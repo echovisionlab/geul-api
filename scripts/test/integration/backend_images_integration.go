@@ -5,7 +5,7 @@ package main
 // Keep the preflight image aligned with testcontainers-go v0.44.0. The
 // library's exported alias is deprecated, while its runtime still uses this
 // exact image internally.
-const suiteReaperImage = "testcontainers/ryuk:0.14.0"
+const suiteReaperImage = "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
 
 var suiteBackendImages = []string{
 	"oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643",
@@ -14,7 +14,7 @@ var suiteBackendImages = []string{
 	"minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
 	"darthsim/imgproxy:v3.31.0@sha256:6db046632f568931e165d61ce289382804f7bbce5b791db6fb6b8d4ace507378",
 	suiteReaperImage,
-	"testcontainers/sshd:1.4.0",
+	"testcontainers/sshd:1.4.0@sha256:bdae17f702908bee93c877ab3e97eddd782e2fb5bdd23a9f29869b9a87b30acd",
 }
 
 func requiredSuiteBackendImages(cdnImage string) []string {

@@ -17,7 +17,7 @@ func TestSuiteBackendPreflightsEveryRuntimeImage(t *testing.T) {
 		"minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
 		"darthsim/imgproxy:v3.31.0@sha256:6db046632f568931e165d61ce289382804f7bbce5b791db6fb6b8d4ace507378",
 		suiteReaperImage,
-		"testcontainers/sshd:1.4.0",
+		"testcontainers/sshd:1.4.0@sha256:bdae17f702908bee93c877ab3e97eddd782e2fb5bdd23a9f29869b9a87b30acd",
 	}
 	cdnImage := "geul-cdn:integration"
 	want = append(want, cdnImage)
