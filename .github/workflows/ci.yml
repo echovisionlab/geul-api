@@ -36,6 +36,15 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
+      - name: Install ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes imagemagick
+          if ! command -v magick >/dev/null 2>&1; then
+            sudo ln -s "$(command -v convert)" /usr/local/bin/magick
+          fi
+          magick -version
+
       - name: Test
         run: go test ./...
 
