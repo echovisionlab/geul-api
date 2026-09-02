@@ -1,0 +1,46 @@
+package post
+
+import (
+	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+)
+
+var PostAdminFilterConfig = &queryutil.FilterConfig{
+	Fields: map[string]queryutil.FieldDef{
+		"search": {
+			Type:          queryutil.TypeText,
+			AllowedOps:    queryutil.SearchOps,
+			SearchColumns: []string{PostSourceTitleSQL},
+		},
+		"status": {
+			Column:     "status",
+			Type:       queryutil.TypeEnum,
+			AllowedOps: queryutil.EnumOps,
+			EnumValues: []string{
+				managev1.PostStatus_POST_STATUS_DRAFT.String(),
+				managev1.PostStatus_POST_STATUS_SCHEDULED.String(),
+				managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
+				managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+			},
+		},
+		"series_id": {
+			Column: "series_id", Type: queryutil.TypeID, AllowedOps: queryutil.IDOps, IsFK: true,
+		},
+		"map_place_id": {
+			Column: "map_place_id", Type: queryutil.TypeID,
+			AllowedOps: []commonv1.FilterOp{
+				commonv1.FilterOp_FILTER_OP_EQ,
+				commonv1.FilterOp_FILTER_OP_NEQ,
+				commonv1.FilterOp_FILTER_OP_IN,
+				commonv1.FilterOp_FILTER_OP_NOT_IN,
+				commonv1.FilterOp_FILTER_OP_IS_NULL,
+				commonv1.FilterOp_FILTER_OP_IS_NOT_NULL,
+			},
+			IsFK: true,
+		},
+		"published_at": {
+			Column: "published_at", Type: queryutil.TypeDate, AllowedOps: queryutil.DateOps,
+		},
+	},
+}

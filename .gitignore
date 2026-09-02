@@ -1,0 +1,14 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.artifacts/
+.coverage/
+.schema-assets/
+bin/
+coverdata/
+coverage.out
+integration.test
+main
+service.test
+*.test
