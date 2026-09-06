@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/echovisionlab/geul-api/compare/v0.1.1...v0.1.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **api:** restore music services and authorization-aware routes ([#9](https://github.com/echovisionlab/geul-api/issues/9)) ([f376675](https://github.com/echovisionlab/geul-api/commit/f376675f55ac83caf11977ad23f93845d075820c))
+
 ## [0.1.1](https://github.com/echovisionlab/geul-api/compare/v0.1.0...v0.1.1) (2026-09-02)
 
 
