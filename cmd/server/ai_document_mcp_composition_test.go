@@ -46,6 +46,9 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		aidocument.DomainPage,
 		aidocument.DomainWork,
 		aidocument.DomainProgramEvent,
+		aidocument.DomainRelease,
+		aidocument.DomainArtist,
+		aidocument.DomainLabel,
 		aidocument.DomainMenu,
 		aidocument.DomainEmailTemplate,
 		aidocument.DomainEmailLayout,
@@ -292,6 +295,9 @@ type compositionMapPlaceReferences struct {
 type compositionMemberReferences struct {
 	managev1connect.UnimplementedMemberServiceHandler
 }
+type compositionArtistReferences struct {
+	managev1connect.UnimplementedArtistServiceHandler
+}
 type compositionFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
 }
@@ -303,6 +309,7 @@ func compositionReferenceApplications() contentReferenceApplications {
 		clients:    &compositionClientReferences{},
 		mapPlaces:  &compositionMapPlaceReferences{},
 		members:    &compositionMemberReferences{},
+		artists:    &compositionArtistReferences{},
 		files:      &compositionFileReferences{},
 	}
 }
@@ -452,7 +459,8 @@ func completeTestAIDocumentRegistrations(port aidocument.DomainPort) aiDocumentD
 	return aiDocumentDomainRegistrations{
 		post: registration(aidocument.DomainPost), page: registration(aidocument.DomainPage),
 		work: registration(aidocument.DomainWork), programEvent: registration(aidocument.DomainProgramEvent),
-		menu:          registration(aidocument.DomainMenu),
+		release: registration(aidocument.DomainRelease), artist: registration(aidocument.DomainArtist),
+		label: registration(aidocument.DomainLabel), menu: registration(aidocument.DomainMenu),
 		emailTemplate: registration(aidocument.DomainEmailTemplate), emailLayout: registration(aidocument.DomainEmailLayout),
 		campaign: registration(aidocument.DomainCampaign), form: registration(aidocument.DomainForm),
 		privacy: registration(aidocument.DomainPrivacy), terms: registration(aidocument.DomainTerms),

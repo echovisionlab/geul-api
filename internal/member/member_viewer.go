@@ -37,6 +37,7 @@ func (s *MemberService) currentMySections(
 		section managev1.MySection
 	}{
 		{lookup: policyv1.Work.LookupManage(), section: managev1.MySection_MY_SECTION_WORKS},
+		{lookup: policyv1.Artist.LookupManage(), section: managev1.MySection_MY_SECTION_ARTISTS},
 		{lookup: policyv1.Form.LookupManage(), section: managev1.MySection_MY_SECTION_FORMS},
 	}
 	for _, resource := range resources {

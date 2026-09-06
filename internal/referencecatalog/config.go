@@ -5,6 +5,8 @@ import queryutil "github.com/echovisionlab/geul-api/internal/query"
 var (
 	categoryFilterConfig = nameSearchFilterConfig()
 	clientFilterConfig   = nameSearchFilterConfig()
+	formatFilterConfig   = nameSearchFilterConfig()
+	genreFilterConfig    = nameSearchFilterConfig()
 	mapPlaceFilterConfig = &queryutil.FilterConfig{
 		Fields: map[string]queryutil.FieldDef{
 			"search": {
@@ -14,7 +16,8 @@ var (
 			},
 		},
 	}
-	tagFilterConfig = nameSearchFilterConfig()
+	styleFilterConfig = nameSearchFilterConfig()
+	tagFilterConfig   = nameSearchFilterConfig()
 )
 
 func nameSearchFilterConfig() *queryutil.FilterConfig {

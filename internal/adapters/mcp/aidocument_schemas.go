@@ -1,6 +1,6 @@
 package mcp
 
-const domainJSONSchema = `{"enum":["post","page","work","program_event","menu","email_template","email_layout","campaign","form","privacy","terms","post_series"]}`
+const domainJSONSchema = `{"enum":["post","page","work","program_event","release","artist","label","menu","email_template","email_layout","campaign","form","privacy","terms","post_series"]}`
 
 const documentReferenceJSONSchema = `{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Canonical document UUID returned by document_list or another authenticated Geul document surface; never a slug or URL."}`
 

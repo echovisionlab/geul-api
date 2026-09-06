@@ -30,6 +30,50 @@ type runtimeEditorProcessingFailureCase struct {
 	mimeType   string
 }
 
+func TestRuntimeReleaseTrackProcessingFailureIntegration(t *testing.T) {
+	testutil.RequireFFmpeg(t)
+	stack := testutil.SetupSharedRuntimeStack(t)
+	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	fixturePath := testutil.GenerateInvalidProcessingMediaFixture(t, t.TempDir(), testutil.EditorMediaBlockTypeAudio)
+	body, err := os.ReadFile(fixturePath)
+	require.NoError(t, err)
+
+	trackID, fileID, uploadID, delivery := completeRuntimeTrackAudioUploadAndWait(
+		t,
+		stack,
+		admin,
+		"audio/mpeg",
+		runtimeTestFileName("track-processing-failure.mp3"),
+		body,
+	)
+	require.Equal(t, commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED, delivery.GetProcessingStatus())
+	requireRuntimeTrackProcessingFailed(t, stack, trackID, fileID)
+	requireRuntimeUploadSessionRemoved(t, stack, uploadID)
+	requireRuntimeTerminalTranscodeFailure(t, stack, fileID, eventpkg.QueueTranscoderAudio)
+}
+
+func TestRuntimeReleaseTrackWaveformFailureIntegration(t *testing.T) {
+	testutil.RequireFFmpeg(t)
+	stack := testutil.SetupSharedRuntimeWaveformFailureStack(t)
+	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	fixturePath := testutil.GenerateTestAudioWAV(t, t.TempDir(), 2)
+	body, err := os.ReadFile(fixturePath)
+	require.NoError(t, err)
+
+	trackID, fileID, uploadID, delivery := completeRuntimeTrackAudioUploadAndWait(
+		t,
+		stack,
+		admin,
+		"audio/wav",
+		runtimeTestFileName("track-waveform-failure.wav"),
+		body,
+	)
+	require.Equal(t, commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED, delivery.GetProcessingStatus())
+	requireRuntimeTrackProcessingFailed(t, stack, trackID, fileID)
+	requireRuntimeUploadSessionRemoved(t, stack, uploadID)
+	requireRuntimeTerminalWaveformFailure(t, stack, fileID)
+}
+
 func TestRuntimeEditorMediaProcessingFailureIntegration(t *testing.T) {
 	testutil.RequireFFmpeg(t)
 	stack := testutil.SetupSharedRuntimeStack(t)
@@ -155,6 +199,53 @@ func completeRuntimeStructuredEditorMediaUploadAndWait(
 	return initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), delivery
 }
 
+func completeRuntimeTrackAudioUploadAndWait(
+	t *testing.T,
+	stack *testutil.RuntimeStack,
+	user *testutil.OryUser,
+	mimeType string,
+	fileName string,
+	body []byte,
+) (string, string, string, *commonv1.MediaDelivery) {
+	t.Helper()
+
+	releaseID := testutil.CreateReleaseViaAPI(t, stack.BackendURL, user)
+	trackID := testutil.CreateManagedReleaseTrackViaAPI(t, stack.BackendURL, user, releaseID, runtimeTestFileName("runtime-track"))
+	testutil.AssertManagedReleaseTrackAuthority(t, stack.DB, releaseID, trackID)
+	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
+	lastModified := time.Now().UnixMilli()
+	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
+	initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+		UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		EntityId:         trackID,
+		EntityType:       &entityType,
+		FileSize:         int64(len(body)),
+		MimeType:         mimeType,
+		FileName:         fileName,
+		FileLastModified: &lastModified,
+	})
+	setAuthHeaders(initReq.Header(), user)
+	initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+	require.NoError(t, err)
+
+	uploadMultipartBody(t, stack.BackendURL, user, initResp.Msg, body)
+	completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+		FileId:        initResp.Msg.GetFileId(),
+		UploadId:      initResp.Msg.GetUploadId(),
+		CorrelationId: runtimePtr(uuid.NewString()),
+	})
+	setAuthHeaders(completeReq.Header(), user)
+	completeResp, err := fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+	require.NoError(t, err)
+	require.Equal(t, initResp.Msg.GetFileId(), completeResp.Msg.GetFileId())
+	requireRuntimeCanonicalFileRecord(t, stack.DB, initResp.Msg.GetFileId(), initResp.Msg.GetExtension(), mimeType, body)
+
+	delivery := waitForRuntimeTerminalFailure(t, fileClient, user, initResp.Msg.GetFileId(), func(delivery *commonv1.MediaDelivery) bool {
+		return delivery.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED
+	})
+	return trackID, initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), delivery
+}
+
 func waitForRuntimeTerminalFailure(
 	t *testing.T,
 	fileClient managev1connect.FileServiceClient,
@@ -184,6 +275,18 @@ func waitForRuntimeTerminalFailure(
 	})
 	require.NotNil(t, last)
 	return last
+}
+
+func requireRuntimeTrackProcessingFailed(t *testing.T, stack *testutil.RuntimeStack, trackID string, fileID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		var track model.Track
+		if err := stack.DB.First(&track, "id = ?", trackID).Error; err != nil {
+			return false
+		}
+		return runtimeDeref(track.AudioOriginalFileID) == fileID &&
+			runtimeDeref(track.ProcessingStatus) == managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_FAILED.String()
+	}, 15*time.Second, 200*time.Millisecond)
 }
 
 func requireRuntimeUploadSessionRemoved(t *testing.T, stack *testutil.RuntimeStack, uploadID string) {

@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -30,21 +33,24 @@ func newOGDependencies(db *gorm.DB, cdnDomain string) *ogDependencies {
 	pageRequests := pageadapter.NewRequests()
 	seriesRequests := seriesadapter.NewRequests()
 	workRequests := workadapter.NewRequests()
+	labelRequests := labeladapter.NewRequests()
+	artistRequests := artistadapter.NewRequests()
 	formRequests := formogadapter.NewRequests()
 	legalRequests := legaladapter.NewRequests()
 	siteRequests := sitesettingsadapter.NewRequests()
 
 	projections := []og.Projection{
 		postadapter.NewProjection(), pageadapter.NewProjection(), seriesadapter.NewProjection(),
-		workadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
+		workadapter.NewProjection(), labeladapter.NewProjection(), artistadapter.NewProjection(),
+		releaseadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
 		sitesettingsadapter.NewProjection(),
 	}
 	requestSources := []og.RequestSource{
-		postRequests, pageRequests, seriesRequests, workRequests,
+		postRequests, pageRequests, seriesRequests, workRequests, labelRequests, artistRequests,
 		formRequests, legalRequests, siteRequests,
 	}
 	allSources := []og.AllRequestSource{
-		postRequests, pageRequests, seriesRequests, workRequests,
+		postRequests, pageRequests, seriesRequests, workRequests, labelRequests, artistRequests,
 		formRequests, legalRequests, siteRequests,
 	}
 	planner := og.NewPlanner(db, cdnDomain, sitesettingsadapter.NewRenderConfig(), projections...)

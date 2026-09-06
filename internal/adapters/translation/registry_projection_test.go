@@ -10,7 +10,7 @@ func TestTranslationEntrySelectSQLUsesTypedBlockAuthority(t *testing.T) {
 	t.Parallel()
 
 	registry := completeDomainRegistryForTest(t)
-	for _, entityType := range []string{"post", "program_event", "work"} {
+	for _, entityType := range []string{"post", "program_event", "work", "release"} {
 		entityType := entityType
 		t.Run(entityType, func(t *testing.T) {
 			t.Parallel()

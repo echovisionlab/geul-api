@@ -111,7 +111,7 @@ func TestOgPlannerAllocatesOneOutputPerLocale(t *testing.T) {
 }
 
 func TestOgPolicyHelpersClassifyLocaleAwareEntities(t *testing.T) {
-	for _, entityType := range []string{"post", "page", "form", "series", "work"} {
+	for _, entityType := range []string{"post", "page", "form", "series", "work", "artist"} {
 		policy, ok := og.PolicyForEntityName(entityType)
 		require.True(t, ok)
 		assert.Equal(t, og.LocaleStrategyTranslated, policy.LocaleStrategy)
@@ -129,7 +129,10 @@ func TestOgGenerationPolicyCoversEverySupportedEntity(t *testing.T) {
 		managev1.OgEntityType_OG_ENTITY_TYPE_POST:    og.LocaleStrategyTranslated,
 		managev1.OgEntityType_OG_ENTITY_TYPE_PAGE:    og.LocaleStrategyTranslated,
 		managev1.OgEntityType_OG_ENTITY_TYPE_WORK:    og.LocaleStrategyTranslated,
+		managev1.OgEntityType_OG_ENTITY_TYPE_LABEL:   og.LocaleStrategyBaseOnly,
+		managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST:  og.LocaleStrategyTranslated,
 		managev1.OgEntityType_OG_ENTITY_TYPE_SITE:    og.LocaleStrategyBaseOnly,
+		managev1.OgEntityType_OG_ENTITY_TYPE_RELEASE: og.LocaleStrategyBaseOnly,
 		managev1.OgEntityType_OG_ENTITY_TYPE_SERIES:  og.LocaleStrategyTranslated,
 		managev1.OgEntityType_OG_ENTITY_TYPE_FORM:    og.LocaleStrategyTranslated,
 		managev1.OgEntityType_OG_ENTITY_TYPE_PRIVACY: og.LocaleStrategyStatic,

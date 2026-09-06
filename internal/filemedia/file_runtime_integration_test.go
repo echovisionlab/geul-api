@@ -33,6 +33,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
@@ -157,6 +158,446 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 	require.Zero(t, usageCount)
 }
 
+func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
+	stack := testutil.SetupSharedRuntimeStack(t)
+
+	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	staleManager := stack.CreateUser(t, policyv1.Role.Author().ID())
+	outsider := stack.CreateUser(t, policyv1.Role.User().ID())
+	releaseID := testutil.CreateReleaseViaAPI(t, stack.BackendURL, manager)
+
+	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
+	trackClient := managev1connect.NewTrackServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
+
+	createReq := connect.NewRequest(&managev1.CreateTrackRequest{
+		ReleaseId: releaseID,
+		Title:     runtimeTestFileName("runtime-track"),
+	})
+	setAuthHeaders(createReq.Header(), staleManager)
+	_, err := trackClient.CreateTrack(context.Background(), createReq)
+	require.Error(t, err)
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+
+	createReq = connect.NewRequest(&managev1.CreateTrackRequest{
+		ReleaseId: releaseID,
+		Title:     runtimeTestFileName("runtime-track"),
+	})
+	setAuthHeaders(createReq.Header(), manager)
+
+	createResp, err := trackClient.CreateTrack(context.Background(), createReq)
+	require.NoError(t, err)
+	trackID := createResp.Msg.Id
+	require.NotEmpty(t, trackID)
+	testutil.AssertManagedReleaseTrackAuthority(t, stack.DB, releaseID, trackID)
+
+	fixturePath := testutil.RepositoryTestAudioMP3(t)
+	fixtureBytes, err := os.ReadFile(fixturePath)
+	require.NoError(t, err)
+	audioMimeType := "audio/mpeg"
+
+	t.Run("deny initiate without track edit permission", func(t *testing.T) {
+		req := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:   trackID,
+			EntityType: runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileSize:   int64(len(fixtureBytes)),
+			MimeType:   audioMimeType,
+			FileName:   runtimeTestFileName("track-deny.mp3"),
+		})
+		setAuthHeaders(req.Header(), outsider)
+
+		_, err := fileClient.InitiateMultipartUpload(context.Background(), req)
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	})
+
+	t.Run("initiate upload then abort and clear track resume candidate", func(t *testing.T) {
+		fileName := runtimeTestFileName("track-abort.mp3")
+		fileLastModified := time.Now().UnixMilli()
+
+		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileSize:         int64(len(fixtureBytes)),
+			MimeType:         audioMimeType,
+			FileName:         fileName,
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(initReq.Header(), manager)
+
+		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+		require.NoError(t, err)
+
+		uploadPartResp := uploadMultipartPart(
+			t,
+			stack.BackendURL,
+			manager,
+			initResp.Msg.FileId,
+			initResp.Msg.UploadId,
+			1,
+			fixtureBytes,
+		)
+		require.NotEmpty(t, uploadPartResp.ETag)
+
+		candidateReq := connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileName:         &fileName,
+			FileSize:         runtimePtr(int64(len(fixtureBytes))),
+			MimeType:         runtimePtr(audioMimeType),
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(candidateReq.Header(), manager)
+
+		candidateResp, err := fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
+		require.NoError(t, err)
+		require.Equal(t, initResp.Msg.UploadId, runtimeDeref(candidateResp.Msg.UploadId))
+		require.Equal(t, initResp.Msg.FileId, runtimeDeref(candidateResp.Msg.FileId))
+		require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, candidateResp.Msg.Status)
+
+		abortReq := connect.NewRequest(&managev1.AbortMultipartUploadRequest{
+			FileId:   initResp.Msg.FileId,
+			UploadId: initResp.Msg.UploadId,
+		})
+		setAuthHeaders(abortReq.Header(), manager)
+
+		abortResp, err := fileClient.AbortMultipartUpload(context.Background(), abortReq)
+		require.NoError(t, err)
+		require.True(t, abortResp.Msg.Success)
+
+		candidateReq = connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileName:         &fileName,
+			FileSize:         runtimePtr(int64(len(fixtureBytes))),
+			MimeType:         runtimePtr(audioMimeType),
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(candidateReq.Header(), manager)
+
+		candidateResp, err = fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
+		require.NoError(t, err)
+		require.Nil(t, candidateResp.Msg.UploadId)
+	})
+
+	t.Run("unstarted presigned parts keep confirmed parts resumable", func(t *testing.T) {
+		fileName := runtimeTestFileName("track-interrupt.mp3")
+		fileLastModified := time.Now().UnixMilli()
+		interruptionCorrelationID := uuid.NewString()
+		resumeCorrelationID := uuid.NewString()
+		completionCorrelationID := uuid.NewString()
+		failedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
+		fullPart := make([]byte, chunkSize)
+		copy(fullPart, fixtureBytes)
+		lastPart := fixtureBytes
+		fileSize := int64((chunkSize * 9) + len(lastPart))
+
+		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileSize:         fileSize,
+			MimeType:         audioMimeType,
+			FileName:         fileName,
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(initReq.Header(), manager)
+
+		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+		require.NoError(t, err)
+
+		uploadPartResp := uploadMultipartPartWithCorrelation(
+			t,
+			stack.BackendURL,
+			manager,
+			initResp.Msg.FileId,
+			initResp.Msg.UploadId,
+			1,
+			fullPart,
+			resumeCorrelationID,
+		)
+		require.NotEmpty(t, uploadPartResp.ETag)
+
+		for _, partNumber := range []int{2, 3, 4, 5, 6} {
+			presigned := requestMultipartPartPresign(
+				t,
+				stack.BackendURL,
+				manager,
+				initResp.Msg.FileId,
+				initResp.Msg.UploadId,
+				partNumber,
+				interruptionCorrelationID,
+			)
+			require.NotEmpty(t, presigned.URL)
+		}
+
+		require.Eventually(t, func() bool {
+			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
+		}, 5*time.Second, 200*time.Millisecond)
+		require.Equal(t, int64(1), countUploadParts(t, stack.DB, initResp.Msg.UploadId))
+		requireNoFileIngestFailedEvent(t, failedReceiver, 2*time.Second, func(event *managev1.FileIngestFailedEvent) bool {
+			return event.CorrelationId == interruptionCorrelationID && event.GetIdentity().GetFileId() == initResp.Msg.FileId
+		})
+
+		candidateReq := connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileName:         &fileName,
+			FileSize:         runtimePtr(fileSize),
+			MimeType:         runtimePtr(audioMimeType),
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(candidateReq.Header(), manager)
+
+		candidateResp, err := fileClient.FindMultipartUploadCandidate(context.Background(), candidateReq)
+		require.NoError(t, err)
+		require.Equal(t, initResp.Msg.UploadId, runtimeDeref(candidateResp.Msg.UploadId))
+		require.Equal(t, initResp.Msg.FileId, runtimeDeref(candidateResp.Msg.FileId))
+		require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, candidateResp.Msg.Status)
+
+		resumeReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileSize:         fileSize,
+			MimeType:         audioMimeType,
+			FileName:         fileName,
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(resumeReq.Header(), manager)
+		resumeResp, err := fileClient.InitiateMultipartUpload(context.Background(), resumeReq)
+		require.NoError(t, err)
+		require.True(t, resumeResp.Msg.GetResumed())
+		require.Equal(t, initResp.Msg.GetUploadId(), resumeResp.Msg.GetUploadId())
+		require.Equal(t, initResp.Msg.GetFileId(), resumeResp.Msg.GetFileId())
+		require.Equal(t, []*managev1.UploadPartInfo{{PartNumber: 1, Etag: uploadPartResp.ETag}}, resumeResp.Msg.GetUploadedParts())
+
+		uploadedParts := resumeResp.Msg.GetUploadedParts()
+		require.Len(t, uploadedParts, 1)
+		require.Equal(t, int32(1), uploadedParts[0].GetPartNumber())
+		require.Equal(t, uploadPartResp.ETag, uploadedParts[0].GetEtag())
+
+		uploadReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
+		for partNumber := 2; partNumber <= 9; partNumber++ {
+			part := uploadMultipartPartWithCorrelation(
+				t,
+				stack.BackendURL,
+				manager,
+				initResp.Msg.FileId,
+				initResp.Msg.UploadId,
+				partNumber,
+				fullPart,
+				resumeCorrelationID,
+			)
+			require.NotEmpty(t, part.ETag)
+		}
+		part := uploadMultipartPartWithCorrelation(
+			t,
+			stack.BackendURL,
+			manager,
+			initResp.Msg.FileId,
+			initResp.Msg.UploadId,
+			10,
+			lastPart,
+			resumeCorrelationID,
+		)
+		require.NotEmpty(t, part.ETag)
+
+		uploadEvent := waitForFileIngestUploadEvent(t, uploadReceiver, 10*time.Second, func(event *managev1.FileIngestUploadEvent) bool {
+			identity := event.GetIdentity()
+			return event.CorrelationId == resumeCorrelationID &&
+				identity.GetUploadId() == initResp.Msg.UploadId &&
+				identity.GetFileId() == initResp.Msg.FileId &&
+				event.GetProgress().GetPercentage() == 100
+		})
+		require.Equal(t, int32(100), uploadEvent.GetProgress().GetPercentage())
+		require.Equal(t, fileSize, uploadEvent.GetProgress().GetBytesTotal())
+		require.Equal(t, fileSize, uploadEvent.GetProgress().GetBytesCompleted())
+
+		uploadedParts = loadUploadPartInfosForTest(t, stack.DB, initResp.Msg.UploadId)
+		require.Len(t, uploadedParts, 10)
+		for index, uploadedPart := range uploadedParts {
+			require.Equal(t, int32(index+1), uploadedPart.PartNumber)
+			require.NotEmpty(t, uploadedPart.Etag)
+		}
+
+		finalizedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
+		attachedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
+		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+			FileId:        initResp.Msg.FileId,
+			UploadId:      initResp.Msg.UploadId,
+			CorrelationId: runtimePtr(completionCorrelationID),
+		})
+		setAuthHeaders(completeReq.Header(), manager)
+
+		completeResp, err := fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+		require.NoError(t, err)
+		require.Equal(t, initResp.Msg.FileId, completeResp.Msg.FileId)
+
+		matchesCompletedIdentity := func(identity *managev1.FileIngestIdentity) bool {
+			return identity.GetUploadId() == initResp.Msg.UploadId &&
+				identity.GetFileId() == initResp.Msg.FileId &&
+				identity.GetEntityId() == trackID &&
+				identity.GetEntityType() == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
+		}
+		finalizedEvent := waitForFileIngestFinalizedEvent(t, finalizedReceiver, 10*time.Second, func(event *managev1.FileIngestFinalizedEvent) bool {
+			return event.CorrelationId == completionCorrelationID && matchesCompletedIdentity(event.GetIdentity())
+		})
+		require.Equal(t, int32(100), finalizedEvent.GetProgress().GetPercentage())
+		attachedEvent := waitForFileIngestAttachedEvent(t, attachedReceiver, 10*time.Second, func(event *managev1.FileIngestAttachedEvent) bool {
+			return event.CorrelationId == completionCorrelationID && matchesCompletedIdentity(event.GetIdentity())
+		})
+		require.Equal(t, fileName, attachedEvent.FileName)
+		require.Equal(t, audioMimeType, attachedEvent.MimeType)
+		require.Equal(t, fileSize, attachedEvent.FileSize)
+		require.Eventually(t, func() bool {
+			var attachedTrack model.Track
+			if err := stack.DB.First(&attachedTrack, "id = ?", trackID).Error; err != nil {
+				return false
+			}
+			return runtimeDeref(attachedTrack.AudioOriginalFileID) == initResp.Msg.FileId
+		}, 10*time.Second, 100*time.Millisecond)
+		require.Eventually(t, func() bool {
+			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 0
+		}, 5*time.Second, 200*time.Millisecond)
+		require.Equal(t, int64(1), countFilesByID(t, stack.DB, initResp.Msg.FileId))
+	})
+
+	t.Run("complete track upload with invalid etag fails and leaves no durable file", func(t *testing.T) {
+		fileName := runtimeTestFileName("track-bad-complete.mp3")
+		fileLastModified := time.Now().UnixMilli()
+
+		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType:       managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:         trackID,
+			EntityType:       runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileSize:         int64(len(fixtureBytes)),
+			MimeType:         audioMimeType,
+			FileName:         fileName,
+			FileLastModified: &fileLastModified,
+		})
+		setAuthHeaders(initReq.Header(), manager)
+
+		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+		require.NoError(t, err)
+
+		part := uploadMultipartPart(
+			t,
+			stack.BackendURL,
+			manager,
+			initResp.Msg.FileId,
+			initResp.Msg.UploadId,
+			1,
+			fixtureBytes,
+		)
+		require.NotEmpty(t, part.ETag)
+
+		abortMultipartInStorage(t, stack, runtimeMediaObjectKey(t, initResp.Msg.FileId, initResp.Msg.Extension), initResp.Msg.UploadId)
+
+		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+			FileId:        initResp.Msg.FileId,
+			UploadId:      initResp.Msg.UploadId,
+			CorrelationId: runtimePtr(uuid.NewString()),
+		})
+		setAuthHeaders(completeReq.Header(), manager)
+
+		_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+		require.Error(t, err)
+
+		require.Eventually(t, func() bool {
+			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
+		}, 5*time.Second, 200*time.Millisecond)
+		require.Equal(t, int64(0), countFilesByID(t, stack.DB, initResp.Msg.FileId))
+
+		requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED)
+	})
+
+	t.Run("complete track upload attach audio and wait for processing to finish", func(t *testing.T) {
+		fileName := runtimeTestFileName("track-complete.mp3")
+		fileLastModified := time.Now().UnixMilli()
+		var currentTrack model.Track
+		require.NoError(t, stack.DB.First(&currentTrack, "id = ?", trackID).Error)
+		expectedCurrentFileID := runtimeDeref(currentTrack.AudioOriginalFileID)
+		require.NotEmpty(t, expectedCurrentFileID)
+		require.Equal(
+			t,
+			expectedCurrentFileID,
+			testutil.ReadReleaseTrackOriginalFileID(t, stack.DB, releaseID, trackID),
+			"Release shared Yjs and Track row must start from the same CAS value",
+		)
+
+		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+			UploadType:            managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+			EntityId:              trackID,
+			EntityType:            runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
+			FileSize:              int64(len(fixtureBytes)),
+			MimeType:              audioMimeType,
+			FileName:              fileName,
+			FileLastModified:      &fileLastModified,
+			ExpectedCurrentFileId: &expectedCurrentFileID,
+		})
+		setAuthHeaders(initReq.Header(), manager)
+
+		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
+		require.NoError(t, err)
+
+		part := uploadMultipartPart(
+			t,
+			stack.BackendURL,
+			manager,
+			initResp.Msg.FileId,
+			initResp.Msg.UploadId,
+			1,
+			fixtureBytes,
+		)
+		require.NotEmpty(t, part.ETag)
+
+		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+			FileId:        initResp.Msg.FileId,
+			UploadId:      initResp.Msg.UploadId,
+			CorrelationId: runtimePtr(uuid.NewString()),
+		})
+		setAuthHeaders(completeReq.Header(), manager)
+
+		completeResp, err := fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+		require.NoError(t, err)
+		require.Equal(t, initResp.Msg.FileId, completeResp.Msg.FileId)
+		stored := requireRuntimeCanonicalFileRecord(t, stack.DB, initResp.Msg.FileId, initResp.Msg.Extension, audioMimeType, fixtureBytes)
+		require.Empty(t, stored.SHA256)
+
+		var track model.Track
+		require.Eventually(t, func() bool {
+			if err := stack.DB.First(&track, "id = ?", trackID).Error; err != nil {
+				return false
+			}
+			return runtimeDeref(track.AudioOriginalFileID) == initResp.Msg.FileId &&
+				runtimeDeref(track.ProcessingStatus) == managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String()
+		}, 10*time.Second, 100*time.Millisecond)
+		require.Equal(
+			t,
+			initResp.Msg.FileId,
+			testutil.ReadReleaseTrackOriginalFileID(t, stack.DB, releaseID, trackID),
+			"editor-collab must persist the projected Track file in Release shared Yjs before the API finalizer updates Track",
+		)
+
+		waitForRuntimeMediaDelivery(t, fileClient, manager, initResp.Msg.FileId, func(delivery *commonv1.MediaDelivery) bool {
+			return delivery.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY &&
+				delivery.GetPlayback().GetUrl() != "" &&
+				delivery.GetSpectrogram().GetUrl() != "" &&
+				delivery.GetWaveform().GetUrl() != ""
+		})
+
+		require.NoError(t, stack.DB.First(&track, "id = ?", trackID).Error)
+		require.Equal(t, initResp.Msg.FileId, runtimeDeref(track.AudioOriginalFileID))
+		require.Equal(t, managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_COMPLETED.String(), runtimeDeref(track.ProcessingStatus))
+
+		deleteRuntimeTrackAndAssertFilePreserved(t, stack, trackClient, manager, trackID, initResp.Msg.FileId)
+	})
+}
 func uploadMultipartPart(
 	t *testing.T,
 	baseURL string,
@@ -318,6 +759,49 @@ func completeRuntimeEditorMediaUploadAndWait(
 	return initResp.Msg.FileId, delivery
 }
 
+type runtimeFileStorageRefs struct {
+	originalKey        string
+	assetKeys          []string
+	generationPrefixes []string
+}
+
+func deleteRuntimeTrackAndAssertFilePreserved(
+	t *testing.T,
+	stack *testutil.RuntimeStack,
+	trackClient managev1connect.TrackServiceClient,
+	manager *testutil.OryUser,
+	trackID string,
+	fileID string,
+) {
+	t.Helper()
+
+	storageRefs := loadRuntimeFileStorageRefs(t, stack.DB, fileID)
+	require.NotEmpty(t, storageRefs.originalKey)
+
+	deleteReq := connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID})
+	setAuthHeaders(deleteReq.Header(), manager)
+	deleteResp, err := trackClient.DeleteTrack(context.Background(), deleteReq)
+	require.NoError(t, err)
+	require.True(t, deleteResp.Msg.Success)
+
+	require.Eventually(t, func() bool {
+		return countTracksByID(t, stack.DB, trackID) == 0
+	}, 5*time.Second, 200*time.Millisecond)
+	require.EqualValues(t, 1, countFilesByID(t, stack.DB, fileID))
+	require.Positive(t, countFileDerivatives(t, stack.DB, fileID))
+
+	s3Client := runtimeS3Client(t, stack)
+	require.True(t, runtimeS3ObjectExists(t, s3Client, stack.S3MediaBucket, storageRefs.originalKey))
+	for _, key := range storageRefs.assetKeys {
+		require.True(t, runtimeS3ObjectExists(t, s3Client, stack.S3MediaBucket, key))
+	}
+	for _, prefix := range storageRefs.generationPrefixes {
+		require.Eventually(t, func() bool {
+			return runtimeS3PrefixHasObjects(t, s3Client, stack.S3MediaBucket, prefix)
+		}, 5*time.Second, 200*time.Millisecond)
+	}
+}
+
 func uploadMultipartPartWithCorrelation(
 	t *testing.T,
 	baseURL string,
@@ -396,6 +880,39 @@ func uploadMultipartPartWithCorrelation(
 	require.NoError(t, json.NewDecoder(confirmResp.Body).Decode(&payload))
 	require.NotEmpty(t, payload.ETag)
 	return payload
+}
+
+func requestMultipartPartPresign(
+	t *testing.T,
+	baseURL string,
+	user *testutil.OryUser,
+	fileID string,
+	uploadID string,
+	partNumber int,
+	correlationID string,
+) multipartPresignResponse {
+	t.Helper()
+	query := url.Values{}
+	query.Set("fileId", fileID)
+	query.Set("uploadId", uploadID)
+	query.Set("partNumber", fmt.Sprintf("%d", partNumber))
+	if correlationID != "" {
+		query.Set("correlationId", correlationID)
+	}
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/upload/part/presign?%s", baseURL, query.Encode()), nil)
+	require.NoError(t, err)
+	testutil.ApplyAuthHeaders(req.Header, user)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var payload multipartPresignResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	return payload
+}
+
+type fileIngestSignalReceiver struct {
+	conn *pgx.Conn
 }
 
 func newFileIngestSignalReceiver(t *testing.T, dsn string) *fileIngestSignalReceiver {
@@ -602,6 +1119,83 @@ func requireRuntimeCanonicalFileRecord(
 	require.Equal(t, mimeType, file.MimeType)
 	require.EqualValues(t, len(body), file.FileSize)
 	return file
+}
+
+func countTracksByID(t *testing.T, db *gorm.DB, trackID string) int64 {
+	t.Helper()
+
+	var count int64
+	require.NoError(t, db.Table("track").Where("id = ?", trackID).Count(&count).Error)
+	return count
+}
+
+func countFileDerivatives(t *testing.T, db *gorm.DB, fileID string) int64 {
+	t.Helper()
+
+	var count int64
+	require.NoError(t, db.Table("file_derivative").Where("file_id = ?", fileID).Count(&count).Error)
+	return count
+}
+
+func abortMultipartInStorage(
+	t *testing.T,
+	stack *testutil.RuntimeStack,
+	fileKey string,
+	uploadID string,
+) {
+	t.Helper()
+
+	s3Client := runtimeS3Client(t, stack)
+
+	_, err := s3Client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(stack.S3MediaBucket),
+		Key:      aws.String(fileKey),
+		UploadId: aws.String(uploadID),
+	})
+	require.NoError(t, err)
+}
+
+func loadRuntimeFileStorageRefs(t *testing.T, db *gorm.DB, fileID string) runtimeFileStorageRefs {
+	t.Helper()
+
+	var file struct {
+		Extension string `gorm:"column:extension"`
+	}
+	require.NoError(t, db.Table("file").Select("extension").Where("id = ?", fileID).First(&file).Error)
+	originalKey := runtimeMediaObjectKey(t, fileID, file.Extension)
+
+	var derivatives []struct {
+		Type                   string  `gorm:"column:type"`
+		AssetObjectKey         *string `gorm:"column:asset_object_key"`
+		GenerationObjectPrefix *string `gorm:"column:generation_object_prefix"`
+	}
+	require.NoError(t, db.Table("file_derivative fd").
+		Select("fd.type, pa.object_key AS asset_object_key, mg.object_prefix AS generation_object_prefix").
+		Joins("LEFT JOIN public_asset pa ON pa.id = fd.asset_id").
+		Joins("LEFT JOIN media_generation mg ON mg.id = fd.media_generation_id").
+		Where("fd.file_id = ?", fileID).
+		Find(&derivatives).Error)
+
+	refs := runtimeFileStorageRefs{originalKey: originalKey}
+	for _, derivative := range derivatives {
+		if derivative.Type == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String() {
+			require.NotNil(t, derivative.GenerationObjectPrefix)
+			require.Nil(t, derivative.AssetObjectKey)
+			refs.generationPrefixes = append(refs.generationPrefixes, *derivative.GenerationObjectPrefix)
+			continue
+		}
+		require.NotNil(t, derivative.AssetObjectKey)
+		require.Nil(t, derivative.GenerationObjectPrefix)
+		refs.assetKeys = append(refs.assetKeys, *derivative.AssetObjectKey)
+	}
+	return refs
+}
+
+func runtimeMediaObjectKey(t *testing.T, fileID string, extension string) string {
+	t.Helper()
+	key, err := mediaauth.MediaObjectKey(fileID, extension)
+	require.NoError(t, err)
+	return key
 }
 
 func runtimeS3Client(t *testing.T, stack *testutil.RuntimeStack) *s3.Client {

@@ -100,32 +100,11 @@ func TestEveryTypedOperationAndValueRoundTrips(t *testing.T) {
 		}
 	}
 
-	for _, protoDomain := range []managev1.AIDocumentDomain{
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_POST,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_PAGE,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_WORK,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_PROGRAM_EVENT,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_MENU,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_EMAIL_TEMPLATE,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_EMAIL_LAYOUT,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_CAMPAIGN,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_FORM,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_PRIVACY,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_TERMS,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_POST_SERIES,
-	} {
+	for number := int32(1); number <= 15; number++ {
+		protoDomain := managev1.AIDocumentDomain(number)
 		domain, err := domainFromProto(protoDomain)
 		if err != nil || domainToProto(domain) != protoDomain {
-			t.Fatalf("domain %d did not round-trip: %q %v", protoDomain, domain, err)
-		}
-	}
-	for _, protoDomain := range []managev1.AIDocumentDomain{
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_RELEASE,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_ARTIST,
-		managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_LABEL,
-	} {
-		if _, err := domainFromProto(protoDomain); err == nil {
-			t.Fatalf("removed domain %d was accepted", protoDomain)
+			t.Fatalf("domain %d did not round-trip: %q %v", number, domain, err)
 		}
 	}
 	if _, err := domainFromProto(managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_UNSPECIFIED); err == nil {

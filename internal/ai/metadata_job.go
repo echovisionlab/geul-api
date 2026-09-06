@@ -613,6 +613,12 @@ func resolveAIResourceType(value string) managev1.AIResourceType {
 		return managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE
 	case managev1.AIResourceType_AI_RESOURCE_TYPE_FORM.String():
 		return managev1.AIResourceType_AI_RESOURCE_TYPE_FORM
+	case managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST.String():
+		return managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST
+	case managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE.String():
+		return managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE
+	case managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL.String():
+		return managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL
 	case managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN.String():
 		return managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN
 	case managev1.AIResourceType_AI_RESOURCE_TYPE_EMAIL_TEMPLATE.String():

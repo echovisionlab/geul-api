@@ -40,8 +40,8 @@ func TestReservedPageSlugNamespace(t *testing.T) {
 	}
 	for _, slug := range []string{
 		"edit", "EDIT", "about", "", "page-edit", "some/admin", "some/where",
-		"page", "pages", "posts", "works", "tools", "TOOLS",
-		"forms", "events", "page", "pages", "post", "work", "form",
+		"page", "pages", "posts", "works", "artists", "tools", "TOOLS",
+		"releases", "labels", "forms", "events", "page", "pages", "post", "artist", "label", "release", "work", "form",
 		"posts/article", "WORKS/example", "series/example", "campaigns/1", "event-series/example",
 		"works/something/somewhere", "campaigns/example/more", "series/example/more", "event-series/example/more",
 	} {
@@ -55,11 +55,14 @@ func TestPageResourceRouteInventory(t *testing.T) {
 	t.Parallel()
 
 	want := map[string]pageRouteResource{
+		"artists":      {table: "artist", hasSlug: true},
 		"campaigns":    {table: "campaign", hasSlug: false},
 		"event-series": {table: "program_event_series", hasSlug: true},
 		"events":       {table: "program_event", hasSlug: true},
 		"forms":        {table: "form", hasSlug: true},
+		"labels":       {table: "label", hasSlug: true},
 		"posts":        {table: "post", hasSlug: true},
+		"releases":     {table: "release", hasSlug: true},
 		"series":       {table: "series", hasSlug: true},
 		"works":        {table: "work", hasSlug: true},
 	}

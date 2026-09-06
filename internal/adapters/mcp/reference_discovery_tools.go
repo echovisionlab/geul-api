@@ -19,13 +19,13 @@ const (
 
 const referenceSearchInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["reference_type","query"],
-  "properties":{"reference_type":{"enum":["category","tag","client","map_place","member"]},"query":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20}}
+  "properties":{"reference_type":{"enum":["category","tag","client","map_place","member","artist"]},"query":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20}}
 }`
 
 const referenceSearchOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["reference_type","items","count","has_more"],
   "properties":{
-    "reference_type":{"enum":["category","tag","client","map_place","member"]},"count":{"type":"integer"},"has_more":{"type":"boolean"},
+    "reference_type":{"enum":["category","tag","client","map_place","member","artist"]},"count":{"type":"integer"},"has_more":{"type":"boolean"},
     "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + documentReferenceJSONSchema + `,"name":{"type":"string"},"slug":{"type":"string"},"address":{"type":"string"},"status":{"type":"string"},"deleted":{"type":"boolean"}}}}
   }
 }`
@@ -44,7 +44,7 @@ const fileListOutputJSONSchema = `{
 }`
 
 var referenceDiscoveryTools = []mcpserver.Tool{
-	relatedTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, or Member IDs before using them in content management tools.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false),
+	relatedTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, Member, or Artist IDs before using them in content management tools.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false),
 	relatedTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Geul Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false),
 }
 
@@ -63,6 +63,9 @@ type MapPlaceReferenceDiscovery interface {
 type MemberReferenceDiscovery interface {
 	SearchMembers(context.Context, *connect.Request[managev1.SearchMembersRequest]) (*connect.Response[managev1.SearchMembersResponse], error)
 }
+type ArtistReferenceDiscovery interface {
+	ListArtists(context.Context, *connect.Request[managev1.ListArtistsRequest]) (*connect.Response[managev1.ListArtistsResponse], error)
+}
 type FileReferenceDiscovery interface {
 	ListFileManagerItems(context.Context, *connect.Request[managev1.ListFileManagerItemsRequest]) (*connect.Response[managev1.ListFileManagerItemsResponse], error)
 }
@@ -73,14 +76,15 @@ type ReferenceDiscoveryTools struct {
 	clients    ClientReferenceDiscovery
 	mapPlaces  MapPlaceReferenceDiscovery
 	members    MemberReferenceDiscovery
+	artists    ArtistReferenceDiscovery
 	files      FileReferenceDiscovery
 }
 
-func NewReferenceDiscoveryTools(categories CategoryReferenceDiscovery, tags TagReferenceDiscovery, clients ClientReferenceDiscovery, mapPlaces MapPlaceReferenceDiscovery, members MemberReferenceDiscovery, files FileReferenceDiscovery) (*ReferenceDiscoveryTools, error) {
-	if interfaceValueIsNil(categories) || interfaceValueIsNil(tags) || interfaceValueIsNil(clients) || interfaceValueIsNil(mapPlaces) || interfaceValueIsNil(members) || interfaceValueIsNil(files) {
+func NewReferenceDiscoveryTools(categories CategoryReferenceDiscovery, tags TagReferenceDiscovery, clients ClientReferenceDiscovery, mapPlaces MapPlaceReferenceDiscovery, members MemberReferenceDiscovery, artists ArtistReferenceDiscovery, files FileReferenceDiscovery) (*ReferenceDiscoveryTools, error) {
+	if interfaceValueIsNil(categories) || interfaceValueIsNil(tags) || interfaceValueIsNil(clients) || interfaceValueIsNil(mapPlaces) || interfaceValueIsNil(members) || interfaceValueIsNil(artists) || interfaceValueIsNil(files) {
 		return nil, errors.New("MCP content reference discovery applications are required")
 	}
-	return &ReferenceDiscoveryTools{categories: categories, tags: tags, clients: clients, mapPlaces: mapPlaces, members: members, files: files}, nil
+	return &ReferenceDiscoveryTools{categories: categories, tags: tags, clients: clients, mapPlaces: mapPlaces, members: members, artists: artists, files: files}, nil
 }
 
 func (*ReferenceDiscoveryTools) ToolNames() []string {
@@ -174,6 +178,17 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		for _, item := range response.Msg.Members {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Nickname, nil, "", "", item.Deleted))
+			}
+		}
+	case "artist":
+		response, err := tools.artists.ListArtists(ctx, connect.NewRequest(&managev1.ListArtistsRequest{Pagination: pagination, Filters: searchFilter}))
+		if err != nil {
+			return expectedToolError(err)
+		}
+		hasMore = response.Msg.Pagination.GetHasMore()
+		for _, item := range response.Msg.Artists {
+			if item != nil {
+				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", item.Status, false))
 			}
 		}
 	default:

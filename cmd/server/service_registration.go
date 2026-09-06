@@ -11,10 +11,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"go.akshayshah.org/connectproto"
-	"google.golang.org/protobuf/encoding/protojson"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/account"
 	accountpublic "github.com/echovisionlab/geul-api/internal/account/public"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
@@ -28,6 +24,7 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
@@ -41,6 +38,7 @@ import (
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
+	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	seriespublicadapter "github.com/echovisionlab/geul-api/internal/adapters/series/public"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
@@ -103,6 +101,9 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"go.akshayshah.org/connectproto"
+	"google.golang.org/protobuf/encoding/protojson"
+	"gorm.io/gorm"
 )
 
 type serviceRegistrationDependencies struct {
@@ -265,6 +266,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		filemedia.WithWorkAttachment(filemediaadapter.NewWorkAttachment(db)),
 		filemedia.WithWorkPolicyAccess(workadapter.NewPolicyAccess(spicedbClient)),
 		filemedia.WithProgramEventAttachment(filemediaadapter.NewProgramEventAttachment(db)),
+		filemedia.WithTrackAttachment(filemediaadapter.NewTrackAttachment(telemetryWriter)),
+		filemedia.WithReleasePolicyAccess(releaseadapter.NewPolicyAccess(spicedbClient)),
 		filemedia.WithAudienceAccess(filemediaadapter.NewAudienceAccess()),
 		filemedia.WithMemberSummaries(filemediaadapter.NewMemberSummaries(db, cfg.CDNURL)),
 	)
@@ -281,6 +284,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	filePath, fileHandler := managev1connect.NewFileServiceHandler(fileService, handlerOpts...)
 	mux.Handle(filePath, fileHandler)
 	slog.Info("Registered service", "path", filePath)
+	internalFileIngestService := filemedia.NewInternalFileIngestService(fileService)
+	internalFileIngestPath, internalFileIngestHandler := intrav1connect.NewInternalFileIngestServiceHandler(
+		internalFileIngestService,
+		internalHandlerOpts...,
+	)
+	mux.Handle(internalFileIngestPath, internalRPCTrust.collab(internalFileIngestHandler))
+	slog.Info("Registered internal service", "path", internalFileIngestPath)
 	collaborationRuntime := collaborationadapter.NewRuntime(db, spicedbClient, cfg.CDNURL)
 	internalCollaborationAuthorizationService := collaboration.NewService(
 		db,
@@ -432,6 +442,16 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	)
 	slog.Info("Registered handlers", "paths", []string{"/upload/part", "/upload/prefix", "/upload/part/presign", "/upload/part/confirm"})
 
+	music := musicServiceRegistration{
+		dependencies: deps, files: fileService, checkpoints: collaborationRuntime.Checkpoints,
+		manageOptions: handlerOpts, internalOptions: internalHandlerOpts, publicOptions: publicHandlerOpts,
+		internalTrust: internalRPCTrust, downloadTTL: downloadTTL,
+	}
+	artistService, internalArtistService := music.registerArtist()
+	labelService := music.registerLabel()
+	internalReleaseService := music.registerRelease()
+	music.registerTaxonomy()
+
 	aiService := ai.NewService(metadataAIJobs)
 	aiPath, aiHandler := managev1connect.NewAIServiceHandler(aiService, handlerOpts...)
 	mux.Handle(aiPath, aiHandler)
@@ -549,6 +569,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(formPath, formHandler)
 	slog.Info("Registered service", "path", formPath)
 
+	// Phase 3: Reference Data Services
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
 	seriesMenuTargets := menu.NewTargetLifecycle(telemetryWriter)
 	seriesPostAccess := seriesadapter.PostAccess{}
@@ -709,7 +730,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		ogDeps.resolver,
 		ogDeps.collector,
 		ogadapter.NewAuthorization(spicedbClient),
-		og.NoopGlobalReconciler{},
+		labeladapter.NewGlobalReconciler(),
 	)
 	adminService := admin.NewService(db, spicedbClient, ogAdmin)
 	adminPath, adminHandler := managev1connect.NewAdminServiceHandler(adminService, handlerOpts...)
@@ -885,6 +906,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 			),
 		},
 		{
+			Domain: translationcore.KindRelease,
+			Port: translationadapter.NewReleaseInterchange(
+				telemetryWriter, sharedtelemetry.NewReleaseLocaleContentAuditRecord,
+			),
+		},
+		{
+			Domain: translationcore.KindArtist,
+			Port: translationadapter.NewArtistInterchange(
+				telemetryWriter, sharedtelemetry.NewArtistLocaleContentAuditRecord,
+			),
+		},
+		{
+			Domain: translationcore.KindLabel,
+			Port:   translationadapter.NewLabelInterchange(telemetryWriter),
+		},
+		{
 			Domain: translationcore.KindMenu,
 			Port:   translationadapter.NewMenuInterchange(menuService),
 		},
@@ -961,6 +998,15 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.programEvent, err = aidocumentadapter.NewProgramEventRegistration(programEventService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Program Event AI document domain: %w", err)
 	}
+	if aiDocumentRegistrations.release, err = aidocumentadapter.NewReleaseRegistration(internalReleaseService); err != nil {
+		return registeredServices{}, fmt.Errorf("register Release AI document domain: %w", err)
+	}
+	if aiDocumentRegistrations.artist, err = aidocumentadapter.NewArtistRegistration(internalArtistService); err != nil {
+		return registeredServices{}, fmt.Errorf("register Artist AI document domain: %w", err)
+	}
+	if aiDocumentRegistrations.label, err = aidocumentadapter.NewLabelRegistration(labelService); err != nil {
+		return registeredServices{}, fmt.Errorf("register Label AI document domain: %w", err)
+	}
 	if aiDocumentRegistrations.menu, err = aidocumentadapter.NewMenuRegistration(menuService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Menu AI document domain: %w", err)
 	}
@@ -999,6 +1045,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 			clients:    clientService,
 			mapPlaces:  mapPlaceService,
 			members:    memberService,
+			artists:    artistService,
 			files:      fileService,
 		},
 		translationService,

@@ -5,6 +5,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,16 @@ type ManagedEditorEntity struct {
 type IncompleteUploadFixture struct {
 	UploadID string
 	FileID   string
+}
+
+type ManagedReleaseTrackPendingUploadFixture struct {
+	ReleaseID string
+	TrackID   string
+	UploadID  string
+	FileID    string
+	AttemptID string
+	FileName  string
+	FileSize  int64
 }
 
 func CreateManagedEditorEntities(
@@ -168,6 +179,141 @@ func maybeGrantResourceManager(
 	require.NoError(t, err)
 	_, err = spiceDB.ApplyRelationships(context.Background(), mutation)
 	require.NoError(t, err)
+}
+
+func CreateReleaseFixture(
+	t require.TestingT,
+	db *gorm.DB,
+) string {
+	releaseID := uuid.NewString()
+	documentID := uuid.NewString()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(
+			`INSERT INTO content_document (id, profile) VALUES (?, 'compact')`,
+			documentID,
+		).Error; err != nil {
+			return err
+		}
+		return tx.Exec(
+			`INSERT INTO release (id, type, content_document_id) VALUES (?, 'RELEASE_TYPE_ALBUM', ?)`,
+			releaseID,
+			documentID,
+		).Error
+	}))
+	return releaseID
+}
+
+func CreateManagedReleaseTrack(
+	t require.TestingT,
+	db *gorm.DB,
+	releaseID string,
+	title string,
+) string {
+	trackID := uuid.NewString()
+	require.NoError(t, db.Exec(`
+		INSERT INTO track (id, release_id, track_number, title)
+		VALUES (?, ?, 1, ?)
+	`, trackID, releaseID, title).Error)
+	return trackID
+}
+
+// AssertManagedReleaseTrackAuthority validates the relational Track root used
+// by the original-audio attachment flow.
+func AssertManagedReleaseTrackAuthority(
+	t *testing.T,
+	db *gorm.DB,
+	releaseID string,
+	trackID string,
+) {
+	t.Helper()
+
+	var count int64
+	require.NoError(t, db.Table("track").
+		Where("id = ? AND release_id = ?", trackID, releaseID).
+		Count(&count).Error)
+	require.EqualValues(t, 1, count)
+}
+
+func SeedReleaseTrackPendingUploadFixture(
+	t *testing.T,
+	db *gorm.DB,
+	releaseID string,
+	trackID string,
+	fileSize int64,
+) ManagedReleaseTrackPendingUploadFixture {
+	t.Helper()
+
+	upload := NewIncompleteUploadFixture()
+	now := time.Now().UTC()
+	pending := ManagedReleaseTrackPendingUploadFixture{
+		ReleaseID: releaseID,
+		TrackID:   trackID,
+		UploadID:  upload.UploadID,
+		FileID:    upload.FileID,
+		AttemptID: uuid.NewString(),
+		FileName:  "expired-track-upload-" + uuid.NewString() + ".wav",
+		FileSize:  fileSize,
+	}
+
+	var count int64
+	require.NoError(t, db.Table("track").Where("id = ? AND release_id = ?", trackID, releaseID).Count(&count).Error)
+	require.EqualValues(t, 1, count)
+
+	chunkSize := int64(10 * 1024 * 1024)
+	totalParts := int32((pending.FileSize + chunkSize - 1) / chunkSize)
+	require.NoError(t, db.Exec(`
+		INSERT INTO upload_session (
+			upload_id,
+			file_id,
+			upload_type,
+			entity_id,
+			entity_type,
+			file_name,
+			file_size,
+			file_last_modified,
+			attempt_id,
+			requested_mime,
+			total_parts,
+			chunk_size,
+			status,
+			last_activity_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploading', ?)
+	`,
+		pending.UploadID,
+		pending.FileID,
+		managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(),
+		trackID,
+		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
+		pending.FileName,
+		pending.FileSize,
+		now.UnixMilli(),
+		pending.AttemptID,
+		"audio/wav",
+		totalParts,
+		chunkSize,
+		now,
+	).Error)
+
+	return pending
+}
+
+func ReadReleaseTrackOriginalFileID(
+	t *testing.T,
+	db *gorm.DB,
+	releaseID string,
+	trackID string,
+) string {
+	t.Helper()
+
+	var fileID *string
+	require.NoError(t, db.Table("track").
+		Select("audio_original_file_id").
+		Where("id = ? AND release_id = ?", trackID, releaseID).
+		Scan(&fileID).Error)
+	if fileID == nil {
+		return ""
+	}
+	return *fileID
 }
 
 func NewIncompleteUploadFixture() IncompleteUploadFixture {

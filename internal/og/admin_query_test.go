@@ -21,6 +21,14 @@ func TestParseOgGenerationTargetEnforcesScopeAndCanonicalIdentity(t *testing.T) 
 		wantErr bool
 	}{
 		{
+			name: "label entity",
+			target: &managev1.OgGenerationTarget{
+				EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_LABEL,
+				EntityId:   "11111111-1111-4111-8111-111111111111",
+				Scope:      &managev1.OgGenerationTarget_Entity{Entity: &managev1.OgEntityTarget{}},
+			},
+		},
+		{
 			name: "post locale",
 			target: &managev1.OgGenerationTarget{
 				EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_POST,
@@ -77,10 +85,26 @@ func TestParseOgGenerationTargetEnforcesScopeAndCanonicalIdentity(t *testing.T) 
 			},
 		},
 		{
+			name: "artist locale",
+			target: &managev1.OgGenerationTarget{
+				EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST,
+				EntityId:   "11111111-1111-4111-8111-111111111111",
+				Scope:      &managev1.OgGenerationTarget_Locale{Locale: &managev1.OgLocaleTarget{Locale: "ko"}},
+			},
+		},
+		{
 			name: "site entity",
 			target: &managev1.OgGenerationTarget{
 				EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_SITE,
 				EntityId:   SiteEntityID,
+				Scope:      &managev1.OgGenerationTarget_Entity{Entity: &managev1.OgEntityTarget{}},
+			},
+		},
+		{
+			name: "release entity",
+			target: &managev1.OgGenerationTarget{
+				EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_RELEASE,
+				EntityId:   "11111111-1111-4111-8111-111111111111",
 				Scope:      &managev1.OgGenerationTarget_Entity{Entity: &managev1.OgEntityTarget{}},
 			},
 		},

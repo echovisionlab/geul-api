@@ -75,8 +75,14 @@ func publicTargetTable(entityType managev1.ShareLinkEntityType) (string, bool) {
 		return "page", false
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK:
 		return "work", false
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE:
+		return "release", false
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD:
 		return "form", false
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL:
+		return "label", false
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST:
+		return "artist", false
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
 		return "privacy_history", true
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
