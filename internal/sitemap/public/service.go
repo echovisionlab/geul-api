@@ -197,6 +197,9 @@ func (s *SitemapService) generateDocument(
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/pages.xml")},
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/post.xml")},
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/work.xml")},
+			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/artist.xml")},
+			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/label.xml")},
+			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/release.xml")},
 			{Loc: joinURL(site.CanonicalOrigin, "/sitemaps/taxonomy.xml")},
 		})
 		return &sitemapRenderedDocument{
@@ -220,6 +223,27 @@ func (s *SitemapService) generateDocument(
 		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
 	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_WORK:
 		rows, queryErr := s.buildWorkRows(ctx, site.CanonicalOrigin)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		content := renderURLSetXML(rows)
+		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_ARTIST:
+		rows, queryErr := s.buildArtistRows(ctx, site.CanonicalOrigin)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		content := renderURLSetXML(rows)
+		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_LABEL:
+		rows, queryErr := s.buildLabelRows(ctx, site.CanonicalOrigin)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		content := renderURLSetXML(rows)
+		return &sitemapRenderedDocument{Content: content, ContentType: sitemapXMLContentType, GeneratedAt: generatedAt}, nil
+	case openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_RELEASE:
+		rows, queryErr := s.buildReleaseRows(ctx, site.CanonicalOrigin)
 		if queryErr != nil {
 			return nil, queryErr
 		}
@@ -324,6 +348,39 @@ func (s *SitemapService) buildWorkRows(
 		return nil, errs.Internal(err)
 	}
 	return buildEntryRows(canonicalOrigin, "/works/", works), nil
+}
+
+func (s *SitemapService) buildArtistRows(
+	ctx context.Context,
+	canonicalOrigin string,
+) ([]sitemapURLRow, error) {
+	artists, err := s.store.ListArtists(ctx)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	return buildEntryRows(canonicalOrigin, "/artist/", artists), nil
+}
+
+func (s *SitemapService) buildLabelRows(
+	ctx context.Context,
+	canonicalOrigin string,
+) ([]sitemapURLRow, error) {
+	labels, err := s.store.ListLabels(ctx)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	return buildEntryRows(canonicalOrigin, "/label/", labels), nil
+}
+
+func (s *SitemapService) buildReleaseRows(
+	ctx context.Context,
+	canonicalOrigin string,
+) ([]sitemapURLRow, error) {
+	releases, err := s.store.ListReleases(ctx)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	return buildEntryRows(canonicalOrigin, "/release/", releases), nil
 }
 
 func (s *SitemapService) buildTaxonomyRows(

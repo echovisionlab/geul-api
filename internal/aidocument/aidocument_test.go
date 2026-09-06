@@ -1189,7 +1189,7 @@ func TestAcceptValidatedApplyRejectsInconsistentResultShape(t *testing.T) {
 func TestSupportedDomainsReturnsOrderedCopy(t *testing.T) {
 	first := SupportedDomains()
 	second := SupportedDomains()
-	if len(first) != 12 || len(second) != 12 || first[0] != DomainPost || first[len(first)-1] != DomainPostSeries {
+	if len(first) != 15 || len(second) != 15 || first[0] != DomainPost || first[len(first)-1] != DomainPostSeries {
 		t.Fatalf("supported domains = %+v", first)
 	}
 	first[0] = Domain("mutated")

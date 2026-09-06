@@ -2,17 +2,21 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -178,3 +182,60 @@ func (a *MemberSummaries) Load(
 ) (map[string]*commonv1.MemberSummary, error) {
 	return memberdomain.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }
+
+type TrackAttachment struct{ authority *releasedomain.TrackAuthority }
+
+func NewTrackAttachment(audit domainaudit.Appender) *TrackAttachment {
+	return &TrackAttachment{authority: releasedomain.NewTrackAuthority(audit)}
+}
+
+func (a *TrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
+	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+}
+
+func (a *TrackAttachment) AttachOriginalWithDB(
+	ctx context.Context,
+	tx *gorm.DB,
+	input filemediadomain.TrackOriginalAudioInput,
+) (filemediadomain.TrackOriginalAudioAttachment, error) {
+	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasedomain.TrackOriginalAudioInput{
+		TrackID:               input.TrackID,
+		VerifiedFileID:        input.VerifiedFileID,
+		ExpectedCurrentFileID: input.ExpectedCurrentFileID,
+	})
+	return filemediadomain.TrackOriginalAudioAttachment{
+		AlreadyApplied: attachment.AlreadyApplied,
+		CurrentFileID:  attachment.CurrentFileID,
+		ReleaseID:      attachment.ReleaseID,
+	}, err
+}
+
+// TrackFileManager adapts FileMedia's deletion fence error to the Release-owned
+// retry sentinel while delegating the File-owned session lifecycle unchanged.
+type TrackFileManager struct{ files *filemediadomain.FileService }
+
+func NewTrackFileManager(files *filemediadomain.FileService) *TrackFileManager {
+	return &TrackFileManager{files: files}
+}
+
+func (m *TrackFileManager) CleanupTrackUploadSessions(ctx context.Context, trackID, reason string) error {
+	return m.files.CleanupTrackUploadSessions(ctx, trackID, reason)
+}
+
+func (m *TrackFileManager) DeleteFileByID(ctx context.Context, fileID string) error {
+	return m.files.DeleteFileByID(ctx, fileID)
+}
+
+func (m *TrackFileManager) RequireNoTrackUploadSessionsWithDB(
+	ctx context.Context,
+	tx *gorm.DB,
+	trackID string,
+) error {
+	err := m.files.RequireNoTrackUploadSessionsWithDB(ctx, tx, trackID)
+	if errors.Is(err, filemediadomain.ErrTrackUploadSessionsChanged) {
+		return releasedomain.ErrTrackUploadSessionsChanged
+	}
+	return err
+}
+
+var _ releasedomain.TrackFileManager = (*TrackFileManager)(nil)

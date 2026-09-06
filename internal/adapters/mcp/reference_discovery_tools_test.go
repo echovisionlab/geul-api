@@ -38,7 +38,7 @@ func TestReferenceDiscoveryToolDescriptors(t *testing.T) {
 
 func TestReferenceSearchBuildsExactCategoryRequest(t *testing.T) {
 	categories := &recordingCategoryReferences{}
-	tools, err := NewReferenceDiscoveryTools(categories, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingFileReferences{})
+	tools, err := NewReferenceDiscoveryTools(categories, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, &recordingFileReferences{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestReferenceSearchBuildsExactCategoryRequest(t *testing.T) {
 
 func TestFileListReturnsCanonicalFileAndFolderIDs(t *testing.T) {
 	files := &recordingFileReferences{}
-	tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, files)
+	tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, files)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestFileListReturnsCanonicalFileAndFolderIDs(t *testing.T) {
 
 func newRecordingReferenceDiscoveryTools(t *testing.T) *ReferenceDiscoveryTools {
 	t.Helper()
-	tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingFileReferences{})
+	tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, &recordingFileReferences{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +106,10 @@ type recordingMapPlaceReferences struct {
 type recordingMemberReferences struct {
 	managev1connect.UnimplementedMemberServiceHandler
 }
+type recordingArtistReferences struct {
+	managev1connect.UnimplementedArtistServiceHandler
+}
+
 type recordingFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
 	request *connect.Request[managev1.ListFileManagerItemsRequest]

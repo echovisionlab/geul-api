@@ -3,19 +3,124 @@
 package filemedia
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
+
+func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirectIntegration(t *testing.T) {
+	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
+	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
+
+	opts := remoteFileImportOptions{
+		uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		entityID:            trackID,
+		entityType:          managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
+		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
+		correlationID:       uuid.NewString(),
+		emitLifecycle:       true,
+		triggerTranscoding:  true,
+		checkPermission:     false,
+	}
+	projection, err := normalizeFileIngestProjectionIdentity(
+		opts.uploadType,
+		opts.transcodeEntityType,
+		opts.slotID,
+		opts.expectedCurrentFileID,
+	)
+	require.NoError(t, err)
+	identity, err := resolveRemoteImportOperationIdentity(opts, trackID, "", projection)
+	require.NoError(t, err)
+
+	body := validRemoteImportWAVBytes()
+	digest := sha256.Sum256(body)
+	mimeType := "audio/wav"
+	extension := mediaExtension(&mimeType)
+	fileName := canonicalRemoteImportFilename("ack-loss.wav", identity.fileID, mimeType)
+	objectKey, err := mediaauth.MediaObjectKey(identity.fileID, extension)
+	require.NoError(t, err)
+	s3Client := runtimeS3Client(t, stack)
+	_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      aws.String(stack.S3MediaBucket),
+		Key:         aws.String(objectKey),
+		Body:        bytes.NewReader(body),
+		ContentType: aws.String(mimeType),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+			Bucket: aws.String(stack.S3MediaBucket),
+			Key:    aws.String(objectKey),
+		})
+	})
+
+	service := NewFileService(
+		stack.DB,
+		s3Client,
+		&flakyAttachedConfirmPublisher{},
+		stack.S3MediaBucket,
+		stack.CDNURL,
+		stack.MediaURL,
+		stack.MediaSigningSecret,
+		&recordingFileTranscoderPublisher{},
+		stack.SpiceDBClient,
+	)
+	service.testVerifiedIngestCommitError = errors.New("injected lost commit acknowledgement")
+
+	err = service.createOrRestoreVerifiedRemoteImportRecord(
+		context.Background(),
+		map[string]interface{}{
+			"id":                identity.fileID,
+			"file_name":         fileName,
+			"mime_type":         mimeType,
+			"file_size":         int64(len(body)),
+			"extension":         extension,
+			"sha256":            digest[:],
+			"ingest_attempt_id": identity.attemptID,
+		},
+		trackID,
+		"",
+		identity,
+		projection,
+		opts,
+		objectKey,
+	)
+	require.NoError(t, err)
+
+	var fileCount, bindingCount int64
+	require.NoError(t, stack.DB.Model(&model.File{}).Where("id = ?", identity.fileID).Count(&fileCount).Error)
+	require.NoError(t, stack.DB.Model(&model.FileIngestBinding{}).Where("file_id = ?", identity.fileID).Count(&bindingCount).Error)
+	require.EqualValues(t, 1, fileCount)
+	require.EqualValues(t, 1, bindingCount)
+
+	stored, err := s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(stack.S3MediaBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	storedBody, err := io.ReadAll(stored.Body)
+	require.NoError(t, err)
+	require.NoError(t, stored.Body.Close())
+	require.Equal(t, body, storedBody, "commit acknowledgement loss must not delete the committed object")
+}
 
 func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownloadDirectIntegration(t *testing.T) {
 	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
@@ -145,6 +250,134 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	require.NoError(t, stack.DB.Where("id = ?", failed.ID).Take(&ready).Error)
 	require.Equal(t, model.PublicAssetStatusReady, ready.Status)
 	require.Empty(t, store.deletedKeys())
+}
+
+func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectIntegration(t *testing.T) {
+	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
+	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote retry track")
+
+	correlationID := uuid.NewString()
+	opts := remoteFileImportOptions{
+		uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		entityID:            trackID,
+		entityType:          managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
+		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
+		sourceURL:           "https://does-not-resolve.invalid/retry-source.wav",
+		correlationID:       correlationID,
+		emitLifecycle:       true,
+		triggerTranscoding:  true,
+		checkPermission:     false,
+	}
+	projection, err := normalizeFileIngestProjectionIdentity(
+		opts.uploadType,
+		opts.transcodeEntityType,
+		opts.slotID,
+		opts.expectedCurrentFileID,
+	)
+	require.NoError(t, err)
+	identity, err := resolveRemoteImportOperationIdentity(opts, trackID, "", projection)
+	require.NoError(t, err)
+
+	body := validRemoteImportWAVBytes()
+	digest := sha256.Sum256(body)
+	mimeType := "audio/wav"
+	extension := mediaExtension(&mimeType)
+	fileName := canonicalRemoteImportFilename("original-winner.wav", identity.fileID, mimeType)
+	objectKey, err := mediaauth.MediaObjectKey(identity.fileID, extension)
+	require.NoError(t, err)
+	s3Client := runtimeS3Client(t, stack)
+	_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      aws.String(stack.S3MediaBucket),
+		Key:         aws.String(objectKey),
+		Body:        bytes.NewReader(body),
+		ContentType: aws.String(mimeType),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+			Bucket: aws.String(stack.S3MediaBucket),
+			Key:    aws.String(objectKey),
+		})
+	})
+
+	require.NoError(t, stack.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("file").Create(structured.Fields{
+			"id":                identity.fileID,
+			"file_name":         storedFileBasename(fileName, identity.fileID, extension),
+			"mime_type":         mimeType,
+			"file_size":         int64(len(body)),
+			"extension":         extension,
+			"sha256":            digest[:],
+			"ingest_attempt_id": identity.attemptID,
+		}).Error; err != nil {
+			return err
+		}
+		entityType := opts.transcodeEntityType.String()
+		return tx.Create(&model.FileIngestBinding{
+			FileID:     identity.fileID,
+			UploadType: opts.uploadType.String(),
+			EntityType: &entityType,
+			EntityID:   trackID,
+		}).Error
+	}))
+
+	asyncPublisher := &flakyAttachedConfirmPublisher{failuresRemaining: 1}
+	service := NewFileService(
+		stack.DB,
+		s3Client,
+		asyncPublisher,
+		stack.S3MediaBucket,
+		stack.CDNURL,
+		stack.MediaURL,
+		stack.MediaSigningSecret,
+		&recordingFileTranscoderPublisher{},
+		stack.SpiceDBClient,
+	)
+
+	_, err = service.importRemoteFile(context.Background(), opts)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "reconfirm durable file attachment")
+	require.Empty(t, decodeHardCutRoutedMessages(t, asyncPublisher.messages, eventpkg.SignalFileIngest, "", func() *managev1.FileIngestFailedEvent {
+		return &managev1.FileIngestFailedEvent{}
+	}))
+
+	opts.sourceURL = "https://another-does-not-resolve.invalid/changed-retry-source.wav"
+	result, err := service.importRemoteFile(context.Background(), opts)
+	require.NoError(t, err)
+	require.Equal(t, identity.fileID, result.fileID)
+	require.Equal(t, identity.attemptID, result.attemptID)
+	require.Equal(t, fileName, result.fileName)
+
+	attachedEvents := decodeHardCutRoutedMessages(t, asyncPublisher.messages, eventpkg.SignalFileIngest, "", func() *managev1.FileIngestAttachedEvent {
+		return &managev1.FileIngestAttachedEvent{}
+	})
+	require.Len(t, attachedEvents, 2)
+	for _, event := range attachedEvents {
+		require.Equal(t, correlationID, event.GetCorrelationId())
+		require.Equal(t, identity.fileID, event.GetIdentity().GetFileId())
+		require.Equal(t, identity.attemptID, event.GetIdentity().GetAttemptId())
+		require.Equal(t, trackID, event.GetIdentity().GetEntityId())
+	}
+	var fileCount, bindingCount int64
+	require.NoError(t, stack.DB.Model(&model.File{}).Where("id = ?", identity.fileID).Count(&fileCount).Error)
+	require.NoError(t, stack.DB.Model(&model.FileIngestBinding{}).Where("file_id = ?", identity.fileID).Count(&bindingCount).Error)
+	require.EqualValues(t, 1, fileCount)
+	require.EqualValues(t, 1, bindingCount)
+
+	var track model.Track
+	require.NoError(t, stack.DB.Where("id = ?", trackID).Take(&track).Error)
+	require.Nil(t, track.AudioOriginalFileID, "remote ingest must leave Track projection CAS to the internal finalizer")
+
+	stored, err := s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(stack.S3MediaBucket),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	storedBody, err := io.ReadAll(stored.Body)
+	require.NoError(t, err)
+	require.NoError(t, stored.Body.Close())
+	require.Equal(t, body, storedBody, "retry must not overwrite or delete the committed winner object")
 }
 
 func validRemoteImportWAVBytes() []byte {

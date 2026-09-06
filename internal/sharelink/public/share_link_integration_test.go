@@ -116,8 +116,11 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 		{name: "post", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, slug: shareLinkStringPointer("post-slug")},
 		{name: "page", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, slug: shareLinkStringPointer("page-slug")},
 		{name: "work", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, slug: shareLinkStringPointer("work-slug")},
+		{name: "release", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, slug: shareLinkStringPointer("release-slug")},
 		{name: "form", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, slug: shareLinkStringPointer("form-slug")},
 		{name: "form dashboard", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD, slug: shareLinkStringPointer("form-slug")},
+		{name: "artist", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, slug: shareLinkStringPointer("artist-slug")},
+		{name: "label", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, slug: shareLinkStringPointer("label-slug")},
 		{name: "privacy", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY},
 		{name: "terms", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS},
 	} {

@@ -31,7 +31,7 @@ func TestEntityCanKeepsStaticTargetsAdminOnly(t *testing.T) {
 		_, err := entityCan(entityType, entityID, false)
 		require.Error(t, err, entityType)
 	}
-	for _, entityType := range []string{"post", "page", "work", "series", "form", "campaign", "email_template"} {
+	for _, entityType := range []string{"post", "page", "work", "artist", "release", "label", "series", "form", "campaign", "email_template"} {
 		for _, requireEdit := range []bool{false, true} {
 			can, err := entityCan(entityType, entityID, requireEdit)
 			require.NoError(t, err, entityType)

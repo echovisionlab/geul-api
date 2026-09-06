@@ -3,10 +3,13 @@
 package worker
 
 import (
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -18,7 +21,8 @@ import (
 func workerOGProjections() []og.Projection {
 	return []og.Projection{
 		postadapter.NewProjection(), pageadapter.NewProjection(), seriesadapter.NewProjection(),
-		workadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
+		workadapter.NewProjection(), labeladapter.NewProjection(), artistadapter.NewProjection(),
+		releaseadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
 		sitesettingsadapter.NewProjection(),
 	}
 }

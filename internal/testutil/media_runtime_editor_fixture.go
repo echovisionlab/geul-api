@@ -326,6 +326,77 @@ func CreateManagedEditorEntityViaAPI(
 	}
 }
 
+func CreateReleaseViaAPI(
+	t *testing.T,
+	backendURL string,
+	creator *OryUser,
+) string {
+	t.Helper()
+
+	title := "release-" + uuid.NewString()
+	client := managev1connect.NewReleaseServiceClient(&http.Client{Timeout: 30 * time.Second}, backendURL)
+	req := connect.NewRequest(&managev1.CreateReleaseRequest{
+		Title:    title,
+		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
+		Document: runtimeReleaseDocument(title),
+	})
+	ApplyAuthHeaders(req.Header(), creator)
+	req.Header().Set("Accept-Language", "en")
+	resp, err := client.CreateRelease(context.Background(), req)
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Msg.Id)
+
+	return resp.Msg.Id
+}
+
+func runtimeReleaseDocument(title string) *contentv1.RichTextDocument {
+	blockID := uuid.NewString()
+	return &contentv1.RichTextDocument{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT,
+		SourceLocale:            "en",
+		Base: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{{
+			Block: &contentv1.RichTextBlock{Id: blockID, Value: &contentv1.RichTextBlock_Paragraph{
+				Paragraph: &contentv1.ParagraphBlock{Props: &contentv1.ParagraphProps{}},
+			}},
+			Placement: &contentv1.ContentBlockPlacement{Index: 0},
+		}}},
+		LocaleOverlays: []*contentv1.RichTextLocaleOverlay{{
+			Locale: "en",
+			Blocks: []*contentv1.RichTextBlockLocale{{
+				BlockId: blockID,
+				Value: &contentv1.RichTextBlockLocale_Paragraph{Paragraph: &contentv1.ParagraphBlockLocale{
+					Props: &contentv1.ParagraphLocaleProps{},
+					Content: []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{
+						Text: &contentv1.RichTextStyledText{Text: title},
+					}}},
+				}},
+			}},
+		}},
+	}
+}
+
+func CreateManagedReleaseTrackViaAPI(
+	t *testing.T,
+	backendURL string,
+	manager *OryUser,
+	releaseID string,
+	title string,
+) string {
+	t.Helper()
+
+	client := managev1connect.NewTrackServiceClient(&http.Client{Timeout: 30 * time.Second}, backendURL)
+	req := connect.NewRequest(&managev1.CreateTrackRequest{
+		ReleaseId: releaseID,
+		Title:     title,
+	})
+	ApplyAuthHeaders(req.Header(), manager)
+	resp, err := client.CreateTrack(context.Background(), req)
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Msg.Id)
+	return resp.Msg.Id
+}
+
 func SeedManagedEditorMediaFixture(
 	t *testing.T,
 	db *gorm.DB,

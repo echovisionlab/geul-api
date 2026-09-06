@@ -24,7 +24,7 @@ const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, or
 	"Pass the returned d unchanged to document_open and document_read; never use a slug or URL as d. " +
 	"Use the focused Post, Work, and Page creation, settings, lifecycle, scheduling, and deletion tools for root management actions. " +
 	"Use the focused featured-image, Post participant, Work credit, version, and slug-check tools for related management actions. " +
-	"Use reference_search to resolve Category, Tag, Client, Map Place, or Member UUIDs, and file_list to resolve existing File UUIDs. " +
+	"Use reference_search to resolve Category, Tag, Client, Map Place, Member, or Artist UUIDs, and file_list to resolve existing File UUIDs. " +
 	"Use document_file_add, document_file_replace, or document_file_remove to reuse existing Files as document File Blocks without uploading or deleting File bytes. Use file_usage_list to inspect every authorized use. " +
 	"Use document_file_download_policy_get before document_file_download_policy_update; expected_file_id is only a compare-and-set guard for the exact current File Block attachment. " +
 	"Use document_metadata_update for title or summary, and for Post categories or tags, after reading exact current revisions. " +
@@ -40,6 +40,9 @@ type aiDocumentDomainRegistrations struct {
 	page          aidocumentadapter.DomainRegistration
 	work          aidocumentadapter.DomainRegistration
 	programEvent  aidocumentadapter.DomainRegistration
+	release       aidocumentadapter.DomainRegistration
+	artist        aidocumentadapter.DomainRegistration
+	label         aidocumentadapter.DomainRegistration
 	menu          aidocumentadapter.DomainRegistration
 	emailTemplate aidocumentadapter.DomainRegistration
 	emailLayout   aidocumentadapter.DomainRegistration
@@ -56,6 +59,9 @@ func (registrations aiDocumentDomainRegistrations) values() []aidocumentadapter.
 		registrations.page,
 		registrations.work,
 		registrations.programEvent,
+		registrations.release,
+		registrations.artist,
+		registrations.label,
 		registrations.menu,
 		registrations.emailTemplate,
 		registrations.emailLayout,
@@ -79,6 +85,7 @@ type contentReferenceApplications struct {
 	clients    mcpadapter.ClientReferenceDiscovery
 	mapPlaces  mcpadapter.MapPlaceReferenceDiscovery
 	members    mcpadapter.MemberReferenceDiscovery
+	artists    mcpadapter.ArtistReferenceDiscovery
 	files      mcpadapter.FileReferenceDiscovery
 }
 
@@ -176,6 +183,7 @@ func newAIDocumentMCPComposition(
 		references.clients,
 		references.mapPlaces,
 		references.members,
+		references.artists,
 		references.files,
 	)
 	if err != nil {

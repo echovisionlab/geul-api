@@ -32,11 +32,14 @@ type pageRouteResource struct {
 // Resource routes are one segment below their plural prefix. A Page may use
 // the same prefix when no current resource owns that exact route.
 var pageRouteResources = map[string]pageRouteResource{
+	"artists":      {table: "artist", hasSlug: true},
 	"campaigns":    {table: "campaign", hasSlug: false},
 	"event-series": {table: "program_event_series", hasSlug: true},
 	"events":       {table: "program_event", hasSlug: true},
 	"forms":        {table: "form", hasSlug: true},
+	"labels":       {table: "label", hasSlug: true},
 	"posts":        {table: "post", hasSlug: true},
+	"releases":     {table: "release", hasSlug: true},
 	"series":       {table: "series", hasSlug: true},
 	"works":        {table: "work", hasSlug: true},
 }

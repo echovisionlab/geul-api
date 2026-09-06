@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
@@ -77,7 +79,7 @@ func newSiteSettingsOGInvalidatorForTest(db *gorm.DB, cdnDomain string) *siteset
 	)
 	collector := og.NewCollector(
 		postadapter.NewRequests(), pageadapter.NewRequests(), seriesadapter.NewRequests(),
-		workadapter.NewRequests(),
+		workadapter.NewRequests(), labeladapter.NewRequests(), artistadapter.NewRequests(),
 		formogadapter.NewRequests(), legaladapter.NewRequests(), sitesettingsadapter.NewRequests(),
 	)
 	return sitesettingsadapter.NewInvalidator(

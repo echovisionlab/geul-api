@@ -61,6 +61,49 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 	_, err = tag.DeleteTag(ctx, connect.NewRequest(&managev1.DeleteTagRequest{Id: createdTag.Msg.Id}))
 	require.NoError(t, err)
 
+	genre := NewAuditedGenreService(db, writer, spiceDB)
+	genreSlug := "reference-audit-genre"
+	genreDescription := "audited genre"
+	createdGenre, err := genre.CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{Name: "Reference audit genre", Slug: &genreSlug, Description: &genreDescription}))
+	require.NoError(t, err)
+	genreName := "Reference audit genre updated"
+	updatedGenreSlug := "reference-audit-genre-updated"
+	updatedGenreDescription := "updated genre"
+	_, err = genre.UpdateGenre(ctx, connect.NewRequest(&managev1.UpdateGenreRequest{Id: createdGenre.Msg.Id, Name: &genreName, Slug: &updatedGenreSlug, Description: &updatedGenreDescription}))
+	require.NoError(t, err)
+	_, err = genre.UpdateGenre(ctx, connect.NewRequest(&managev1.UpdateGenreRequest{Id: createdGenre.Msg.Id, Name: &genreName, Slug: &updatedGenreSlug, Description: &updatedGenreDescription}))
+	require.NoError(t, err)
+	_, err = genre.DeleteGenre(ctx, connect.NewRequest(&managev1.DeleteGenreRequest{Id: createdGenre.Msg.Id}))
+	require.NoError(t, err)
+
+	style := NewAuditedStyleService(db, writer, spiceDB)
+	styleSlug := "reference-audit-style"
+	styleDescription := "audited style"
+	createdStyle, err := style.CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{Name: "Reference audit style", Slug: &styleSlug, Description: &styleDescription}))
+	require.NoError(t, err)
+	styleName := "Reference audit style updated"
+	updatedStyleSlug := "reference-audit-style-updated"
+	updatedStyleDescription := "updated style"
+	_, err = style.UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{Id: createdStyle.Msg.Id, Name: &styleName, Slug: &updatedStyleSlug, Description: &updatedStyleDescription}))
+	require.NoError(t, err)
+	_, err = style.UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{Id: createdStyle.Msg.Id, Name: &styleName, Slug: &updatedStyleSlug, Description: &updatedStyleDescription}))
+	require.NoError(t, err)
+	_, err = style.DeleteStyle(ctx, connect.NewRequest(&managev1.DeleteStyleRequest{Id: createdStyle.Msg.Id}))
+	require.NoError(t, err)
+
+	format := NewAuditedFormatService(db, writer, spiceDB)
+	formatSlug := "reference-audit-format"
+	createdFormat, err := format.CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{Name: "Reference audit format", Slug: &formatSlug}))
+	require.NoError(t, err)
+	formatName := "Reference audit format updated"
+	updatedFormatSlug := "reference-audit-format-updated"
+	_, err = format.UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{Id: createdFormat.Msg.Id, Name: &formatName, Slug: &updatedFormatSlug}))
+	require.NoError(t, err)
+	_, err = format.UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{Id: createdFormat.Msg.Id, Name: &formatName, Slug: &updatedFormatSlug}))
+	require.NoError(t, err)
+	_, err = format.DeleteFormat(ctx, connect.NewRequest(&managev1.DeleteFormatRequest{Id: createdFormat.Msg.Id}))
+	require.NoError(t, err)
+
 	var records []referenceDataAuditRecord
 	require.NoError(t, db.Raw(`
 		SELECT action, target_type, target_id, actor_member_id::text AS actor_member_id,
@@ -68,7 +111,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 		FROM public.domain_audit
 		ORDER BY action, target_id
 	`).Scan(&records).Error)
-	require.Len(t, records, 6)
+	require.Len(t, records, 15)
 
 	assertReferenceDataAuditRecords(t, records, memberID, sharedtelemetry.RequestIDFromContext(ctx), map[string]referenceDataAuditExpectation{
 		string(sharedtelemetry.AuditCategoryCreated): {targetType: "category", targetID: createdCategory.Msg.Id},
@@ -77,12 +120,21 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 		string(sharedtelemetry.AuditTagCreated):      {targetType: "tag", targetID: createdTag.Msg.Id},
 		string(sharedtelemetry.AuditTagUpdated):      {targetType: "tag", targetID: createdTag.Msg.Id, changedFields: []string{"name", "slug"}},
 		string(sharedtelemetry.AuditTagDeleted):      {targetType: "tag", targetID: createdTag.Msg.Id},
+		string(sharedtelemetry.AuditGenreCreated):    {targetType: "genre", targetID: createdGenre.Msg.Id},
+		string(sharedtelemetry.AuditGenreUpdated):    {targetType: "genre", targetID: createdGenre.Msg.Id, changedFields: []string{"description", "name", "slug"}},
+		string(sharedtelemetry.AuditGenreDeleted):    {targetType: "genre", targetID: createdGenre.Msg.Id},
+		string(sharedtelemetry.AuditStyleCreated):    {targetType: "style", targetID: createdStyle.Msg.Id},
+		string(sharedtelemetry.AuditStyleUpdated):    {targetType: "style", targetID: createdStyle.Msg.Id, changedFields: []string{"description", "name", "slug"}},
+		string(sharedtelemetry.AuditStyleDeleted):    {targetType: "style", targetID: createdStyle.Msg.Id},
+		string(sharedtelemetry.AuditFormatCreated):   {targetType: "format", targetID: createdFormat.Msg.Id},
+		string(sharedtelemetry.AuditFormatUpdated):   {targetType: "format", targetID: createdFormat.Msg.Id, changedFields: []string{"name", "slug"}},
+		string(sharedtelemetry.AuditFormatDeleted):   {targetType: "format", targetID: createdFormat.Msg.Id},
 	})
 	_, err = category.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{Name: ""}))
 	require.Error(t, err)
 	var auditCount int64
 	require.NoError(t, db.Table("public.domain_audit").Count(&auditCount).Error)
-	require.EqualValues(t, 6, auditCount)
+	require.EqualValues(t, 15, auditCount)
 }
 
 func TestReferenceDataAuditAppendFailureRollsBackCreateIntegration(t *testing.T) {
@@ -100,6 +152,21 @@ func TestReferenceDataAuditAppendFailureRollsBackCreateIntegration(t *testing.T)
 	require.NoError(t, db.Table("public.category").Where("slug = ?", slug).Count(&count).Error)
 	require.Zero(t, count)
 
+	styleSlug := "reference-audit-failing-style"
+	createdStyle, err := NewStyleService(db, spiceDB).CreateStyle(
+		ctx,
+		connect.NewRequest(&managev1.CreateStyleRequest{Name: "Reference audit failing style", Slug: &styleSlug}),
+	)
+	require.NoError(t, err)
+	updatedName := "must roll back"
+	_, err = NewAuditedStyleService(db, referenceFailingAuditAppender{}, spiceDB).UpdateStyle(
+		ctx,
+		connect.NewRequest(&managev1.UpdateStyleRequest{Id: createdStyle.Msg.Id, Name: &updatedName}),
+	)
+	require.Error(t, err)
+	var storedName string
+	require.NoError(t, db.Table("public.style").Select("name").Where("id = ?", createdStyle.Msg.Id).Scan(&storedName).Error)
+	require.Equal(t, "Reference audit failing style", storedName)
 }
 
 func TestReferenceDataMenuTargetRewritesAuditAndRollBackTogetherIntegration(t *testing.T) {

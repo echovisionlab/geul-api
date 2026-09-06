@@ -36,6 +36,9 @@ type ReadModel interface {
 	ListTermsHistory(context.Context) ([]Entry, error)
 	ListPosts(context.Context) ([]Entry, error)
 	ListWorks(context.Context) ([]Entry, error)
+	ListArtists(context.Context) ([]Entry, error)
+	ListLabels(context.Context) ([]Entry, error)
+	ListReleases(context.Context) ([]Entry, error)
 	ListCategories(context.Context) ([]Entry, error)
 	ListTags(context.Context) ([]Entry, error)
 }
