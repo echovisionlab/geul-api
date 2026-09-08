@@ -64,7 +64,6 @@ import (
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	publicform "github.com/echovisionlab/geul-api/internal/form/public"
-	"github.com/echovisionlab/geul-api/internal/handler"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	"github.com/echovisionlab/geul-api/internal/llm"
@@ -393,24 +392,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		account.WithLifecycleMemberEmailProjection(accountadapter.MemberEmailProjection{}),
 	)
 	// Hooks handler (for Kratos webhooks)
-	hooksHandler := handler.NewHooksHandler(
-		loginHooks,
-		registrationHooks,
-		accountSettingsHooks,
-		credentialHooks,
-	)
+	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
+	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
 	protectInternalHook := func(h http.HandlerFunc) http.Handler {
 		return internalRPCTrust.identity(h)
 	}
-	mux.Handle("/hooks/after-login", protectInternalHook(hooksHandler.AfterLogin))
-	mux.Handle("/hooks/reject-credential-registration", protectInternalHook(hooksHandler.RejectCredentialRegistration))
-	mux.Handle("/hooks/after-settings", protectInternalHook(hooksHandler.AfterSettings))
-	mux.Handle("/hooks/after-verification", protectInternalHook(hooksHandler.AfterVerification))
-	mux.Handle("/hooks/pre-settings-oidc", protectInternalHook(hooksHandler.PreSettingsOIDC))
-	mux.Handle("/hooks/post-settings-oidc", protectInternalHook(hooksHandler.PostSettingsOIDC))
-	mux.Handle("/hooks/pre-settings-passkey", protectInternalHook(hooksHandler.PreSettingsPasskey))
-	mux.Handle("/hooks/post-settings-passkey", protectInternalHook(hooksHandler.PostSettingsPasskey))
-	slog.Info("Registered hooks", "paths", []string{"/hooks/after-login", "/hooks/reject-credential-registration", "/hooks/after-settings", "/hooks/after-verification", "/hooks/pre-settings-oidc", "/hooks/post-settings-oidc", "/hooks/pre-settings-passkey", "/hooks/post-settings-passkey"})
+	authenticationHooks.RegisterRoutes(mux, protectInternalHook)
+	accountHooks.RegisterRoutes(mux, protectInternalHook)
+
 	if strings.TrimSpace(cfg.SESEventSNSTopicARN) != "" {
 		providerNotifications := emaildelivery.NewProviderNotificationProcessor(
 			emaildeliveryadapter.NewCampaignProviderOutcomeStore(db),

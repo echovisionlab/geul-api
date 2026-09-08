@@ -30,11 +30,19 @@ import (
 )
 
 const (
-	oryKratosImage           = "oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643"
 	oryTestSessionCookieName = "geul_test_session"
 	oryHostLoopback          = "127.0.0.1"
 	oryStackSetupTimeout     = 2 * time.Minute
 )
+
+// KratosIntegrationImage must carry the Identity settings inventory contract.
+// The same source-built image is used by migration and runtime containers.
+func KratosIntegrationImage() string {
+	if image := strings.TrimSpace(os.Getenv("GEUL_TEST_KRATOS_IMAGE")); image != "" {
+		return image
+	}
+	return "geul-identity-kratos:local"
+}
 
 func hostAccessOptionsForURL(rawURL string) ([]testcontainers.ContainerCustomizer, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))

@@ -24,7 +24,7 @@ func TestBackendIntegrationCourierRouteRequiresInternalServiceSecret(t *testing.
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	)
-	server.SetHandlers(nil, handler)
+	server.SetHandlers(nil, nil, handler)
 	endpoint := "http://" + server.listener.Addr().String() +
 		"/api.intra.v1.EmailCourierService/SendEmail"
 

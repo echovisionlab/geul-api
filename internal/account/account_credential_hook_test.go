@@ -60,3 +60,9 @@ func TestAccountCredentialMutationFromSnapshots(t *testing.T) {
 		})
 	}
 }
+
+func TestStockKratosSettingsSnapshotIsRejected(t *testing.T) {
+	service := &AccountCredentialHookLifecycle{}
+	err := service.Validate(t.Context(), AccountCredentialHookInput{IdentityID: "test-identity", FlowID: "test-flow", Kind: AccountCredentialPasskey, Credentials: map[string]auth.Credential{}, PreviousCredentials: map[string]auth.Credential{}, CredentialSnapshotPresent: false, PreviousSnapshotPresent: false})
+	require.ErrorIs(t, err, ErrAccountCredentialSnapshotMissing)
+}
