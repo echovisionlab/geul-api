@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/config"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/storage"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/stretchr/testify/require"
 )
 

@@ -3,9 +3,9 @@ package media
 import (
 	"testing"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"

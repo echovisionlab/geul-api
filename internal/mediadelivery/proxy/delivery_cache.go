@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 )
 
 const immutablePublicCacheControl = "public, max-age=31536000, immutable"

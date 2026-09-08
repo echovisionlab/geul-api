@@ -17,12 +17,12 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 type seriesQueryCounter struct {

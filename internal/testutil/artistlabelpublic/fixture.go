@@ -28,6 +28,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
@@ -39,7 +40,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 const artistLabelPublicCDN = "https://cdn.example.com"

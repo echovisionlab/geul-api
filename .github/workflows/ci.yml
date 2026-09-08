@@ -58,6 +58,12 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Verify media authorization contract
+        run: |
+          go test -race -covermode=atomic -coverprofile="${RUNNER_TEMP}/mediaauth-coverage.out" ./internal/mediaauth
+          go tool cover -func="${RUNNER_TEMP}/mediaauth-coverage.out"
+          awk 'NR > 1 && $3 == 0 { print; uncovered = 1 } END { exit uncovered ? 1 : 0 }' "${RUNNER_TEMP}/mediaauth-coverage.out"
+
       - name: Vet
         run: go vet ./...
 

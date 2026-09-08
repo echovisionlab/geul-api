@@ -25,8 +25,7 @@ docker build -t registry.dsub.io/echovisionlab/geul-api:0.1.0 .
 ```
 
 The API uses the public Go modules
-`github.com/echovisionlab/geul-event-contracts`,
-`github.com/echovisionlab/geul-mediaauth`, and
+`github.com/echovisionlab/geul-event-contracts` and
 `github.com/echovisionlab/geul-telemetry`. The companion TypeScript package
 `@echovisionlab/geul-common` is not a Go dependency of this service.
 

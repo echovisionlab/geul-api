@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 func TestClassifyFileMediaGenerationDeleteRefsIncludesRetiredGenerations(t *testing.T) {
