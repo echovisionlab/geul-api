@@ -1,0 +1,17 @@
+packages:
+  - '.'
+
+allowBuilds:
+  '@emnapi/core': true
+  '@emnapi/runtime': true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+
+minimumReleaseAgeExclude:
+  - '@echovisionlab/geul-event@0.1.1'
+  - '@echovisionlab/geul-proto@0.1.1'
+  - '@echovisionlab/geul-telemetry@0.1.0'
+
+overrides:
+  esbuild: 0.28.1

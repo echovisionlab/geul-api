@@ -19,7 +19,6 @@ type suiteOptions struct {
 	GoWork        string
 	SchemaRoot    string
 	PostgresImage string
-	CDNImage      string
 }
 
 const integrationGoWorkOff = "off"
@@ -37,7 +36,6 @@ func parseOptions(args []string) (suiteOptions, error) {
 	flags.StringVar(&options.GoWork, "go-work", integrationGoWorkOff, "Go workspace: off or an absolute go.work path")
 	flags.StringVar(&options.SchemaRoot, "schema-root", "../geul-schema", "reviewed schema asset root")
 	flags.StringVar(&options.PostgresImage, "postgres-image", testutil.AppIntegrationPostgresImage, "local PostgreSQL image")
-	flags.StringVar(&options.CDNImage, "cdn-image", "geul-cdn:integration", "local CDN image")
 	if err := flags.Parse(args); err != nil {
 		return suiteOptions{}, err
 	}
@@ -50,8 +48,8 @@ func parseOptions(args []string) (suiteOptions, error) {
 	if options.GoWork != integrationGoWorkOff && !filepath.IsAbs(options.GoWork) {
 		return suiteOptions{}, fmt.Errorf("integration go.work must be off or an absolute path")
 	}
-	if strings.TrimSpace(options.SchemaRoot) == "" || strings.TrimSpace(options.PostgresImage) == "" || strings.TrimSpace(options.CDNImage) == "" {
-		return suiteOptions{}, fmt.Errorf("schema root, PostgreSQL image, and CDN image are required")
+	if strings.TrimSpace(options.SchemaRoot) == "" || strings.TrimSpace(options.PostgresImage) == "" {
+		return suiteOptions{}, fmt.Errorf("schema root and PostgreSQL image are required")
 	}
 	if options.Band != "" && options.Package != "" {
 		return suiteOptions{}, fmt.Errorf("integration band and package are mutually exclusive")

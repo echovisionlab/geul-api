@@ -28,7 +28,6 @@ type AppIntegrationBackendLease struct {
 	S3MediaBucket        string `json:"s3_media_bucket"`
 	S3CacheBucket        string `json:"s3_cache_bucket"`
 	S3ForcePathStyle     bool   `json:"s3_force_path_style"`
-	CDNImage             string `json:"cdn_image,omitempty"`
 	HookControlURL       string `json:"hook_control_url"`
 	HookControlToken     string `json:"hook_control_token"`
 }

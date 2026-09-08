@@ -116,7 +116,7 @@ func run() (runErr error) {
 	}
 	var backend *suiteBackend
 	if integrationBandsNeedBackend(bands) {
-		backend, err = startSuiteBackend(ctx, leasePath, options.CDNImage)
+		backend, err = startSuiteBackend(ctx, leasePath)
 		if err != nil {
 			return err
 		}

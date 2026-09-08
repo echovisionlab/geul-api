@@ -15,8 +15,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func startSuiteBackend(ctx context.Context, leasePath, cdnImage string) (*suiteBackend, error) {
-	if err := requireLocalDockerImages(ctx, requiredSuiteBackendImages(cdnImage)); err != nil {
+func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, error) {
+	if err := requireLocalDockerImages(ctx, requiredSuiteBackendImages()); err != nil {
 		return nil, err
 	}
 	kratosBefore, err := dockerContainerIDsForImage(ctx, suiteBackendImages[0])
@@ -60,7 +60,6 @@ func startSuiteBackend(ctx context.Context, leasePath, cdnImage string) (*suiteB
 		return fail(fmt.Errorf("orchestrator backend must start exactly one Kratos and one SpiceDB container"))
 	}
 	lease := stack.Lease()
-	lease.CDNImage = cdnImage
 	lease.HookControlURL = hookProxy.ControlURL()
 	lease.HookControlToken = hookProxy.ControlToken()
 	return &suiteBackend{

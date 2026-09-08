@@ -17,10 +17,23 @@ COPY . .
 # Build single production binary (includes API, worker, scheduler).
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o backend ./cmd/server
 
-# Final image
-FROM docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM docker.io/library/node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS og-builder
+WORKDIR /app/media/og
+RUN npm install --global pnpm@11.22.0
+COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY media/og/ ./
+RUN pnpm typecheck && pnpm build && pnpm prune --prod
 
-RUN apk add --no-cache ca-certificates imagemagick rsvg-convert tzdata
+FROM docker.io/library/node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS mesh-builder
+WORKDIR /app/media/asset-optimizer
+COPY media/asset-optimizer/package.json media/asset-optimizer/package-lock.json ./
+RUN npm ci --omit=dev
+
+# A single API image owns delivery, durable consumers and native tools.
+FROM docker.io/library/node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+
+RUN apk add --no-cache su-exec ca-certificates imagemagick rsvg-convert tzdata ffmpeg mesa-va-gallium font-noto-arabic font-noto-thai
 
 WORKDIR /app
 
@@ -28,9 +41,20 @@ RUN mkdir -p /coverdata
 
 COPY --from=builder /app/backend .
 COPY --from=builder /app/assets ./assets
+COPY --from=og-builder /app/media/og/node_modules ./media/og/node_modules
+COPY --from=og-builder /app/media/og/dist ./media/og/dist
+COPY media/og/assets ./media/og/assets
+COPY media/og/package.json media/og/LICENSE.md media/og/THIRD_PARTY_NOTICES.md ./media/og/
+COPY media/og/THIRD_PARTY_LICENSES ./media/og/THIRD_PARTY_LICENSES
+COPY --from=mesh-builder /app/media/asset-optimizer/node_modules ./media/asset-optimizer/node_modules
+COPY media/asset-optimizer/package.json media/asset-optimizer/LICENSE.md ./media/asset-optimizer/
+COPY media/asset-optimizer/scripts/optimize-particle-mesh.mjs ./media/asset-optimizer/scripts/optimize-particle-mesh.mjs
+
+COPY --chmod=755 media/og-node /usr/local/bin/geul-og-node
+ENV OG_NODE_BINARY_PATH=/usr/local/bin/geul-og-node
 
 ENV MAGICK_CONFIGURE_PATH=/app/assets/imagemagick
 
-EXPOSE 8000
+EXPOSE 8000 8002
 
 CMD ["./backend"]

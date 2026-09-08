@@ -1,0 +1,38 @@
+{
+  "name": "@echovisionlab/geul-asset-optimizer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Geul asset optimizer service and runtime assets.",
+  "author": "Echo Vision Lab",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/echovisionlab/geul-asset-optimizer.git"
+  },
+  "engines": {
+    "node": "24.19.0"
+  },
+  "scripts": {
+    "check:compose": "docker compose --env-file scripts/ci/asset-optimizer-compose.env -f compose/asset-optimizer.yml config >/dev/null",
+    "check:yaml": "node scripts/ci/validate-yaml.mjs",
+    "format": "prettier --write \"**/*.{js,mjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{js,mjs,json,md,yml,yaml}\"",
+    "test": "node --test \"scripts/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@gltf-transform/cli": "4.4.2",
+    "@gltf-transform/core": "4.4.2",
+    "@gltf-transform/extensions": "4.4.2",
+    "@gltf-transform/functions": "4.4.2",
+    "draco3dgltf": "1.5.7",
+    "meshoptimizer": "1.2.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "brace-expansion": "2.1.4",
+    "sharp": "0.35.3"
+  }
+}

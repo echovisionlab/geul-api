@@ -6,8 +6,18 @@ services:
     container_name: geul-api
     ports:
       - '${GEUL_API_BIND_HOST:-127.0.0.1}:${GEUL_API_PUBLIC_PORT:-8000}:8000'
+      - '${GEUL_API_BIND_HOST:-127.0.0.1}:${GEUL_MEDIA_PUBLIC_PORT:-8002}:8002'
     environment:
       PORT: ${GEUL_API_PORT:-8000}
+      MEDIA_DELIVERY_PORT: 8002
+      CDN_IMGPROXY_URL: http://imgproxy:8080
+      IMGPROXY_KEY: ${GEUL_IMGPROXY_KEY:?set GEUL_IMGPROXY_KEY}
+      IMGPROXY_SALT: ${GEUL_IMGPROXY_SALT:?set GEUL_IMGPROXY_SALT}
+      MEDIA_AUDIO_WORKERS: ${GEUL_MEDIA_AUDIO_WORKERS:-3}
+      MEDIA_VIDEO_WORKERS: ${GEUL_MEDIA_VIDEO_WORKERS:-3}
+      MEDIA_WAVEFORM_WORKERS: ${GEUL_MEDIA_WAVEFORM_WORKERS:-2}
+      OG_OTEL_RESOURCE_ATTRIBUTES: ${GEUL_OG_OTEL_RESOURCE_ATTRIBUTES:-service.namespace=geul,deployment.environment=production,service.name=geul-og}
+      OG_GENERATE_WORKERS: ${GEUL_OG_GENERATE_WORKERS:-12}
       MCP_PRIVATE_PORT: ${GEUL_API_MCP_PRIVATE_PORT:-8001}
       AUTH_HEADER_NAME: ${AUTH_HEADER_NAME:?set AUTH_HEADER_NAME}
       INTERNAL_SERVICE_HEADER_NAME: ${INTERNAL_SERVICE_HEADER_NAME:?set INTERNAL_SERVICE_HEADER_NAME}
@@ -54,6 +64,10 @@ services:
       OTEL_EXPORTER_OTLP_PROTOCOL: ${GEUL_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_RESOURCE_ATTRIBUTES: ${GEUL_OTEL_RESOURCE_ATTRIBUTES:-service.namespace=geul,deployment.environment=production}
       GOOGLE_AI_API_KEY: ${GEUL_GOOGLE_AI_API_KEY:?set GEUL_GOOGLE_AI_API_KEY}
+    stop_grace_period: 140s
+    depends_on:
+      imgproxy:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       runtime:
@@ -63,6 +77,31 @@ services:
       test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8000/health']
       interval: 30s
       timeout: 10s
+      retries: 3
+
+  imgproxy:
+    image: docker.io/darthsim/imgproxy:v3.31.4@sha256:73c5dda13199745b0d2d00e4149d4a589c5b2e205dbf335ca05eca8276b54712
+    environment:
+      IMGPROXY_KEY: ${GEUL_IMGPROXY_KEY:?set GEUL_IMGPROXY_KEY}
+      IMGPROXY_SALT: ${GEUL_IMGPROXY_SALT:?set GEUL_IMGPROXY_SALT}
+      IMGPROXY_USE_S3: 'true'
+      IMGPROXY_S3_ENDPOINT: ${GEUL_S3_ENDPOINT:?set GEUL_S3_ENDPOINT}
+      AWS_ACCESS_KEY_ID: ${GEUL_S3_ACCESS_KEY_ID:?set GEUL_S3_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${GEUL_S3_SECRET_ACCESS_KEY:?set GEUL_S3_SECRET_ACCESS_KEY}
+      AWS_REGION: ${GEUL_S3_REGION:?set GEUL_S3_REGION}
+      IMGPROXY_ALLOW_INSECURE_URLS: 'false'
+      IMGPROXY_WORKERS: '10'
+      IMGPROXY_MAX_SRC_RESOLUTION: '50'
+      IMGPROXY_MAX_ANIMATION_FRAMES: '100'
+      IMGPROXY_PREFERRED_FORMATS: webp
+      IMGPROXY_ENFORCE_AVIF: 'false'
+      IMGPROXY_TTL: '31536000'
+    restart: unless-stopped
+    networks: [runtime]
+    healthcheck:
+      test: ['CMD', 'imgproxy', 'health']
+      interval: 10s
+      timeout: 3s
       retries: 3
 
 networks:

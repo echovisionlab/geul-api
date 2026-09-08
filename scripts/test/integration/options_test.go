@@ -8,9 +8,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse default options: %v", err)
 	}
-	if defaults.CDNImage != "geul-cdn:integration" {
-		t.Fatalf("default CDN image = %q", defaults.CDNImage)
-	}
+
 	if defaults.GoWork != integrationGoWorkOff {
 		t.Fatalf("default go.work = %q, want %q", defaults.GoWork, integrationGoWorkOff)
 	}
@@ -19,7 +17,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{},
 		{"--band", "db", "--jobs", "4"},
 		{"--band", "ory"},
-		{"--band", "serial", "--cdn-image", "geul-cdn:integration"},
+		{"--band", "serial"},
 		{"--package", "./internal/translation"},
 		{"--package", "./internal/member"},
 		{"--package", "./internal/testutil"},
