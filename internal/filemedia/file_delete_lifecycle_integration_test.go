@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"

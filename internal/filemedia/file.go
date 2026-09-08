@@ -22,13 +22,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 const (

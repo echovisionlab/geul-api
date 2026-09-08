@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/config"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/minio/minio-go/v7"
 )
 

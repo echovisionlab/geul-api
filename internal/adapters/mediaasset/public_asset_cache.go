@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"

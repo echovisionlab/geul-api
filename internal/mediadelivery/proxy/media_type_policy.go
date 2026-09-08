@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 )
 
 func deliveryExtension(deliveryPath mediaauth.DeliveryPath) string {

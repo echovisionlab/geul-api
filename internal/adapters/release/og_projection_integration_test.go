@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )

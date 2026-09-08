@@ -5,8 +5,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"gorm.io/gorm"
 )
 

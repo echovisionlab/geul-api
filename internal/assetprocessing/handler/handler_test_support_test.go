@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/echovisionlab/geul-api/internal/assetprocessing/optimizer"

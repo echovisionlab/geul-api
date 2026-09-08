@@ -16,11 +16,11 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 // GeneratedGeneralFileInput is a bounded server-generated File. It follows

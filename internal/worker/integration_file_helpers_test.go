@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"

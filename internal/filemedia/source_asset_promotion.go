@@ -17,11 +17,11 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 func dedicatedPublicAssetKind(uploadType managev1.UploadType, slotID string) (string, bool) {

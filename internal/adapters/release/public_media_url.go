@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 )
 
 var ErrMediaURLSigningFailed = errors.New("media URL signing failed")
