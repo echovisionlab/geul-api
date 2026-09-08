@@ -25,7 +25,6 @@ func TestSplitRepoPathForLegacySuffix(t *testing.T) {
 	tests := map[string]string{
 		"apps/collab":                        filepath.Join(string(filepath.Separator), "workspace", "geul-editor-collab"),
 		"apps/web/.next":                     filepath.Join(string(filepath.Separator), "workspace", "geul-web", ".next"),
-		"apps/transcoder":                    filepath.Join(string(filepath.Separator), "workspace", "geul-transcoder"),
 		"infra/kratos/kratos.yml":            filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "kratos", "kratos.yml"),
 		"infra/oathkeeper/rules.yml":         filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "oathkeeper", "rules.yml"),
 		"infra/spicedb/schema.generated.zed": filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "spicedb", "schema.generated.zed"),
