@@ -554,3 +554,50 @@ func pageTestNodeField(t *testing.T, fields []core.FieldValue, id core.FieldID) 
 	t.Fatalf("field %q not found", id)
 	return core.Value{}
 }
+
+func TestPageCodecSeparatesMermaidSectionsFromNestedRichTextBlocks(t *testing.T) {
+	codec, err := NewPageCodec()
+	require.NoError(t, err)
+	seen := make(map[core.BlockKind]bool)
+	for _, kind := range codec.Catalog().BlockKinds {
+		require.False(t, seen[kind], "duplicate catalog kind %q", kind)
+		seen[kind] = true
+	}
+	require.True(t, seen["mermaid"])
+	require.True(t, seen["page-mermaid"])
+
+	sectionID, richID, blockID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	block := &contentv1.RichTextBlockNode{
+		Block: &contentv1.RichTextBlock{Id: blockID, Value: &contentv1.RichTextBlock_Mermaid{
+			Mermaid: &contentv1.MermaidBlock{Props: &contentv1.MermaidProps{Source: proto.String("graph LR; A-->B")}},
+		}}, Placement: &contentv1.ContentBlockPlacement{},
+	}
+	document := &contentv1.LocalizedPageDocument{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Locale: "en",
+		Base: &contentv1.PageSectionGraph{Nodes: []*contentv1.PageSectionNode{
+			{Section: &contentv1.PageSection{Id: sectionID, Settings: &contentv1.PageSectionSettings{}, Value: &contentv1.PageSection_Mermaid{
+				Mermaid: &contentv1.MermaidSection{Props: &contentv1.MermaidSectionProps{Source: proto.String("graph LR; C-->D")}},
+			}}, Placement: &contentv1.PageSectionPlacement{}},
+			{Section: &contentv1.PageSection{Id: richID, Settings: &contentv1.PageSectionSettings{}, Value: &contentv1.PageSection_RichText{
+				RichText: &contentv1.RichTextSection{Props: &contentv1.RichTextSectionProps{}, Blocks: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{block}}},
+			}}, Placement: &contentv1.PageSectionPlacement{Index: 1}},
+		}},
+		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "en"},
+	}
+	nodes, err := codec.Project(document)
+	require.NoError(t, err)
+	require.Len(t, nodes, 3)
+	require.Equal(t, core.BlockKind("page-mermaid"), nodes[0].Kind)
+	require.Equal(t, core.BlockKind("mermaid"), nodes[2].Kind)
+	require.Equal(t, core.BlockID(richID), nodes[2].Parent)
+
+	for _, operation := range []core.Operation{
+		core.SetNestedFieldOperation(core.BlockID(sectionID), pageSectionDataField,
+			[]core.FieldPathSegment{core.ObjectPath("props"), core.ObjectPath("source")}, core.Text("graph LR; E-->F")),
+		core.SetFieldOperation(core.BlockID(blockID), "source", core.Text("graph LR; G-->H")),
+	} {
+		require.NoError(t, codec.applyPageOperation(document, core.LocaleRoleSource, operation, make(map[string]struct{})))
+	}
+	require.Equal(t, "graph LR; E-->F", document.Base.Nodes[0].Section.GetMermaid().GetProps().GetSource())
+	require.Equal(t, "graph LR; G-->H", document.Base.Nodes[1].Section.GetRichText().Blocks.Nodes[0].Block.GetMermaid().GetProps().GetSource())
+}

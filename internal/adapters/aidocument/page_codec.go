@@ -47,11 +47,11 @@ func NewPageCodec() (*PageCodec, error) {
 	}
 	for index := 0; index < baseOneof.Fields().Len(); index++ {
 		field := baseOneof.Fields().Get(index)
-		codec.baseCases[pageKind(field.JSONName())] = field
+		codec.baseCases[codec.sectionKind(field.JSONName())] = field
 	}
 	for index := 0; index < localeOneof.Fields().Len(); index++ {
 		field := localeOneof.Fields().Get(index)
-		codec.localeCase[pageKind(field.JSONName())] = field
+		codec.localeCase[codec.sectionKind(field.JSONName())] = field
 	}
 	catalog := rich.Catalog()
 	catalog.BlockKinds = append(catalog.BlockKinds, pageColumnBlockKind)
@@ -224,24 +224,34 @@ func (c *PageCodec) projectRichTextChildren(
 }
 
 func (c *PageCodec) sectionMessage(message protoreflect.Message) (core.BlockKind, protoreflect.Message, error) {
-	return pageOneofMessage(message, c.baseCases)
+	return c.oneofMessage(message, c.baseCases)
 }
 
 func (c *PageCodec) localeSectionMessage(message protoreflect.Message) (core.BlockKind, protoreflect.Message, error) {
-	return pageOneofMessage(message, c.localeCase)
+	return c.oneofMessage(message, c.localeCase)
 }
 
-func pageOneofMessage(message protoreflect.Message, cases map[core.BlockKind]protoreflect.FieldDescriptor) (core.BlockKind, protoreflect.Message, error) {
+func (c *PageCodec) oneofMessage(message protoreflect.Message, cases map[core.BlockKind]protoreflect.FieldDescriptor) (core.BlockKind, protoreflect.Message, error) {
 	oneof := message.Descriptor().Oneofs().ByName("value")
 	field := message.WhichOneof(oneof)
 	if field == nil {
 		return "", nil, errors.New("page section kind is required")
 	}
-	kind := pageKind(field.JSONName())
+	kind := c.sectionKind(field.JSONName())
 	if cases[kind] == nil {
 		return "", nil, fmt.Errorf("unsupported Page section kind %q", kind)
 	}
 	return kind, message.Get(field).Message(), nil
+}
+
+// Page sections and nested rich-text blocks share one AI document catalog.
+// Scope colliding section names without changing existing, unambiguous handles.
+func (c *PageCodec) sectionKind(value string) core.BlockKind {
+	kind := pageKind(value)
+	if slices.Contains(c.rich.Catalog().BlockKinds, kind) {
+		return "page-" + kind
+	}
+	return kind
 }
 
 func pageKind(value string) core.BlockKind {

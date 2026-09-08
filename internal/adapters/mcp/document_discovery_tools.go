@@ -20,7 +20,7 @@ const ToolDocumentList = "document_list"
 var documentDiscoveryTools = []mcpserver.Tool{{
 	Name:  ToolDocumentList,
 	Title: "List accessible documents",
-	Description: "List Post, Work, Page, or Program Event documents the authenticated Geul member may open. " +
+	Description: "List Post, Work, Page, or Program Event documents the authenticated member may open. " +
 		"Use this before document_open when the document UUID is unknown. " +
 		"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
 	InputSchema:     json.RawMessage(documentListInputJSONSchema),

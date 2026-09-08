@@ -402,3 +402,24 @@ func snapshotFromRichDocument(t *testing.T, document *contentv1.RichTextDocument
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestMaterializeMermaidKeepsSourceAndEscapesAuthoredMarkup(t *testing.T) {
+	blockID := uuid.New()
+	document := paragraphDocument(blockID, "")
+	source := "flowchart LR\n  A[<script>unsafe</script>] --> B"
+	document.Base.Nodes[0].Block.Value = &contentv1.RichTextBlock_Mermaid{Mermaid: &contentv1.MermaidBlock{
+		Props: &contentv1.MermaidProps{Source: stringPointer(source)},
+	}}
+	document.LocaleOverlays[0].Blocks[0].Value = &contentv1.RichTextBlockLocale_Mermaid{Mermaid: &contentv1.MermaidBlockLocale{
+		Props: &contentv1.MermaidLocaleProps{Title: stringPointer("<caption>")},
+	}}
+	localized, err := SnapshotToLocalizedRichTextDocument(snapshotFromRichDocument(t, document), "en")
+	require.NoError(t, err)
+	result, err := MaterializeLocalizedRichTextDocument(t.Context(), localized, nil)
+	require.NoError(t, err)
+	require.Contains(t, result.HTML, `class="language-mermaid"`)
+	require.Contains(t, result.HTML, "&lt;script&gt;")
+	require.Contains(t, result.HTML, "&lt;caption&gt;")
+	require.NotContains(t, result.HTML, "<script>")
+	require.Equal(t, "<caption>\n"+source, result.Text)
+}
