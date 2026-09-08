@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/echovisionlab/geul-api/compare/v0.1.2...v0.2.0) (2026-09-08)
+
+
+### Features
+
+* **media:** integrate existing media services into API ([#11](https://github.com/echovisionlab/geul-api/issues/11)) ([78b39c3](https://github.com/echovisionlab/geul-api/commit/78b39c3d511246bd7ea3eaf52b072a460e483c59))
+
 ## [0.1.2](https://github.com/echovisionlab/geul-api/compare/v0.1.1...v0.1.2) (2026-09-06)
 
 
