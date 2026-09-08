@@ -1,12 +1,13 @@
-package handler
+package account
 
 import (
 	"context"
 	"testing"
 
+	"github.com/glebarez/sqlite"
+
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -63,24 +64,32 @@ func TestSyncAccountEmailCandidateProjectionDoesNotMutateIdentityTraits(t *testi
 			Identifiers: []string{"delivery@example.test"},
 		},
 	}
-	db := newHookTestDB(t)
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	require.NoError(t, db.Exec(`CREATE TABLE member (
+        id TEXT PRIMARY KEY, account_identity_id TEXT UNIQUE,
+        primary_email TEXT, deleted_at DATETIME
+    )`).Error)
 	require.NoError(t, db.Exec(`
 		INSERT INTO member (id, account_identity_id, primary_email)
 		VALUES ('member-1', 'identity-1', 'delivery@example.test')
 	`).Error)
-	kratos := &hookIdentityManager{identity: identity}
-	providerCandidates := account.ResolveAccountEmailProviderCandidates(t.Context(), credentials)
+	// The Account service accepts a read-only identity port. A fake with no
+	// mutation methods also verifies that synchronization needs no write capability.
+	kratos := &fakeIdentityManager{identity: identity}
+	providerCandidates := ResolveAccountEmailProviderCandidates(t.Context(), credentials)
 	identity.Credentials = credentials
-	emailService := account.NewAccountEmailService(db, kratos, candidateMemberProjection{})
+	emailService := NewAccountEmailService(db, kratos, candidateMemberProjection{})
 	require.NoError(t, emailService.EnsureMemberPrimaryEmailUsable(
 		context.Background(), identity.ID, identity, providerCandidates,
 	))
-	_, err := emailService.SyncMemberEmailProjection(
+	_, err = emailService.SyncMemberEmailProjection(
 		context.Background(), identity.ID, identity, providerCandidates,
 	)
 	require.NoError(t, err)
 
-	require.Empty(t, kratos.updatedMetadata)
-	require.Empty(t, kratos.updatedTraits)
 	require.Equal(t, structured.Fields{"email": "delivery@example.test"}, identity.Traits)
 }
