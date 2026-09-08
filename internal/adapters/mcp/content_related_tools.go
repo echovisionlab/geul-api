@@ -35,13 +35,13 @@ const (
 )
 
 var contentRelatedTools = []mcpserver.Tool{
-	relatedTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing Geul File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	relatedTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	relatedTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	relatedTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false),
-	relatedTool(ToolPostAuthorAdd, "Add Post author", "Add a Geul Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Geul Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Geul Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Geul Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	relatedTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	relatedTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	relatedTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	relatedTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	relatedTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false),
 	relatedTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
 	relatedTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group.", workCreditGroupUpdateInputJSONSchema, contentActionOutputJSONSchema, false, true),

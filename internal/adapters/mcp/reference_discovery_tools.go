@@ -45,7 +45,7 @@ const fileListOutputJSONSchema = `{
 
 var referenceDiscoveryTools = []mcpserver.Tool{
 	relatedTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, Member, or Artist IDs before using them in content management tools.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false),
-	relatedTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Geul Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false),
+	relatedTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false),
 }
 
 type CategoryReferenceDiscovery interface {

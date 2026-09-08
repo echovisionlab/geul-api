@@ -31,14 +31,14 @@ const (
 var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileAdd, Title: "Add an existing File to a document",
-		Description: "Add a new File Block that reuses an existing Geul File; this does not upload or copy bytes. " +
+		Description: "Add a new File Block that reuses an existing File; this does not upload or copy bytes. " +
 			"Read the document first and pass its exact current revision. New File Block download policy starts disabled.",
 		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: json.RawMessage(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta(),
 	},
 	{
 		Name: ToolDocumentFileReplace, Title: "Replace a document File Block attachment",
-		Description: "Replace the existing File attached to one File Block with another existing Geul File; this does not upload or delete File bytes. " +
+		Description: "Replace the existing File attached to one File Block with another existing File; this does not upload or delete File bytes. " +
 			"The server verifies the target is a File Block and resets that attachment's download policy to disabled.",
 		InputSchema: json.RawMessage(documentFileReplaceInputJSONSchema), OutputSchema: json.RawMessage(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
@@ -46,7 +46,7 @@ var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileRemove, Title: "Remove a File Block from a document",
 		Description: "Remove one verified File Block and its attachment policy from a document. " +
-			"The reusable Geul File and its bytes remain in File Manager.",
+			"The reusable File and its bytes remain in File Manager.",
 		InputSchema: json.RawMessage(documentFileRemoveInputJSONSchema), OutputSchema: json.RawMessage(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	},
@@ -60,13 +60,13 @@ var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileDownloadPolicyUpdate, Title: "Update a File Block download policy",
 		Description: "Set disabled, public, authenticated, or restricted download access on one exact File Block attachment. " +
-			"expected_file_id is only a compare-and-set guard against replacing a different current File; it is not relation authority. Public access can expose the original File outside Geul.",
+			"expected_file_id is only a compare-and-set guard against replacing a different current File; it is not relation authority. Public access can expose the original File outside this site.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyUpdateInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, true), Meta: oauthSecurityMeta(),
 	},
 	{
 		Name: ToolFileUsageList, Title: "List File usages",
-		Description: "List authorized Geul entities and exact Block attachment paths that currently reference one reusable File. " +
+		Description: "List authorized entities and exact Block attachment paths that currently reference one reusable File. " +
 			"Use this before considering a physical File deletion or to find every document placement.",
 		InputSchema: json.RawMessage(fileUsageListInputJSONSchema), OutputSchema: json.RawMessage(fileUsageListOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),

@@ -28,7 +28,7 @@ func expectedToolError(err error) (mcpserver.ToolResult, error) {
 		connect.CodeResourceExhausted:
 		return executionError(errors.New(connectErr.Message()))
 	case connect.CodeUnavailable:
-		return executionError(errors.New("Geul service is temporarily unavailable"))
+		return executionError(errors.New("The service is temporarily unavailable"))
 	default:
 		return mcpserver.ToolResult{}, err
 	}
