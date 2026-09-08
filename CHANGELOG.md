@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/echovisionlab/geul-api/compare/v0.2.1...v0.2.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* **account:** restore settings credential validation and domain diagnostics ([#16](https://github.com/echovisionlab/geul-api/issues/16)) ([bfd6a95](https://github.com/echovisionlab/geul-api/commit/bfd6a95c1eb61d5a10d0bd22ad1fc89f20fdfd0b))
+
 ## [0.2.1](https://github.com/echovisionlab/geul-api/compare/v0.2.0...v0.2.1) (2026-09-08)
 
 
