@@ -66,6 +66,17 @@ and integration-only changes are recorded in [media/IMPORTS.md](media/IMPORTS.md
 
 ## Integration tests
 
+Build the matching Identity Kratos image before running integration tests:
+
+```sh
+docker build -f ../geul-identity/Dockerfile.kratos -t geul-identity-kratos:local ../geul-identity
+```
+
+An explicit test image can be selected with `GEUL_TEST_KRATOS_IMAGE`. Stock
+Kratos omits the credential inventory required by account settings policy and
+is not a substitute for this source-built runtime.
+
+
 Unit and package tests run with `go test ./...`. Integration tests are
 explicitly tagged and require a local reviewed schema checkout plus the
 already available runtime images:

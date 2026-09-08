@@ -663,7 +663,7 @@ func (s *BackendIntegrationStack) addCleanup(name string, fn func() error) {
 }
 
 func runBackendIntegrationKratosMigrate(ctx context.Context, netw *testcontainers.DockerNetwork, dsn string) error {
-	ctr, err := testcontainers.Run(ctx, oryKratosImage,
+	ctr, err := testcontainers.Run(ctx, KratosIntegrationImage(),
 		network.WithNetwork([]string{"kratos-migrate"}, netw),
 		testcontainers.WithEnv(map[string]string{
 			"DSN": dsn,
@@ -808,7 +808,7 @@ func runBackendIntegrationKratos(
 	}
 	kratosOptions = append(kratosOptions, hostAccessOptions...)
 
-	ctr, err := testcontainers.Run(ctx, oryKratosImage, kratosOptions...)
+	ctr, err := testcontainers.Run(ctx, KratosIntegrationImage(), kratosOptions...)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("start kratos container: %w", err)
 	}

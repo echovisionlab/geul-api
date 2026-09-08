@@ -2,13 +2,15 @@
 
 package main
 
+import "github.com/echovisionlab/geul-api/internal/testutil"
+
 // Keep the preflight image aligned with testcontainers-go v0.44.0. The
 // library's exported alias is deprecated, while its runtime still uses this
 // exact image internally.
 const suiteReaperImage = "testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0"
 
 var suiteBackendImages = []string{
-	"oryd/kratos:v26.2.0@sha256:2a13bb8d362c7a7ae33bd7c0f5168aee46921f15c916a06346db91c06dc76643",
+	testutil.KratosIntegrationImage(),
 	"ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c",
 	"oryd/oathkeeper:v26.2.0@sha256:467329abde34feefca217b7af76fff59e77fe1795a19376e9d479f33c7c198fc",
 	"minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -254,24 +255,12 @@ JSON
 func writeExecutable(t *testing.T, path string, content string) {
 	t.Helper()
 
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".executable-*")
-	if err != nil {
-		t.Fatalf("create executable %s: %v", path, err)
-	}
-	temporaryPath := temporary.Name()
-	t.Cleanup(func() { _ = os.Remove(temporaryPath) })
-	if _, err := temporary.WriteString(content); err != nil {
-		_ = temporary.Close()
-		t.Fatalf("write executable %s: %v", path, err)
-	}
-	if err := temporary.Chmod(0o755); err != nil {
-		_ = temporary.Close()
-		t.Fatalf("chmod executable %s: %v", path, err)
-	}
-	if err := temporary.Close(); err != nil {
-		t.Fatalf("close executable %s: %v", path, err)
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		t.Fatalf("install executable %s: %v", path, err)
+	// Keep the write descriptor outside this parallel test process. A sibling
+	// fork can inherit a Go-opened descriptor until exec and make the freshly
+	// closed fixture fail with ETXTBSY on Linux (golang/go#22315).
+	writer := exec.Command("sh", "-c", `cat > "$1" && chmod 755 "$1"`, "fixture-writer", path)
+	writer.Stdin = strings.NewReader(content)
+	if output, err := writer.CombinedOutput(); err != nil {
+		t.Fatalf("write executable %s: %v: %s", path, err, output)
 	}
 }
