@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/echovisionlab/geul-api/compare/v0.2.0...v0.2.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **media:** internalize media authorization dependency ([#14](https://github.com/echovisionlab/geul-api/issues/14)) ([9c75c67](https://github.com/echovisionlab/geul-api/commit/9c75c67251ae30551f301e8b700a6e054c64b013))
+
 ## [0.2.0](https://github.com/echovisionlab/geul-api/compare/v0.1.2...v0.2.0) (2026-09-08)
 
 
