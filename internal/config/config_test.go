@@ -318,6 +318,8 @@ func TestLoadConfigRejectsNonPositiveAuthCodeResendCooldown(t *testing.T) {
 }
 
 func setRequiredConfigEnv(t *testing.T) {
+	t.Setenv("IMGPROXY_KEY", "0123456789abcdef")
+	t.Setenv("IMGPROXY_SALT", "abcdef0123456789")
 	t.Helper()
 
 	values := map[string]string{
@@ -352,5 +354,25 @@ func setRequiredConfigEnv(t *testing.T) {
 	}
 	for key, value := range values {
 		t.Setenv(key, value)
+	}
+}
+
+func TestLoadConfigRejectsConflictingMediaListenersAndInvalidEngineSecrets(t *testing.T) {
+	for _, testCase := range []struct{ key, value string }{
+		{"MEDIA_DELIVERY_PORT", "8000"},
+		{"MEDIA_DELIVERY_PORT", "8001"},
+		{"OG_PORT", "8002"},
+		{"OG_PORT", "8000"},
+		{"OG_PORT", "8001"},
+		{"IMGPROXY_KEY", "invalid"},
+		{"IMGPROXY_SALT", "abc"},
+	} {
+		t.Run(testCase.key+"="+testCase.value, func(t *testing.T) {
+			setRequiredConfigEnv(t)
+			t.Setenv("PORT", "8000")
+			t.Setenv(testCase.key, testCase.value)
+			_, err := Load()
+			require.ErrorContains(t, err, testCase.key)
+		})
 	}
 }

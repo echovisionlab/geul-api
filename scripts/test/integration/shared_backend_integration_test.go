@@ -19,9 +19,7 @@ func TestSuiteBackendPreflightsEveryRuntimeImage(t *testing.T) {
 		suiteReaperImage,
 		"testcontainers/sshd:1.4.0@sha256:bdae17f702908bee93c877ab3e97eddd782e2fb5bdd23a9f29869b9a87b30acd",
 	}
-	cdnImage := "geul-cdn:integration"
-	want = append(want, cdnImage)
-	if got := requiredSuiteBackendImages(cdnImage); !slices.Equal(got, want) {
+	if got := requiredSuiteBackendImages(); !slices.Equal(got, want) {
 		t.Fatalf("suite backend images = %q, want %q", got, want)
 	}
 }

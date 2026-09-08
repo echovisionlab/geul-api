@@ -813,7 +813,6 @@ func splitRepoPathForLegacySuffix(moduleRoot, suffix string) (string, bool) {
 	}{
 		{legacy: "apps/collab", split: "geul-editor-collab"},
 		{legacy: "apps/web", split: "geul-web"},
-		{legacy: "apps/transcoder", split: "geul-transcoder"},
 		{legacy: "infra/kratos", split: "geul-identity/config/kratos"},
 		{legacy: "infra/oathkeeper", split: "geul-identity/config/oathkeeper"},
 		{legacy: "infra/spicedb", split: "geul-identity/config/spicedb"},

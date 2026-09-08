@@ -17,7 +17,6 @@ var suiteBackendImages = []string{
 	"testcontainers/sshd:1.4.0@sha256:bdae17f702908bee93c877ab3e97eddd782e2fb5bdd23a9f29869b9a87b30acd",
 }
 
-func requiredSuiteBackendImages(cdnImage string) []string {
-	images := append([]string(nil), suiteBackendImages...)
-	return append(images, cdnImage)
+func requiredSuiteBackendImages() []string {
+	return append([]string(nil), suiteBackendImages...)
 }

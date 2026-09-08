@@ -39,11 +39,21 @@ jobs:
       - name: Install ImageMagick
         run: |
           sudo apt-get update
-          sudo apt-get install --yes imagemagick
+          sudo apt-get install --yes imagemagick ffmpeg
           if ! command -v magick >/dev/null 2>&1; then
             sudo ln -s "$(command -v convert)" /usr/local/bin/magick
           fi
           magick -version
+
+      - name: Set up media tools
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+
+      - name: Build and test media tools
+        run: |
+          npm install --global pnpm@11.22.0
+          make media-test
 
       - name: Test
         run: go test ./...

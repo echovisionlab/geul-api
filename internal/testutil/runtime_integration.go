@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -28,17 +27,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/google/uuid"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
-	runtimeMinIOImage         = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
 	runtimeImgproxyImage      = "darthsim/imgproxy:v3.31.0@sha256:6db046632f568931e165d61ce289382804f7bbce5b791db6fb6b8d4ace507378"
-	runtimeCDNPort            = "8081/tcp"
+	runtimeMinIOImage         = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
 	runtimeTokenSigningSecret = IntegrationTokenSigningSecret
 	runtimeMediaSigningSecret = "runtime-media-signing-secret"
 	runtimeProcessGracePeriod = 2 * time.Second
@@ -78,9 +74,8 @@ type RuntimeStack struct {
 	s3CompleteFailureProxy *runtimeS3CompleteFailureProxy
 	backendProc            *runtimeProcess
 	collabProc             *runtimeProcess
-	cdnContainer           testcontainers.Container
-	imgproxyContainer      testcontainers.Container
 	imgproxyStarted        bool
+	imgproxyContainer      testcontainers.Container
 	transcoderProc         *runtimeProcess
 	waveformProc           *runtimeProcess
 	waveformFFmpegPath     string
@@ -302,7 +297,7 @@ func SetupSharedDirectMediaRuntimeStackWithCDN(t *testing.T) *RuntimeStack {
 	})
 	stack := requireSharedRuntimeStack(t, runtimeSharedDirectMediaCDNStack)
 	activateRuntimeApplicationStack(t, stack, nil)
-	if stack.cdnContainer == nil {
+	if stack.backendProc == nil {
 		withIntegrationSuiteCleanupRegistration(func() {
 			stack.StartCDN(t)
 		})
@@ -503,14 +498,20 @@ func (s *RuntimeStack) StartBackend(t *testing.T) {
 	require.NoError(t, err)
 	port := parsed.Port()
 	require.NotEmpty(t, port)
-	tempDir := integrationTempDir(t, "backend")
+	s.StartImgproxy(t)
+	// FFmpeg progress uses Unix sockets; macOS has a 104-byte socket path limit.
+	// The suite's nested temporary root exceeds it after the job ID is appended.
+	tempDir, err := os.MkdirTemp("/tmp", "geul-media-")
+	require.NoError(t, err)
+	registerIntegrationCleanup(t, "media temporary directory", func() error { return os.RemoveAll(tempDir) })
 	corsOrigin := s.WebURL
 	if corsOrigin == "" {
 		corsOrigin = "http://127.0.0.1:3000"
 	}
 	cdnURL := s.CDNURL
 	if cdnURL == "" {
-		cdnURL = "http://127.0.0.1:9999"
+		cdnURL = fmt.Sprintf("http://127.0.0.1:%d", reserveLocalPort(t))
+		s.CDNURL = cdnURL
 	}
 	mediaURL := s.MediaURL
 	if mediaURL == "" {
@@ -524,7 +525,27 @@ func (s *RuntimeStack) StartBackend(t *testing.T) {
 	if s.backendS3Endpoint != "" {
 		s3Endpoint = s.backendS3Endpoint
 	}
+	deliveryURL, err := urlFromString(cdnURL)
+	require.NoError(t, err)
+	mediaRoot := appIntegrationRepoPath("../../media")
 	backendEnv := map[string]string{
+		"MEDIA_DELIVERY_PORT":          deliveryURL.Port(),
+		"MCP_PRIVATE_PORT":             fmt.Sprint(reserveLocalPort(t)),
+		"FFMPEG_TEMP_DIR":              filepath.Join(tempDir, "transcode"),
+		"ASSET_OPTIMIZER_TEMP_DIR":     filepath.Join(tempDir, "mesh"),
+		"WAVEFORM_TEMP_DIR":            filepath.Join(tempDir, "waveform"),
+		"WAVEFORM_FFMPEG_PATH":         s.waveformFFmpegPath,
+		"GLTF_TRANSFORM_PATH":          filepath.Join(mediaRoot, "asset-optimizer/node_modules/.bin/gltf-transform"),
+		"PARTICLE_MESH_SCRIPT_PATH":    filepath.Join(mediaRoot, "asset-optimizer/scripts/optimize-particle-mesh.mjs"),
+		"OG_WORKER_SCRIPT":             filepath.Join(mediaRoot, "og/dist/index.js"),
+		"OG_PORT":                      fmt.Sprint(reserveLocalPort(t)),
+		"OG_GENERATE_WORKERS":          "1",
+		"MEDIA_AUDIO_WORKERS":          "1",
+		"MEDIA_VIDEO_WORKERS":          "1",
+		"MEDIA_WAVEFORM_WORKERS":       "1",
+		"CDN_IMGPROXY_URL":             s.ImgproxyURL,
+		"IMGPROXY_KEY":                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"IMGPROXY_SALT":                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 		"PORT":                         port,
 		"AUTH_HEADER_NAME":             "X-Authenticated-Context-B64",
 		"INTERNAL_SERVICE_HEADER_NAME": "X-Internal-Service",
@@ -562,6 +583,10 @@ func (s *RuntimeStack) StartBackend(t *testing.T) {
 		"HTTP_READ_TIMEOUT_SEC":        fmt.Sprintf("%d", s.BackendReadTimeoutSec),
 		"HTTP_WRITE_TIMEOUT_SEC":       fmt.Sprintf("%d", s.BackendWriteTimeoutSec),
 		"HTTP_IDLE_TIMEOUT_SEC":        fmt.Sprintf("%d", s.BackendIdleTimeoutSec),
+	}
+	if image := os.Getenv("GEUL_INTEGRATION_API_IMAGE"); image != "" {
+		s.backendProc = startBackendImage(t, image, backendEnv, s.BackendURL)
+		return
 	}
 	s.backendProc = startRuntimeProcess(t, runtimeProcessSpec{
 		Name:      "backend",
@@ -684,92 +709,7 @@ func (s *RuntimeStack) StartImgproxy(t *testing.T) {
 	s.imgproxyStarted = true
 }
 
-func (s *RuntimeStack) StartCDN(t *testing.T) {
-	t.Helper()
-	if s.cdnContainer != nil {
-		return
-	}
-	backend, err := CurrentAppIntegrationBackendLease()
-	require.NoError(t, err)
-	cdnImage := strings.TrimSpace(backend.CDNImage)
-	require.NotEmpty(t, cdnImage, "suite backend lease must select an already-local canonical CDN image")
-
-	s.StartImgproxy(t)
-
-	if s.CDNURL == "" {
-		s.CDNURL = fmt.Sprintf("http://127.0.0.1:%d", reserveLocalPort(t))
-	}
-	parsed, err := urlFromString(s.CDNURL)
-	require.NoError(t, err)
-	port := parsed.Port()
-	require.NotEmpty(t, port)
-
-	ctx := context.Background()
-	s3EndpointForContainer, err := rewriteHostURLForContainer(s.S3Endpoint)
-	require.NoError(t, err)
-	imgproxyURLForContainer, err := rewriteHostURLForContainer(s.ImgproxyURL)
-	require.NoError(t, err)
-
-	hostAccessOptions, err := hostAccessOptionsForURL(s3EndpointForContainer)
-	require.NoError(t, err)
-	imgproxyHostAccessOptions, err := hostAccessOptionsForURL(imgproxyURLForContainer)
-	require.NoError(t, err)
-	hostAccessOptions = append(hostAccessOptions, imgproxyHostAccessOptions...)
-
-	cdnPort := network.MustParsePort(runtimeCDNPort)
-	cdnOptions := []testcontainers.ContainerCustomizer{
-		testcontainers.WithExposedPorts(runtimeCDNPort),
-		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
-			if hostConfig.PortBindings == nil {
-				hostConfig.PortBindings = network.PortMap{}
-			}
-			hostConfig.PortBindings[cdnPort] = []network.PortBinding{{
-				HostIP:   netip.MustParseAddr("127.0.0.1"),
-				HostPort: port,
-			}}
-		}),
-		testcontainers.WithEnv(map[string]string{
-			"CDN_PORT":                     strings.TrimSuffix(runtimeCDNPort, "/tcp"),
-			"S3_ENDPOINT":                  s3EndpointForContainer,
-			"S3_REGION":                    s.S3Region,
-			"S3_ACCESS_KEY_ID":             s.S3AccessKeyID,
-			"S3_SECRET_ACCESS_KEY":         s.S3SecretAccessKey,
-			"S3_CACHE_BUCKET":              s.S3CacheBucket,
-			"S3_MEDIA_BUCKET":              s.S3MediaBucket,
-			"S3_RELEASE_BUCKET":            s.S3MediaBucket,
-			"S3_RELEASE_ACCESS_KEY_ID":     s.S3AccessKeyID,
-			"S3_RELEASE_SECRET_ACCESS_KEY": s.S3SecretAccessKey,
-			"S3_FORCE_PATH_STYLE":          "true",
-			"CDN_FONT_S3_PREFIX":           "fonts/",
-			"CDN_FONT_UPSTREAM_URL":        "https://fonts.gstatic.com",
-			"CDN_FONT_CSS_UPSTREAM":        "https://fonts.googleapis.com",
-			"CDN_FONT_CACHE_MAX_AGE":       "31536000",
-			"CDN_PUBLIC_URL":               s.CDNURL,
-			"CDN_IMGPROXY_URL":             imgproxyURLForContainer,
-			"IMGPROXY_KEY":                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-			"IMGPROXY_SALT":                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-			"CDN_IMAGE_CACHE_MAX_AGE":      "31536000",
-			"CDN_MEDIA_CACHE_MAX_AGE":      "86400",
-			"MEDIA_SIGNING_SECRET":         s.MediaSigningSecret,
-			"CDN_ALLOWED_ORIGINS":          s.WebURL,
-			"OTEL_SDK_DISABLED":            "true",
-		}),
-		testcontainers.WithWaitStrategy(
-			wait.ForHTTP("/health").WithPort(runtimeCDNPort).WithStartupTimeout(2 * time.Minute),
-		),
-	}
-	cdnOptions = append(cdnOptions, hostAccessOptions...)
-
-	container, err := testcontainers.Run(ctx, cdnImage, cdnOptions...)
-	require.NoError(t, err)
-	registerIntegrationCleanup(t, "cdn container", func() error {
-		return runBackendIntegrationBoundedCleanup(func(ctx context.Context) error {
-			return container.Terminate(ctx)
-		})
-	})
-	s.cdnContainer = container
-	s.warmCDNImageProxy(t)
-}
+func (s *RuntimeStack) StartCDN(t *testing.T) { s.StartBackend(t); s.warmCDNImageProxy(t) }
 
 func (s *RuntimeStack) warmCDNImageProxy(t *testing.T) {
 	t.Helper()
@@ -849,46 +789,7 @@ func (s *RuntimeStack) runtimeS3Client(t *testing.T) *s3.Client {
 	})
 }
 
-func (s *RuntimeStack) StartTranscoder(t *testing.T) {
-	t.Helper()
-	if s.transcoderProc != nil {
-		return
-	}
-
-	port := reserveLocalPort(t)
-	s.TranscoderURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	tempDir := filepath.Join(integrationTempDir(t, "transcoder"), "transcoder")
-	require.NoError(t, os.MkdirAll(tempDir, 0o755))
-	s.transcoderProc = startRuntimeProcess(t, runtimeProcessSpec{
-		Name:      "transcoder",
-		Workdir:   appIntegrationRepoPath("../../../../apps/transcoder"),
-		Command:   "go",
-		Args:      []string{"run", "./cmd/transcoder"},
-		HealthURL: s.TranscoderURL + "/health",
-		Env: map[string]string{
-			"PORT":                    fmt.Sprintf("%d", port),
-			"S3_MEDIA_BUCKET":         s.S3MediaBucket,
-			"S3_REGION":               s.S3Region,
-			"S3_ENDPOINT":             s.S3Endpoint,
-			"S3_ACCESS_KEY_ID":        s.S3AccessKeyID,
-			"S3_SECRET_ACCESS_KEY":    s.S3SecretAccessKey,
-			"S3_FORCE_PATH_STYLE":     "true",
-			"DATABASE_DSN":            s.PostgresDSN,
-			"FFMPEG_PATH":             "ffmpeg",
-			"FFPROBE_PATH":            "ffprobe",
-			"FFMPEG_TEMP_DIR":         tempDir,
-			"WORKER_COUNT":            "1",
-			"JOB_TIMEOUT_MINUTES":     "10",
-			"AUDIO_HLS_BITRATE":       "128k",
-			"MAX_RETRIES":             "2",
-			"PREFETCH_COUNT":          "1",
-			"WAVEFORM_WORKER_COUNT":   "1",
-			"WAVEFORM_PREFETCH_COUNT": "1",
-			"LOG_LEVEL":               "info",
-			"INSTANCE_ID":             "integration-transcoder",
-		},
-	})
-}
+func (s *RuntimeStack) StartTranscoder(t *testing.T) { s.StartBackend(t) }
 
 func (s *RuntimeStack) StartWaveformProcessor(t *testing.T) {
 	s.StartWaveformProcessorWithFFmpeg(t, "ffmpeg")
@@ -896,43 +797,10 @@ func (s *RuntimeStack) StartWaveformProcessor(t *testing.T) {
 
 func (s *RuntimeStack) StartWaveformProcessorWithFFmpeg(t *testing.T, ffmpegPath string) {
 	t.Helper()
-	if s.waveformProc != nil {
-		return
+	if ffmpegPath != "ffmpeg" {
+		require.Equal(t, s.waveformFFmpegPath, ffmpegPath, "waveform fault must be selected before API startup")
 	}
-
-	port := reserveLocalPort(t)
-	s.WaveformURL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	tempDir := filepath.Join(integrationTempDir(t, "waveform"), "waveform")
-	require.NoError(t, os.MkdirAll(tempDir, 0o755))
-	s.waveformProc = startRuntimeProcess(t, runtimeProcessSpec{
-		Name:      "waveform-processor",
-		Workdir:   appIntegrationRepoPath("../../../../apps/transcoder"),
-		Command:   "go",
-		Args:      []string{"run", "./cmd/waveform-processor"},
-		HealthURL: s.WaveformURL + "/health",
-		Env: map[string]string{
-			"PORT":                    fmt.Sprintf("%d", port),
-			"S3_MEDIA_BUCKET":         s.S3MediaBucket,
-			"S3_REGION":               s.S3Region,
-			"S3_ENDPOINT":             s.S3Endpoint,
-			"S3_ACCESS_KEY_ID":        s.S3AccessKeyID,
-			"S3_SECRET_ACCESS_KEY":    s.S3SecretAccessKey,
-			"S3_FORCE_PATH_STYLE":     "true",
-			"DATABASE_DSN":            s.PostgresDSN,
-			"FFMPEG_PATH":             ffmpegPath,
-			"FFPROBE_PATH":            "ffprobe",
-			"FFMPEG_TEMP_DIR":         tempDir,
-			"WORKER_COUNT":            "1",
-			"JOB_TIMEOUT_MINUTES":     "10",
-			"AUDIO_HLS_BITRATE":       "128k",
-			"MAX_RETRIES":             "2",
-			"PREFETCH_COUNT":          "1",
-			"WAVEFORM_WORKER_COUNT":   "1",
-			"WAVEFORM_PREFETCH_COUNT": "1",
-			"LOG_LEVEL":               "info",
-			"INSTANCE_ID":             "integration-waveform",
-		},
-	})
+	s.StartBackend(t)
 }
 
 func (s *RuntimeStack) StartAllNonWebProcesses(t *testing.T) {
@@ -1301,17 +1169,6 @@ func (s *RuntimeStack) DumpProcessLogs(t *testing.T) {
 		}
 	}
 
-	if s.imgproxyContainer != nil {
-		logText := strings.TrimSpace(strings.TrimPrefix(backendIntegrationContainerLogs(context.Background(), s.imgproxyContainer), ": "))
-		if logText != "" {
-			if focused := runtimeFocusedLogLines(logText, runtimeFocusedLogTerms, runtimeFocusedLogLineLimit); focused != "" {
-				t.Logf("[imgproxy focused log]\n%s", focused)
-			}
-			if tail := runtimeTailLogLines(logText, runtimeTailLogLineLimit); tail != "" {
-				t.Logf("[imgproxy log tail: last %d lines]\n%s", runtimeTailLogLineLimit, tail)
-			}
-		}
-	}
 }
 
 func waitForRuntimeHealth(t *testing.T, process *runtimeProcess) {

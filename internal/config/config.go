@@ -14,8 +14,9 @@ import (
 )
 
 type Config struct {
-	Port           int `envconfig:"PORT" required:"true"`
-	MCPPrivatePort int `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
+	Media          MediaConfig `envconfig:""`
+	Port           int         `envconfig:"PORT" required:"true"`
+	MCPPrivatePort int         `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
 
 	AuthHeaderName            string `envconfig:"AUTH_HEADER_NAME" required:"true"`
 	InternalServiceHeaderName string `envconfig:"INTERNAL_SERVICE_HEADER_NAME" required:"true"`
@@ -81,6 +82,10 @@ func Load() (*Config, error) {
 	}
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.Media.validate(cfg.Port, cfg.MCPPrivatePort); err != nil {
 		return nil, err
 	}
 

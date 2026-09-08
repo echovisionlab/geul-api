@@ -911,10 +911,6 @@ func requestMultipartPartPresign(
 	return payload
 }
 
-type fileIngestSignalReceiver struct {
-	conn *pgx.Conn
-}
-
 func newFileIngestSignalReceiver(t *testing.T, dsn string) *fileIngestSignalReceiver {
 	t.Helper()
 

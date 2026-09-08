@@ -7,6 +7,6 @@ import (
 	"fmt"
 )
 
-func startSuiteBackend(context.Context, string, string) (*suiteBackend, error) {
+func startSuiteBackend(context.Context, string) (*suiteBackend, error) {
 	return nil, fmt.Errorf("integration suite backend requires the integration build tag")
 }
