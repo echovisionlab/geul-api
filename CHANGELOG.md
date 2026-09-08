@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/echovisionlab/geul-api/compare/v0.2.2...v0.3.0) (2026-09-08)
+
+
+### Features
+
+* **content:** render Mermaid blocks and remove fixed site branding ([#18](https://github.com/echovisionlab/geul-api/issues/18)) ([21a3d1f](https://github.com/echovisionlab/geul-api/commit/21a3d1fe71988d92b7b4cc09c0d33370256eb8e1))
+
 ## [0.2.2](https://github.com/echovisionlab/geul-api/compare/v0.2.1...v0.2.2) (2026-09-08)
 
 
