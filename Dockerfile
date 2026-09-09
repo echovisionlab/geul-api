@@ -17,7 +17,7 @@ COPY . .
 # Build single production binary (includes API, worker, scheduler).
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o backend ./cmd/server
 
-FROM docker.io/library/node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS og-builder
+FROM docker.io/library/node:26.8.1-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS og-builder
 WORKDIR /app/media/og
 RUN npm install --global pnpm@11.22.0
 COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml ./
@@ -25,13 +25,13 @@ RUN pnpm install --frozen-lockfile
 COPY media/og/ ./
 RUN pnpm typecheck && pnpm build && pnpm prune --prod
 
-FROM docker.io/library/node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS mesh-builder
+FROM docker.io/library/node:26.8.1-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS mesh-builder
 WORKDIR /app/media/asset-optimizer
 COPY media/asset-optimizer/package.json media/asset-optimizer/package-lock.json ./
 RUN npm ci --omit=dev
 
 # A single API image owns delivery, durable consumers and native tools.
-FROM docker.io/library/node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+FROM docker.io/library/node:26.8.1-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3
 
 RUN apk add --no-cache su-exec ca-certificates imagemagick rsvg-convert tzdata ffmpeg mesa-va-gallium font-noto-arabic font-noto-thai
 
