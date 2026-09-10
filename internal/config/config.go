@@ -14,9 +14,10 @@ import (
 )
 
 type Config struct {
-	Media          MediaConfig `envconfig:""`
-	Port           int         `envconfig:"PORT" required:"true"`
-	MCPPrivatePort int         `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
+	OpenDiscogsGatewaySecret string      `envconfig:"OPENDISCOGS_GATEWAY_SECRET"`
+	Media                    MediaConfig `envconfig:""`
+	Port                     int         `envconfig:"PORT" required:"true"`
+	MCPPrivatePort           int         `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
 
 	AuthHeaderName            string `envconfig:"AUTH_HEADER_NAME" required:"true"`
 	InternalServiceHeaderName string `envconfig:"INTERNAL_SERVICE_HEADER_NAME" required:"true"`

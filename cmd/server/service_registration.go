@@ -339,6 +339,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
+	if err := registerOpenDiscogsAuthentication(mux, cfg.OpenDiscogsGatewaySecret, personalAccessTokenHandlers.tokens); err != nil {
+		return registeredServices{}, fmt.Errorf("initialize OpenDiscogs authentication: %w", err)
+	}
 	accountService := personalAccessTokenHandlers.accountHandler
 	mcpAuthorAdmissionHandler, err := authentication.NewMCPGatewayAuthorAdmissionHandler(
 		cfg.TokenSigningSecret,
