@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kelseyhightower/envconfig"
@@ -41,10 +40,6 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	if _, ok := os.LookupEnv("TOKEN_SIGNING_SECRET"); ok {
-		return nil, fmt.Errorf("TOKEN_SIGNING_SECRET is no longer supported; use MEDIA_SIGNING_SECRET")
-	}
-
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, err
