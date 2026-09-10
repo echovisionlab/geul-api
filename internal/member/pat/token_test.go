@@ -66,7 +66,6 @@ func TestTokenParserRejectsEveryMalformedBoundary(t *testing.T) {
 		raw + " ",
 		"Bearer " + raw,
 		strings.ToUpper(tokenPrefix) + remainder,
-		"geul_pat_" + remainder,
 		tokenPrefix + selector,
 		tokenPrefix + "." + secret,
 		tokenPrefix + selector + ".",

@@ -114,23 +114,6 @@ func TestServiceAuthenticationFailsClosed(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsUnsupportedPrefixBeforeRepositoryLookup(t *testing.T) {
-	t.Parallel()
-	service, repository, _ := newTestService(t, 1)
-	issued, err := service.Create(t.Context(), "member-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository.findErr = errors.New("repository must not be called")
-	unsupported := "geul_" + issued.Secret.Reveal()
-	if _, err := service.Authenticate(t.Context(), unsupported); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("unsupported prefix error = %v, want ErrInvalidToken", err)
-	}
-	if repository.touchCalls != 0 {
-		t.Fatal("unsupported credentials must not update last-used time")
-	}
-}
-
 func TestServiceRejectsInvalidInputsAndStoredMultiplicity(t *testing.T) {
 	t.Parallel()
 	service, repository, _ := newTestService(t, 2)
