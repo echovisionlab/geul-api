@@ -99,3 +99,30 @@ values. Display names and repository-owned branding use Geul.
 ## License
 
 PolyForm Noncommercial License 1.0.0. See [LICENSE](LICENSE).
+
+## OpenDiscogs gateway authentication
+
+Set the optional secret `OPENDISCOGS_GATEWAY_SECRET` (32–256 bytes) to enable
+`POST /internal/opendiscogs/authenticate` on the main listener. An unset secret
+leaves the route unregistered. This dedicated gateway secret is independent of
+internal RPC, session, OAuth and media signing secrets. Do not expose the route
+through the public Oathkeeper RPC policy.
+
+The trusted gateway authenticates using HTTP Basic (`opendiscogs` and the
+gateway secret), sends the Member personal access token in `X-API-Key`, and
+sends an empty body with no query parameters. The API calls the existing
+Member PAT service on every request, including before a catalogue cache hit.
+Regeneration and deletion therefore invalidate the previous bearer immediately
+for subsequent checks. A successful response is `200 {"member_id":"..."}`;
+invalid credentials return 401, invalid transport 400, saturation 429 with
+`Retry-After: 1`, and dependency failures 503. All responses use `no-store`.
+There are at most eight concurrent verification calls, each with a two-second
+deadline. No raw bearer, verifier, or incoming identity header is returned or
+logged. This boundary only admits monthly public dump reads; it grants no MCP,
+content-write, or administrative permission.
+
+The edge accepts `Authorization: Bearer <Member PAT>`, applies IP and member
+request limits, verifies the credential before consulting its catalogue cache,
+and uses a separate origin-only credential. Direct origin access must also
+require that gateway credential. Never cache authentication decisions or make
+shared HTTP caches eligible for the externally returned authenticated response.
