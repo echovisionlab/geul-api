@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/httpadmission"
 	"log/slog"
 	"net"
 	"net/http"
@@ -200,7 +201,7 @@ func newApplicationHTTPServer(mux *http.ServeMux, cfg *config.Config) *http.Serv
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Connect-Protocol-Version", "MCP-Protocol-Version"},
-		ExposedHeaders:   []string{"Grpc-Status", "Grpc-Message", "Retry-After", telemetry.RequestIDHeader},
+		ExposedHeaders:   []string{"Grpc-Status", "Grpc-Message", httpadmission.RetryAfter, httpadmission.Challenge, httpadmission.RateLimit, httpadmission.RateLimitPolicy, "Link", telemetry.RequestIDHeader},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})

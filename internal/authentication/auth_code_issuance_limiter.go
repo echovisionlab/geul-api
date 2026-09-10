@@ -43,6 +43,7 @@ type AuthCodeIssuanceRequest struct {
 type AuthCodeIssuanceReservation struct {
 	token    string
 	issuedAt time.Time
+	quota    authCodeQuota
 }
 
 // IssuanceID returns the opaque reservation identifier used to bind the
@@ -51,6 +52,12 @@ func (r AuthCodeIssuanceReservation) IssuanceID() string { return r.token }
 
 // IssuedAt returns the exact issuance instant used for courier expiry.
 func (r AuthCodeIssuanceReservation) IssuedAt() time.Time { return r.issuedAt }
+
+type authCodeQuota struct {
+	limit         int64
+	remaining     int64
+	windowSeconds int64
+}
 
 type authCodeIssuanceBudget struct {
 	limit  int
@@ -140,9 +147,16 @@ func (l *AuthCodeIssuanceLimiter) Reserve(
 			return err
 		}
 		for _, budget := range budgets {
-			candidate, err := authCodeIssuanceRetryAfter(tx, budget, now)
+			candidate, count, err := authCodeIssuanceRetryAfter(tx, budget, now)
 			if err != nil {
 				return err
+			}
+			if budget.column == "client_ip_digest" {
+				reservation.quota = authCodeQuota{
+					limit:         int64(budget.limit),
+					remaining:     max(0, int64(budget.limit)-count),
+					windowSeconds: int64(budget.window / time.Second),
+				}
 			}
 			if candidate > retryAfter {
 				retryAfter = candidate
@@ -166,6 +180,7 @@ func (l *AuthCodeIssuanceLimiter) Reserve(
 		).Error; err != nil {
 			return err
 		}
+		reservation.quota.remaining = max(0, reservation.quota.remaining-1)
 		allowed = true
 		return nil
 	})
@@ -173,7 +188,7 @@ func (l *AuthCodeIssuanceLimiter) Reserve(
 		return AuthCodeIssuanceReservation{}, false, 0, fmt.Errorf("reserve auth code issuance: %w", err)
 	}
 	if !allowed {
-		return AuthCodeIssuanceReservation{}, false, retryAfter, nil
+		return AuthCodeIssuanceReservation{quota: reservation.quota}, false, retryAfter, nil
 	}
 	return reservation, true, 0, nil
 }
@@ -217,7 +232,7 @@ func authCodeIssuanceRetryAfter(
 	tx *gorm.DB,
 	budget authCodeIssuanceBudget,
 	now time.Time,
-) (time.Duration, error) {
+) (time.Duration, int64, error) {
 	query := "SELECT count(*), min(issued_at) FROM public.auth_code_issuance WHERE issued_at > ?"
 	args := []any{now.Add(-budget.window)}
 	if budget.column != "" {
@@ -227,19 +242,19 @@ func authCodeIssuanceRetryAfter(
 	var count int64
 	var first sql.NullTime
 	if err := tx.Raw(query, args...).Row().Scan(&count, &first); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if count < int64(budget.limit) {
-		return 0, nil
+		return 0, count, nil
 	}
 	if !first.Valid {
-		return budget.window, nil
+		return budget.window, count, nil
 	}
 	retryAfter := budget.window - now.Sub(first.Time.UTC())
 	if retryAfter <= 0 {
-		return time.Microsecond, nil
+		return time.Microsecond, count, nil
 	}
-	return retryAfter, nil
+	return retryAfter, count, nil
 }
 
 func (l *AuthCodeIssuanceLimiter) Release(

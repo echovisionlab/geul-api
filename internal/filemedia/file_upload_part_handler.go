@@ -693,7 +693,7 @@ func (s *FileService) loadMultipartUploadPartRequest(
 	}
 	gatewayIdentity, ok := auth.GatewayIdentityFromContext(r.Context())
 	if !ok {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
+		http.Error(w, "authentication required: sign in through the site login page and send the session cookie", http.StatusUnauthorized)
 		return request, false
 	}
 	fileID := r.URL.Query().Get("fileId")

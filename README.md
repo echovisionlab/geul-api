@@ -119,8 +119,29 @@ credential's current Member identity; the consuming service owns resource
 authorization, quotas, rate limits and cache policy. No product-specific
 permission or MCP authorization is granted by this endpoint.
 
-Invalid credentials return 401, invalid transport 400, saturation 429 with
+Invalid credentials return 401, invalid transport 400, saturation 503 with
 `Retry-After: 1`, and dependency failures 503. All responses use `no-store`.
 At most eight verification calls run concurrently, each with a two-second
 deadline. Raw bearers, verifiers and incoming identity headers are neither
 returned nor logged. Do not cache verification responses.
+
+### HTTP admission responses
+
+Quota rejection uses 429 with `Retry-After` in whole seconds. Server concurrency
+saturation uses 503 with `Retry-After`; it is not a Member usage quota. The trusted
+PAT verifier challenges gateway credentials with HTTP Basic; public consumers
+own their Bearer challenges and authorization policies.
+
+The login-code reservation transaction supplies `RateLimit-Policy` and
+`RateLimit` (IETF draft-ietf-httpapi-ratelimit-headers-11, not a published RFC).
+`auth-code-ip` counts outstanding reservations for the normalized caller IP over
+600 seconds. `r` is available reservations after this request; `t=600` is the
+effective rolling window, not an absolute reset timestamp. Failed delivery may
+release a reservation after the response snapshot. Cooldown, address and global
+budgets also apply; their activity counters are private. `Retry-After` is the
+maximum wait across rejected budgets and takes precedence over `t`.
+
+Unified authentication responses preserve admission headers, and browser CORS
+exposes them. OAuth, Connect and Kratos error payloads retain their existing
+protocol contracts. Cookie-session routes do not accept PATs and must not
+advertise Bearer authentication merely to share a response format.

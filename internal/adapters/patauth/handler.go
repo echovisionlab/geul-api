@@ -62,6 +62,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	username, password, ok := request.BasicAuth()
 	candidate := sha256.Sum256([]byte(password))
 	if !ok || len(request.Header.Values("Authorization")) != 1 || username != GatewayUsername || subtle.ConstantTimeCompare(candidate[:], handler.secretHash[:]) != 1 {
+		writer.Header().Set("WWW-Authenticate", `Basic realm="PAT verification", charset="UTF-8"`)
 		writer.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -79,7 +80,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		defer func() { <-handler.slots }()
 	default:
 		writer.Header().Set("Retry-After", "1")
-		writer.WriteHeader(http.StatusTooManyRequests)
+		writer.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), authenticationTimeout)

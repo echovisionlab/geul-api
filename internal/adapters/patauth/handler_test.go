@@ -149,7 +149,7 @@ func TestSaturationAndCancellation(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, authenticatedRequest())
-	if w.Code != 429 || w.Header().Get("Retry-After") != "1" {
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
 		t.Fatalf("saturation status %d", w.Code)
 	}
 	cancel()
@@ -157,4 +157,22 @@ func TestSaturationAndCancellation(t *testing.T) {
 	if len(h.slots) != 0 {
 		t.Error("slot leak")
 	}
+}
+
+func TestGatewayAuthenticationChallenge(t *testing.T) {
+	h, err := New(strings.Repeat("x", 32), fakeChallengeAuthenticator{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, Path, nil))
+	if w.Code != http.StatusUnauthorized || w.Header().Get("WWW-Authenticate") != `Basic realm="PAT verification", charset="UTF-8"` {
+		t.Fatalf("status=%d headers=%v", w.Code, w.Header())
+	}
+}
+
+type fakeChallengeAuthenticator struct{}
+
+func (fakeChallengeAuthenticator) Authenticate(context.Context, string) (pat.Principal, error) {
+	panic("must not authenticate without gateway credentials")
 }
