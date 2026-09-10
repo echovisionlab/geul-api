@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/echovisionlab/geul-api/compare/v0.4.0...v0.4.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **auth:** keep PAT verification independent of consuming services ([80cb857](https://github.com/echovisionlab/geul-api/commit/80cb85736e3683b341432c198abbe929c1cfce3a))
+* **auth:** make PAT verification independent of consuming services ([36a37e3](https://github.com/echovisionlab/geul-api/commit/36a37e30a3990e41c6dc082bf1e80aafe9548723))
+
 ## [0.4.0](https://github.com/echovisionlab/geul-api/compare/v0.3.0...v0.4.0) (2026-09-10)
 
 
