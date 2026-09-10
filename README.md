@@ -102,12 +102,10 @@ PolyForm Noncommercial License 1.0.0. See [LICENSE](LICENSE).
 
 ## Internal personal access token verification
 
-New and regenerated personal access tokens use `pat_<selector>.<secret>`.
-Previously issued `geul_pat_` credentials remain accepted as compatibility
-aliases. Replacing only their leading `geul_pat_` with `pat_` preserves the same
-credential; it does not rotate the secret. Both spellings share the stored
-selector/SHA-256 verifier and are invalidated together by regeneration or
-deletion. No database table, column or stored verifier migration is required.
+Personal access tokens use only `pat_<selector>.<secret>` for issuance,
+regeneration and verification. Other prefixes, including `geul_pat_`, are
+rejected before repository lookup. The database stores the selector and SHA-256
+secret verifier, so this prefix change requires no database migration.
 
 Set the optional `PAT_VERIFICATION_SECRET` (32–256 bytes) to enable
 `POST /internal/auth/personal-access-token/verify` on the main listener. An
