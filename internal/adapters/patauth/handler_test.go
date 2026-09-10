@@ -1,4 +1,4 @@
-package opendiscogsauth
+package patauth
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member/pat"
 )
 
-const testSecret = "gateway-secret-for-opendiscogs-tests-only"
+const testSecret = "gateway-secret-for-pat-tests-only"
 
 type authenticateFunc func(context.Context, string) (pat.Principal, error)
 
