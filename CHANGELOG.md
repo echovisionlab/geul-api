@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/echovisionlab/geul-api/compare/v0.5.2...v0.5.3) (2026-09-10)
+
+
+### Bug Fixes
+
+* remove obsolete media setting guard and contract checks ([#32](https://github.com/echovisionlab/geul-api/issues/32)) ([8236e1a](https://github.com/echovisionlab/geul-api/commit/8236e1a22793edc675489a1a2a27d40c9b449980))
+
 ## [0.5.2](https://github.com/echovisionlab/geul-api/compare/v0.5.1...v0.5.2) (2026-09-10)
 
 
