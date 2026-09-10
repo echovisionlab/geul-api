@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/echovisionlab/geul-api/compare/v0.3.0...v0.4.0) (2026-09-10)
+
+
+### Features
+
+* **auth:** verify Member API keys for the OpenDiscogs gateway ([f58cb7c](https://github.com/echovisionlab/geul-api/commit/f58cb7cf223d092199478cad5304f8d8588ed69f))
+* **auth:** verify Member API keys for the OpenDiscogs gateway ([1d3d828](https://github.com/echovisionlab/geul-api/commit/1d3d8285f7a61a0573934f56cf62a1dc14d2d191))
+
 ## [0.3.0](https://github.com/echovisionlab/geul-api/compare/v0.2.2...v0.3.0) (2026-09-08)
 
 
