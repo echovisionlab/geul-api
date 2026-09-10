@@ -11,7 +11,9 @@ import (
 )
 
 const (
-	tokenPrefix        = "geul_pat_"
+	tokenPrefix = "pat_"
+	// Accept previously issued credentials without changing their stored verifier.
+	legacyTokenPrefix  = "geul_pat_"
 	tokenSelectorBytes = 16
 	tokenSecretBytes   = 32
 )
@@ -101,6 +103,9 @@ func generateCredentialForID(tokenID TokenID, random io.Reader) (generatedCreden
 
 func parseToken(raw string) (TokenID, Verifier, error) {
 	remainder, ok := strings.CutPrefix(raw, tokenPrefix)
+	if !ok {
+		remainder, ok = strings.CutPrefix(raw, legacyTokenPrefix)
+	}
 	if !ok {
 		return "", Verifier{}, ErrInvalidToken
 	}

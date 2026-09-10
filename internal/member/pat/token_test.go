@@ -20,8 +20,8 @@ func TestGeneratedTokenRoundTripsToOneWayVerifier(t *testing.T) {
 		t.Fatalf("generateCredential() error = %v", err)
 	}
 	raw := credential.secret.Reveal()
-	if !strings.HasPrefix(raw, tokenPrefix) {
-		t.Fatalf("token = %q, want prefix %q", raw, tokenPrefix)
+	if !strings.HasPrefix(raw, "pat_") {
+		t.Fatal("new credentials must use the public pat_ prefix")
 	}
 
 	parsedID, candidate, err := parseToken(raw)
@@ -66,6 +66,9 @@ func TestTokenParserRejectsEveryMalformedBoundary(t *testing.T) {
 		raw + " ",
 		"Bearer " + raw,
 		strings.ToUpper(tokenPrefix) + remainder,
+		strings.ToUpper(legacyTokenPrefix) + remainder,
+		"geul_" + legacyTokenPrefix + remainder,
+		legacyTokenPrefix + selector + "." + secret + ".extra",
 		tokenPrefix + selector,
 		tokenPrefix + "." + secret,
 		tokenPrefix + selector + ".",
@@ -104,6 +107,17 @@ func TestTokenGenerationRejectsShortRandomSources(t *testing.T) {
 				t.Fatalf("failed generation returned credential material: %#v", credential)
 			}
 		})
+	}
+}
+
+func TestTokenRegenerationRejectsInvalidSelector(t *testing.T) {
+	t.Parallel()
+	credential, err := generateCredentialForID(TokenID("invalid"), errorReader{})
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatal("invalid selectors must fail before reading entropy")
+	}
+	if credential.id != "" || credential.secret.Reveal() != "" || credential.verifier.valid() {
+		t.Fatal("invalid selectors must not produce credential material")
 	}
 }
 
