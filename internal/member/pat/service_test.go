@@ -108,6 +108,48 @@ func TestServiceAuthenticationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTokenPrefixAliasesShareIdentityRegenerationAndRevocation(t *testing.T) {
+	t.Parallel()
+	service, repository, _ := newTestService(t, 2)
+	issued, err := service.Create(t.Context(), "member-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := issued.Secret.Reveal()
+	legacy := legacyTokenPrefix + strings.TrimPrefix(current, tokenPrefix)
+	for _, raw := range []string{current, legacy} {
+		principal, err := service.Authenticate(t.Context(), raw)
+		if err != nil || principal.MemberID != "member-1" || principal.TokenID != issued.Metadata.ID {
+			t.Fatal("prefix aliases must authenticate the same stored credential")
+		}
+	}
+	if len(repository.records) != 1 {
+		t.Fatal("a prefix alias must not create a second credential")
+	}
+	replacement, err := service.Regenerate(t.Context(), "member-1", issued.Metadata.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(replacement.Secret.Reveal(), "pat_") {
+		t.Fatal("regeneration must issue the public pat_ prefix")
+	}
+	for _, raw := range []string{current, legacy} {
+		if _, err := service.Authenticate(t.Context(), raw); !errors.Is(err, ErrInvalidToken) {
+			t.Fatal("regeneration must invalidate both spellings of the old credential")
+		}
+	}
+	current = replacement.Secret.Reveal()
+	legacy = legacyTokenPrefix + strings.TrimPrefix(current, tokenPrefix)
+	if err := service.Delete(t.Context(), "member-1", issued.Metadata.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{current, legacy} {
+		if _, err := service.Authenticate(t.Context(), raw); !errors.Is(err, ErrInvalidToken) {
+			t.Fatal("deletion must invalidate both token spellings")
+		}
+	}
+}
+
 func TestServiceRejectsInvalidInputsAndStoredMultiplicity(t *testing.T) {
 	t.Parallel()
 	service, repository, _ := newTestService(t, 2)
