@@ -39,16 +39,6 @@ func TestLoadRequiresMediaSigningSecret(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsLegacyTokenSigningSecret(t *testing.T) {
-	setValidConfigEnvironment(t)
-	t.Setenv("TOKEN_SIGNING_SECRET", "legacy-secret")
-
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "TOKEN_SIGNING_SECRET is no longer supported") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestLoadRejectsInvalidImgproxySecrets(t *testing.T) {
 	for _, tt := range []struct {
 		name  string

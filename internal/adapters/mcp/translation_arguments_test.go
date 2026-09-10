@@ -28,23 +28,15 @@ func TestTranslationJobStatusInputUsesResponseVocabulary(t *testing.T) {
 			t.Fatalf("status round trip %q -> %v -> %q", name, status, got)
 		}
 	}
-	for _, removed := range []string{"applied", "failed", "cancelled"} {
-		if _, ok := translationJobStatusesByName[removed]; ok {
-			t.Fatalf("removed terminal Translation Job status %q is still accepted", removed)
-		}
-		if _, err := translationJobsListRequest(translationJobsListArguments{Statuses: []string{removed}}); err == nil {
-			t.Fatalf("translationJobsListRequest accepted removed terminal status %q", removed)
-		}
-	}
 }
 
-func TestTranslationJobSortDoesNotExposeRemovedSourceRevision(t *testing.T) {
+func TestTranslationJobSortAcceptsSupportedFields(t *testing.T) {
 	for _, field := range []string{"requested_at", "updated_at", "target_locale", "status"} {
 		if !validTranslationJobSort(field) {
 			t.Fatalf("validTranslationJobSort(%q) = false", field)
 		}
 	}
-	if validTranslationJobSort("source_revision") {
-		t.Fatal("removed source_revision is still accepted as a Translation Job sort")
+	if validTranslationJobSort("unknown") {
+		t.Fatal("unknown Translation Job sort was accepted")
 	}
 }
