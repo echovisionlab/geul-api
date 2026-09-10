@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/echovisionlab/geul-api/compare/v0.4.1...v0.5.0) (2026-09-10)
+
+
+### Features
+
+* **http:** standardize authentication and quota response metadata ([#26](https://github.com/echovisionlab/geul-api/issues/26)) ([5749567](https://github.com/echovisionlab/geul-api/commit/57495676f2876ee3b586d7f99e9872bb606a3e72))
+
 ## [0.4.1](https://github.com/echovisionlab/geul-api/compare/v0.4.0...v0.4.1) (2026-09-10)
 
 
