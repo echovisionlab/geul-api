@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/echovisionlab/geul-api/compare/v0.5.0...v0.5.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* issue personal access tokens with neutral prefix ([#28](https://github.com/echovisionlab/geul-api/issues/28)) ([9b2c840](https://github.com/echovisionlab/geul-api/commit/9b2c8404f82d3eaf6905ea4da3524e1aeffcb2c0))
+
 ## [0.5.0](https://github.com/echovisionlab/geul-api/compare/v0.4.1...v0.5.0) (2026-09-10)
 
 
