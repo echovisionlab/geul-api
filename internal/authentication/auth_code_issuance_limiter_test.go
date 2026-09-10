@@ -5,6 +5,10 @@ package authentication
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -42,8 +46,12 @@ func TestAuthCodeIssuanceLimiterRejectsBeforeSecondIssuance(t *testing.T) {
 	require.True(t, allowed)
 	require.Zero(t, retryAfter)
 	require.NotEmpty(t, reservation.token)
+	require.Equal(t, int64(defaultAuthCodeIssuanceLimits().IPTenMinute-1), reservation.quota.remaining)
+	require.Equal(t, int64(600), reservation.quota.windowSeconds)
 
-	_, allowed, retryAfter, err = limiter.Reserve(context.Background(), request)
+	rejected, allowed, retryAfter, err := limiter.Reserve(context.Background(), request)
+	require.Equal(t, reservation.quota, rejected.quota)
+	require.Empty(t, rejected.token)
 	require.NoError(t, err)
 	require.False(t, allowed)
 	require.Equal(t, time.Minute, retryAfter)
@@ -361,4 +369,28 @@ func TestNewAuthCodeIssuanceLimiterRejectsInvalidConfiguration(t *testing.T) {
 	invalid := valid
 	invalid.IPTenMinute = 0
 	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(db, []byte("secret"), invalid) })
+}
+
+func TestAuthCodeAdmissionHeadersEndToEnd(t *testing.T) {
+	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"state":"sent_email"}`)
+	}))
+	defer upstream.Close()
+	proxy, err := NewKratosPublicProxy(upstream.URL, limiter, testAuthIssuanceProvenanceKey)
+	require.NoError(t, err)
+	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
+		request := httptest.NewRequest(http.MethodPost, "/self-service/login?flow=login-flow", strings.NewReader(`{"method":"code","identifier":"person@example.com"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, request)
+		require.Equal(t, status, response.Code, response.Body.String())
+		require.Equal(t, `"auth-code-ip";q=20;w=600`, response.Header().Get("RateLimit-Policy"))
+		require.Equal(t, `"auth-code-ip";r=19;t=600`, response.Header().Get("RateLimit"))
+		require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+		if status == http.StatusTooManyRequests {
+			require.NotEmpty(t, response.Header().Get("Retry-After"))
+		}
+	}
 }

@@ -122,6 +122,7 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
+	reservation.quota.write(w.Header())
 	if !allowed {
 		writeKratosProxyError(w, http.StatusTooManyRequests, "please wait before requesting another code", retryAfter)
 		return
