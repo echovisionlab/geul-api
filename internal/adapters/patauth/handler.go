@@ -1,6 +1,6 @@
-// Package opendiscogsauth exposes current Member PAT verification to the trusted
-// OpenDiscogs gateway. It grants only access to the public dump catalogue.
-package opendiscogsauth
+// Package patauth exposes current Member PAT verification to trusted callers.
+// It authenticates a credential; consumers own their authorization decisions.
+package patauth
 
 import (
 	"context"
@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	Path                    = "/internal/opendiscogs/authenticate"
-	GatewayUsername         = "opendiscogs"
+	Path                    = "/internal/auth/personal-access-token/verify"
+	GatewayUsername         = "pat-verifier"
 	APIKeyHeader            = "X-API-Key"
 	minimumSecretLength     = 32
 	maximumSecretLength     = 256
@@ -43,7 +43,7 @@ type principalResponse struct {
 
 func New(secret string, authenticator Authenticator) (*Handler, error) {
 	if len(secret) < minimumSecretLength || len(secret) > maximumSecretLength || authenticator == nil {
-		return nil, errors.New("OpenDiscogs authentication requires a 32–256 byte gateway secret and an authenticator")
+		return nil, errors.New("PAT verification requires a 32–256 byte gateway secret and an authenticator")
 	}
 	return &Handler{authenticator: authenticator, secretHash: sha256.Sum256([]byte(secret)), slots: make(chan struct{}, maximumConcurrentChecks)}, nil
 }
