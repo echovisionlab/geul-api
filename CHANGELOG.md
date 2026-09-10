@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/echovisionlab/geul-api/compare/v0.5.1...v0.5.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* accept only canonical personal access token prefix ([#30](https://github.com/echovisionlab/geul-api/issues/30)) ([7c966d4](https://github.com/echovisionlab/geul-api/commit/7c966d4e3e364043e0a3ff246e01664319c972f1))
+
 ## [0.5.1](https://github.com/echovisionlab/geul-api/compare/v0.5.0...v0.5.1) (2026-09-10)
 
 
