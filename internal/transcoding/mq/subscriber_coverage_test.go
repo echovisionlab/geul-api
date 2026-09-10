@@ -37,11 +37,11 @@ func newControlledSignalConnection() *controlledSignalConnection {
 }
 
 func (c *controlledSignalConnection) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	c.readyOnce.Do(func() { close(c.ready) })
 	return pgconn.CommandTag{}, nil
 }
 
 func (c *controlledSignalConnection) WaitForNotification(ctx context.Context) (*pgconn.Notification, error) {
+	c.readyOnce.Do(func() { close(c.ready) })
 	select {
 	case result := <-c.waits:
 		return result.notification, result.err
