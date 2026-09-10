@@ -83,6 +83,9 @@ func TestTransportAndAuthenticationFailures(t *testing.T) {
 			if w.Code != tc.want || called != tc.calls {
 				t.Fatalf("status %d calls %d, want %d/%d", w.Code, called, tc.want, tc.calls)
 			}
+			if tc.want == http.StatusUnauthorized && tc.calls == 0 && w.Header().Get("WWW-Authenticate") != `Basic realm="PAT verification", charset="UTF-8"` {
+				t.Error("missing gateway authentication challenge")
+			}
 			if w.Header().Get("Cache-Control") != "no-store" {
 				t.Error("cacheable auth response")
 			}
@@ -157,22 +160,4 @@ func TestSaturationAndCancellation(t *testing.T) {
 	if len(h.slots) != 0 {
 		t.Error("slot leak")
 	}
-}
-
-func TestGatewayAuthenticationChallenge(t *testing.T) {
-	h, err := New(strings.Repeat("x", 32), fakeChallengeAuthenticator{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, Path, nil))
-	if w.Code != http.StatusUnauthorized || w.Header().Get("WWW-Authenticate") != `Basic realm="PAT verification", charset="UTF-8"` {
-		t.Fatalf("status=%d headers=%v", w.Code, w.Header())
-	}
-}
-
-type fakeChallengeAuthenticator struct{}
-
-func (fakeChallengeAuthenticator) Authenticate(context.Context, string) (pat.Principal, error) {
-	panic("must not authenticate without gateway credentials")
 }

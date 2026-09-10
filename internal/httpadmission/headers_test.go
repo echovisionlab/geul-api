@@ -22,5 +22,4 @@ func TestCopy(t *testing.T) {
 			t.Fatal(dst)
 		}
 	}
-	Copy(http.Header{}, http.Header{})
 }
