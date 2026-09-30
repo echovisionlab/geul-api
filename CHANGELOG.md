@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/echovisionlab/geul-api/compare/v0.5.4...v0.5.5) (2026-09-30)
+
+
+### Bug Fixes
+
+* fence concurrent content mutations and durable worker delivery ([#42](https://github.com/echovisionlab/geul-api/issues/42)) ([b71fe5a](https://github.com/echovisionlab/geul-api/commit/b71fe5a0369c91f2fde470cf280a3d7a8e9d5a81))
+
 ## [0.5.4](https://github.com/echovisionlab/geul-api/compare/v0.5.3...v0.5.4) (2026-09-30)
 
 
