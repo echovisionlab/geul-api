@@ -28,6 +28,12 @@ The API uses the public Go modules
 `github.com/echovisionlab/geul-event-contracts` and
 `github.com/echovisionlab/geul-telemetry`.
 
+Page source-room batches may mutate shared block structure and explicit source
+locale values. Deleting a shared block removes its descendant blocks and their
+locale overlays atomically, including target translations. Target locales in
+the resulting `changed_locales` acknowledgement describe that cascade; only
+explicit locale mutations in the request determine source-room write authority.
+
 ## Included media services
 
 CDN delivery, audio/video transcoding, waveform generation, mesh optimization,

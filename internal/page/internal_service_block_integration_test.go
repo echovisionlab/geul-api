@@ -148,6 +148,26 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	require.Equal(t, *targetRevision, targetRoom.Msg.GetTargetRevision())
 	require.Equal(t, "Source paragraph", pageParagraphText(t, targetRoom.Msg.Document, richSectionID, paragraphID))
 	require.Empty(t, targetRoom.Msg.PresentLocaleValues, "source fallback must not become target presence")
+	targetWrite, err := internalService.ApplyPageBlockBatch(
+		withPageAuditedCollabRequestContext(t, ctx),
+		connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+			PageId: created.Msg.Id, Locale: "ko", ExpectedTargetRevision: targetRoom.Msg.TargetRevision,
+			Batch: &contentv1.PageSectionMutationBatch{
+				BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+				ExpectedRevision:        applied.Msg.DocumentRevision,
+				ContributorMemberIds:    []string{memberID},
+				LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{
+					Locale: "ko",
+					Mutations: []*contentv1.PageSectionLocaleMutation{
+						pageRichTextLocaleUpsert(richSectionID, paragraphID, "Translated paragraph"),
+					},
+				}},
+			},
+		}),
+	)
+	require.NoError(t, err)
+	require.True(t, targetWrite.Msg.Changed)
+	require.Equal(t, applied.Msg.DocumentRevision, targetWrite.Msg.DocumentRevision)
 	requirePageContentRows(
 		t,
 		db,
@@ -245,6 +265,37 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 		}),
 	)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	deleted, err := internalService.ApplyPageBlockBatch(
+		withPageAuditedCollabRequestContext(t, ctx),
+		connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+			PageId: created.Msg.Id, Locale: "en",
+			Batch: &contentv1.PageSectionMutationBatch{
+				BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+				ExpectedRevision:        moved.Msg.DocumentRevision,
+				ContributorMemberIds:    []string{memberID},
+				BaseMutations: []*contentv1.PageSectionMutation{{
+					Operation: &contentv1.PageSectionMutation_Delete{Delete: &contentv1.DeletePageSection{SectionId: columnsID}},
+				}},
+			},
+		}),
+	)
+	require.NoError(t, err, "source structure deletion must allow cascading target overlay removal")
+	require.True(t, deleted.Msg.Changed)
+	require.NotEqual(t, moved.Msg.DocumentRevision, deleted.Msg.DocumentRevision)
+	require.ElementsMatch(t, []string{"en", "ko"}, deleted.Msg.ChangedLocales)
+	for _, locale := range []string{"en", "ko"} {
+		reloaded, reloadErr := internalService.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
+			PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: locale,
+		}))
+		require.NoError(t, reloadErr)
+		require.Equal(t, deleted.Msg.DocumentRevision, reloaded.Msg.DocumentRevision)
+		require.Empty(t, reloaded.Msg.Document.Base.Nodes)
+		require.Empty(t, reloaded.Msg.PresentLocaleValues)
+	}
+	var remainingOverlays int64
+	require.NoError(t, db.Table("content_block_locale").Where("block_id IN ?", []string{columnsID, richSectionID, paragraphID}).Count(&remainingOverlays).Error)
+	require.Zero(t, remainingOverlays)
 }
 
 func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {

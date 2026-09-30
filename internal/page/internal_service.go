@@ -232,6 +232,9 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			if req.Msg.ExpectedTargetRevision != nil {
 				return errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 			}
+			if err := validatePageSourceLocaleMutations(req.Msg.PageId, domain.SourceLocale, batch.LocaleGroups); err != nil {
+				return err
+			}
 			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(req.Msg.PageId, locale, pageLockedTargetFence(documentID, domain)))
 		} else {
 			result, targetRevision, err = applyPageTargetLocaleBatch(
@@ -254,11 +257,6 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 				ctx, tx, s.auditWriter, contributorMemberID, req.Msg.PageId, locale,
 				sharedtelemetry.AuditItemOperationUpdated,
 			)
-		}
-		if err := ValidateSourceLocaleChanges(
-			ctx, tx, req.Msg.PageId, domain.SourceLocale, result.ChangedLocales,
-		); err != nil {
-			return err
 		}
 		if !result.Changed {
 			return nil
