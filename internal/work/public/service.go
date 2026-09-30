@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -148,58 +150,7 @@ func (s *WorkService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetWorkRequest],
 ) (*connect.Response[openv1.GetWorkResponse], error) {
-	slugOrID := req.Msg.Slug
-	shareToken := req.Msg.ShareToken
-	sharePassword := req.Msg.GetSharePassword()
-
-	var work model.Work
-	var err error
-
-	// UUID-first approach
-	if workdomain.IsValidUUID(slugOrID) {
-		err = s.db.WithContext(ctx).Preload("MapPlace").First(&work, "id = ?", slugOrID).Error
-	} else {
-		err = s.db.WithContext(ctx).Preload("MapPlace").First(&work, "slug = ?", slugOrID).Error
-	}
-
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("work not found")
-		}
-		return nil, errs.Internal(err)
-	}
-	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{
-		ResourceType: "work",
-		ResourceID:   work.ID,
-		Status:       work.Status,
-		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
-	}
-	// Check access for draft works
-	if !isPublicWorkStatus(work.Status) {
-		allowed, permissionErr := hasDraftWorkView(ctx, s.spiceDB, work.ID)
-		if permissionErr != nil {
-			return nil, errs.Internal(fmt.Errorf("check work draft view permission: %w", permissionErr))
-		}
-		if allowed {
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
-			if user := auth.GetUser(ctx); user != nil {
-				mediaAuthorization.IdentityID = user.IdentityID.String()
-				mediaAuthorization.MemberID = user.MemberID.String()
-			}
-		} else {
-			link, accessErr := requireDraftShareLinkAccess(
-				ctx, s.db, optionalStringValue(shareToken), sharePassword,
-				managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, work.ID, "work",
-			)
-			if accessErr != nil {
-				return nil, accessErr
-			}
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-			mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-		}
-	}
-
-	return s.buildWorkResponse(ctx, req.Header().Get("Accept-Language"), &work, mediaAuthorization)
+	return s.buildWorkResponse(ctx, req)
 }
 
 // List returns published and archived works.
@@ -335,18 +286,62 @@ func (s *WorkService) ListMapFeatures(
 // buildWorkResponse builds a GetWorkResponse with the work
 func (s *WorkService) buildWorkResponse(
 	ctx context.Context,
-	acceptLanguage string,
-	work *model.Work,
-	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
+	req *connect.Request[openv1.GetWorkRequest],
 ) (*connect.Response[openv1.GetWorkResponse], error) {
 	if s.blocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
+	work := &model.Work{}
+	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{}
 	var localization publiccontent.Selection
 	var document *contentv1.LocalizedRichTextDocument
 	var revision string
 	var blockMedia []*contentv1.ContentBlockMediaItem
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "SHARE"}).
+			Preload("MapPlace")
+		var loadErr error
+		if workdomain.IsValidUUID(req.Msg.Slug) {
+			loadErr = query.First(work, "id = ?", req.Msg.Slug).Error
+		} else {
+			loadErr = query.First(work, "slug = ?", req.Msg.Slug).Error
+		}
+		if loadErr != nil {
+			if errors.Is(loadErr, gorm.ErrRecordNotFound) {
+				return errs.NotFoundMsg("work not found")
+			}
+			return errs.Internal(loadErr)
+		}
+		mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
+			ResourceType: "work",
+			ResourceID:   work.ID,
+			Status:       work.Status,
+			Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
+		}
+		if !isPublicWorkStatus(work.Status) {
+			allowed, permissionErr := hasDraftWorkView(ctx, s.spiceDB, work.ID)
+			if permissionErr != nil {
+				return errs.Internal(fmt.Errorf("check work draft view permission: %w", permissionErr))
+			}
+			if allowed {
+				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
+				if user := auth.GetUser(ctx); user != nil {
+					mediaAuthorization.IdentityID = user.IdentityID.String()
+					mediaAuthorization.MemberID = user.MemberID.String()
+				}
+			} else {
+				link, accessErr := requireDraftShareLinkAccess(
+					ctx, tx, optionalStringValue(req.Msg.ShareToken), req.Msg.GetSharePassword(),
+					managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, work.ID, "work",
+				)
+				if accessErr != nil {
+					return accessErr
+				}
+				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
+				mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+			}
+		}
 		documentID, loadErr := workdomain.LoadWorkContentDocumentIDForPublicRead(ctx, tx, work.ID)
 		if loadErr != nil {
 			return loadErr
@@ -360,7 +355,7 @@ func (s *WorkService) buildWorkResponse(
 			return errs.InternalMsg("Work source locale is not initialized")
 		}
 		workdomain.OverlayWorkSourceLocaleDocumentForPublic(work, sourceState)
-		localization, loadErr = publiccontent.Resolve(ctx, tx, workLocalizationSpec, work.ID, acceptLanguage)
+		localization, loadErr = publiccontent.Resolve(ctx, tx, workLocalizationSpec, work.ID, req.Header().Get("Accept-Language"))
 		if loadErr != nil {
 			return errs.Internal(loadErr)
 		}

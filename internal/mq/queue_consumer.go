@@ -157,10 +157,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		Redelivered:   delivery.ReadCount > 1,
 		Headers:       stringHeaders(delivery.Headers),
 	}
-	ctx, cancel := context.WithCancel(parent)
-	if c.config.Timeout > 0 {
-		ctx, cancel = context.WithTimeout(parent, c.config.Timeout)
-	}
+	ctx, cancel := queueDeliveryContext(parent, c.config.Timeout)
 	defer cancel()
 	ctx, span := StartConsumerSpan(ctx, message)
 	defer span.End()
@@ -206,6 +203,13 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 	}
 	emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryAccepted, c.config.Name, message, retryCount+1, "")
 	emitQueueDeliveryRequeued(parent, c.config.Name, message, retryCount+1, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
+}
+
+func queueDeliveryContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(parent, timeout)
+	}
+	return context.WithCancel(parent)
 }
 
 func retryDelay(config QueueConfig, retryCount int) time.Duration {

@@ -683,6 +683,16 @@ func (s *CampaignService) ScheduleCampaign(
 
 	// Use transaction with row-level locking to prevent race conditions
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		observedLayoutID, _, err := observeAndLockCampaignLayouts(
+			ctx,
+			tx,
+			s.emailAuthoring,
+			req.Msg.Id,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
 		// Lock the row for update to prevent concurrent modifications
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
@@ -690,6 +700,9 @@ func (s *CampaignService) ScheduleCampaign(
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
+		}
+		if strings.TrimSpace(ptrStringValue(campaign.LayoutID)) != observedLayoutID {
+			return errs.FailedPrecondition("campaign layout assignment changed; retry")
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, campaignCan); err != nil {
 			return err
@@ -878,9 +891,22 @@ func prepareCampaignSendNowWithDB(
 	emailDelivery CampaignDeliveryPort,
 	request *managev1.SendCampaignNowRequest,
 ) (campaignSendNowResult, error) {
+	observedLayoutID, _, err := observeAndLockCampaignLayouts(
+		ctx,
+		tx,
+		emailAuthoring,
+		request.Id,
+		nil,
+	)
+	if err != nil {
+		return campaignSendNowResult{}, err
+	}
 	campaign, err := lockCampaignForSendNow(ctx, tx, request.Id)
 	if err != nil {
 		return campaignSendNowResult{}, err
+	}
+	if strings.TrimSpace(ptrStringValue(campaign.LayoutID)) != observedLayoutID {
+		return campaignSendNowResult{}, errs.FailedPrecondition("campaign layout assignment changed; retry")
 	}
 	if err := identitystate.RequireFreshAdminCan(ctx, tx, spiceDB, campaignCan); err != nil {
 		return campaignSendNowResult{}, err

@@ -30,11 +30,24 @@ func createCampaignDeliveryRun(
 	if targetCount < 0 {
 		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg("target count cannot be negative")
 	}
+	observedLayoutID, lockedLayouts, err := observeAndLockCampaignLayouts(
+		ctx,
+		tx,
+		emailAuthoring,
+		campaign.ID,
+		nil,
+	)
+	if err != nil {
+		return CampaignDeliveryRunRef{}, err
+	}
 	var lockedCampaign model.Campaign
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		First(&lockedCampaign, "id = ?", campaign.ID).Error; err != nil {
 		return CampaignDeliveryRunRef{}, err
+	}
+	if strings.TrimSpace(ptrStringValue(lockedCampaign.LayoutID)) != observedLayoutID {
+		return CampaignDeliveryRunRef{}, errs.FailedPrecondition("campaign layout assignment changed; retry")
 	}
 	campaign = lockedCampaign
 	target, err := deriveCampaignDeliveryTarget(
@@ -52,15 +65,8 @@ func createCampaignDeliveryRun(
 	var sourceLayoutID *string
 	var sourceLayoutUpdatedAt *time.Time
 	if campaign.LayoutID != nil && strings.TrimSpace(*campaign.LayoutID) != "" {
-		if emailAuthoring == nil {
-			return CampaignDeliveryRunRef{}, errs.DependencyUnavailable("Email Authoring")
-		}
 		layoutID := strings.TrimSpace(*campaign.LayoutID)
-		layouts, err := emailAuthoring.LockLayoutsForCampaign(ctx, tx, layoutID)
-		if err != nil {
-			return CampaignDeliveryRunRef{}, err
-		}
-		layout, ok := layouts[layoutID]
+		layout, ok := lockedLayouts[layoutID]
 		if !ok {
 			return CampaignDeliveryRunRef{}, errs.FailedPrecondition("campaign email layout no longer exists")
 		}

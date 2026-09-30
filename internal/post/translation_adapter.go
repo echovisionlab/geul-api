@@ -100,6 +100,11 @@ func applyTypedTranslationCandidateWithDB(
 			return fenceErr
 		}
 		if job.TargetLocale == domain.SourceLocale {
+			if err := validatePostProviderSourceTarget(
+				job.SourceLocale, job.TargetLocale, domain.SourceLocale,
+			); err != nil {
+				return err
+			}
 			return applyPostProviderSourceCandidate(
 				ctx, tx, store, job, candidate, metadata, auditWriter, documentID, domain,
 			)
@@ -362,6 +367,16 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// validatePostProviderSourceTarget discards a late translation when its
+// request-time target has since become the Post's canonical source locale.
+// A job whose target remains a target may still apply after a source switch.
+func validatePostProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentSourceLocale string) error {
+	if jobTargetLocale == currentSourceLocale && jobSourceLocale != currentSourceLocale {
+		return translation.ErrSourceNoLongerCurrent
+	}
+	return nil
 }
 
 func sameNullableString(left, right *string) bool {

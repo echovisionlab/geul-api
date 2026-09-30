@@ -259,9 +259,28 @@ func TestArtistPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *te
 	require.NoError(t, err)
 	require.Len(t, works.Msg.Works, 1)
 	require.Equal(t, fixture.Work.Id, works.Msg.Works[0].Id)
+	require.Equal(t, openv1.WorkType_WORK_TYPE_MUSIC_PROJECT, works.Msg.Works[0].GetType())
 	require.Equal(t, workSummary, works.Msg.Works[0].GetSummary())
 	require.Equal(t, artistlabelpublictest.AssetURL(t, db, workImageFileID), works.Msg.Works[0].GetImageAsset().GetUrl())
 	require.EqualValues(t, 1, works.Msg.Total)
+
+	for _, workType := range []managev1.WorkType{
+		managev1.WorkType_WORK_TYPE_MUSIC_PROJECT,
+		managev1.WorkType_WORK_TYPE_PORTFOLIO,
+		managev1.WorkType_WORK_TYPE_ARTICLE,
+		managev1.WorkType_WORK_TYPE_CONTRIBUTION,
+	} {
+		require.NoError(t, db.Model(&model.Work{}).Where("id = ?", fixture.Work.Id).Update("type", workType.String()).Error)
+		got, err := publicArtistSvc.GetWorks(context.Background(), connect.NewRequest(&openv1.GetArtistWorksRequest{
+			ArtistId: mainArtist.Id,
+			Limit:    10,
+			Offset:   &offset,
+		}))
+		require.NoError(t, err)
+		require.Len(t, got.Msg.Works, 1)
+		require.Equal(t, openv1.WorkType(workType), got.Msg.Works[0].GetType())
+	}
+	require.NoError(t, db.Model(&model.Work{}).Where("id = ?", fixture.Work.Id).Update("type", managev1.WorkType_WORK_TYPE_MUSIC_PROJECT.String()).Error)
 
 	_, err = publicArtistSvc.GetWorks(context.Background(), connect.NewRequest(&openv1.GetArtistWorksRequest{
 		ArtistId: mainArtist.Id,

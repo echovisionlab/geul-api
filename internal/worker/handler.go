@@ -93,6 +93,7 @@ type httpDoer interface {
 
 type MetadataAIJobProcessor interface {
 	ProcessJob(ctx context.Context, jobID string) error
+	RecoverExpiredJobs(ctx context.Context, limit int) (int, error)
 }
 
 type TranslationJobProcessor interface {
@@ -239,6 +240,12 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 		return err
 	case scheduler.JobProcessScheduledPosts:
 		_, err := post.ProcessDueScheduledPosts(ctx, h.db, 0)
+		return err
+	case scheduler.JobRecoverMetadataAI:
+		if h.metadataAI == nil {
+			return nil
+		}
+		_, err := h.metadataAI.RecoverExpiredJobs(ctx, 0)
 		return err
 
 	default:

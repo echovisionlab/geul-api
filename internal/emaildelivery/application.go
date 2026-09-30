@@ -19,6 +19,8 @@ const (
 	RecipientStatusBlocked         = "blocked"
 	RecipientStatusSuppressed      = "suppressed"
 	deliveryRetryableStatus        = "retryable"
+	deliveryProcessingTimeout      = 5 * time.Minute
+	deliveryClaimReleaseTimeout    = 2 * time.Second
 )
 
 type DeliveryOutcome string
@@ -53,6 +55,9 @@ type DeliveryRenderer interface {
 type DeliveryCampaignStore interface {
 	NeedsDelivery(context.Context, string) (bool, error)
 	MarkResult(context.Context, string, string, string, string) error
+	ClaimDelivery(context.Context, string) (claimID string, claimed bool, err error)
+	ReleaseDeliveryClaim(context.Context, string, string) error
+	MarkClaimedResult(context.Context, string, string, string, string, string) error
 }
 
 type Suppression struct {
@@ -117,6 +122,8 @@ func (a *DeliveryApplication) Deliver(
 	if job == nil || strings.TrimSpace(job.GetMessageId()) == "" {
 		return DeliveryResult{}, fmt.Errorf("email message id is required")
 	}
+	ctx, cancel := context.WithTimeout(ctx, deliveryProcessingTimeout)
+	defer cancel()
 	if expired, err := EmailCommandExpired(job, a.now().UTC()); err != nil {
 		return DeliveryResult{}, err
 	} else if expired {
@@ -124,21 +131,23 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{Outcome: DeliveryExpired}, nil
 	}
 
-	a.metrics.RecordSendAttempt(ctx, job.GetTemplateType())
-	needsDelivery, err := a.campaign.NeedsDelivery(ctx, job.GetDeliveryRecipientId())
-	if err != nil || !needsDelivery {
-		if err == nil {
-			logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.duplicate_suppressed", job, "skipped", "campaign_recipient_terminal", "")
-		}
-		return DeliveryResult{}, err
-	}
-
-	suppression, err := a.suppressions.Find(ctx, job.GetRecipient())
+	recipientID := strings.TrimSpace(job.GetDeliveryRecipientId())
+	claimID, claimed, err := a.claimDelivery(ctx, recipientID)
 	if err != nil {
 		return DeliveryResult{}, err
 	}
+	if !claimed {
+		logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.delivery.duplicate_suppressed", job, "skipped", "campaign_recipient_claim_unavailable", "")
+		return DeliveryResult{}, nil
+	}
+	a.metrics.RecordSendAttempt(ctx, job.GetTemplateType())
+
+	suppression, err := a.suppressions.Find(ctx, job.GetRecipient())
+	if err != nil {
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
+	}
 	if suppression != nil {
-		if err := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), RecipientStatusSuppressed, "", "email_suppressed"); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSuppressed, "", "email_suppressed"); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "suppressed")
@@ -149,14 +158,14 @@ func (a *DeliveryApplication) Deliver(
 
 	decision, err := a.recipients.Authorize(ctx, job)
 	if err != nil {
-		return DeliveryResult{}, err
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	if decision.Blocked {
 		reason := strings.TrimSpace(decision.Reason)
 		if reason == "" {
 			reason = "recipient_context_blocked"
 		}
-		if err := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), RecipientStatusBlocked, "", reason); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", reason); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "blocked")
@@ -168,7 +177,7 @@ func (a *DeliveryApplication) Deliver(
 	rendered, err := a.renderer.Render(ctx, job)
 	if err != nil {
 		errorType := managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String()
-		if markErr := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), RecipientStatusBlocked, "", errorType); markErr != nil {
+		if markErr := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", errorType); markErr != nil {
 			return DeliveryResult{}, fmt.Errorf("persist terminal render failure: %w", markErr)
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
@@ -177,7 +186,7 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{Outcome: DeliveryRenderFailed}, nil
 	}
 	if rendered == nil {
-		if err := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), RecipientStatusSkipped, "", "template_not_configured"); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSkipped, "", "template_not_configured"); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "skipped")
@@ -188,10 +197,10 @@ func (a *DeliveryApplication) Deliver(
 
 	adapters, err := a.providers.GetActiveAdapters(ctx)
 	if err != nil {
-		return DeliveryResult{}, err
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	if len(adapters) == 0 {
-		if err := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), RecipientStatusBlocked, "", "no_active_adapter"); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", "no_active_adapter"); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "blocked")
@@ -209,13 +218,15 @@ func (a *DeliveryApplication) Deliver(
 	}
 	providerMessageID, failures, lastErr, expired, err := a.sendThroughProviders(ctx, job, adapters, message)
 	if err != nil {
-		return DeliveryResult{}, err
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	if expired {
 		return DeliveryResult{Outcome: DeliveryExpired}, nil
 	}
 	if providerMessageID != "" {
-		if err := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), RecipientStatusSent, providerMessageID, ""); err != nil {
+		// Retain the claim if provider acceptance is known but the durable
+		// terminal write fails; releasing it could immediately send a duplicate.
+		if err := a.markResult(ctx, recipientID, claimID, RecipientStatusSent, providerMessageID, ""); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "accepted")
@@ -227,7 +238,7 @@ func (a *DeliveryApplication) Deliver(
 	status, errorType, failureErr := ClassifyProviderFailures(failures, lastErr)
 	retryable := status == deliveryRetryableStatus
 	if !retryable && failureErr != nil {
-		if err := a.campaign.MarkResult(ctx, job.GetDeliveryRecipientId(), status, "", errorType); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, status, "", errorType); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
@@ -246,10 +257,79 @@ func (a *DeliveryApplication) Deliver(
 	if failureErr == nil {
 		return DeliveryResult{Outcome: DeliveryProviderFailed}, nil
 	}
+	if retryable {
+		if err := a.releaseClaim(ctx, recipientID, claimID); err != nil {
+			return DeliveryResult{}, err
+		}
+	}
 	return DeliveryResult{
 		Outcome: DeliveryProviderFailed, Retryable: retryable,
 		ErrorType: errorType, Err: failureErr,
 	}, nil
+}
+
+func (a *DeliveryApplication) claimDelivery(ctx context.Context, recipientID string) (string, bool, error) {
+	if recipientID == "" {
+		needsDelivery, err := a.campaign.NeedsDelivery(ctx, recipientID)
+		return "", needsDelivery, err
+	}
+	claimID, claimed, err := a.campaign.ClaimDelivery(ctx, recipientID)
+	if err != nil || !claimed {
+		return "", claimed, err
+	}
+	if strings.TrimSpace(claimID) == "" {
+		return "", false, fmt.Errorf("campaign delivery claim id is required")
+	}
+	return claimID, true, nil
+}
+
+func (a *DeliveryApplication) markResult(
+	ctx context.Context,
+	recipientID string,
+	claimID string,
+	status string,
+	providerMessageID string,
+	errorType string,
+) error {
+	if claimID == "" {
+		return a.campaign.MarkResult(ctx, recipientID, status, providerMessageID, errorType)
+	}
+	return a.campaign.MarkClaimedResult(ctx, recipientID, claimID, status, providerMessageID, errorType)
+}
+
+func (a *DeliveryApplication) markTerminalResult(
+	ctx context.Context,
+	recipientID string,
+	claimID string,
+	status string,
+	providerMessageID string,
+	errorType string,
+) error {
+	if err := a.markResult(ctx, recipientID, claimID, status, providerMessageID, errorType); err != nil {
+		return a.releaseClaimAfterError(ctx, recipientID, claimID, err)
+	}
+	return nil
+}
+
+func (a *DeliveryApplication) releaseClaimAfterError(
+	ctx context.Context,
+	recipientID string,
+	claimID string,
+	operationErr error,
+) error {
+	if releaseErr := a.releaseClaim(ctx, recipientID, claimID); releaseErr != nil {
+		return errors.Join(operationErr, fmt.Errorf("release campaign delivery claim: %w", releaseErr))
+	}
+	return operationErr
+}
+
+func (a *DeliveryApplication) releaseClaim(ctx context.Context, recipientID string, claimID string) error {
+	if claimID == "" {
+		return nil
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryClaimReleaseTimeout)
+	defer cancel()
+	return a.campaign.ReleaseDeliveryClaim(releaseCtx, recipientID, claimID)
 }
 
 type ProviderFailure struct {

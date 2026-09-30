@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -162,12 +163,65 @@ func TestMetadataAIJobConcurrentDeliveriesCallProviderOnceIntegration(t *testing
 	workers.Wait()
 	close(errorsByWorker)
 	for processErr := range errorsByWorker {
-		require.NoError(t, processErr)
+		if processErr != nil {
+			require.ErrorIs(t, processErr, errMetadataAIJobLeaseUnavailable)
+		}
 	}
 
 	require.Equal(t, int32(2), reads.Load())
 	require.Equal(t, 1, provider.calls)
 	requireMetadataAIJobStatus(t, db, job.ID, metadataAIJobStatusReady)
+}
+
+func TestMetadataAIJobRecoveryReenqueuesOnlyMissingPGMQMessagesIntegration(t *testing.T) {
+	db := newServiceIntegrationDB(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	publisher, err := mq.NewPublisher(sqlDB)
+	require.NoError(t, err)
+	queue := eventpkg.QueueAiMetadataGenerate
+	require.NoError(t, testutil.PurgePGMQQueue(t.Context(), sqlDB, queue))
+	t.Cleanup(func() { require.NoError(t, testutil.PurgePGMQQueue(context.Background(), sqlDB, queue)) })
+
+	identityID := uuid.NewString()
+	email := "metadata-ai-recovery-" + identityID + "@example.test"
+	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: "Metadata AI Recovery"})
+	memberID := seedActiveMemberEmailPair(t, db, identityID, email)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	old := now.Add(-metadataAIJobRecoveryDelay - time.Minute)
+	pending := metadataJobRecord{
+		ID: uuid.NewString(), RequesterMemberID: memberID, TargetType: managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE.String(),
+		TargetID: uuid.NewString(), RequestedKeys: []string{"summary"}, Context: "{}", Prompt: "unused",
+		Status: metadataAIJobStatusQueued, CreatedAt: old, UpdatedAt: old,
+	}
+	orphan := pending
+	orphan.ID = uuid.NewString()
+	require.NoError(t, db.Create(&pending).Error)
+	require.NoError(t, db.Create(&orphan).Error)
+	t.Cleanup(func() {
+		require.NoError(t, db.Delete(&metadataJobRecord{}, "id IN ?", []string{pending.ID, orphan.ID}).Error)
+	})
+	require.NoError(t, publisher.EnqueueProtobuf(
+		t.Context(),
+		queue,
+		pending.ID,
+		&managev1.MetadataGenerationQueueEvent{JobId: pending.ID},
+	))
+
+	manager := &MetadataJobManager{db: db, asyncPublisher: publisher}
+	recovered, err := manager.RecoverExpiredJobs(t.Context(), 25)
+	require.NoError(t, err)
+	require.Equal(t, 1, recovered)
+
+	messages, err := testutil.ReadPGMQ(t.Context(), sqlDB, queue, time.Hour, 5)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	messageIDs := map[string]bool{}
+	for _, message := range messages {
+		messageIDs[message.Envelope.MessageID] = true
+	}
+	require.True(t, messageIDs[pending.ID])
+	require.True(t, messageIDs[orphan.ID])
 }
 
 func requireMetadataAIJobStatus(t *testing.T, db *gorm.DB, jobID string, status string) {

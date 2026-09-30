@@ -1,10 +1,12 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
+
+	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -33,30 +35,32 @@ func (s *FormService) ListFormSubmissions(
 		return nil, err
 	}
 
+	query := s.db.WithContext(ctx).Model(&model.FormSubmission{}).Where("form_id = ?", req.Msg.FormId)
+	query, err := applyFormSubmissionFilters(query, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	pageQuery, err := applyFormSubmissionSort(query, req.Msg.Sorts)
+	if err != nil {
+		return nil, err
+	}
+
 	var submissions []model.FormSubmission
 	var total int64
 
-	query := s.db.WithContext(ctx).Model(&model.FormSubmission{}).Where("form_id = ?", req.Msg.FormId)
-
-	// Count total
+	// Count and page from the same filtered query.
 	if err := query.Count(&total).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
 
-	// Apply pagination
-	limit := int32(50)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
+	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.PaginationConfig{
+		DefaultLimit: 50,
+		MaxLimit:     100,
+	})
 
-	if err := query.
-		Order("created_at DESC").
-		Limit(int(limit)).
-		Offset(int(offset)).
+	if err := pageQuery.
+		Limit(int(pagination.Limit)).
+		Offset(int(pagination.Offset)).
 		Find(&submissions).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
@@ -75,9 +79,9 @@ func (s *FormService) ListFormSubmissions(
 		Submissions: protoSubmissions,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
+			Limit:   pagination.Limit,
+			Offset:  pagination.Offset,
+			HasMore: int64(pagination.Offset)+int64(pagination.Limit) < total,
 		},
 	}), nil
 }

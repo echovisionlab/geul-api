@@ -3,14 +3,17 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
@@ -28,7 +31,14 @@ const (
 	metadataAIJobStatusFailed    = "failed"
 	metadataAIJobStatusApplied   = "applied"
 	metadataAIJobStatusDismissed = "dismissed"
+
+	metadataAIJobLeaseDuration   = 3 * time.Minute
+	metadataAIJobRecoveryDelay   = 10 * time.Minute
+	metadataAIPersistenceTimeout = 5 * time.Second
+	metadataAIJobRecoveryBatch   = 25
 )
+
+var errMetadataAIJobLeaseUnavailable = errors.New("metadata AI job is being processed by another delivery")
 
 var metadataSuggestionResponseKeys = map[string]struct{}{
 	"summary": {},
@@ -226,17 +236,21 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) error
 		}
 		return fmt.Errorf("failed to load metadata AI job %s: %w", jobID, err)
 	}
-	if job.Status != metadataAIJobStatusQueued {
+	if job.Status != metadataAIJobStatusQueued && job.Status != metadataAIJobStatusRunning {
 		return nil
 	}
 
-	startedAt := time.Now()
+	startedAt := time.Now().UTC().Truncate(time.Microsecond)
+	staleBefore := startedAt.Add(-metadataAIJobLeaseDuration)
+	if job.Status == metadataAIJobStatusRunning && job.StartedAt != nil && job.StartedAt.After(staleBefore) {
+		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
+	}
 	claimed, err := m.claimJob(ctx, &job, startedAt)
 	if err != nil {
 		return err
 	}
 	if !claimed {
-		return nil
+		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
 	}
 
 	userPrompt := metadataAIUserPrompt(job.Context, job.Prompt)
@@ -252,30 +266,44 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) error
 		Observer:           metadataAIProviderObserver{},
 	})
 	if err != nil {
-		return m.failJob(ctx, &job, time.Since(startedAt), err)
+		return m.failJob(ctx, &job, startedAt, time.Since(startedAt), err)
+	}
+	if err := ctx.Err(); err != nil {
+		return m.failJob(ctx, &job, startedAt, time.Since(startedAt), err)
 	}
 
 	suggestion, err := parseMetadataSuggestionPayload(responseText, job.RequestedKeys)
 	if err != nil {
-		return m.failJob(ctx, &job, time.Since(startedAt), err)
+		return m.failJob(ctx, &job, startedAt, time.Since(startedAt), err)
+	}
+	if err := ctx.Err(); err != nil {
+		return m.failJob(ctx, &job, startedAt, time.Since(startedAt), err)
 	}
 
 	completedAt := time.Now()
 	durationMS := time.Since(startedAt).Milliseconds()
+	suggestionJSON, err := json.Marshal(suggestion)
+	if err != nil {
+		return m.failJob(ctx, &job, startedAt, time.Since(startedAt), err)
+	}
 	updates := structured.Fields{
 		"status":        metadataAIJobStatusReady,
-		"suggestion":    suggestion,
+		"suggestion":    string(suggestionJSON),
 		"response_text": responseText,
 		"error":         nil,
 		"duration_ms":   durationMS,
 		"completed_at":  completedAt,
 		"updated_at":    completedAt,
 	}
-	if err := m.db.WithContext(ctx).
+	result := m.db.WithContext(ctx).
 		Model(&metadataJobRecord{}).
-		Where("id = ?", job.ID).
-		Updates(updates).Error; err != nil {
-		return fmt.Errorf("failed to finalize metadata AI job: %w", err)
+		Where("id = ? AND status = ? AND started_at = ?", job.ID, metadataAIJobStatusRunning, startedAt).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("failed to finalize metadata AI job: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
 	}
 
 	job.Status = metadataAIJobStatusReady
@@ -297,21 +325,108 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) error
 	return nil
 }
 
+// RecoverExpiredJobs republishes durable commands only after their queue retry
+// window has elapsed and no transport row with the job's stable message ID
+// remains in PGMQ. The job timestamp update and enqueue share one transaction.
+func (m *MetadataJobManager) RecoverExpiredJobs(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		limit = metadataAIJobRecoveryBatch
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	recoveryBefore := now.Add(-metadataAIJobRecoveryDelay)
+	staleBefore := now.Add(-metadataAIJobLeaseDuration)
+	queueTable := pq.QuoteIdentifier("q_" + eventpkg.QueueAiMetadataGenerate)
+	republished := 0
+	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var jobs []metadataJobRecord
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where(
+				"(status = ? AND updated_at <= ?) OR (status = ? AND updated_at <= ? AND (started_at IS NULL OR started_at <= ?))",
+				metadataAIJobStatusQueued,
+				recoveryBefore,
+				metadataAIJobStatusRunning,
+				recoveryBefore,
+				staleBefore,
+			).
+			Order("updated_at ASC").
+			Limit(limit).
+			Find(&jobs).Error; err != nil {
+			return fmt.Errorf("failed to scan expired metadata AI jobs: %w", err)
+		}
+
+		for _, job := range jobs {
+			var transportPending bool
+			query := "SELECT EXISTS (SELECT 1 FROM pgmq." + queueTable + " WHERE message->>'message_id' = ?)"
+			if err := tx.Raw(query, job.ID).Scan(&transportPending).Error; err != nil {
+				return fmt.Errorf("failed to inspect metadata AI queue message %s: %w", job.ID, err)
+			}
+
+			update := tx.Model(&metadataJobRecord{}).
+				Where("id = ? AND status = ? AND updated_at = ?", job.ID, job.Status, job.UpdatedAt)
+			if job.Status == metadataAIJobStatusRunning {
+				if job.StartedAt == nil {
+					update = update.Where("started_at IS NULL")
+				} else {
+					update = update.Where("started_at = ?", *job.StartedAt)
+				}
+			}
+			result := update.Updates(structured.Fields{"updated_at": now})
+			if result.Error != nil {
+				return fmt.Errorf("failed to refresh expired metadata AI job %s: %w", job.ID, result.Error)
+			}
+			if result.RowsAffected == 0 || transportPending {
+				continue
+			}
+
+			if err := publishDurableProtoInTransaction(
+				ctx,
+				m.asyncPublisher,
+				tx,
+				eventpkg.QueueAiMetadataGenerate,
+				job.ID,
+				&managev1.MetadataGenerationQueueEvent{JobId: job.ID},
+			); err != nil {
+				return fmt.Errorf("failed to republish expired metadata AI job %s: %w", job.ID, err)
+			}
+			republished++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if republished > 0 {
+		slog.Info("Expired metadata AI jobs republished", "count", republished)
+	}
+	return republished, nil
+}
+
 func (m *MetadataJobManager) claimJob(
 	ctx context.Context,
 	job *metadataJobRecord,
 	startedAt time.Time,
 ) (bool, error) {
-	result := m.db.WithContext(ctx).
-		Model(&metadataJobRecord{}).
-		Where("id = ? AND status = ?", job.ID, metadataAIJobStatusQueued).
-		Updates(structured.Fields{
-			"status":     metadataAIJobStatusRunning,
-			"provider":   m.provider.ProviderName(),
-			"model":      m.provider.ModelName(),
-			"started_at": startedAt,
-			"updated_at": startedAt,
-		})
+	query := m.db.WithContext(ctx).Model(&metadataJobRecord{})
+	switch job.Status {
+	case metadataAIJobStatusQueued:
+		query = query.Where("id = ? AND status = ?", job.ID, metadataAIJobStatusQueued)
+	case metadataAIJobStatusRunning:
+		query = query.Where("id = ? AND status = ?", job.ID, metadataAIJobStatusRunning)
+		if job.StartedAt == nil {
+			query = query.Where("started_at IS NULL")
+		} else {
+			query = query.Where("started_at = ?", *job.StartedAt)
+		}
+	default:
+		return false, nil
+	}
+	result := query.Updates(structured.Fields{
+		"status":     metadataAIJobStatusRunning,
+		"provider":   m.provider.ProviderName(),
+		"model":      m.provider.ModelName(),
+		"started_at": startedAt,
+		"updated_at": startedAt,
+	})
 	if result.Error != nil {
 		return false, fmt.Errorf("failed to mark metadata AI job running: %w", result.Error)
 	}
@@ -330,6 +445,7 @@ func (m *MetadataJobManager) claimJob(
 func (m *MetadataJobManager) failJob(
 	ctx context.Context,
 	job *metadataJobRecord,
+	startedAt time.Time,
 	duration time.Duration,
 	cause error,
 ) error {
@@ -343,11 +459,17 @@ func (m *MetadataJobManager) failJob(
 		"completed_at": finishedAt,
 		"updated_at":   finishedAt,
 	}
-	if err := m.db.WithContext(ctx).
+	persistenceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataAIPersistenceTimeout)
+	defer cancel()
+	result := m.db.WithContext(persistenceCtx).
 		Model(&metadataJobRecord{}).
-		Where("id = ?", job.ID).
-		Updates(updates).Error; err != nil {
-		return fmt.Errorf("metadata AI job failed with %q and the failure state could not be stored: %w", message, err)
+		Where("id = ? AND status = ? AND started_at = ?", job.ID, metadataAIJobStatusRunning, startedAt).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("metadata AI job failed with %q and the failure state could not be stored: %w", message, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
 	}
 
 	job.Status = metadataAIJobStatusFailed
