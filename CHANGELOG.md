@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.6](https://github.com/echovisionlab/geul-api/compare/v0.5.5...v0.5.6) (2026-09-30)
+
+
+### Bug Fixes
+
+* **api:** clarify queue policies and service ownership ([#45](https://github.com/echovisionlab/geul-api/issues/45)) ([3894623](https://github.com/echovisionlab/geul-api/commit/3894623e7b006865a610b332fbc7cd852eaf61e9))
+
 ## [0.5.5](https://github.com/echovisionlab/geul-api/compare/v0.5.4...v0.5.5) (2026-09-30)
 
 
