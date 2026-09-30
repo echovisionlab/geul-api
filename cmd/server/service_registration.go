@@ -12,7 +12,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/account"
-	accountpublic "github.com/echovisionlab/geul-api/internal/account/public"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	audienceadapter "github.com/echovisionlab/geul-api/internal/adapters/audience"
@@ -40,9 +39,7 @@ import (
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
-	seriespublicadapter "github.com/echovisionlab/geul-api/internal/adapters/series/public"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
-	sitemapadapter "github.com/echovisionlab/geul-api/internal/adapters/sitemap"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -63,43 +60,26 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
-	publicform "github.com/echovisionlab/geul-api/internal/form/public"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
-	mapthemepublic "github.com/echovisionlab/geul-api/internal/maptheme/public"
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
-	memberpublic "github.com/echovisionlab/geul-api/internal/member/public"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/page"
-	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	"github.com/echovisionlab/geul-api/internal/post"
-	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/programevent"
-	programeventpublic "github.com/echovisionlab/geul-api/internal/programevent/public"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
 	"github.com/echovisionlab/geul-api/internal/series"
-	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
-	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
-	sitemappublic "github.com/echovisionlab/geul-api/internal/sitemap/public"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	publicsitesettings "github.com/echovisionlab/geul-api/internal/sitesettings/public"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
-	translationcore "github.com/echovisionlab/geul-api/internal/translation"
-	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/work"
-	workpublic "github.com/echovisionlab/geul-api/internal/work/public"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.akshayshah.org/connectproto"
 	"google.golang.org/protobuf/encoding/protojson"
 	"gorm.io/gorm"
@@ -174,7 +154,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	passwordHasher := deps.passwordHasher
 	metadataAIJobs := deps.metadataAIJobs
 	contentBlockStore := deps.contentBlockStore
-	authCodeIssuanceLimiter := deps.authCodeIssuanceLimiter
 	adapterLoader := deps.adapterLoader
 	telemetryWriter := deps.telemetryWriter
 	ogDeps := deps.og
@@ -737,246 +716,46 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(shareLinkPath, shareLinkHandler)
 	slog.Info("Registered service", "path", shareLinkPath)
 
-	// Internal API services are not browser/session authenticated and must not
-	// be exposed via Oathkeeper. Every handler is protected below by the exact
-	// caller-scoped service credential; private-network placement is additional
-	// defense in depth.
-
-	// EmailCourierService - authenticated identity courier ingress.
-	emailCourierService := emaildelivery.NewEmailCourierService(
-		workerPublisher,
-		kratosClient,
-		emaildeliveryadapter.NewAuthIssuanceAuthority(
-			[]byte(cfg.TokenSigningSecret),
-			authCodeIssuanceLimiter,
-			accountEmailChangeLifecycle,
-		),
-		time.Duration(cfg.AuthCodeLifespanSeconds)*time.Second,
-	)
-	emailCourierPath, emailCourierHandler := intrav1connect.NewEmailCourierServiceHandler(emailCourierService, internalHandlerOpts...)
-	mux.Handle(emailCourierPath, internalRPCTrust.identity(emailCourierHandler))
-	slog.Info("Registered internal service", "path", emailCourierPath)
-	internalPageService := page.NewInternalPageService(
-		db,
-		servicePublisher,
-		spicedbClient,
-		pageRuntime,
-		page.WithInternalPageDomainAuditWriter(telemetryWriter),
-		page.WithInternalPageContentBlockStore(contentBlockStore),
-		page.WithInternalPageContentBlockMediaHydrator(fileService),
-	)
-	internalPagePath, internalPageHandler := intrav1connect.NewInternalPageServiceHandler(internalPageService, internalHandlerOpts...)
-	mux.Handle(internalPagePath, internalRPCTrust.collab(internalPageHandler))
-	slog.Info("Registered internal service", "path", internalPagePath)
-
-	internalPostService := post.NewInternalPostService(
-		db,
-		spicedbClient,
-		servicePublisher,
-		cfg.CDNURL,
-		ogDeps.refresher,
-		postMedia,
-		post.WithInternalPostDomainAuditWriter(telemetryWriter),
-		post.WithInternalPostContentBlockStore(contentBlockStore),
-	)
-	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(internalPostService, internalHandlerOpts...)
-	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
-	slog.Info("Registered internal service", "path", internalPostPath)
-
-	internalProgramEventService := programevent.NewAuditedInternalProgramEventService(
-		db,
-		servicePublisher,
-		telemetryWriter,
-		programevent.WithInternalProgramEventSpiceDB(spicedbClient),
-		programevent.WithInternalProgramEventCheckpoints(collaborationRuntime.Checkpoints),
-		programevent.WithInternalProgramEventContentBlockStore(contentBlockStore),
-		programevent.WithInternalProgramEventMediaHydrator(programEventFiles),
-	)
-	internalProgramEventPath, internalProgramEventHandler := intrav1connect.NewInternalProgramEventServiceHandler(internalProgramEventService, internalHandlerOpts...)
-	mux.Handle(internalProgramEventPath, internalRPCTrust.collab(internalProgramEventHandler))
-	slog.Info("Registered internal service", "path", internalProgramEventPath)
-
-	internalWorkService := work.NewInternalWorkService(
-		db,
-		servicePublisher,
-		workRuntime,
-		spicedbClient,
-		work.WithInternalWorkDomainAuditWriter(telemetryWriter),
-		work.WithInternalWorkCheckpoints(collaborationRuntime.Checkpoints),
-		work.WithInternalWorkContentBlockStore(contentBlockStore),
-		work.WithInternalWorkContentBlockMediaHydrator(fileService),
-	)
-	internalWorkPath, internalWorkHandler := intrav1connect.NewInternalWorkServiceHandler(internalWorkService, internalHandlerOpts...)
-	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
-	slog.Info("Registered internal service", "path", internalWorkPath)
-
-	internalMapService := maptheme.NewAuditedInternalMapService(db, telemetryWriter, spicedbClient)
-	internalMapPath, internalMapHandler := intrav1connect.NewInternalMapServiceHandler(internalMapService, internalHandlerOpts...)
-	mux.Handle(internalMapPath, internalRPCTrust.collab(internalMapHandler))
-	slog.Info("Registered internal service", "path", internalMapPath)
-
-	internalCampaignService := campaign.NewAuditedInternalCampaignService(
-		db,
-		telemetryWriter,
-		campaign.WithInternalCampaignContentBlockStore(contentBlockStore),
-		campaign.WithInternalCampaignSpiceDB(spicedbClient),
-		campaign.WithInternalCampaignCheckpoints(collaborationRuntime.Checkpoints),
-	)
-	internalCampaignPath, internalCampaignHandler := intrav1connect.NewInternalCampaignServiceHandler(internalCampaignService, internalHandlerOpts...)
-	mux.Handle(internalCampaignPath, internalRPCTrust.collab(internalCampaignHandler))
-	slog.Info("Registered internal service", "path", internalCampaignPath)
-
-	internalEmailTemplateService := emailauthoring.NewAuditedInternalEmailTemplateService(
-		db,
-		telemetryWriter,
-		spicedbClient,
-		emailauthoring.WithInternalEmailTemplateCheckpoints(collaborationRuntime.Checkpoints),
-		emailauthoring.WithInternalEmailTemplateContentBlockStore(contentBlockStore),
-		emailauthoring.WithInternalEmailTemplateCampaignDeliveryReferences(emailAuthoringReferences),
-	)
-	internalEmailTemplatePath, internalEmailTemplateHandler := intrav1connect.NewInternalEmailTemplateServiceHandler(internalEmailTemplateService, internalHandlerOpts...)
-	mux.Handle(internalEmailTemplatePath, internalRPCTrust.collab(internalEmailTemplateHandler))
-	slog.Info("Registered internal service", "path", internalEmailTemplatePath)
-
-	internalEmailLayoutService := emailauthoring.NewAuditedInternalEmailLayoutService(
-		db,
-		telemetryWriter,
-		emailauthoring.WithInternalEmailLayoutCheckpoints(collaborationRuntime.Checkpoints),
-		emailauthoring.WithInternalEmailLayoutCampaignDeliveryReferences(emailAuthoringReferences),
-		emailauthoring.WithInternalEmailLayoutContentBlockStore(contentBlockStore),
-	)
-	internalEmailLayoutPath, internalEmailLayoutHandler := intrav1connect.NewInternalEmailLayoutServiceHandler(internalEmailLayoutService, internalHandlerOpts...)
-	mux.Handle(internalEmailLayoutPath, internalRPCTrust.collab(internalEmailLayoutHandler))
-	slog.Info("Registered internal service", "path", internalEmailLayoutPath)
-
-	internalTermsService := legal.NewAuditedInternalTermsService(
-		db,
-		telemetryWriter,
-		legalDependencies,
-		legal.WithInternalTermsContentBlocks(contentBlockStore, spicedbClient, collaborationRuntime.Checkpoints),
-	)
-	internalTermsPath, internalTermsHandler := intrav1connect.NewInternalTermsServiceHandler(internalTermsService, internalHandlerOpts...)
-	mux.Handle(internalTermsPath, internalRPCTrust.collab(internalTermsHandler))
-	slog.Info("Registered internal service", "path", internalTermsPath)
-
-	internalPrivacyService := legal.NewAuditedInternalPrivacyService(
-		db,
-		telemetryWriter,
-		legalDependencies,
-		legal.WithInternalPrivacyContentBlocks(contentBlockStore, spicedbClient, collaborationRuntime.Checkpoints),
-	)
-	internalPrivacyPath, internalPrivacyHandler := intrav1connect.NewInternalPrivacyServiceHandler(internalPrivacyService, internalHandlerOpts...)
-	mux.Handle(internalPrivacyPath, internalRPCTrust.collab(internalPrivacyHandler))
-	slog.Info("Registered internal service", "path", internalPrivacyPath)
-
-	internalFormService := formdomain.NewAuditedInternalFormService(db, servicePublisher, telemetryWriter, spicedbClient, formDependencies)
-	internalFormPath, internalFormHandler := intrav1connect.NewInternalFormServiceHandler(internalFormService, internalHandlerOpts...)
-	mux.Handle(internalFormPath, internalRPCTrust.collab(internalFormHandler))
-	slog.Info("Registered internal service", "path", internalFormPath)
-
-	legalAIDocumentService, err := legal.NewAuditedAIDocumentService(
-		db, contentBlockStore, spicedbClient, legalRuntime, telemetryWriter,
-	)
+	internalServices, err := (internalContentServiceRegistration{
+		dependencies:                deps,
+		handlerOptions:              internalHandlerOpts,
+		internalTrust:               internalRPCTrust,
+		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
+		collaborationRuntime:        collaborationRuntime,
+		pageRuntime:                 pageRuntime,
+		workRuntime:                 workRuntime,
+		fileService:                 fileService,
+		postMedia:                   postMedia,
+		programEventFiles:           programEventFiles,
+		emailAuthoringReferences:    emailAuthoringReferences,
+		legalRuntime:                legalRuntime,
+		legalDependencies:           legalDependencies,
+		formDependencies:            formDependencies,
+	}).register()
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Legal AI document service: %w", err)
+		return registeredServices{}, err
 	}
-	translationInterchangeRegistrations := []translationadapter.InterchangeDomainRegistration{
-		{
-			Domain: translationcore.KindPage,
-			Port: translationadapter.NewPageInterchangePort(
-				telemetryWriter, sharedtelemetry.NewPageLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindPost,
-			Port:   translationadapter.NewPostInterchange(post.NewTranslationInterchange(telemetryWriter)),
-		},
-		{
-			Domain: translationcore.KindWork,
-			Port: translationadapter.NewWorkInterchangePort(
-				telemetryWriter, sharedtelemetry.NewWorkLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindRelease,
-			Port: translationadapter.NewReleaseInterchange(
-				telemetryWriter, sharedtelemetry.NewReleaseLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindArtist,
-			Port: translationadapter.NewArtistInterchange(
-				telemetryWriter, sharedtelemetry.NewArtistLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindLabel,
-			Port:   translationadapter.NewLabelInterchange(telemetryWriter),
-		},
-		{
-			Domain: translationcore.KindMenu,
-			Port:   translationadapter.NewMenuInterchange(menuService),
-		},
-		{
-			Domain: translationcore.KindEmailTemplate,
-			Port: translationadapter.NewEmailTemplateInterchange(
-				emailAuthoringReferences, telemetryWriter, sharedtelemetry.NewEmailTemplateLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindEmailLayout,
-			Port: translationadapter.NewEmailLayoutInterchange(
-				emailAuthoringReferences, telemetryWriter, sharedtelemetry.NewEmailLayoutLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindPrivacy,
-			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService),
-		},
-		{
-			Domain: translationcore.KindTerms,
-			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService),
-		},
-		{
-			Domain: translationcore.KindCampaign,
-			Port: translationadapter.NewCampaignInterchange(
-				telemetryWriter, sharedtelemetry.NewCampaignLocaleContentAuditRecord,
-			),
-		},
-		{
-			Domain: translationcore.KindForm,
-			Port:   translationadapter.NewFormInterchange(internalFormService),
-		},
-		{
-			Domain: translationcore.KindProgramEvent,
-			Port:   translationadapter.NewProgramEventInterchange(programEventService),
-		},
-		{
-			Domain: translationcore.KindPostSeries,
-			Port:   translationadapter.NewPostSeriesInterchange(seriesService),
-		},
-	}
-	translationInterchangeRegistry, err := translationadapter.NewInterchangeRegistry(
-		translationInterchangeRegistrations...,
-	)
+	internalPageService := internalServices.page
+	internalWorkService := internalServices.work
+	internalEmailTemplateService := internalServices.emailTemplate
+	internalCampaignService := internalServices.campaign
+	internalFormService := internalServices.form
+	legalAIDocumentService := internalServices.legalDocuments
+	translationService, err := (translationServiceRegistration{
+		dependencies:             deps,
+		handlerOptions:           handlerOpts,
+		domainRegistry:           translationRegistry,
+		emailAuthoringReferences: emailAuthoringReferences,
+		menuService:              menuService,
+		legalDocuments:           legalAIDocumentService,
+		internalFormService:      internalFormService,
+		programEventService:      programEventService,
+		seriesService:            seriesService,
+		fileService:              fileService,
+	}).register()
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Translation interchange registry: %w", err)
+		return registeredServices{}, err
 	}
-	translationXLIFFFiles, err := filemediaadapter.NewTranslationXLIFFFiles(fileService)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Translation XLIFF File runtime: %w", err)
-	}
-	translationService := translationapplication.NewAuditedTranslationService(
-		db, workerPublisher, cfg.CDNURL, telemetryWriter, spicedbClient, ogDeps.planner, ogDeps.refresher,
-		translationapplication.WithTranslationServiceContentBlockStore(contentBlockStore),
-		translationapplication.WithTranslationServiceDomainRegistry(translationRegistry),
-		translationapplication.WithTranslationServiceXLIFFFiles(translationXLIFFFiles),
-		translationapplication.WithTranslationServiceInterchangeDomains(translationInterchangeRegistry),
-	)
-	translationPath, translationHandler := managev1connect.NewTranslationServiceHandler(translationService, handlerOpts...)
-	mux.Handle(translationPath, translationHandler)
-	slog.Info("Registered service", "path", translationPath)
-
 	aiDocumentRegistrations := aiDocumentDomainRegistrations{}
 	if aiDocumentRegistrations.post, err = aidocumentadapter.NewPostRegistration(postService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Post AI document domain: %w", err)
@@ -1083,168 +862,16 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)
-	// Public API services (no auth required - exposed via Oathkeeper public rules)
-	manifestService := publicsitesettings.NewManifestService(
-		cfg.SiteOrigin,
-		sitesettingsadapter.NewPublicProjection(
-			db,
-			sitesettingsadapter.NewAssets(cfg.CDNURL),
-			sitesettingsadapter.ManifestMenus{},
-		),
-		spicedbClient,
-	)
-	manifestPath, manifestHandler := openv1connect.NewManifestServiceHandler(manifestService, publicHandlerOpts...)
-	mux.Handle(manifestPath, manifestHandler)
-	slog.Info("Registered public service", "path", manifestPath)
-
-	publicFilePath, publicFileHandler := openv1connect.NewFileServiceHandler(publicFileService, publicHandlerOpts...)
-	mux.Handle(publicFilePath, publicFileHandler)
-	slog.Info("Registered public service", "path", publicFilePath)
-
-	pagePublicAccess := pageruntime.NewPublicAccess(spicedbClient, postShareLinks)
-	publicPageService := pagepublic.NewPageService(
-		db,
-		pagePublicAccess,
-		pagePublicAccess,
-		pageruntime.NewPublicMedia(publicFileService),
-		pagepublic.WithPageContentBlockStore(contentBlockStore),
-	)
-	publicPagePath, publicPageHandler := openv1connect.NewPageServiceHandler(publicPageService, publicHandlerOpts...)
-	mux.Handle(publicPagePath, publicPageHandler)
-	slog.Info("Registered public service", "path", publicPagePath)
-
-	publicPostService := postpublic.NewPostService(
-		db,
-		cfg.CDNURL,
-		spicedbClient,
-		postadapter.NewPublicFiles(db, publicFileService),
-		postadapter.NewLocalization(),
-		referencecatalogadapter.PublicMapPlaces{},
-		postMembers,
-		postShareLinks,
-		postpublic.WithPostContentBlockStore(contentBlockStore),
-	)
-	publicPostPath, publicPostHandler := openv1connect.NewPostServiceHandler(publicPostService, publicHandlerOpts...)
-	mux.Handle(publicPostPath, publicPostHandler)
-	slog.Info("Registered public service", "path", publicPostPath)
-
-	publicWorkService := workpublic.NewWorkService(
-		db,
-		spicedbClient,
-		publicFileService,
-		workRuntime,
-		workadapter.NewMemberSummaries(db, cfg.CDNURL),
-		referencecatalogadapter.PublicMapPlaces{},
-		workpublic.WithWorkContentBlockStore(contentBlockStore),
-	)
-	publicWorkPath, publicWorkHandler := openv1connect.NewWorkServiceHandler(publicWorkService, publicHandlerOpts...)
-	mux.Handle(publicWorkPath, publicWorkHandler)
-	slog.Info("Registered public service", "path", publicWorkPath)
-
-	publicReferenceCatalogAssets := referencecatalogadapter.NewPublicAssets(cfg.CDNURL)
-	publicClientService := publicreferencecatalog.NewClientService(db, publicReferenceCatalogAssets)
-	publicClientPath, publicClientHandler := openv1connect.NewClientServiceHandler(publicClientService, publicHandlerOpts...)
-	mux.Handle(publicClientPath, publicClientHandler)
-	slog.Info("Registered public service", "path", publicClientPath)
-
-	publicFormService := publicform.NewAuditedFormService(db, passwordHasher, spicedbClient, telemetryWriter, formDependencies)
-	publicFormPath, publicFormHandler := openv1connect.NewFormServiceHandler(publicFormService, publicHandlerOpts...)
-	mux.Handle(publicFormPath, publicFormHandler)
-	slog.Info("Registered public service", "path", publicFormPath)
-
-	publicMemberService := memberpublic.NewMemberService(db, cfg.CDNURL, spicedbClient)
-	publicMemberPath, publicMemberHandler := openv1connect.NewMemberServiceHandler(publicMemberService, publicHandlerOpts...)
-	mux.Handle(publicMemberPath, publicMemberHandler)
-	slog.Info("Registered public service", "path", publicMemberPath)
-	publicAccountService := accountpublic.NewAuditedAccountService(
-		db,
-		kratosClient,
-		spicedbClient,
-		cfg.SiteOrigin,
-		workerPublisher,
-		accountadapter.MemberDeletion{},
-		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
-	)
-	publicAccountPath, publicAccountHandler := openv1connect.NewAccountServiceHandler(publicAccountService, publicHandlerOpts...)
-	mux.Handle(publicAccountPath, publicAccountHandler)
-	slog.Info("Registered public service", "path", publicAccountPath)
-
-	publicPrivacyService := legalpublic.NewPrivacyServiceWithContentBlocks(db, contentBlockStore, legalRuntime)
-	publicPrivacyPath, publicPrivacyHandler := openv1connect.NewPrivacyServiceHandler(publicPrivacyService, publicHandlerOpts...)
-	mux.Handle(publicPrivacyPath, publicPrivacyHandler)
-	slog.Info("Registered public service", "path", publicPrivacyPath)
-
-	publicTermsService := legalpublic.NewTermsServiceWithContentBlocks(db, contentBlockStore, legalRuntime)
-	publicTermsPath, publicTermsHandler := openv1connect.NewTermsServiceHandler(publicTermsService, publicHandlerOpts...)
-	mux.Handle(publicTermsPath, publicTermsHandler)
-	slog.Info("Registered public service", "path", publicTermsPath)
-
-	publicCategoryService := publicreferencecatalog.NewCategoryService(db)
-	publicCategoryPath, publicCategoryHandler := openv1connect.NewCategoryServiceHandler(publicCategoryService, publicHandlerOpts...)
-	mux.Handle(publicCategoryPath, publicCategoryHandler)
-	slog.Info("Registered public service", "path", publicCategoryPath)
-
-	publicSeriesService := seriespublic.NewSeriesService(seriespublicadapter.NewPublicReader(db, cfg.CDNURL))
-	publicSeriesPath, publicSeriesHandler := openv1connect.NewSeriesServiceHandler(publicSeriesService, publicHandlerOpts...)
-	mux.Handle(publicSeriesPath, publicSeriesHandler)
-	slog.Info("Registered public service", "path", publicSeriesPath)
-
-	publicTagService := publicreferencecatalog.NewTagService(db)
-	publicTagPath, publicTagHandler := openv1connect.NewTagServiceHandler(publicTagService, publicHandlerOpts...)
-	mux.Handle(publicTagPath, publicTagHandler)
-	slog.Info("Registered public service", "path", publicTagPath)
-
-	publicNewsletterService := memberpublic.NewAuditedNewsletterService(db, cfg.TokenSigningSecret, telemetryWriter)
-	publicNewsletterPath, publicNewsletterHandler := openv1connect.NewNewsletterServiceHandler(publicNewsletterService, publicHandlerOpts...)
-	mux.Handle(publicNewsletterPath, publicNewsletterHandler)
-	slog.Info("Registered public service", "path", publicNewsletterPath)
-
-	publicMapPlaceService := publicreferencecatalog.NewMapPlaceService(db, publicReferenceCatalogAssets)
-	publicMapPlacePath, publicMapPlaceHandler := openv1connect.NewMapPlaceServiceHandler(publicMapPlaceService, publicHandlerOpts...)
-	mux.Handle(publicMapPlacePath, publicMapPlaceHandler)
-	slog.Info("Registered public service", "path", publicMapPlacePath)
-
-	publicMapThemeService := mapthemepublic.NewMapThemeService(db)
-	publicMapThemePath, publicMapThemeHandler := openv1connect.NewMapThemeServiceHandler(publicMapThemeService, publicHandlerOpts...)
-	mux.Handle(publicMapThemePath, publicMapThemeHandler)
-	slog.Info("Registered public service", "path", publicMapThemePath)
-
-	publicProgramEventTypeService := programeventpublic.NewProgramEventTypeService(db)
-	publicProgramEventTypePath, publicProgramEventTypeHandler := openv1connect.NewProgramEventTypeServiceHandler(publicProgramEventTypeService, publicHandlerOpts...)
-	mux.Handle(publicProgramEventTypePath, publicProgramEventTypeHandler)
-	slog.Info("Registered public service", "path", publicProgramEventTypePath)
-
-	publicProgramEventAssets := programeventadapter.NewPublicAssets(db, cfg.CDNURL)
-	publicProgramEventFiles := programeventadapter.NewPublicFiles(publicFileService)
-	publicProgramEventSeriesService := programeventpublic.NewProgramEventSeriesService(db, publicProgramEventAssets)
-	publicProgramEventSeriesPath, publicProgramEventSeriesHandler := openv1connect.NewProgramEventSeriesServiceHandler(publicProgramEventSeriesService, publicHandlerOpts...)
-	mux.Handle(publicProgramEventSeriesPath, publicProgramEventSeriesHandler)
-	slog.Info("Registered public service", "path", publicProgramEventSeriesPath)
-
-	publicProgramEventService := programeventpublic.NewProgramEventService(
-		db,
-		publicProgramEventAssets,
-		programeventadapter.NewPublicCreditMemberSummaries(db, cfg.CDNURL),
-		programeventpublic.WithProgramEventContentBlockStore(contentBlockStore),
-		programeventpublic.WithProgramEventFileService(publicProgramEventFiles),
-	)
-	publicProgramEventPath, publicProgramEventHandler := openv1connect.NewProgramEventServiceHandler(publicProgramEventService, publicHandlerOpts...)
-	mux.Handle(publicProgramEventPath, publicProgramEventHandler)
-	slog.Info("Registered public service", "path", publicProgramEventPath)
-
-	publicShareLinkService := sharelinkpublic.NewService(db, sharelinkadapter.NewPublicTargetResolver(db))
-	publicShareLinkPath, publicShareLinkHandler := openv1connect.NewShareLinkServiceHandler(publicShareLinkService, publicHandlerOpts...)
-	mux.Handle(publicShareLinkPath, publicShareLinkHandler)
-	slog.Info("Registered public service", "path", publicShareLinkPath)
-
-	publicSitemapService := sitemappublic.NewSitemapService(
-		sitemapadapter.NewPostgresStore(db),
-		cfg.SiteOrigin,
-	)
-	publicSitemapPath, publicSitemapHandler := openv1connect.NewSitemapServiceHandler(publicSitemapService, publicHandlerOpts...)
-	mux.Handle(publicSitemapPath, publicSitemapHandler)
-	slog.Info("Registered public service", "path", publicSitemapPath)
+	(publicServiceRegistration{
+		dependencies:     deps,
+		handlerOptions:   publicHandlerOpts,
+		fileService:      publicFileService,
+		postShareLinks:   postShareLinks,
+		postMembers:      postMembers,
+		workRuntime:      workRuntime,
+		legalRuntime:     legalRuntime,
+		formDependencies: formDependencies,
+	}).register()
 
 	return registeredServices{
 		authInterceptor:             authInterceptor,
