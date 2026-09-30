@@ -28,6 +28,24 @@ The API uses the public Go modules
 `github.com/echovisionlab/geul-event-contracts` and
 `github.com/echovisionlab/geul-telemetry`.
 
+Page source-room batches may mutate shared block structure and explicit source
+locale values. Deleting a shared block removes its descendant blocks and their
+locale overlays atomically, including target translations. Target locales in
+the resulting `changed_locales` acknowledgement describe that cascade; only
+explicit locale mutations in the request determine source-room write authority.
+
+Page target CAS also binds `page_translation.incarnation_id`, assigned by
+PostgreSQL for each locale row lifetime. Apply the schema upgrade documented in
+`geul-schema` before deploying this API; a deleted/recreated locale cannot reuse
+an old room's token even with identical timestamps. Internal target conflicts
+return a typed `TARGET_REVISION_CHANGED` detail, and no-op metadata writes do
+not report changed locales or advance their revision.
+
+A provider translation job whose target has since become the Page source is
+rejected before any source write. Jobs targeting a locale that remains a target
+may still survive source-locale switching; promotion must not give old target
+jobs authority to overwrite canonical source content.
+
 ## Included media services
 
 CDN delivery, audio/video transcoding, waveform generation, mesh optimization,

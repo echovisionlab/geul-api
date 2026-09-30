@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -47,19 +48,16 @@ func TestPageTranslationMetadataRejectsLegacyBodyAndTargetSourceMutation(t *test
 		now,
 	).Error)
 
-	require.NoError(t, ValidateSourceLocaleChanges(
-		context.Background(),
-		db,
+	require.NoError(t, validatePageSourceLocaleMutations(
 		pageID,
 		"en",
-		[]string{"en"},
+		[]contentblock.LocaleMutationGroup{{Locale: "en"}},
 	))
-	require.Error(t, ValidateSourceLocaleChanges(
-		context.Background(),
-		db,
+	require.NoError(t, validatePageSourceLocaleMutations(pageID, "en", nil), "structural deletion has no explicit locale writes")
+	require.Error(t, validatePageSourceLocaleMutations(
 		pageID,
 		"en",
-		[]string{"ko"},
+		[]contentblock.LocaleMutationGroup{{Locale: "ko"}},
 	))
 
 	err = UpsertTranslationMetadataEntry(

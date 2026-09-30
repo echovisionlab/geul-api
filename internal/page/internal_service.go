@@ -232,6 +232,9 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			if req.Msg.ExpectedTargetRevision != nil {
 				return errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 			}
+			if err := validatePageSourceLocaleMutations(req.Msg.PageId, domain.SourceLocale, batch.LocaleGroups); err != nil {
+				return err
+			}
 			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(req.Msg.PageId, locale, pageLockedTargetFence(documentID, domain)))
 		} else {
 			result, targetRevision, err = applyPageTargetLocaleBatch(
@@ -254,11 +257,6 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 				ctx, tx, s.auditWriter, contributorMemberID, req.Msg.PageId, locale,
 				sharedtelemetry.AuditItemOperationUpdated,
 			)
-		}
-		if err := ValidateSourceLocaleChanges(
-			ctx, tx, req.Msg.PageId, domain.SourceLocale, result.ChangedLocales,
-		); err != nil {
-			return err
 		}
 		if !result.Changed {
 			return nil
@@ -507,6 +505,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	}
 
 	changed := advance.Changed
+	var changedLocales []string
 	documentRevision := advance.DocumentRevision.String()
 	sourceChanged := advance.TranslationSourceChanged
 	if targetPath {
@@ -515,6 +514,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 		sourceChanged = false
 	}
 	if changed {
+		changedLocales = []string{locale}
 		fields := make([]string, 0, 2)
 		if req.Msg.Title != nil {
 			fields = append(fields, "title")
@@ -536,7 +536,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	}
 	return connect.NewResponse(&intrav1.UpdatePageLocaleMetadataResponse{
 		DocumentRevision: documentRevision, Changed: changed, SourceChanged: sourceChanged,
-		ChangedLocales: []string{locale}, Locale: locale,
+		ChangedLocales: changedLocales, Locale: locale,
 		TargetRevision: targetRevision,
 	}), nil
 }

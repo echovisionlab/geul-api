@@ -1,14 +1,19 @@
 package page
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestPageInterchangeProjectionPreservesStableBlockExplicitEmpty(t *testing.T) {
@@ -34,6 +39,32 @@ func TestPageInterchangeProjectionPreservesStableBlockExplicitEmpty(t *testing.T
 	require.Contains(t, bodyHandle, "section:section-a:block:paragraph-a:typed:")
 	require.Contains(t, targets, bodyHandle)
 	require.Equal(t, "", targets[bodyHandle].TranslatedText)
+}
+
+func TestPageInterchangeTargetRevisionBindsLocaleIncarnation(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE page_translation (
+		entity_id TEXT NOT NULL,
+		locale TEXT NOT NULL,
+		incarnation_id TEXT NOT NULL,
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY (entity_id, locale)
+	)`).Error)
+
+	pageID := uuid.NewString()
+	updatedAt := time.Date(2026, time.August, 23, 4, 5, 6, 7000, time.UTC)
+	require.NoError(t, db.Exec(`INSERT INTO page_translation
+		(entity_id, locale, incarnation_id, updated_at) VALUES (?, 'ko', ?, ?)`,
+		pageID, "d7c6d919-a47c-47b4-b75e-a661908a7d32", updatedAt).Error)
+	first, err := pageInterchangeTargetRevision(context.Background(), db, pageID, "ko", "doc-revision", true)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Exec(`UPDATE page_translation SET incarnation_id = ? WHERE entity_id = ? AND locale = 'ko'`,
+		"abc942b5-c2eb-4d0b-a480-c82538186124", pageID).Error)
+	second, err := pageInterchangeTargetRevision(context.Background(), db, pageID, "ko", "doc-revision", true)
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
 }
 
 func TestValidatePageInterchangeMutationUsesCurrentStableUnitIntersection(t *testing.T) {
