@@ -163,7 +163,9 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 	defer span.End()
 	startedAt := time.Now()
 	err = c.handler(ctx, message)
-	if parent.Err() != nil {
+	decision := decideQueueDelivery(parent.Err() != nil, err, retryCount, c.config.MaxRetries)
+	switch decision {
+	case queueDeliveryShutdownRetry:
 		requeueCtx, requeueCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer requeueCancel()
 		if retryErr := c.pgmq.Retry(requeueCtx, c.db, c.config.Name, delivery.TransportID, 0); retryErr != nil {
@@ -174,8 +176,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		emitQueueHandoff(requeueCtx, sharedtelemetry.EventQueueRetryAccepted, c.config.Name, message, retryCount, "")
 		emitQueueDeliveryRequeued(requeueCtx, c.config.Name, message, retryCount, time.Since(startedAt), sharedtelemetry.QueueFailureShutdown)
 		return
-	}
-	if err == nil {
+	case queueDeliveryComplete:
 		if completeErr := c.pgmq.Complete(parent, c.db, c.config.Name, delivery.TransportID); completeErr != nil {
 			RecordConsumerError(span, completeErr)
 			slog.Error("PGMQ delete failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", completeErr)
@@ -183,9 +184,8 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		}
 		emitQueueDeliverySucceeded(parent, c.config.Name, message, retryCount, time.Since(startedAt))
 		return
-	}
-	RecordConsumerError(span, err)
-	if _, terminal := TerminalDeliveryErrorClass(err); terminal || retryCount >= c.config.MaxRetries {
+	case queueDeliveryTerminal, queueDeliveryRetriesExhausted:
+		RecordConsumerError(span, err)
 		if archiveErr := c.pgmq.DeadLetter(parent, c.db, c.config.Name, delivery.TransportID); archiveErr != nil {
 			emitQueueHandoff(parent, sharedtelemetry.EventQueueDLQFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureArchiveFailed)
 			slog.Error("PGMQ archive failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", archiveErr)
@@ -194,15 +194,17 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		emitQueueHandoff(parent, sharedtelemetry.EventQueueDLQAccepted, c.config.Name, message, retryCount, "")
 		emitQueueDeliveryFailed(parent, c.config.Name, message, retryCount, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
 		return
+	case queueDeliveryRetry:
+		RecordConsumerError(span, err)
+		delay := retryDelay(c.config, retryCount)
+		if retryErr := c.pgmq.Retry(parent, c.db, c.config.Name, delivery.TransportID, delay); retryErr != nil {
+			emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureVisibilityUpdateFailed)
+			slog.Error("PGMQ retry visibility update failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", retryErr)
+			return
+		}
+		emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryAccepted, c.config.Name, message, retryCount+1, "")
+		emitQueueDeliveryRequeued(parent, c.config.Name, message, retryCount+1, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
 	}
-	delay := retryDelay(c.config, retryCount)
-	if retryErr := c.pgmq.Retry(parent, c.db, c.config.Name, delivery.TransportID, delay); retryErr != nil {
-		emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureVisibilityUpdateFailed)
-		slog.Error("PGMQ retry visibility update failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", retryErr)
-		return
-	}
-	emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryAccepted, c.config.Name, message, retryCount+1, "")
-	emitQueueDeliveryRequeued(parent, c.config.Name, message, retryCount+1, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
 }
 
 func queueDeliveryContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

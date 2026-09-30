@@ -11,19 +11,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-type emailSendOutcome string
-
-const (
-	emailSendOutcomeAccepted                emailSendOutcome = "accepted"
-	emailSendOutcomeTerminalSuppressed      emailSendOutcome = "terminal_failed:suppressed"
-	emailSendOutcomeTerminalBlocked         emailSendOutcome = "terminal_failed:recipient_blocked"
-	emailSendOutcomeTerminalRender          emailSendOutcome = "terminal_failed:render"
-	emailSendOutcomeTerminalMissingTemplate emailSendOutcome = "terminal_failed:template_not_configured"
-	emailSendOutcomeTerminalNoAdapter       emailSendOutcome = "terminal_failed:no_active_adapter"
-	emailSendOutcomeTerminalPermanent       emailSendOutcome = "terminal_failed:permanent_adapter_failure"
-	emailSendOutcomeTerminalExpired         emailSendOutcome = "terminal_failed:expired"
-	emailDeliveryRetryable                                   = "retryable"
-)
+const emailDeliveryRetryable = "retryable"
 
 func (h *Handlers) handleSendEmail(ctx context.Context, job *managev1.SendEmailEvent) error {
 	_, err := h.handleEmailDelivery(ctx, job)
@@ -33,7 +21,7 @@ func (h *Handlers) handleSendEmail(ctx context.Context, job *managev1.SendEmailE
 func (h *Handlers) handleEmailDelivery(
 	ctx context.Context,
 	job *managev1.SendEmailEvent,
-) (emailSendOutcome, error) {
+) (emaildelivery.DeliveryOutcome, error) {
 	application := emaildelivery.NewDeliveryApplication(
 		emaildeliveryadapter.NewCampaignDeliveryStore(h.db, h.auditWriter, h.mailMetrics),
 		emaildeliveryadapter.NewRecipientPolicy(h.db, h.kratosClient),
@@ -43,18 +31,27 @@ func (h *Handlers) handleEmailDelivery(
 		h.mailMetrics,
 	)
 	result, err := application.Deliver(ctx, job)
-	if err != nil {
-		return "", err
+	return emailDeliveryQueueResult(result, err)
+}
+
+// emailDeliveryQueueResult maps application outcomes into the queue's
+// retryable and terminal error contract.
+func emailDeliveryQueueResult(
+	result emaildelivery.DeliveryResult,
+	deliveryErr error,
+) (emaildelivery.DeliveryOutcome, error) {
+	if deliveryErr != nil {
+		return "", deliveryErr
 	}
 	if result.Err != nil {
 		if result.Retryable {
 			return "", retryableEmailDeliveryError(result.ErrorType)
 		}
-		return emailSendOutcomeTerminalPermanent, mq.NewTerminalDeliveryError(
+		return result.Outcome, mq.NewTerminalDeliveryError(
 			terminalEmailDeliveryErrorClass(result.ErrorType), result.Err,
 		)
 	}
-	return emailSendOutcome(result.Outcome), nil
+	return result.Outcome, nil
 }
 
 func terminalEmailDeliveryErrorClass(errorType string) string {

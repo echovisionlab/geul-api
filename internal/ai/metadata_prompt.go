@@ -14,13 +14,6 @@ const metadataAIProviderTimeout = 90 * time.Second
 
 const metadataAISystemPrompt = "You generate metadata suggestions for a publishing system. The user message is a JSON object containing task and source data. Return only a single valid JSON object that matches the response schema. Never output HTML, markdown, or explanatory text. Keep wording restrained, precise, and factual, and do not invent unsupported claims."
 
-var metadataJSONPropertyDefinitions = map[string]structured.Fields{
-	"summary": {
-		"type":        "string",
-		"description": "Plain-text standalone synopsis. Begin with the primary subject, state what it is or does, include only the clearest distinguishing context from the source, and keep it suitable for search engines and AI answer systems.",
-	},
-}
-
 type metadataContextPayload struct {
 	Task struct {
 		RequestedKeys []string `json:"requestedKeys"`
@@ -39,11 +32,11 @@ func buildMetadataResponseJSONSchema(userPrompt string) structured.Fields {
 	properties := structured.Fields{}
 	required := make([]string, 0, len(payload.Task.RequestedKeys))
 	for _, key := range payload.Task.RequestedKeys {
-		property, ok := metadataJSONPropertyDefinitions[key]
+		definition, ok := metadataSuggestionRegistry[key]
 		if !ok {
 			continue
 		}
-		properties[key] = property
+		properties[key] = definition.responseSchema
 		required = append(required, key)
 	}
 	if len(required) == 0 {
@@ -87,7 +80,7 @@ func validateMetadataAIUserPrompt(userPrompt string) error {
 		return errs.InvalidArgument("context", "metadata-json requires at least one requested key")
 	}
 	for _, key := range payload.Task.RequestedKeys {
-		if _, ok := metadataSuggestionResponseKeys[key]; !ok {
+		if _, ok := metadataSuggestionRegistry[key]; !ok {
 			return errs.InvalidArgument("context", fmt.Sprintf("metadata-json does not support requested key %q", key))
 		}
 	}
