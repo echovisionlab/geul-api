@@ -505,6 +505,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	}
 
 	changed := advance.Changed
+	var changedLocales []string
 	documentRevision := advance.DocumentRevision.String()
 	sourceChanged := advance.TranslationSourceChanged
 	if targetPath {
@@ -513,6 +514,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 		sourceChanged = false
 	}
 	if changed {
+		changedLocales = []string{locale}
 		fields := make([]string, 0, 2)
 		if req.Msg.Title != nil {
 			fields = append(fields, "title")
@@ -534,7 +536,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	}
 	return connect.NewResponse(&intrav1.UpdatePageLocaleMetadataResponse{
 		DocumentRevision: documentRevision, Changed: changed, SourceChanged: sourceChanged,
-		ChangedLocales: []string{locale}, Locale: locale,
+		ChangedLocales: changedLocales, Locale: locale,
 		TargetRevision: targetRevision,
 	}), nil
 }

@@ -12,6 +12,9 @@ func TestDeriveTargetRevisionUsesOnlyAuthoritativeCurrentFacts(t *testing.T) {
 	if err != nil || base == "" {
 		t.Fatalf("DeriveTargetRevision() = (%q, %v)", base, err)
 	}
+	if want := "tr1_rjPNmdzpVz9LKqqRKZi4mcVy4qvAxOFn6mWVd3EFZ7w"; base != want {
+		t.Fatalf("legacy target revision = %q, want %q", base, want)
+	}
 	stable, err := DeriveTargetRevision(TargetRevisionFacts{LocaleExists: true, LocaleUpdatedAt: &updatedAt})
 	if err != nil || stable != base {
 		t.Fatalf("stable revision = (%q, %v), want %q", stable, err, base)
@@ -21,6 +24,9 @@ func TestDeriveTargetRevisionUsesOnlyAuthoritativeCurrentFacts(t *testing.T) {
 	for name, facts := range map[string]TargetRevisionFacts{
 		"locale row changed": {LocaleExists: true, LocaleUpdatedAt: &nextTime},
 		"document changed":   {LocaleExists: true, DocumentRevision: "document-revision-2", LocaleUpdatedAt: &updatedAt},
+		"locale incarnation changed": {
+			LocaleExists: true, LocaleIncarnation: "incarnation-2", LocaleUpdatedAt: &updatedAt,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			next, nextErr := DeriveTargetRevision(facts)
@@ -94,6 +100,9 @@ func TestDeriveTargetRevisionRepresentsMissingTargetAsAbsentToken(t *testing.T) 
 	updatedAt := time.Now()
 	if _, err := DeriveTargetRevision(TargetRevisionFacts{LocaleUpdatedAt: &updatedAt}); err == nil {
 		t.Fatal("absent target accepted persisted revision facts")
+	}
+	if _, err := DeriveTargetRevision(TargetRevisionFacts{LocaleIncarnation: "incarnation-1"}); err == nil {
+		t.Fatal("absent target accepted an incarnation")
 	}
 	if _, err := DeriveTargetRevision(TargetRevisionFacts{LocaleExists: true}); err == nil {
 		t.Fatal("present target accepted no updated_at")

@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
@@ -237,6 +238,13 @@ func parsePageContentUUID(fieldName string, value string) (uuid.UUID, error) {
 func normalizePageContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
+	}
+	var targetConflict *translation.TargetRevisionConflict
+	if errors.As(err, &targetConflict) {
+		return errs.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+			"Page target translation changed since it was loaded; reload before saving",
+		)
 	}
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):

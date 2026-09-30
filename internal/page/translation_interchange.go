@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gorm.io/gorm"
@@ -821,15 +822,16 @@ func pageInterchangeTargetRevision(
 		return translation.DeriveTargetRevision(translation.TargetRevisionFacts{})
 	}
 	var row struct {
-		UpdatedAt time.Time `gorm:"column:updated_at"`
+		UpdatedAt     time.Time `gorm:"column:updated_at"`
+		IncarnationID uuid.UUID `gorm:"column:incarnation_id"`
 	}
-	result := tx.WithContext(ctx).Table("page_translation").Select("updated_at").
+	result := tx.WithContext(ctx).Table("page_translation").Select("updated_at", "incarnation_id").
 		Where("entity_id = ? AND locale = ?", pageID, locale).Take(&row)
 	if result.Error != nil {
 		return "", errs.Internal(result.Error)
 	}
-	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
-		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &row.UpdatedAt,
+	revision, err := derivePageTargetRevision(documentRevision, pageLocaleMetadataRow{
+		IncarnationID: row.IncarnationID, UpdatedAt: row.UpdatedAt,
 	})
 	if err != nil {
 		return "", errs.Internal(err)

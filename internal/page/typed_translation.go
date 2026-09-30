@@ -428,6 +428,9 @@ func ApplyTranslationCandidateWithDB(
 			return fenceErr
 		}
 		if job.TargetLocale == domain.SourceLocale {
+			if err := validatePageProviderSourceTarget(job.SourceLocale, job.TargetLocale, domain.SourceLocale); err != nil {
+				return err
+			}
 			return applyPageProviderSourceCandidate(
 				ctx, tx, store, job, candidate, entry, auditWriter, documentID, domain, providerPatch,
 			)
@@ -549,6 +552,13 @@ func ApplyTranslationCandidateWithDB(
 		job.TargetLocale,
 		entry,
 	)
+}
+
+func validatePageProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentSourceLocale string) error {
+	if jobTargetLocale == currentSourceLocale && jobSourceLocale != currentSourceLocale {
+		return translation.ErrSourceNoLongerCurrent
+	}
+	return nil
 }
 
 func applyPageProviderSourceCandidate(
