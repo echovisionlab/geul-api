@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/echovisionlab/geul-api/compare/v0.5.3...v0.5.4) (2026-09-30)
+
+
+### Bug Fixes
+
+* preserve Page block and translation write integrity ([#40](https://github.com/echovisionlab/geul-api/issues/40)) ([4b12750](https://github.com/echovisionlab/geul-api/commit/4b12750cd3cd519846f6723e475abf05d1b1d79b))
+
 ## [0.5.3](https://github.com/echovisionlab/geul-api/compare/v0.5.2...v0.5.3) (2026-09-10)
 
 
