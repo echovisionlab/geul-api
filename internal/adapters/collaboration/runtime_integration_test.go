@@ -100,9 +100,13 @@ func collaborationAuthorizationRequest(
 	resourceID string,
 	permission intrav1.CollaborationPermission,
 ) *connect.Request[intrav1.AuthorizeCollaborationRequest] {
+	locale := "en"
+	if resourceType == intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MAP_THEME {
+		locale = "und"
+	}
 	return connect.NewRequest(&intrav1.AuthorizeCollaborationRequest{
 		Principal:  &intrav1.CollaborationPrincipal{SessionId: sessionID},
-		Resource:   &intrav1.CollaborationResource{Type: resourceType, Id: resourceID, Locale: "en"},
+		Resource:   &intrav1.CollaborationResource{Type: resourceType, Id: resourceID, Locale: locale},
 		Permission: permission,
 	})
 }
@@ -170,20 +174,26 @@ func TestAuthorizeCollaborationDelegatesEverySupportedResourceToCanonicalSpiceDB
 			resourceID := seedCollaborationRoot(t, db, spec.resourceType)
 			attachCollaborationResourcePolicy(t, spiceDB, spec.resourceType, resourceID)
 			checker := &recordingCollaborationAuthorizationChecker{delegate: spiceDB}
+			locale := "en"
+			if spec.resourceType == intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MAP_THEME {
+				locale = "und"
+			}
 
 			for _, permissionCase := range []intrav1.CollaborationPermission{
 				intrav1.CollaborationPermission_COLLABORATION_PERMISSION_EDIT,
 				intrav1.CollaborationPermission_COLLABORATION_PERMISSION_VIEW,
 			} {
 				checker.calls = nil
+				request := collaborationAuthorizationRequest(principal.sessionID, spec.resourceType, resourceID, permissionCase)
+				request.Msg.Resource.Locale = locale
 				response, err := newAuthorizationService(db, checker, "").AuthorizeCollaboration(
-					t.Context(), collaborationAuthorizationRequest(principal.sessionID, spec.resourceType, resourceID, permissionCase),
+					t.Context(), request,
 				)
 
 				require.NoError(t, err)
 				require.True(t, response.Msg.Authorized)
 				require.Equal(t, principal.memberID, response.Msg.GetMember().GetId())
-				require.Equal(t, "en", response.Msg.GetLocale())
+				require.Equal(t, locale, response.Msg.GetLocale())
 				wantCan, canErr := spec.can.forPermission(resourceID, permissionCase, false)
 				require.NoError(t, canErr)
 				requireCollaborationAuthorizationCheck(

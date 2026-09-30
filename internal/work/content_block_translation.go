@@ -82,6 +82,11 @@ func ApplyTypedTranslationCandidateWithDB(
 		return err
 	}
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == domain.SourceLocale {
+		if err := validateWorkProviderSourceTarget(
+			job.SourceLocale, job.TargetLocale, domain.SourceLocale,
+		); err != nil {
+			return err
+		}
 		return applyWorkProviderSourceCandidate(
 			ctx, tx, store, job, candidate, entry, auditWriter, documentID, domain,
 		)
@@ -221,4 +226,14 @@ func workSystemTranslationDocumentFence(workID string) contentblock.DomainFence 
 		}
 		return loadWorkContentDomainContext(ctx, tx, workID)
 	}
+}
+
+// validateWorkProviderSourceTarget discards a late translation when its
+// request-time target has since become the Work's canonical source locale.
+// A job whose target remains a target may still apply after a source switch.
+func validateWorkProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentSourceLocale string) error {
+	if jobTargetLocale == currentSourceLocale && jobSourceLocale != currentSourceLocale {
+		return translation.ErrSourceNoLongerCurrent
+	}
+	return nil
 }

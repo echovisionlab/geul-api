@@ -44,6 +44,21 @@ func authorizationPermission(value intrav1.CollaborationPermission) (intrav1.Col
 	}
 }
 
+func normalizeCollaborationLocale(resourceType intrav1.CollaborationResourceType, value string) (*string, error) {
+	if resourceType == intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MAP_THEME {
+		if value != "und" {
+			return nil, errs.InvalidArgument("locale", "Map Theme collaboration requires the locale-neutral und locale")
+		}
+		locale := "und"
+		return &locale, nil
+	}
+	locale := localization.NormalizeExactSupportedLocale(value)
+	if locale == nil {
+		return nil, errs.InvalidArgument("locale", "must be an exact canonical locale")
+	}
+	return locale, nil
+}
+
 func (s *Service) AuthorizeCollaboration(
 	ctx context.Context,
 	req *connect.Request[intrav1.AuthorizeCollaborationRequest],
@@ -69,9 +84,9 @@ func (s *Service) AuthorizeCollaboration(
 	if err != nil {
 		return nil, err
 	}
-	locale := localization.NormalizeExactSupportedLocale(req.Msg.Resource.GetLocale())
-	if locale == nil {
-		return nil, errs.InvalidArgument("locale", "must be an exact canonical locale")
+	locale, err := normalizeCollaborationLocale(req.Msg.Resource.GetType(), req.Msg.Resource.GetLocale())
+	if err != nil {
+		return nil, err
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {

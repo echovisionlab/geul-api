@@ -408,13 +408,14 @@ func (s *ArtistService) GetWorks(
 		Title       string     `gorm:"column:title"`
 		Slug        *string    `gorm:"column:slug"`
 		Summary     *string    `gorm:"column:summary"`
+		Type        string     `gorm:"column:type"`
 		ImageFileID *string    `gorm:"column:image_file_id"`
 		PublishedAt *time.Time `gorm:"column:published_at"`
 	}
 
 	err := s.db.WithContext(ctx).
 		Table("work_credit").
-		Select("DISTINCT work.id, "+workSourceTitleSQL("work")+" AS title, "+workSourceSummarySQL("work")+" AS summary, work.slug, work.featured_image_file_id AS image_file_id, work.published_at").
+		Select("DISTINCT work.id, "+workSourceTitleSQL("work")+" AS title, "+workSourceSummarySQL("work")+" AS summary, work.slug, work.type, work.featured_image_file_id AS image_file_id, work.published_at").
 		Joins("JOIN work ON work.id = work_credit.work_id").
 		Where("work_credit.artist_id = ? AND work.status IN ?", artistID, []string{
 			managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
@@ -464,6 +465,7 @@ func (s *ArtistService) GetWorks(
 		work := &openv1.ArtistWork{
 			Id:    w.ID,
 			Title: w.Title,
+			Type:  artistWorkTypeFromDatabase(w.Type),
 		}
 		if w.Slug != nil {
 			work.Slug = w.Slug
@@ -641,6 +643,7 @@ func collectArtistWorkIDs(
 		Title       string     `gorm:"column:title"`
 		Slug        *string    `gorm:"column:slug"`
 		Summary     *string    `gorm:"column:summary"`
+		Type        string     `gorm:"column:type"`
 		ImageFileID *string    `gorm:"column:image_file_id"`
 		PublishedAt *time.Time `gorm:"column:published_at"`
 	},

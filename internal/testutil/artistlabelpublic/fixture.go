@@ -33,6 +33,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -533,6 +534,7 @@ func linkArtistLabelFixture(
 			Runtime:     artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
 		},
 		artistdomain.WithInternalArtistContentBlockStore(store),
+		artistdomain.WithInternalArtistCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
 	).UpdateArtistDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateArtistDocumentMetadataRequest{
 		ArtistId: artistID, ExpectedRevision: state.Revision, Locale: "en",
 		ContributorMemberIds: []string{state.Contributor},

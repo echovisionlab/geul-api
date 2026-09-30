@@ -72,7 +72,7 @@ func (s *ProgramEventService) prepareProgramEventUpdate(
 	if r.TypeId != nil {
 		update.fields["type_id"] = r.GetTypeId()
 	}
-	if err := applyProgramEventTimeUpdate(update.fields, event, r); err != nil {
+	if err := applyProgramEventTimeAndLocationUpdates(update.fields, event, r); err != nil {
 		return programEventUpdate{}, err
 	}
 	if r.Timezone != nil {
@@ -84,9 +84,6 @@ func (s *ProgramEventService) prepareProgramEventUpdate(
 	}
 	if r.AllDay != nil {
 		update.fields["all_day"] = r.GetAllDay()
-	}
-	if err := applyProgramEventLocationUpdate(update.fields, event, r); err != nil {
-		return programEventUpdate{}, err
 	}
 	applyProgramEventOptionalFields(update.fields, r)
 	if r.Slug != nil {
@@ -100,6 +97,20 @@ func (s *ProgramEventService) prepareProgramEventUpdate(
 		update.fields["slug"] = slug
 	}
 	return update, nil
+}
+
+func applyProgramEventTimeAndLocationUpdates(
+	fields structured.Fields,
+	event *model.ProgramEvent,
+	r *managev1.UpdateProgramEventRequest,
+) error {
+	for _, field := range []string{"starts_at", "ends_at", "location_mode", "map_place_id"} {
+		delete(fields, field)
+	}
+	if err := applyProgramEventTimeUpdate(fields, event, r); err != nil {
+		return err
+	}
+	return applyProgramEventLocationUpdate(fields, event, r)
 }
 
 func applyProgramEventTimeUpdate(fields structured.Fields, event *model.ProgramEvent, r *managev1.UpdateProgramEventRequest) error {
@@ -136,7 +147,11 @@ func applyProgramEventLocationUpdate(fields structured.Fields, event *model.Prog
 	case r.LocationMode != nil && !programEventLocationModeUsesMapPlace(locationMode):
 		mapPlaceID = nil
 	case r.MapPlaceId != nil:
-		mapPlaceID = nullableString(r.MapPlaceId)
+		if programEventLocationModeUsesMapPlace(locationMode) {
+			mapPlaceID = nullableString(r.MapPlaceId)
+		} else {
+			mapPlaceID = nil
+		}
 	}
 	if err := validateProgramEventLocation(locationMode, mapPlaceID); err != nil {
 		return err
@@ -147,8 +162,11 @@ func applyProgramEventLocationUpdate(fields structured.Fields, event *model.Prog
 			fields["map_place_id"] = nil
 		}
 	}
-	if r.MapPlaceId != nil && (r.LocationMode == nil || programEventLocationModeUsesMapPlace(locationMode)) {
-		fields["map_place_id"] = nullableString(r.MapPlaceId)
+	if r.MapPlaceId != nil {
+		fields["map_place_id"] = nil
+		if programEventLocationModeUsesMapPlace(locationMode) {
+			fields["map_place_id"] = nullableString(r.MapPlaceId)
+		}
 	}
 	return nil
 }
@@ -200,6 +218,9 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 			ctx, s.spiceDB, current.ID,
 			programEventMutationAction(current.Status, policyv1.ProgramEvent.Edit),
 		); err != nil {
+			return err
+		}
+		if err := applyProgramEventTimeAndLocationUpdates(update.fields, &current, r); err != nil {
 			return err
 		}
 		if err := validateProgramEventSeriesRelationForUpdate(ctx, tx, current, update.fields); err != nil {

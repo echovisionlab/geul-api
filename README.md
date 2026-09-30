@@ -156,3 +156,41 @@ Unified authentication responses preserve admission headers, and browser CORS
 exposes them. OAuth, Connect and Kratos error payloads retain their existing
 protocol contracts. Cookie-session routes do not accept PATs and must not
 advertise Bearer authentication merely to share a response format.
+
+## Concurrent content and delivery contracts
+
+Post and Work public detail reads authorize the locked root and load localized
+metadata and body in one repeatable-read transaction. Content writers lock the
+root before the document. A read started before unpublish may return that
+published snapshot, but it cannot combine its published status with a later
+draft body. Draft and share-link access retain their existing authorization.
+Delayed translations cannot write into a locale promoted to the current source
+unless the job itself targets that current source.
+
+Map Theme collaboration uses exactly the locale-neutral `und` locale. Other
+collaboration resources retain exact supported-locale validation. Program Event
+updates validate the combined time/location patch against the root returned
+under `FOR UPDATE`; TBA and ONLINE locations clear map-place IDs.
+
+Campaign workers claim pending recipients before contacting a provider. Claims
+have UUID owners and ten-minute leases; the application deadline is at most five
+minutes and respects the caller's shorter deadline. Terminal writes and releases
+are fenced by the current owner. Recovery ignores active claims. Locks follow
+layout, campaign, run, then recipient order. The deployment's versioned
+`email-delivery-claims-v1` migration must complete before this API is started.
+Provider acceptance followed by a process crash or failed terminal database write
+still has an at-least-once delivery ambiguity; the lease prevents immediate
+parallel delivery but does not make the provider and database atomic.
+
+Metadata AI jobs use a three-minute attempt lease and timestamp-fenced results.
+Queue delivery retries up to eight times with exponential backoff. A minute
+reconciler checks jobs unchanged for ten minutes, and republishes only when no
+active PGMQ row has the job's stable message ID. A running attempt must also be
+stale. Enqueue and recovery timestamps commit together; canceled handlers get
+at most five seconds to persist their fenced failure state.
+
+Queue handlers create one cancelable or timeout context per delivery. A local
+same-condition diagnostic of 10,000 completed timed deliveries retained 10,000
+children with the former overwritten cancel function and zero with the single
+constructor. This measures retained context registrations rather than production
+RSS or request latency.
