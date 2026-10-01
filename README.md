@@ -163,9 +163,15 @@ Post and Work public detail reads authorize the locked root and load localized
 metadata and body in one repeatable-read transaction. Content writers lock the
 root before the document. A read started before unpublish may return that
 published snapshot, but it cannot combine its published status with a later
-draft body. Draft and share-link access retain their existing authorization.
+draft body. Work also captures its featured-image source, credit groups, credits,
+and client associations in that transaction before resolving public identity
+and ready assets. Draft and share-link access retain their existing authorization.
 Delayed translations cannot write into a locale promoted to the current source
 unless the job itself targets that current source.
+
+Work, Program Event, and Program Event Type public lists reuse or batch their
+loaded relations. The [public-read query measurements](docs/public-read-query-budget.md)
+record the same-fixture before/after counts and remaining resolver costs.
 
 Map Theme collaboration uses exactly the locale-neutral `und` locale. Other
 collaboration resources retain exact supported-locale validation. Program Event
