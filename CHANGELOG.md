@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.7](https://github.com/echovisionlab/geul-api/compare/v0.5.6...v0.5.7) (2026-10-01)
+
+
+### Bug Fixes
+
+* preserve public work snapshots and batch list relations ([#48](https://github.com/echovisionlab/geul-api/issues/48)) ([5e8735a](https://github.com/echovisionlab/geul-api/commit/5e8735ac5f4b63afea7d04b41f0801d5982a3326))
+
 ## [0.5.6](https://github.com/echovisionlab/geul-api/compare/v0.5.5...v0.5.6) (2026-09-30)
 
 
