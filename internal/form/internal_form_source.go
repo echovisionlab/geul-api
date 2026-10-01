@@ -3,12 +3,14 @@ package form
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -58,7 +60,7 @@ func (s *InternalFormService) SaveDocument(
 			return err
 		}
 		if root.DocumentRevision != expectedDocumentRevision.String() {
-			return errs.FailedPrecondition("Form Content Document revision changed")
+			return formDocumentRevisionChangedConflict()
 		}
 		contributorMemberID, err := canonicalFormCollaborationContributor(r.ContributorMemberIds)
 		if err != nil {
@@ -195,6 +197,7 @@ func (s *InternalFormService) SaveDocument(
 		return nil
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
+		err = normalizeFormDocumentSaveError(err)
 		slog.Error("Failed to save collaborative Form document", "formId", r.FormId, "error", err)
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("form", r.FormId)
@@ -207,6 +210,27 @@ func (s *InternalFormService) SaveDocument(
 		DocumentRevision: result.documentRevision,
 		TargetRevision:   result.targetRevision,
 	}), nil
+}
+
+func formDocumentRevisionChangedConflict() error {
+	return errs.CollaborationConflict(
+		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
+		"Form Content Document revision changed",
+	)
+}
+
+func normalizeFormDocumentSaveError(err error) error {
+	var targetConflict *translation.TargetRevisionConflict
+	if errors.As(err, &targetConflict) {
+		return errs.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+			targetConflict.Error(),
+		)
+	}
+	if dberrors.IsSerializationFailure(err) {
+		return formDocumentRevisionChangedConflict()
+	}
+	return err
 }
 
 func canonicalFormCollaborationContributor(values []string) (string, error) {

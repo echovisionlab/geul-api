@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,12 +33,21 @@ func startSuitePostgres(ctx context.Context, options suiteOptions) (*suitePostgr
 	if err != nil {
 		return nil, err
 	}
+	port, err := reserveSuitePostgresPort()
+	if err != nil {
+		return nil, fmt.Errorf("reserve loopback port for suite PostgreSQL: %w", err)
+	}
 	image := options.PostgresImage
 
-	arguments := suitePostgresDockerArguments(options, templateName)
+	arguments := suitePostgresDockerArguments(options, templateName, port)
 	output, err := dockerOutput(ctx, arguments...)
 	if err != nil {
-		return nil, fmt.Errorf("start suite PostgreSQL container from local image %s: %w", image, err)
+		return nil, fmt.Errorf(
+			"start suite PostgreSQL container from local image %s on reserved loopback port 127.0.0.1:%s (reservation is released before Docker binds it; no automatic retry): %w",
+			image,
+			port,
+			err,
+		)
 	}
 	containerID := strings.TrimSpace(output)
 	suite := &suitePostgres{ContainerID: containerID, Template: templateName}
@@ -49,10 +59,17 @@ func startSuitePostgres(ctx context.Context, options suiteOptions) (*suitePostgr
 	}()
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, 2*time.Minute)
-	port, err := waitForPostgresPort(waitCtx, containerID)
+	publishedPort, err := waitForPostgresPort(waitCtx, containerID)
 	cancelWait()
 	if err != nil {
 		return nil, err
+	}
+	if publishedPort != port {
+		return nil, fmt.Errorf(
+			"suite PostgreSQL Docker mapping does not match reserved loopback port: reserved 127.0.0.1:%s, published %s",
+			port,
+			publishedPort,
+		)
 	}
 	adminURL := &url.URL{
 		Scheme:   "postgres",
@@ -71,17 +88,29 @@ func startSuitePostgres(ctx context.Context, options suiteOptions) (*suitePostgr
 	return suite, nil
 }
 
-func suitePostgresDockerArguments(options suiteOptions, templateName string) []string {
+func suitePostgresDockerArguments(options suiteOptions, templateName, port string) []string {
 	arguments := []string{
 		"run", "--pull=never", "--rm", "--detach",
 		"--label", "geul.integration.owner=suite-orchestrator",
 		"--env", "POSTGRES_DB=" + templateName,
 		"--env", "POSTGRES_USER=test",
 		"--env", "POSTGRES_PASSWORD=test",
-		"--publish", "127.0.0.1::5432",
+		"--publish", fmt.Sprintf("127.0.0.1:%s:5432", port),
 		"--tmpfs", "/var/lib/postgresql:rw",
 	}
 	return append(arguments, options.PostgresImage)
+}
+
+func reserveSuitePostgresPort() (string, error) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		return "", fmt.Errorf("release reserved listener before Docker bind: %w", err)
+	}
+	return strconv.Itoa(port), nil
 }
 
 func requireLocalPostgresImage(ctx context.Context, image string) error {

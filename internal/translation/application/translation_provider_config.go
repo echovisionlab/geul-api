@@ -286,10 +286,8 @@ func (s *TranslationService) UpdateTranslationProvider(
 		if len(changedFields) == 0 {
 			return nil
 		}
-		now := time.Now().UTC()
-		updates["updated_at"] = now
-		provider.UpdatedAt = now
-		if err := tx.Model(&provider).Updates(updates).Error; err != nil {
+		updates["updated_at"] = tx.NowFunc().UTC()
+		if err := tx.Model(&provider).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
 			return err
 		}
 		if s.auditWriter == nil {

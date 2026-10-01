@@ -61,7 +61,8 @@ func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(
 	}))
 	require.NoError(t, err)
 	_, err = management.UpdateWork(adminCtx, connect.NewRequest(&managev1.UpdateWorkRequest{
-		Id: created.Msg.Id,
+		Id:              created.Msg.Id,
+		ObservedClients: &managev1.WorkClientsUpdate{ClientIds: []string{}},
 		Clients: &managev1.WorkClientsUpdate{
 			ClientIds: []string{publishedClient.Msg.Id},
 		},
@@ -142,7 +143,8 @@ func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(
 		_, writeErr := management.UnpublishWork(adminCtx, connect.NewRequest(&managev1.UnpublishWorkRequest{Id: created.Msg.Id}))
 		if writeErr == nil {
 			_, writeErr = management.UpdateWork(adminCtx, connect.NewRequest(&managev1.UpdateWorkRequest{
-				Id: created.Msg.Id,
+				Id:              created.Msg.Id,
+				ObservedClients: &managev1.WorkClientsUpdate{ClientIds: []string{publishedClient.Msg.Id}},
 				Clients: &managev1.WorkClientsUpdate{
 					ClientIds: []string{draftClient.Msg.Id},
 				},

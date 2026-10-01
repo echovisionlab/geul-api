@@ -4,6 +4,7 @@ package application
 
 import (
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -11,6 +12,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	"gorm.io/gorm"
 )
 
 func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccurrences(t *testing.T) {
@@ -22,12 +25,16 @@ func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccu
 	admin := seedTranslationProviderAuditAdmin(t, stack.Postgres.DB)
 	grantTranslationProviderIntegrationAdmin(t, stack.SpiceDBClient, admin)
 	ctx := translationProviderAuditedMemberContext(t, admin)
-	service := &TranslationService{db: stack.Postgres.DB, spiceDB: stack.SpiceDBClient}
+	writeTime := time.Date(2026, time.October, 2, 3, 4, 5, 123456789, time.UTC)
+	db := stack.Postgres.DB.Session(&gorm.Session{NowFunc: func() time.Time { return writeTime }})
+	service := &TranslationService{db: db, spiceDB: stack.SpiceDBClient}
 
 	response, err := service.UpdateTranslationSettings(ctx, connect.NewRequest(
 		&managev1.UpdateTranslationSettingsRequest{Settings: &managev1.TranslationSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{" Photoshop ", "Photoshop", "react native", "React Native", " "},
-		}},
+			ProtectedTerms: []string{" Photoshop ", "Photoshop", "react native", "React Native", " "},
+		}, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
+			BaseSettings: &managev1.TranslationSettings{},
+		},
 	))
 	require.NoError(t, err)
 	updated := response.Msg.Settings
@@ -35,6 +42,8 @@ func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccu
 	var stored model.TranslationSettings
 	require.NoError(t, stack.Postgres.DB.First(&stored, "id = 1").Error)
 	require.Equal(t, []string{"Photoshop", "react native", "React Native"}, []string(stored.ProtectedTerms))
+	require.Equal(t, writeTime.Truncate(time.Microsecond).UnixNano(), stored.UpdatedAt.UnixNano())
+	require.Equal(t, stored.UpdatedAt.UnixNano(), updated.UpdatedAt.AsTime().UnixNano())
 
 	request := translation.ProviderRequest{
 		RequestID: "job", OperationID: "job", Profile: translation.GenerationProfile{
@@ -51,8 +60,12 @@ func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccu
 
 	canonicalNoopResponse, err := service.UpdateTranslationSettings(ctx, connect.NewRequest(
 		&managev1.UpdateTranslationSettingsRequest{Settings: &managev1.TranslationSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
-		}},
+			ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
+		}, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
+			BaseSettings: &managev1.TranslationSettings{
+				ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
+			},
+		},
 	))
 	require.NoError(t, err)
 	canonicalNoop := canonicalNoopResponse.Msg.Settings

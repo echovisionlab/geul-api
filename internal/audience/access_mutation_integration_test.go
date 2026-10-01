@@ -29,6 +29,39 @@ const (
 	audienceTestTargetModeUsersByFilter = "users_by_filter"
 )
 
+func TestAudienceSegmentTypeSwitchWithoutConfigClearsObservedFiltersIntegration(t *testing.T) {
+	db := newAudienceAccessMutationDB(t)
+	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
+	userTagID := uuid.NewString()
+	seedAudienceAccessUserTag(t, db, userTagID)
+	service := newAudienceServiceForTest(db, spiceDB)
+	created, err := service.CreateSegment(adminCtx, connect.NewRequest(&managev1.CreateSegmentRequest{
+		Name:        "Observed type reset " + uuid.NewString(),
+		SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
+		Config:      &managev1.SegmentConfig{MemberTagIds: []string{userTagID}},
+	}))
+	require.NoError(t, err)
+
+	desiredType := managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS
+	updated, err := service.UpdateSegment(adminCtx, connect.NewRequest(&managev1.UpdateSegmentRequest{
+		Id:          created.Msg.Id,
+		SegmentType: &desiredType,
+		Observed: &managev1.SegmentConfigSnapshot{
+			SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
+			Config:      &managev1.SegmentConfig{MemberTagIds: []string{userTagID}},
+		},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, desiredType, updated.Msg.SegmentType)
+	require.Empty(t, updated.Msg.Config.MemberTagIds)
+
+	var remaining int64
+	require.NoError(t, db.Model(&model.AudienceSegmentUserTag{}).
+		Where("audience_segment_id = ? AND user_tag_id = ?", created.Msg.Id, userTagID).
+		Count(&remaining).Error)
+	require.Zero(t, remaining)
+}
+
 func TestAudienceArchivePreservesCampaignAndUserTagReferencesUnit(t *testing.T) {
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
@@ -268,7 +301,7 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 
 	name := "Archived segment renamed by admin"
 	description := "Archived segment description updated by admin"
-	createdAfter := timestamppb.New(now.Add(-time.Hour))
+	createdAfter := timestamppb.New(time.Date(2026, time.January, 2, 3, 4, 5, 123456789, time.UTC))
 	updated, err := service.UpdateSegment(
 		adminCtx,
 		connect.NewRequest(&managev1.UpdateSegmentRequest{
@@ -279,6 +312,10 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 				AccountRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN},
 				CreatedAfter: createdAfter,
 			},
+			Observed: &managev1.SegmentConfigSnapshot{
+				SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER,
+				Config:      &managev1.SegmentConfig{},
+			},
 		}),
 	)
 	require.NoError(t, err)
@@ -286,7 +323,14 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 	require.Equal(t, name, updated.Msg.Name)
 	require.Equal(t, description, updated.Msg.GetDescription())
 	require.Equal(t, []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN}, updated.Msg.Config.AccountRoles)
-	require.True(t, updated.Msg.Config.CreatedAfter.AsTime().Equal(createdAfter.AsTime()))
+
+	var stored model.AudienceSegment
+	require.NoError(t, db.Select("created_after").First(&stored, "id = ?", segmentID).Error)
+	require.NotNil(t, stored.CreatedAfter)
+	expectedStoredCreatedAfter := createdAfter.AsTime().Truncate(time.Microsecond)
+	require.True(t, expectedStoredCreatedAfter.Equal(*stored.CreatedAfter))
+	require.True(t, stored.CreatedAfter.Equal(updated.Msg.Config.CreatedAfter.AsTime()))
+	require.False(t, createdAfter.AsTime().Equal(*stored.CreatedAfter))
 }
 
 func TestAudienceAdminListDefaultsToActiveAndCanIncludeArchivedUnit(t *testing.T) {

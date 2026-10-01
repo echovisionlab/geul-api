@@ -1,6 +1,30 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/testutil"
+)
+
+func TestParseOptionsUsesMinIOEnvironmentDefaultAndExplicitOverride(t *testing.T) {
+	t.Setenv(testutil.AppIntegrationMinIOImageEnv, "environment-minio:local")
+
+	defaults, err := parseOptions(nil)
+	if err != nil {
+		t.Fatalf("parse default options: %v", err)
+	}
+	if defaults.MinIOImage != "environment-minio:local" {
+		t.Fatalf("default MinIO image = %q, want environment-minio:local", defaults.MinIOImage)
+	}
+
+	override, err := parseOptions([]string{"--minio-image", " geul-test-minio:local "})
+	if err != nil {
+		t.Fatalf("parse explicit MinIO image: %v", err)
+	}
+	if override.MinIOImage != "geul-test-minio:local" {
+		t.Fatalf("explicit MinIO image = %q, want geul-test-minio:local", override.MinIOImage)
+	}
+}
 
 func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 	t.Parallel()
@@ -19,9 +43,11 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--band", "ory"},
 		{"--band", "serial"},
 		{"--package", "./internal/translation"},
+		{"--package", "./internal/filemedia", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
 		{"--package", "./internal/member"},
 		{"--package", "./internal/testutil"},
 		{"--go-work", "/workspace/go.work"},
+		{"--minio-image", "geul-test-minio:local"},
 	} {
 		if _, err := parseOptions(args); err != nil {
 			t.Fatalf("parseOptions(%q): %v", args, err)
@@ -33,8 +59,13 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--band", "db", "--jobs", "5"},
 		{"--band", "unknown"},
 		{"--band", "db", "--package", "./internal/translation"},
+		{"--run", "^TestFileDownloadAudiencePolicyIntegration$"},
+		{"--band", "ory", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
 		{"--package", "./internal/not-cataloged"},
+		{"--package", "./internal/filemedia", "--run", "["},
+		{"--package", "./internal/filemedia", "--run", ""},
 		{"--cdn-image", ""},
+		{"--minio-image", ""},
 		{"--go-work", "../go.work"},
 	} {
 		if _, err := parseOptions(args); err == nil {
@@ -64,6 +95,40 @@ func TestBandGoTestArgumentsBoundPackageConcurrency(t *testing.T) {
 	serialArgs := bandGoTestArguments(serial, 3)
 	if serialArgs[2] != "1" {
 		t.Fatalf("serial package concurrency = %q, want 1", serialArgs[2])
+	}
+}
+
+func TestPackageGoTestArgumentsPreserveDefaultAndApplyOptionalRun(t *testing.T) {
+	t.Parallel()
+
+	packagePath := "./internal/filemedia"
+	withoutFilter := packageGoTestArguments(packagePath, "")
+	wantWithoutFilter := []string{
+		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",
+		"-count=1", "-tags=integration", packagePath,
+	}
+	if len(withoutFilter) != len(wantWithoutFilter) {
+		t.Fatalf("unfiltered arguments = %q, want %q", withoutFilter, wantWithoutFilter)
+	}
+	for index := range wantWithoutFilter {
+		if withoutFilter[index] != wantWithoutFilter[index] {
+			t.Fatalf("unfiltered argument %d = %q, want %q", index, withoutFilter[index], wantWithoutFilter[index])
+		}
+	}
+
+	filter := "^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$"
+	withFilter := packageGoTestArguments(packagePath, filter)
+	wantWithFilter := []string{
+		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",
+		"-count=1", "-tags=integration", "-run", filter, packagePath,
+	}
+	if len(withFilter) != len(wantWithFilter) {
+		t.Fatalf("filtered arguments = %q, want %q", withFilter, wantWithFilter)
+	}
+	for index := range wantWithFilter {
+		if withFilter[index] != wantWithFilter[index] {
+			t.Fatalf("filtered argument %d = %q, want %q", index, withFilter[index], wantWithFilter[index])
+		}
 	}
 }
 

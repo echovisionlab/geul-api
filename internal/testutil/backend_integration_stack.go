@@ -840,7 +840,7 @@ func runBackendIntegrationKratos(
 }
 
 func startBackendIntegrationMinIO(ctx context.Context) (endpoint, mediaBucket, cacheBucket string, cleanup func() error, err error) {
-	ctr, err := testcontainers.Run(ctx, runtimeMinIOImage,
+	ctr, err := testcontainers.Run(ctx, MinIOIntegrationImage(),
 		testcontainers.WithExposedPorts("9000/tcp"),
 		testcontainers.WithEnv(map[string]string{
 			"MINIO_ROOT_USER":     "minioadmin",

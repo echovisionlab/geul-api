@@ -480,16 +480,39 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, campaignCan); err != nil {
 			return err
 		}
-		targetMode, err := campaignTargetModeFromProto(req.Msg.TargetMode)
-		if err != nil {
-			return errs.InvalidArgument("target_mode", err.Error())
+		targetMode := campaign.TargetMode
+		segmentID := campaign.SegmentID
+		recipientScope := campaign.RecipientScope
+		layoutID := campaign.LayoutID
+		touched := false
+		if req.Msg.TargetMode != nil {
+			parsedMode, err := campaignTargetModeFromProto(*req.Msg.TargetMode)
+			if err != nil {
+				return errs.InvalidArgument("target_mode", err.Error())
+			}
+			targetMode = parsedMode
+			// Target mode and segment are one patch unit. An absent/null segment
+			// clears the relation for ALL and fails validation for SEGMENT.
+			segmentID = nullableTrimmedString(ptrStringValue(req.Msg.SegmentId))
+			touched = true
+		} else if req.Msg.SegmentId != nil {
+			return errs.InvalidArgument("segment_id", "must be updated together with target_mode")
 		}
-		recipientScope, err := campaignRecipientScopeFromProto(req.Msg.RecipientScope)
-		if err != nil {
-			return errs.InvalidArgument("recipient_scope", err.Error())
+		if req.Msg.RecipientScope != nil {
+			parsedScope, err := campaignRecipientScopeFromProto(*req.Msg.RecipientScope)
+			if err != nil {
+				return errs.InvalidArgument("recipient_scope", err.Error())
+			}
+			recipientScope = parsedScope
+			touched = true
 		}
-		segmentID := nullableTrimmedString(ptrStringValue(req.Msg.SegmentId))
-		layoutID := nullableTrimmedString(ptrStringValue(req.Msg.LayoutId))
+		if req.Msg.LayoutId != nil {
+			layoutID = nullableTrimmedString(ptrStringValue(req.Msg.LayoutId))
+			touched = true
+		}
+		if !touched {
+			return errs.InvalidArgument("configuration", "must include at least one configuration field")
+		}
 		if err := validateCampaignTargetDefinition(model.Campaign{TargetMode: targetMode, SegmentID: segmentID}); err != nil {
 			return errs.InvalidArgument("target_mode", err.Error())
 		}
@@ -511,7 +534,7 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 				return errs.FailedPrecondition("archived audience segment cannot be assigned to a campaign")
 			}
 		}
-		if layoutID != nil {
+		if req.Msg.LayoutId != nil && layoutID != nil {
 			if _, ok := lockedLayouts[*layoutID]; !ok {
 				return errs.NotFound("email_layout", *layoutID)
 			}
@@ -534,7 +557,20 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 		}
 		configurationChanged = true
 		now := time.Now().UTC()
-		if err := tx.Model(&campaign).Updates(structured.Fields{"target_mode": targetMode, "segment_id": segmentID, "layout_id": layoutID, "recipient_scope": recipientScope, "updated_at": now}).Error; err != nil {
+		updates := structured.Fields{"updated_at": now}
+		if campaign.TargetMode != targetMode {
+			updates["target_mode"] = targetMode
+		}
+		if ptrStringValue(campaign.SegmentID) != ptrStringValue(segmentID) {
+			updates["segment_id"] = segmentID
+		}
+		if ptrStringValue(campaign.LayoutID) != ptrStringValue(layoutID) {
+			updates["layout_id"] = layoutID
+		}
+		if campaign.RecipientScope != recipientScope {
+			updates["recipient_scope"] = recipientScope
+		}
+		if err := tx.Model(&campaign).Updates(updates).Error; err != nil {
 			return errs.Internal(err)
 		}
 		campaign.TargetMode, campaign.SegmentID, campaign.LayoutID, campaign.RecipientScope, campaign.UpdatedAt = targetMode, segmentID, layoutID, recipientScope, now
@@ -542,10 +578,14 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 	}); err != nil {
 		return nil, err
 	}
+	recipientScopeProto, err := campaignRecipientScopeToProto(campaign.RecipientScope)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	return connect.NewResponse(&managev1.UpdateCampaignConfigurationResponse{
 		Id: campaign.ID, Changed: configurationChanged,
-		TargetMode: req.Msg.TargetMode, SegmentId: campaign.SegmentID, LayoutId: campaign.LayoutID,
-		RecipientScope: req.Msg.RecipientScope, UpdatedAt: timestamppb.New(campaign.UpdatedAt),
+		TargetMode: campaignTargetModeToProto(campaign.TargetMode), SegmentId: campaign.SegmentID, LayoutId: campaign.LayoutID,
+		RecipientScope: recipientScopeProto, UpdatedAt: timestamppb.New(campaign.UpdatedAt),
 	}), nil
 }
 

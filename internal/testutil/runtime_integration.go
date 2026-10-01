@@ -34,7 +34,6 @@ import (
 
 const (
 	runtimeImgproxyImage      = "darthsim/imgproxy:v3.31.0@sha256:6db046632f568931e165d61ce289382804f7bbce5b791db6fb6b8d4ace507378"
-	runtimeMinIOImage         = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
 	runtimeTokenSigningSecret = IntegrationTokenSigningSecret
 	runtimeMediaSigningSecret = "runtime-media-signing-secret"
 	runtimeProcessGracePeriod = 2 * time.Second

@@ -125,4 +125,67 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 		require.Equal(t, managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(), after.LocationMode)
 		require.Nil(t, after.MapPlaceID)
 	})
+
+	t.Run("relation snapshot applies membership delta to locked current rows", func(t *testing.T) {
+		createArtist := func(name string) string {
+			id := integrationTestUUID()
+			documentID := seedServiceIntegrationContentDocument(t, db, creativeContentProfile)
+			slug := name + "-" + integrationTestUUID()
+			require.NoError(t, db.Create(&model.Artist{
+				ID: id, ContentDocumentID: &documentID, Slug: &slug,
+				Status: "ARTIST_STATUS_DRAFT", CreatedAt: time.Now().UTC(),
+			}).Error)
+			return id
+		}
+		artistRemoved := createArtist("event-delta-removed")
+		artistConcurrentDelete := createArtist("event-delta-concurrent-delete")
+		artistRoleChanged := createArtist("event-delta-role-changed")
+		artistPeerAdd := createArtist("event-delta-peer-add")
+		artistLocalAdd := createArtist("event-delta-local-add")
+		originalRole := "original role"
+		peerRole := "peer role"
+		require.NoError(t, db.Create(&[]model.ProgramEventArtist{
+			{EventID: event.Msg.Id, ArtistID: artistRemoved, Role: &originalRole, SortOrder: 0},
+			{EventID: event.Msg.Id, ArtistID: artistConcurrentDelete, Role: &originalRole, SortOrder: 1},
+			{EventID: event.Msg.Id, ArtistID: artistRoleChanged, Role: &originalRole, SortOrder: 2},
+		}).Error)
+
+		lockTx := lockAdminMutationRoot(t, db, "program_event", "id = '"+event.Msg.Id+"'::uuid")
+		result := make(chan error, 1)
+		go func() {
+			_, err := eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{
+				Id: event.Msg.Id,
+				ObservedArtists: &managev1.ProgramEventArtistsSnapshot{Artists: []*managev1.ProgramEventArtist{
+					{ArtistId: artistRemoved, Role: &originalRole, SortOrder: 0},
+					{ArtistId: artistConcurrentDelete, Role: &originalRole, SortOrder: 1},
+					{ArtistId: artistRoleChanged, Role: &originalRole, SortOrder: 2},
+				}},
+				Artists: []*managev1.ProgramEventArtist{
+					{ArtistId: artistConcurrentDelete, Role: &originalRole, SortOrder: 0},
+					{ArtistId: artistRoleChanged, Role: &originalRole, SortOrder: 1},
+					{ArtistId: artistLocalAdd, Role: &originalRole, SortOrder: 2},
+				},
+			}))
+			result <- err
+		}()
+		requireAdminMutationWaiting(t, result)
+
+		require.NoError(t, lockTx.Create(&model.ProgramEventArtist{
+			EventID: event.Msg.Id, ArtistID: artistPeerAdd, Role: &peerRole, SortOrder: 4,
+		}).Error)
+		require.NoError(t, lockTx.Where("event_id = ? AND artist_id = ?", event.Msg.Id, artistConcurrentDelete).
+			Delete(&model.ProgramEventArtist{}).Error)
+		require.NoError(t, lockTx.Model(&model.ProgramEventArtist{}).
+			Where("event_id = ? AND artist_id = ?", event.Msg.Id, artistRoleChanged).
+			Updates(map[string]any{"role": peerRole}).Error)
+		require.NoError(t, lockTx.Commit().Error)
+		require.NoError(t, <-result)
+
+		var after []model.ProgramEventArtist
+		require.NoError(t, db.Where("event_id = ?", event.Msg.Id).Order("sort_order ASC, artist_id ASC").Find(&after).Error)
+		require.Equal(t, []string{artistRoleChanged, artistPeerAdd, artistLocalAdd}, []string{after[0].ArtistID, after[1].ArtistID, after[2].ArtistID})
+		require.Equal(t, peerRole, *after[0].Role, "a peer role update to an unchanged row survives")
+		require.Equal(t, peerRole, *after[1].Role, "an unseen concurrent addition survives")
+		require.Equal(t, originalRole, *after[2].Role, "the intended local addition is applied")
+	})
 }

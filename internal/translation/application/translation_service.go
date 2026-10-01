@@ -251,7 +251,7 @@ func (s *TranslationService) UpdateTranslationSettings(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	updated, err := s.updateTranslationRuntimeSettings(ctx, settingsCan, req.Msg.Settings)
+	updated, err := s.updateTranslationRuntimeSettings(ctx, settingsCan, req.Msg)
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
@@ -279,7 +279,7 @@ func requireTranslationAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) e
 func (s *TranslationService) updateTranslationRuntimeSettings(
 	ctx context.Context,
 	settingsCan policyv1.Can,
-	requestedSettings *managev1.TranslationSettings,
+	request *managev1.UpdateTranslationSettingsRequest,
 ) (translationRuntimeSettings, error) {
 	var updated translationRuntimeSettings
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -290,10 +290,6 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, settingsCan); err != nil {
 			return err
 		}
-		requested, err := translationRuntimeSettingsFromProto(requestedSettings)
-		if err != nil {
-			return errs.InvalidArgument("settings", err.Error())
-		}
 		current, err := normalizeTranslationRuntimeSettings(translationRuntimeSettings{
 			DefaultLocale:  row.DefaultLocale,
 			ProtectedTerms: append([]string(nil), row.ProtectedTerms...),
@@ -302,17 +298,24 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 		if err != nil {
 			return err
 		}
+		requested, err := applyTranslationRuntimeSettingsUpdate(current, request)
+		if err != nil {
+			return errs.InvalidArgument("settings", err.Error())
+		}
 		fields := translationRuntimeSettingsChangedFields(current, requested)
 		if len(fields) == 0 {
 			updated = current
 			return nil
 		}
-		now := time.Now().UTC()
-		if err := tx.Model(&row).Updates(map[string]any{
-			"default_locale":  requested.DefaultLocale,
-			"protected_terms": pq.Array(requested.ProtectedTerms),
-			"updated_at":      now,
-		}).Error; err != nil {
+		now := tx.NowFunc().UTC()
+		updates := map[string]any{"updated_at": now}
+		if current.DefaultLocale != requested.DefaultLocale {
+			updates["default_locale"] = requested.DefaultLocale
+		}
+		if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
+			updates["protected_terms"] = pq.Array(requested.ProtectedTerms)
+		}
+		if err := tx.Model(&row).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
 			return err
 		}
 		if s.auditWriter != nil {
@@ -322,7 +325,7 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 				return err
 			}
 		}
-		requested.UpdatedAt = &now
+		requested.UpdatedAt = &row.UpdatedAt
 		updated = requested
 		return nil
 	})

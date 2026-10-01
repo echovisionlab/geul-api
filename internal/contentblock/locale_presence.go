@@ -405,18 +405,21 @@ func presentTableCellLocaleValues(blockID string, payload map[string]json.RawMes
 		cells    []tableCell
 	}
 	parsedRows := make([]tableRow, 0, len(rows))
-	rowIdentities := tableIdentityState{}
-	cellIdentities := tableIdentityState{}
+	seenRows := make(map[string]struct{}, len(rows))
+	seenCells := make(map[string]struct{})
 	for _, rawRow := range rows {
 		row, err := decodeJSONObject(rawRow)
 		if err != nil {
 			return nil, fmt.Errorf("row: %w", err)
 		}
-		rowID, durable, err := tableIdentity(row, "rowId")
+		rowID, err := tableIdentity(row, "rowId")
 		if err != nil {
 			return nil, err
 		}
-		rowIdentities.observe(durable)
+		if _, duplicate := seenRows[rowID]; duplicate {
+			return nil, fmt.Errorf("duplicate table row UUID %s", rowID)
+		}
+		seenRows[rowID] = struct{}{}
 		rawCells, ok := row["cells"]
 		if !ok {
 			return nil, fmt.Errorf("table row cells are required")
@@ -431,29 +434,18 @@ func presentTableCellLocaleValues(blockID string, payload map[string]json.RawMes
 			if err != nil {
 				return nil, fmt.Errorf("table row cell: %w", err)
 			}
-			cellID, durable, err := tableIdentity(cell, "cellId")
+			cellID, err := tableIdentity(cell, "cellId")
 			if err != nil {
 				return nil, err
 			}
-			cellIdentities.observe(durable)
+			if _, duplicate := seenCells[cellID]; duplicate {
+				return nil, fmt.Errorf("duplicate table cell UUID %s", cellID)
+			}
+			seenCells[cellID] = struct{}{}
 			_, contentPresent := cell[richTextContentField]
 			parsed.cells = append(parsed.cells, tableCell{identity: cellID, content: contentPresent})
 		}
 		parsedRows = append(parsedRows, parsed)
-	}
-	allIdentities := tableIdentityState{
-		durableCount: rowIdentities.durableCount + cellIdentities.durableCount,
-		legacyCount:  rowIdentities.legacyCount + cellIdentities.legacyCount,
-	}
-	if allIdentities.mixed() {
-		return nil, fmt.Errorf("table locale contains partially migrated durable identities")
-	}
-	// Legacy table payloads predate durable row/cell identities. The Web codec
-	// pairs them positionally and writes stable identities on the first table
-	// edit. Until then there is no canonical path that can safely identify an
-	// explicit cell value, so omit only those table presence targets.
-	if allIdentities.legacy() {
-		return nil, nil
 	}
 	var targets []*managev1.AIDocumentFieldTarget
 	for _, row := range parsedRows {
@@ -469,41 +461,20 @@ func presentTableCellLocaleValues(blockID string, payload map[string]json.RawMes
 	return targets, nil
 }
 
-type tableIdentityState struct {
-	durableCount int
-	legacyCount  int
-}
-
-func (state *tableIdentityState) observe(durable bool) {
-	if durable {
-		state.durableCount++
-	} else {
-		state.legacyCount++
-	}
-}
-
-func (state tableIdentityState) mixed() bool {
-	return state.durableCount != 0 && state.legacyCount != 0
-}
-
-func (state tableIdentityState) legacy() bool {
-	return state.legacyCount != 0 && state.durableCount == 0
-}
-
-func tableIdentity(object map[string]json.RawMessage, field string) (string, bool, error) {
+func tableIdentity(object map[string]json.RawMessage, field string) (string, error) {
 	raw, present := object[field]
-	if !present || string(raw) == "null" {
-		return "", false, nil
+	if !present || string(bytes.TrimSpace(raw)) == "null" {
+		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", false, fmt.Errorf("%s must be a string", field)
+		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", false, nil
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed.String() != value {
+		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
-	return value, true, nil
+	return value, nil
 }
 
 func localeValueTarget(blockID, field string, path ...*managev1.AIDocumentFieldPathSegment) *managev1.AIDocumentFieldTarget {

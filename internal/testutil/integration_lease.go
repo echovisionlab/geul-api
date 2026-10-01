@@ -1,6 +1,24 @@
 package testutil
 
+import (
+	"os"
+	"strings"
+)
+
 const AppIntegrationPostgresImage = "registry.dsub.io/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a"
+
+const AppIntegrationMinIOImage = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+
+const AppIntegrationMinIOImageEnv = "GEUL_INTEGRATION_MINIO_IMAGE"
+
+// MinIOIntegrationImage returns the configured MinIO image for integration
+// tests, defaulting to the pinned upstream release used by local test runs.
+func MinIOIntegrationImage() string {
+	if image := strings.TrimSpace(os.Getenv(AppIntegrationMinIOImageEnv)); image != "" {
+		return image
+	}
+	return AppIntegrationMinIOImage
+}
 
 const AppIntegrationLeaseVersion = 1
 

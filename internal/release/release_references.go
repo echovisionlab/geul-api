@@ -3,14 +3,14 @@ package release
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -27,28 +27,24 @@ func (s *ReleaseService) SetReleaseArtists(
 		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
 			return err
 		}
+		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
+			return err
+		}
 		var existing []model.ReleaseArtist
 		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("sort_order ASC, artist_id ASC").Find(&existing).Error; err != nil {
 			return err
 		}
-		if sameReleaseArtists(existing, req.Msg.Artists) {
+		for _, artist := range req.Msg.Artists {
+			if artist == nil {
+				return errs.InvalidArgument("artists", "must not contain null")
+			}
+		}
+		next := mergeReleaseArtists(existing, req.Msg.Observed.Artists, req.Msg.Artists, req.Msg.OrderIntent)
+		if sameReleaseArtistRows(existing, next) {
 			return nil
 		}
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Delete(&model.ReleaseArtist{}).Error; err != nil {
+		if err := persistReleaseArtists(tx, req.Msg.ReleaseId, existing, next); err != nil {
 			return err
-		}
-
-		for _, artist := range req.Msg.Artists {
-			if strings.TrimSpace(artist.ArtistId) == "" {
-				continue
-			}
-			if err := tx.Create(&model.ReleaseArtist{
-				ReleaseID: req.Msg.ReleaseId,
-				ArtistID:  artist.ArtistId,
-				SortOrder: int(artist.SortOrder),
-			}).Error; err != nil {
-				return err
-			}
 		}
 
 		if err := tx.Model(&model.Release{}).Where("id = ?", req.Msg.ReleaseId).
@@ -86,31 +82,24 @@ func (s *ReleaseService) SetReleaseLabels(
 		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
 			return err
 		}
+		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
+			return err
+		}
 		var existing []model.ReleaseLabel
 		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("sort_order ASC, label_id ASC").Find(&existing).Error; err != nil {
 			return err
 		}
-		if sameReleaseLabels(existing, req.Msg.Labels) {
+		for _, label := range req.Msg.Labels {
+			if label == nil {
+				return errs.InvalidArgument("labels", "must not contain null")
+			}
+		}
+		next := mergeReleaseLabels(existing, req.Msg.Observed.Labels, req.Msg.Labels, req.Msg.OrderIntent)
+		if sameReleaseLabelRows(existing, next) {
 			return nil
 		}
-		// Delete existing labels
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Delete(&model.ReleaseLabel{}).Error; err != nil {
+		if err := persistReleaseLabels(tx, req.Msg.ReleaseId, existing, next); err != nil {
 			return err
-		}
-
-		// Insert new labels
-		for _, label := range req.Msg.Labels {
-			rl := model.ReleaseLabel{
-				ReleaseID: req.Msg.ReleaseId,
-				LabelID:   label.LabelId,
-				SortOrder: int(label.SortOrder),
-			}
-			if label.CatalogNumber != nil {
-				rl.CatalogNumber = label.CatalogNumber
-			}
-			if err := tx.Create(&rl).Error; err != nil {
-				return err
-			}
 		}
 
 		// Update release updated_at
@@ -143,7 +132,7 @@ func (s *ReleaseService) SetReleaseCategories(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseCategoriesRequest],
 ) (*connect.Response[managev1.SuccessResponse], error) {
-	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "categories", req.Msg.CategoryIds,
+	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "categories", req.Msg.CategoryIds, req.Msg.Observed,
 		func(releaseID, categoryID string) *model.ReleaseCategory {
 			return &model.ReleaseCategory{ReleaseID: releaseID, CategoryID: categoryID}
 		})
@@ -154,7 +143,7 @@ func (s *ReleaseService) SetReleaseGenres(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseGenresRequest],
 ) (*connect.Response[managev1.SuccessResponse], error) {
-	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "genres", req.Msg.GenreIds,
+	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "genres", req.Msg.GenreIds, req.Msg.Observed,
 		func(releaseID, genreID string) *model.ReleaseGenre {
 			return &model.ReleaseGenre{ReleaseID: releaseID, GenreID: genreID}
 		})
@@ -165,7 +154,7 @@ func (s *ReleaseService) SetReleaseStyles(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseStylesRequest],
 ) (*connect.Response[managev1.SuccessResponse], error) {
-	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "styles", req.Msg.StyleIds,
+	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "styles", req.Msg.StyleIds, req.Msg.Observed,
 		func(releaseID, styleID string) *model.ReleaseStyle {
 			return &model.ReleaseStyle{ReleaseID: releaseID, StyleID: styleID}
 		})
@@ -183,30 +172,24 @@ func (s *ReleaseService) SetReleaseFormats(
 		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
 			return err
 		}
+		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
+			return err
+		}
 		var existing []model.ReleaseFormat
 		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("format_id ASC").Find(&existing).Error; err != nil {
 			return err
 		}
-		if sameReleaseFormats(existing, req.Msg.Formats) {
+		for _, format := range req.Msg.Formats {
+			if format == nil {
+				return errs.InvalidArgument("formats", "must not contain null")
+			}
+		}
+		next := mergeReleaseFormats(existing, req.Msg.Observed.Formats, req.Msg.Formats)
+		if sameReleaseFormatRows(existing, next) {
 			return nil
 		}
-		// Delete existing formats
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Delete(&model.ReleaseFormat{}).Error; err != nil {
+		if err := persistReleaseFormats(tx, req.Msg.ReleaseId, existing, next); err != nil {
 			return err
-		}
-
-		// Insert new formats
-		for _, format := range req.Msg.Formats {
-			rf := model.ReleaseFormat{
-				ReleaseID: req.Msg.ReleaseId,
-				FormatID:  format.FormatId,
-			}
-			if format.FormatDescription != nil {
-				rf.FormatDescription = format.FormatDescription
-			}
-			if err := tx.Create(&rf).Error; err != nil {
-				return err
-			}
 		}
 
 		// Update release updated_at
@@ -246,11 +229,24 @@ func (s *ReleaseService) SetReleaseCredits(
 		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
 			return err
 		}
+		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
+			return err
+		}
 		var existing []model.ReleaseCredit
 		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("sort_order ASC, id ASC").Find(&existing).Error; err != nil {
 			return err
 		}
-		if sameReleaseCredits(existing, req.Msg.Credits) {
+		for _, credit := range req.Msg.Credits {
+			if credit == nil {
+				return errs.InvalidArgument("credits", "must not contain null")
+			}
+			if credit.GetId() == "" {
+				id := uuid.NewString()
+				credit.Id = &id
+			}
+		}
+		next := mergeReleaseCredits(existing, req.Msg.Observed.Credits, req.Msg.Credits, req.Msg.OrderIntent)
+		if sameReleaseCreditRows(existing, next) {
 			return nil
 		}
 		references := make([]authorizationtarget.Reference, 0, len(req.Msg.Credits))
@@ -266,34 +262,8 @@ func (s *ReleaseService) SetReleaseCredits(
 		if err := authorizationtarget.LockReferences(ctx, tx, references); err != nil {
 			return err
 		}
-		// Delete existing credits
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Delete(&model.ReleaseCredit{}).Error; err != nil {
+		if err := persistReleaseCredits(tx, req.Msg.ReleaseId, existing, next); err != nil {
 			return err
-		}
-
-		// Insert new credits
-		for _, credit := range req.Msg.Credits {
-			rc := model.ReleaseCredit{
-				ReleaseID:  req.Msg.ReleaseId,
-				CreditRole: credit.CreditRole,
-				SortOrder:  int(credit.SortOrder),
-			}
-			// Use provided ID or let DB generate one
-			if credit.Id != nil && *credit.Id != "" {
-				rc.ID = *credit.Id
-			}
-			if credit.ArtistId != nil {
-				rc.ArtistID = credit.ArtistId
-			}
-			if credit.MemberId != nil {
-				rc.MemberID = credit.MemberId
-			}
-			if credit.CreditedName != nil {
-				rc.CreditedName = credit.CreditedName
-			}
-			if err := tx.Create(&rc).Error; err != nil {
-				return err
-			}
 		}
 
 		// Update release updated_at
@@ -319,99 +289,4 @@ func (s *ReleaseService) SetReleaseCredits(
 	)
 
 	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
-}
-
-func sameReleaseArtists(existing []model.ReleaseArtist, requested []*managev1.ReleaseArtistInput) bool {
-	actual := make([]struct {
-		id   string
-		sort int
-	}, 0, len(existing))
-	for _, row := range existing {
-		actual = append(actual, struct {
-			id   string
-			sort int
-		}{row.ArtistID, row.SortOrder})
-	}
-	next := make([]struct {
-		id   string
-		sort int
-	}, 0, len(requested))
-	for _, row := range requested {
-		if row != nil && strings.TrimSpace(row.ArtistId) != "" {
-			next = append(next, struct {
-				id   string
-				sort int
-			}{row.ArtistId, int(row.SortOrder)})
-		}
-	}
-	return reflect.DeepEqual(actual, next)
-}
-
-func sameReleaseLabels(existing []model.ReleaseLabel, requested []*managev1.ReleaseLabelInput) bool {
-	actual := make([]struct {
-		id      string
-		catalog *string
-		sort    int
-	}, 0, len(existing))
-	for _, row := range existing {
-		actual = append(actual, struct {
-			id      string
-			catalog *string
-			sort    int
-		}{row.LabelID, row.CatalogNumber, row.SortOrder})
-	}
-	next := make([]struct {
-		id      string
-		catalog *string
-		sort    int
-	}, 0, len(requested))
-	for _, row := range requested {
-		if row != nil {
-			next = append(next, struct {
-				id      string
-				catalog *string
-				sort    int
-			}{row.LabelId, row.CatalogNumber, int(row.SortOrder)})
-		}
-	}
-	return reflect.DeepEqual(actual, next)
-}
-
-func sameReleaseFormats(existing []model.ReleaseFormat, requested []*managev1.ReleaseFormatInput) bool {
-	actual := make([]struct {
-		id          string
-		description *string
-	}, 0, len(existing))
-	for _, row := range existing {
-		actual = append(actual, struct {
-			id          string
-			description *string
-		}{row.FormatID, row.FormatDescription})
-	}
-	next := make([]struct {
-		id          string
-		description *string
-	}, 0, len(requested))
-	for _, row := range requested {
-		if row != nil {
-			next = append(next, struct {
-				id          string
-				description *string
-			}{row.FormatId, row.FormatDescription})
-		}
-	}
-	return reflect.DeepEqual(actual, next)
-}
-
-func sameReleaseCredits(existing []model.ReleaseCredit, requested []*managev1.ReleaseCreditInput) bool {
-	if len(existing) != len(requested) {
-		return false
-	}
-	for i, row := range existing {
-		next := requested[i]
-		if next == nil || row.CreditRole != next.CreditRole || row.SortOrder != int(next.SortOrder) || !sameOptionalString(row.ArtistID, next.ArtistId) || !sameOptionalString(row.MemberID, next.MemberId) || !sameOptionalString(row.CreditedName, next.CreditedName) {
-			return false
-		}
-	}
-	return true
 }

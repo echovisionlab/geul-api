@@ -74,13 +74,12 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 		campaignID,
 		"Schedule layout lock-order race",
 	)
+	targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
+	recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS
 	_, err = campaignService(db).UpdateCampaignConfiguration(
 		ctx,
 		connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
-			Id:             campaignID,
-			TargetMode:     managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL,
-			LayoutId:       &layoutID,
-			RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS,
+			Id: campaignID, TargetMode: &targetMode, LayoutId: &layoutID, RecipientScope: &recipientScope,
 		}),
 	)
 	require.NoError(t, err)
