@@ -102,10 +102,18 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 		c.deadLetter(parent, message, "")
 		return
 	}
+	settlement := newDeliverySettlement(c.conn.DB(), c.client, c.config.Name, message, body)
+	if !settlement.envelopeMatchesCommand() {
+		emitQueueDeliveryFailed(parent, message, c.config.Name, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
+		c.deadLetter(parent, message, "transcode command envelope identity mismatch archive failed")
+		return
+	}
+	parent = withDeliverySettlement(parent, settlement)
 	jobCtx, cancel := context.WithTimeout(parent, c.config.Timeout)
 	err = c.handler(jobCtx, body)
 	cancel()
-	if c.completeTerminalOrSuccessful(parent, message, startedAt, err) {
+	settled := settlement.finish()
+	if c.completeTerminalOrSuccessful(parent, message, startedAt, err, settled) {
 		return
 	}
 	if parent.Err() != nil {
@@ -123,9 +131,18 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 	c.deadLetter(parent, message, "PGMQ archive failed")
 }
 
-func (c *Consumer) completeTerminalOrSuccessful(parent context.Context, message eventpkg.Message, startedAt time.Time, err error) bool {
-	if jobresult.IsTerminal(err) && parent.Err() == nil {
-		c.complete(parent, message, startedAt, "PGMQ terminal completion failed")
+func (c *Consumer) completeTerminalOrSuccessful(parent context.Context, message eventpkg.Message, startedAt time.Time, err error, settled bool) bool {
+	if settled {
+		emitQueueDeliverySucceeded(parent, message, c.config.Name, time.Since(startedAt))
+		return true
+	}
+	if jobresult.IsTerminal(err) {
+		// The handler confirms that its terminal result was durably published.
+		// Settle the input independently of a concurrent worker shutdown so the
+		// already-published outcome is not turned back into runnable work.
+		settleCtx, cancel := terminalResultSettlementContext(parent)
+		defer cancel()
+		c.complete(settleCtx, message, startedAt, "PGMQ terminal completion failed")
 		return true
 	}
 	if err == nil && parent.Err() == nil {
@@ -133,6 +150,12 @@ func (c *Consumer) completeTerminalOrSuccessful(parent context.Context, message 
 		return true
 	}
 	return false
+}
+
+const terminalInputSettlementTimeout = 5 * time.Second
+
+func terminalResultSettlementContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), terminalInputSettlementTimeout)
 }
 
 func (c *Consumer) complete(parent context.Context, message eventpkg.Message, startedAt time.Time, failureMessage string) {

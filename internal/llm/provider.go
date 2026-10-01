@@ -21,6 +21,11 @@ import (
 const (
 	defaultGeminiModelName = "gemini-2.5-flash"
 	defaultRequestTimeout  = 30 * time.Second
+	// Allow JSON escaping and envelope overhead for the 20MiB document input
+	// boundary. Provider output has no independent maximum, so bound its wire
+	// response explicitly; error responses only need a small diagnostic prefix.
+	maxOpenAICompatibleResponseBodyBytes int64 = 128 << 20
+	maxOpenAICompatibleErrorBodyBytes    int64 = 64 << 10
 )
 
 // GenerationRequest is one stateless text-generation request.
@@ -496,15 +501,13 @@ func (s *openAICompatibleTextSession) GenerateText(
 	}
 	defer httpResp.Body.Close()
 
-	responseBody, err := io.ReadAll(httpResp.Body)
+	responseBody, err := readOpenAICompatibleResponseBody(
+		httpResp,
+		maxOpenAICompatibleResponseBodyBytes,
+		maxOpenAICompatibleErrorBodyBytes,
+	)
 	if err != nil {
-		return "", NewProviderFailure(ProviderFailureDetails{
-			Category:      ProviderFailureUnavailable,
-			ExceptionType: ProviderExceptionResponseRead,
-		}, err)
-	}
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return "", NewProviderHTTPFailure(httpResp.StatusCode, ProviderExceptionProviderResponse, nil)
+		return "", err
 	}
 
 	var response openAICompatibleChatResponse
@@ -544,6 +547,36 @@ func (s *openAICompatibleTextSession) GenerateText(
 		"text_len", len(text),
 	)
 	return text, nil
+}
+
+func readOpenAICompatibleResponseBody(
+	httpResp *http.Response,
+	maxSuccessBodyBytes int64,
+	maxErrorBodyBytes int64,
+) ([]byte, error) {
+	isHTTPError := httpResp.StatusCode < 200 || httpResp.StatusCode >= 300
+	maxBodyBytes := maxSuccessBodyBytes
+	if isHTTPError {
+		maxBodyBytes = maxErrorBodyBytes
+	}
+
+	responseBody, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes+1))
+	if err != nil {
+		return nil, NewProviderFailure(ProviderFailureDetails{
+			Category:      ProviderFailureUnavailable,
+			ExceptionType: ProviderExceptionResponseRead,
+		}, err)
+	}
+	if isHTTPError {
+		return nil, NewProviderHTTPFailure(httpResp.StatusCode, ProviderExceptionProviderResponse, nil)
+	}
+	if int64(len(responseBody)) > maxBodyBytes {
+		return nil, NewProviderFailure(ProviderFailureDetails{
+			Category:      ProviderFailureResponseInvalid,
+			ExceptionType: ProviderExceptionProviderResponse,
+		}, nil)
+	}
+	return responseBody, nil
 }
 
 func geminiProviderFailure(err error, requestContextErr error) error {

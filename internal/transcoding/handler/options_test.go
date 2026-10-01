@@ -16,6 +16,7 @@ func TestNewHandlerRejectsIncompleteOptions(t *testing.T) {
 		FFmpeg:            &fakeHandlerFFmpeg{workDir: t.TempDir()},
 		Storage:           fakeHandlerStorage{},
 		Publisher:         &recordingHandlerPublisher{},
+		Admission:         jobAdmissionFunc(allowTestJobAdmission),
 	}
 	invalid := []Options{
 		{},
@@ -23,6 +24,7 @@ func TestNewHandlerRejectsIncompleteOptions(t *testing.T) {
 		func() Options { options := valid; options.FFmpeg = nil; return options }(),
 		func() Options { options := valid; options.Storage = nil; return options }(),
 		func() Options { options := valid; options.Publisher = nil; return options }(),
+		func() Options { options := valid; options.Admission = nil; return options }(),
 	}
 	for _, options := range invalid {
 		handler, err := NewHandler(options)

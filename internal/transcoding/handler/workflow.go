@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/transcoding/jobregistry"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -32,6 +33,9 @@ func (w transcodeWorkflow[T]) run(ctx context.Context, command T) error {
 
 	complete, err := w.transcode(session.Context, command, session.reportProgress, startedAt)
 	if err != nil {
+		if jobregistry.IsExplicitCancellation(session.Context) {
+			return publishExplicitCancellationResult(w, session.Context, command, startedAt)
+		}
 		return w.fail(session.Context, command, startedAt, err)
 	}
 	return w.completions.publish(session.Context, complete, w.mediaType)

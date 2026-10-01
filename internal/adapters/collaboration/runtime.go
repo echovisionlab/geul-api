@@ -329,9 +329,14 @@ func (contributorResolver) ResolveActiveSubjects(
 	var rows []contributorRow
 	if err := tx.WithContext(ctx).
 		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.state = ?", "active").
-		Select("member.id::text AS member_id, member.account_identity_id::text AS account_identity_id").
-		Where("member.id IN ? AND member.deleted_at IS NULL AND member.account_identity_id IS NOT NULL", memberIDs).
+		Joins(`JOIN kratos.identities AS identity
+			ON identity.id = member.account_identity_id
+			AND identity.external_id = CAST(member.id AS text)
+			AND identity.state = ?
+			AND LOWER(COALESCE(identity.metadata_admin ->> 'banned', 'false')) NOT IN ('true', '1')`, "active").
+		Clauses(clause.Locking{Strength: "SHARE"}).
+		Select("CAST(member.id AS text) AS member_id, CAST(member.account_identity_id AS text) AS account_identity_id").
+		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = ? AND member.account_identity_id IS NOT NULL", memberIDs, true).
 		Find(&rows).Error; err != nil {
 		return nil, errs.Internal(err)
 	}

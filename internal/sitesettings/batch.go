@@ -43,6 +43,9 @@ func (s *SiteSettingService) applySiteSettingBatch(
 		if err := s.applyRequestedSiteSettings(settings, requested); err != nil {
 			return err
 		}
+		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
+			return err
+		}
 		requestedKeys := make([]string, 0, len(requested))
 		for _, setting := range requested {
 			requestedKeys = append(requestedKeys, setting.Key)
@@ -55,9 +58,6 @@ func (s *SiteSettingService) applySiteSettingBatch(
 			return err
 		}
 		if err := s.lockAndValidateSiteSettingAssets(ctx, tx, settings, requested); err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
 		settings.UpdatedAt = time.Now()

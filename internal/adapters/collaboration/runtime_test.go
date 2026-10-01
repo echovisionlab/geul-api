@@ -16,6 +16,76 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestContributorResolverRejectsIneligibleMembersAndRequiresBilateralIdentityLink(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	require.NoError(t, db.Exec("ATTACH DATABASE ':memory:' AS kratos").Error)
+	require.NoError(t, db.Exec(`CREATE TABLE member (
+		id TEXT PRIMARY KEY,
+		account_identity_id TEXT,
+		onboarded BOOLEAN NOT NULL,
+		deleted_at TEXT
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE kratos.identities (
+		id TEXT PRIMARY KEY,
+		external_id TEXT,
+		state TEXT NOT NULL,
+		metadata_admin TEXT NOT NULL
+	)`).Error)
+
+	type fixture struct {
+		name       string
+		onboarded  bool
+		deleted    bool
+		state      string
+		banned     string
+		badLink    bool
+		wantActive bool
+	}
+	fixtures := []fixture{
+		{name: "active onboarded unbanned", onboarded: true, state: "active", banned: `{"banned":false}`, wantActive: true},
+		{name: "metadata banned true", onboarded: true, state: "active", banned: `{"banned":true}`},
+		{name: "metadata banned one", onboarded: true, state: "active", banned: `{"banned":1}`},
+		{name: "not onboarded", state: "active", banned: `{"banned":false}`},
+		{name: "deleted member", onboarded: true, deleted: true, state: "active", banned: `{"banned":false}`},
+		{name: "inactive identity", onboarded: true, state: "inactive", banned: `{"banned":false}`},
+		{name: "identity points to another member", onboarded: true, state: "active", banned: `{"banned":false}`, badLink: true},
+	}
+	memberIDs := make([]string, 0, len(fixtures))
+	validMemberID := ""
+	validIdentityID := ""
+	for _, testCase := range fixtures {
+		memberID := uuid.NewString()
+		identityID := uuid.NewString()
+		memberIDs = append(memberIDs, memberID)
+		var deletedAt any
+		if testCase.deleted {
+			deletedAt = "2026-10-01T00:00:00Z"
+		}
+		require.NoError(t, db.Exec(`INSERT INTO member (id, account_identity_id, onboarded, deleted_at)
+			VALUES (?, ?, ?, ?)`, memberID, identityID, testCase.onboarded, deletedAt).Error)
+		externalID := memberID
+		if testCase.badLink {
+			externalID = uuid.NewString()
+		}
+		require.NoError(t, db.Exec(`INSERT INTO kratos.identities (id, external_id, state, metadata_admin)
+			VALUES (?, ?, ?, ?)`, identityID, externalID, testCase.state, testCase.banned).Error)
+		if testCase.wantActive {
+			validMemberID = memberID
+			validIdentityID = identityID
+		}
+	}
+
+	subjects, err := (contributorResolver{}).ResolveActiveSubjects(t.Context(), db, memberIDs)
+
+	require.NoError(t, err)
+	require.Len(t, subjects, 1)
+	require.Equal(t, validIdentityID, subjects[validMemberID].ID.String())
+}
+
 type permissionCheck struct {
 	actor policyv1.Actor
 	can   policyv1.Can
