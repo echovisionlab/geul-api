@@ -1,0 +1,118 @@
+name: Editor mutation integration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: ${{ matrix.suite }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && !startsWith(github.event.pull_request.head.ref, 'release-please--branches--')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - suite: Audience, Campaign, Form and Legal
+            packages: ./internal/audience ./internal/campaign ./internal/form ./internal/legal
+          - suite: Program Event, Release, Track and Translation Settings
+            packages: ./internal/programevent ./internal/release ./internal/translation/application
+          - suite: Work, ContentBlock and FilePolicy
+            packages: ./internal/work/integration ./internal/contentblock ./internal/filemedia
+    env:
+      POSTGRES_IMAGE: registry.dsub.io/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a
+      FILEMEDIA_RUN: ^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$
+      PACKAGE_LIST: ${{ matrix.packages }}
+    defaults:
+      run:
+        working-directory: geul-api
+    steps:
+      - name: Checkout API
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: geul-api
+          persist-credentials: false
+
+      - name: Checkout schema snapshot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-schema
+          ref: 0a8a72f5a541a306f4843bbcf453f7deee679efe
+          path: geul-schema
+          persist-credentials: false
+
+      - name: Checkout identity runtime source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-identity
+          ref: c9508e117073dadf23599f7ac71cb4bbe9aaea13
+          path: geul-identity
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: geul-api/go.mod
+          cache: false
+
+      - name: Download Go modules
+        run: GOWORK=off go mod download
+
+      - name: Validate Harbor credentials
+        env:
+          HARBOR_REGISTRY_USERNAME: ${{ secrets.HARBOR_REGISTRY_USERNAME }}
+          HARBOR_REGISTRY_PASSWORD: ${{ secrets.HARBOR_REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for var in HARBOR_REGISTRY_USERNAME HARBOR_REGISTRY_PASSWORD; do
+            if [ -z "${!var:-}" ]; then
+              echo "::error::Missing repository secret: ${var}"
+              exit 1
+            fi
+          done
+
+      - name: Log in to Harbor
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: registry.dsub.io
+          username: ${{ secrets.HARBOR_REGISTRY_USERNAME }}
+          password: ${{ secrets.HARBOR_REGISTRY_PASSWORD }}
+
+      - name: Preload pinned integration images
+        run: |
+          set -euo pipefail
+          docker pull "$POSTGRES_IMAGE"
+          docker pull 'ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c'
+          docker pull 'oryd/oathkeeper:v26.2.0@sha256:467329abde34feefca217b7af76fff59e77fe1795a19376e9d479f33c7c198fc'
+          docker pull 'minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e'
+          docker pull 'darthsim/imgproxy:v3.31.0@sha256:6db046632f568931e165d61ce289382804f7bbce5b791db6fb6b8d4ace507378'
+          docker pull 'testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0'
+          docker pull 'testcontainers/sshd:1.4.0@sha256:bdae17f702908bee93c877ab3e97eddd782e2fb5bdd23a9f29869b9a87b30acd'
+
+      - name: Build the matching Kratos settings runtime
+        run: docker build --file ../geul-identity/Dockerfile.kratos --tag geul-identity-kratos:local ../geul-identity
+
+      - name: Run selected packages through the protected lease runner
+        run: |
+          set -euo pipefail
+          read -r -a packages <<< "$PACKAGE_LIST"
+          for package_path in "${packages[@]}"; do
+            package_args=(--package "$package_path")
+            if [[ "$package_path" == "./internal/filemedia" ]]; then
+              package_args+=(--run "$FILEMEDIA_RUN")
+            fi
+            GOWORK=off go run -tags=integration ./scripts/test/integration \
+              --schema-root ../geul-schema \
+              --postgres-image "$POSTGRES_IMAGE" \
+              "${package_args[@]}"
+          done

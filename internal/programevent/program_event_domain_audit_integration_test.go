@@ -101,9 +101,47 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	labelDocumentID := seedServiceIntegrationContentDocument(t, db, creativeContentProfile)
 	require.NoError(t, db.Create(&model.Label{ID: labelID, ContentDocumentID: &labelDocumentID, Slug: &labelSlug, Status: "LABEL_STATUS_DRAFT", CreatedAt: time.Now().UTC()}).Error)
 	require.NoError(t, db.Create(&model.Client{ID: clientID, Name: "Event audit client", CreatedAt: time.Now().UTC()}).Error)
-	relationRequest := &managev1.UpdateProgramEventRequest{Id: eventID, ReplaceArtists: true, Artists: []*managev1.ProgramEventArtist{{ArtistId: artistID}}, ReplaceLabels: true, Labels: []*managev1.ProgramEventLabel{{LabelId: labelID}}, ReplaceClients: true, Clients: []*managev1.ProgramEventClient{{ClientId: clientID}}}
+	relationRequest := &managev1.UpdateProgramEventRequest{
+		Id:              eventID,
+		ReplaceArtists:  true,
+		Artists:         []*managev1.ProgramEventArtist{{ArtistId: artistID}},
+		ObservedArtists: &managev1.ProgramEventArtistsSnapshot{},
+		ReplaceLabels:   true,
+		Labels:          []*managev1.ProgramEventLabel{{LabelId: labelID}},
+		ObservedLabels:  &managev1.ProgramEventLabelsSnapshot{},
+		ReplaceClients:  true,
+		Clients:         []*managev1.ProgramEventClient{{ClientId: clientID}},
+		ObservedClients: &managev1.ProgramEventClientsSnapshot{},
+	}
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(relationRequest))
 	require.NoError(t, err)
+	unrelatedSlug := "audited-event-preserved-relations-" + integrationTestUUID()
+	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{
+		Id:   eventID,
+		Slug: &unrelatedSlug,
+		ObservedArtists: &managev1.ProgramEventArtistsSnapshot{Artists: []*managev1.ProgramEventArtist{
+			{ArtistId: artistID},
+		}},
+		ObservedLabels: &managev1.ProgramEventLabelsSnapshot{Labels: []*managev1.ProgramEventLabel{
+			{LabelId: labelID},
+		}},
+		ObservedClients: &managev1.ProgramEventClientsSnapshot{Clients: []*managev1.ProgramEventClient{
+			{ClientId: clientID},
+		}},
+	}))
+	require.NoError(t, err)
+	var preservedArtists []model.ProgramEventArtist
+	var preservedLabels []model.ProgramEventLabel
+	var preservedClients []model.ProgramEventClient
+	require.NoError(t, db.Where("event_id = ?", eventID).Find(&preservedArtists).Error)
+	require.NoError(t, db.Where("event_id = ?", eventID).Find(&preservedLabels).Error)
+	require.NoError(t, db.Where("event_id = ?", eventID).Find(&preservedClients).Error)
+	require.Len(t, preservedArtists, 1, "an observed baseline alone does not remove artists")
+	require.Len(t, preservedLabels, 1, "an observed baseline alone does not remove labels")
+	require.Len(t, preservedClients, 1, "an observed baseline alone does not remove clients")
+	require.Equal(t, []string{artistID}, []string{preservedArtists[0].ArtistID}, "an observed baseline alone does not remove artists")
+	require.Equal(t, []string{labelID}, []string{preservedLabels[0].LabelID}, "an observed baseline alone does not remove labels")
+	require.Equal(t, []string{clientID}, []string{preservedClients[0].ClientID}, "an observed baseline alone does not remove clients")
 	relationNoopCount := programEventAuditCount(t, db, eventID)
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(relationRequest))
 	require.NoError(t, err)

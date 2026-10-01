@@ -39,14 +39,30 @@ func TestLegalAuthorizationCreateDeleteIntegration(t *testing.T) {
 		legaldomain.WithPrivacyContentBlockStore(store),
 	)
 
-	terms, err := termsService.CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{
-		Document: legalPolicyDocumentFixture("en", "authorization terms"),
-	}))
+	terms, err := termsService.CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{}))
 	require.NoError(t, err)
-	privacy, err := privacyService.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
-		Document: legalPolicyDocumentFixture("en", "authorization privacy"),
-	}))
+	require.NotNil(t, terms.Msg.Document)
+	require.NotEmpty(t, terms.Msg.Document.SourceLocale)
+	privacy, err := privacyService.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{}))
 	require.NoError(t, err)
+	require.NotNil(t, privacy.Msg.Document)
+	require.NotEmpty(t, privacy.Msg.Document.SourceLocale)
+	termsMismatchLocale := "en"
+	if terms.Msg.Document.SourceLocale == termsMismatchLocale {
+		termsMismatchLocale = "ko"
+	}
+	_, err = termsService.CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{
+		Document: legalPolicyDocumentFixture(termsMismatchLocale, "must not be dropped"),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), err)
+	privacyMismatchLocale := "en"
+	if privacy.Msg.Document.SourceLocale == privacyMismatchLocale {
+		privacyMismatchLocale = "ko"
+	}
+	_, err = privacyService.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
+		Document: legalPolicyDocumentFixture(privacyMismatchLocale, "must not be dropped"),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), err)
 
 	for _, resource := range []struct {
 		manage func(string) (policyv1.Can, error)

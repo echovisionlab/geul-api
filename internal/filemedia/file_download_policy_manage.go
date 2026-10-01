@@ -103,6 +103,24 @@ func (s *FileService) UpdateFileDownloadPolicy(
 	if err != nil {
 		return nil, err
 	}
+	if req.Msg.ObservedPolicy == nil {
+		return nil, errs.InvalidArgument("observed_policy", "is required")
+	}
+	var observedSegmentIDs []string
+	observedAudience, ok := storedFileDownloadAudience(req.Msg.ObservedPolicy.Audience)
+	if !ok {
+		return nil, errs.InvalidArgument("observed_policy.audience", "unsupported file download audience")
+	}
+	observedSegmentIDs, err = uniqueUUIDs(req.Msg.ObservedPolicy.AudienceSegmentIds, "observed_policy.audience_segment_ids")
+	if err != nil {
+		return nil, err
+	}
+	if len(observedSegmentIDs) > maxFileDownloadAudienceSegments {
+		return nil, errs.InvalidArgument(
+			"observed_policy.audience_segment_ids",
+			fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments),
+		)
+	}
 	if len(segmentIDs) > maxFileDownloadAudienceSegments {
 		return nil, errs.InvalidArgument(
 			"audience_segment_ids",
@@ -159,20 +177,29 @@ func (s *FileService) UpdateFileDownloadPolicy(
 		if loadErr != nil {
 			return loadErr
 		}
-		if locked.Audience == audience && slices.Equal(previousSegmentIDs, segmentIDs) {
+		nextAudience, nextSegmentIDs := mergeObservedFileDownloadPolicy(
+			locked.Audience, observedAudience, audience, previousSegmentIDs, observedSegmentIDs, segmentIDs,
+		)
+		if len(nextSegmentIDs) > maxFileDownloadAudienceSegments {
+			return errs.InvalidArgument(
+				"audience_segment_ids",
+				fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments),
+			)
+		}
+		if locked.Audience == nextAudience && slices.Equal(previousSegmentIDs, nextSegmentIDs) {
 			relation = locked
 			policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
 			return loadErr
 		}
-		if updateErr := updateFileDownloadPolicyRelation(ctx, tx, locked, audience, segmentIDs); updateErr != nil {
+		if updateErr := updateFileDownloadPolicyRelation(ctx, tx, locked, nextAudience, nextSegmentIDs); updateErr != nil {
 			return updateErr
 		}
 		if auditErr := appendRelationFileDownloadPolicyAudit(
-			ctx, tx, s.auditWriter, locked, locked.Audience, audience, previousSegmentIDs, segmentIDs,
+			ctx, tx, s.auditWriter, locked, locked.Audience, nextAudience, previousSegmentIDs, nextSegmentIDs,
 		); auditErr != nil {
 			return auditErr
 		}
-		locked.Audience = audience
+		locked.Audience = nextAudience
 		relation = locked
 		policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
 		return loadErr
@@ -181,6 +208,53 @@ func (s *FileService) UpdateFileDownloadPolicy(
 		return nil, err
 	}
 	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{Policy: policy}), nil
+}
+
+func mergeObservedFileDownloadPolicy(
+	currentAudience, observedAudience, desiredAudience mediaasset.FileDownloadAudience,
+	currentSegmentIDs, observedSegmentIDs, desiredSegmentIDs []string,
+) (mediaasset.FileDownloadAudience, []string) {
+	mergedAudience := currentAudience
+	if observedAudience != desiredAudience {
+		mergedAudience = desiredAudience
+	}
+	mergedSegmentIDs := mergeObservedFileDownloadSegmentIDs(currentSegmentIDs, observedSegmentIDs, desiredSegmentIDs)
+	if mergedAudience != mediaasset.FileDownloadAudienceRestricted {
+		// Non-restricted audiences cannot retain segment relations.
+		mergedSegmentIDs = nil
+	}
+	return mergedAudience, mergedSegmentIDs
+}
+
+func mergeObservedFileDownloadSegmentIDs(current, observed, desired []string) []string {
+	result := make(map[string]struct{}, len(current)+len(desired))
+	observedSet := make(map[string]struct{}, len(observed))
+	desiredSet := make(map[string]struct{}, len(desired))
+	for _, id := range current {
+		result[id] = struct{}{}
+	}
+	for _, id := range observed {
+		observedSet[id] = struct{}{}
+	}
+	for _, id := range desired {
+		desiredSet[id] = struct{}{}
+	}
+	for id := range observedSet {
+		if _, shouldKeep := desiredSet[id]; !shouldKeep {
+			delete(result, id)
+		}
+	}
+	for id := range desiredSet {
+		if _, existed := observedSet[id]; !existed {
+			result[id] = struct{}{}
+		}
+	}
+	merged := make([]string, 0, len(result))
+	for id := range result {
+		merged = append(merged, id)
+	}
+	sort.Strings(merged)
+	return merged
 }
 
 func validateFileDownloadPolicySelector(

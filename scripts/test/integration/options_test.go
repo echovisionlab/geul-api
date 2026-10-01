@@ -19,6 +19,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--band", "ory"},
 		{"--band", "serial"},
 		{"--package", "./internal/translation"},
+		{"--package", "./internal/filemedia", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
 		{"--package", "./internal/member"},
 		{"--package", "./internal/testutil"},
 		{"--go-work", "/workspace/go.work"},
@@ -33,7 +34,11 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--band", "db", "--jobs", "5"},
 		{"--band", "unknown"},
 		{"--band", "db", "--package", "./internal/translation"},
+		{"--run", "^TestFileDownloadAudiencePolicyIntegration$"},
+		{"--band", "ory", "--run", "^TestFileDownloadAudiencePolicyIntegration$"},
 		{"--package", "./internal/not-cataloged"},
+		{"--package", "./internal/filemedia", "--run", "["},
+		{"--package", "./internal/filemedia", "--run", ""},
 		{"--cdn-image", ""},
 		{"--go-work", "../go.work"},
 	} {
@@ -64,6 +69,40 @@ func TestBandGoTestArgumentsBoundPackageConcurrency(t *testing.T) {
 	serialArgs := bandGoTestArguments(serial, 3)
 	if serialArgs[2] != "1" {
 		t.Fatalf("serial package concurrency = %q, want 1", serialArgs[2])
+	}
+}
+
+func TestPackageGoTestArgumentsPreserveDefaultAndApplyOptionalRun(t *testing.T) {
+	t.Parallel()
+
+	packagePath := "./internal/filemedia"
+	withoutFilter := packageGoTestArguments(packagePath, "")
+	wantWithoutFilter := []string{
+		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",
+		"-count=1", "-tags=integration", packagePath,
+	}
+	if len(withoutFilter) != len(wantWithoutFilter) {
+		t.Fatalf("unfiltered arguments = %q, want %q", withoutFilter, wantWithoutFilter)
+	}
+	for index := range wantWithoutFilter {
+		if withoutFilter[index] != wantWithoutFilter[index] {
+			t.Fatalf("unfiltered argument %d = %q, want %q", index, withoutFilter[index], wantWithoutFilter[index])
+		}
+	}
+
+	filter := "^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$"
+	withFilter := packageGoTestArguments(packagePath, filter)
+	wantWithFilter := []string{
+		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",
+		"-count=1", "-tags=integration", "-run", filter, packagePath,
+	}
+	if len(withFilter) != len(wantWithFilter) {
+		t.Fatalf("filtered arguments = %q, want %q", withFilter, wantWithFilter)
+	}
+	for index := range wantWithFilter {
+		if withFilter[index] != wantWithFilter[index] {
+			t.Fatalf("filtered argument %d = %q, want %q", index, withFilter[index], wantWithFilter[index])
+		}
 	}
 }
 

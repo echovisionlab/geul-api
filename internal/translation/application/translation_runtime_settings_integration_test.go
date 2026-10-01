@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccurrences(t *testing.T) {
@@ -26,8 +27,10 @@ func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccu
 
 	response, err := service.UpdateTranslationSettings(ctx, connect.NewRequest(
 		&managev1.UpdateTranslationSettingsRequest{Settings: &managev1.TranslationSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{" Photoshop ", "Photoshop", "react native", "React Native", " "},
-		}},
+			ProtectedTerms: []string{" Photoshop ", "Photoshop", "react native", "React Native", " "},
+		}, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
+			BaseSettings: &managev1.TranslationSettings{},
+		},
 	))
 	require.NoError(t, err)
 	updated := response.Msg.Settings
@@ -51,8 +54,12 @@ func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccu
 
 	canonicalNoopResponse, err := service.UpdateTranslationSettings(ctx, connect.NewRequest(
 		&managev1.UpdateTranslationSettingsRequest{Settings: &managev1.TranslationSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
-		}},
+			ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
+		}, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
+			BaseSettings: &managev1.TranslationSettings{
+				ProtectedTerms: []string{"Photoshop", "react native", "React Native"},
+			},
+		},
 	))
 	require.NoError(t, err)
 	canonicalNoop := canonicalNoopResponse.Msg.Settings

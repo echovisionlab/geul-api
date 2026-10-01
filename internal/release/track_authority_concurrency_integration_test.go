@@ -171,6 +171,7 @@ func TestReleaseMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.
 			_, err := fixture.releases.SetReleaseCredits(fixture.ctx, connect.NewRequest(&managev1.SetReleaseCreditsRequest{
 				ReleaseId: fixture.release,
 				Credits:   []*managev1.ReleaseCreditInput{{CreditedName: stringPtr("Must not persist")}},
+				Observed:  &managev1.ReleaseCreditsSnapshot{},
 			}))
 			result <- err
 		}()
@@ -302,6 +303,7 @@ func TestTrackMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.T)
 				Credits: []*managev1.TrackCreditInput{{
 					CreditedName: stringPtr("Must not persist"),
 				}},
+				Observed: &managev1.TrackCreditsSnapshot{},
 			}))
 			result <- err
 		}()
@@ -352,4 +354,55 @@ func TestTrackMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.T)
 		require.NoError(t, fixture.db.Model(&model.Track{}).Where("id = ?", trackID).Count(&count).Error)
 		require.Equal(t, int64(1), count)
 	})
+}
+
+func TestTrackCreditsObservedSnapshotPreservesConcurrentAdditionIntegration(t *testing.T) {
+	fixture := newReleaseTrackAuthorityRaceFixture(t)
+	trackID := fixture.createTrack(t, "Observed credit merge")
+	stableID := integrationTestUUID()
+	peerID := integrationTestUUID()
+	newID := integrationTestUUID()
+	oldName := "Original credit"
+	peerName := "Added in another tab"
+
+	_, err := fixture.tracks.SetTrackCredits(fixture.ctx, connect.NewRequest(&managev1.SetTrackCreditsRequest{
+		TrackId: trackID,
+		Credits: []*managev1.TrackCreditInput{{
+			Id: stringPtr(stableID), CreditedName: &oldName,
+		}},
+		Observed: &managev1.TrackCreditsSnapshot{},
+	}))
+	require.NoError(t, err)
+	// This row models a peer commit after this client's observed snapshot was loaded.
+	peerCredit := model.TrackCredit{ID: peerID, TrackID: trackID, CreditedName: &peerName, SortOrder: 1}
+	require.NoError(t, fixture.db.Create(&peerCredit).Error)
+
+	_, err = fixture.tracks.SetTrackCredits(fixture.ctx, connect.NewRequest(&managev1.SetTrackCreditsRequest{
+		TrackId: trackID,
+		Observed: &managev1.TrackCreditsSnapshot{Credits: []*managev1.TrackCreditInput{{
+			Id: stringPtr(stableID), CreditedName: &oldName,
+		}}},
+		Credits: []*managev1.TrackCreditInput{
+			{Id: stringPtr(stableID), CreditedName: &oldName},
+			{Id: stringPtr(newID), CreditedName: stringPtr("Added by this tab")},
+		},
+	}))
+	require.NoError(t, err)
+
+	var persisted []model.TrackCredit
+	require.NoError(t, fixture.db.Where("track_id = ?", trackID).Order("sort_order ASC").Find(&persisted).Error)
+	require.Len(t, persisted, 3)
+	require.Equal(t, stableID, persisted[0].ID)
+	require.Equal(t, peerID, persisted[1].ID)
+	require.Equal(t, peerName, *persisted[1].CreditedName)
+	require.Equal(t, newID, persisted[2].ID)
+}
+
+func TestTrackCreditsRequireObservedSnapshotIntegration(t *testing.T) {
+	fixture := newReleaseTrackAuthorityRaceFixture(t)
+	trackID := fixture.createTrack(t, "Missing observed snapshot")
+	_, err := fixture.tracks.SetTrackCredits(fixture.ctx, connect.NewRequest(&managev1.SetTrackCreditsRequest{
+		TrackId: trackID,
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 }

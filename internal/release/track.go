@@ -602,7 +602,7 @@ func (s *TrackService) SetTrackCredits(
 	if err := s.validateTrackCreditArtists(ctx, req.Msg.Credits); err != nil {
 		return nil, err
 	}
-	err := s.replaceTrackCredits(ctx, req.Msg.TrackId, req.Msg.Credits)
+	err := s.replaceTrackCredits(ctx, req.Msg.TrackId, req.Msg.Credits, req.Msg.Observed)
 	if err != nil {
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err

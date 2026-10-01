@@ -73,9 +73,10 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		{
 			name: "campaign configuration update", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
 			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+				targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
+				recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_ALL_MATCHING_USERS
 				_, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
-					Id: campaignID, TargetMode: managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL,
-					RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_ALL_MATCHING_USERS,
+					Id: campaignID, TargetMode: &targetMode, RecipientScope: &recipientScope,
 				}))
 				return err
 			},

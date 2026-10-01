@@ -141,7 +141,7 @@ func run() (runErr error) {
 		}
 		if err := runSerialIntegrationBand(ctx, band.Packages, backend, func(packagePath string) error {
 			arguments := append(
-				packageGoTestArguments(packagePath),
+				packageGoTestArguments(packagePath, options.Run),
 				"-args", "-geul-integration-lease-file="+leasePath,
 			)
 			return runSuiteCommand(ctx, repoRoot, options.GoWork, arguments)

@@ -29,6 +29,39 @@ const (
 	audienceTestTargetModeUsersByFilter = "users_by_filter"
 )
 
+func TestAudienceSegmentTypeSwitchWithoutConfigClearsObservedFiltersIntegration(t *testing.T) {
+	db := newAudienceAccessMutationDB(t)
+	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
+	userTagID := uuid.NewString()
+	seedAudienceAccessUserTag(t, db, userTagID)
+	service := newAudienceServiceForTest(db, spiceDB)
+	created, err := service.CreateSegment(adminCtx, connect.NewRequest(&managev1.CreateSegmentRequest{
+		Name:        "Observed type reset " + uuid.NewString(),
+		SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
+		Config:      &managev1.SegmentConfig{MemberTagIds: []string{userTagID}},
+	}))
+	require.NoError(t, err)
+
+	desiredType := managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS
+	updated, err := service.UpdateSegment(adminCtx, connect.NewRequest(&managev1.UpdateSegmentRequest{
+		Id:          created.Msg.Id,
+		SegmentType: &desiredType,
+		Observed: &managev1.SegmentConfigSnapshot{
+			SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
+			Config:      &managev1.SegmentConfig{MemberTagIds: []string{userTagID}},
+		},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, desiredType, updated.Msg.SegmentType)
+	require.Empty(t, updated.Msg.Config.MemberTagIds)
+
+	var remaining int64
+	require.NoError(t, db.Model(&model.AudienceSegmentUserTag{}).
+		Where("audience_segment_id = ? AND user_tag_id = ?", created.Msg.Id, userTagID).
+		Count(&remaining).Error)
+	require.Zero(t, remaining)
+}
+
 func TestAudienceArchivePreservesCampaignAndUserTagReferencesUnit(t *testing.T) {
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
@@ -278,6 +311,10 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 			Config: &managev1.SegmentConfig{
 				AccountRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN},
 				CreatedAfter: createdAfter,
+			},
+			Observed: &managev1.SegmentConfigSnapshot{
+				SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER,
+				Config:      &managev1.SegmentConfig{},
 			},
 		}),
 	)
