@@ -50,6 +50,41 @@ func TestSiteSettingsMutationRechecksAuthorityAfterRootLockIntegration(t *testin
 	require.NotEqual(t, "must not persist", companyName)
 }
 
+func TestSiteSettingsNoOpMutationStillRequiresFreshAdminIntegration(t *testing.T) {
+	db := newServiceIntegrationDB(t)
+	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
+	service := sitesettings.NewSiteSettingService(
+		db,
+		"https://www.example.test",
+		sitesettingsadapter.NewAssets("https://cdn.example.test"),
+		sitesettingsadapter.NewReferences(),
+		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"),
+		spiceDB,
+	)
+
+	_, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
+		Key: "company_name", Value: structpb.NewStringValue("same value"),
+	}))
+	require.NoError(t, err)
+	demoteSiteSettingsMutationActor(t, spiceDB, ctx)
+
+	_, err = service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
+		Key: "company_name", Value: structpb.NewStringValue("same value"),
+	}))
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	_, err = service.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{
+		Settings: []*managev1.SiteSetting{{
+			Key: "company_name", Value: structpb.NewStringValue("same value"),
+		}},
+	}))
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	var companyName string
+	require.NoError(t, db.Table("site_settings").Select("company_name").Where("id = 1").Scan(&companyName).Error)
+	require.Equal(t, "same value", companyName)
+}
+
 func lockSiteSettingsMutationRoot(t *testing.T, db *gorm.DB, table, condition string) *gorm.DB {
 	t.Helper()
 	tx := db.Begin()

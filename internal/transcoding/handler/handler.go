@@ -16,6 +16,7 @@ type Options struct {
 	FFmpeg            FFmpegExecutor
 	Storage           StorageClient
 	Publisher         EventPublisher
+	Admission         JobAdmission
 }
 
 // Handler coordinates audio and video transcode jobs.
@@ -37,6 +38,7 @@ func NewHandler(options Options) (*Handler, error) {
 		jobs:        jobs,
 		completions: completions,
 		progress:    progressPublisher{publisher: options.Publisher},
+		admission:   options.Admission,
 	}
 	sources := &sourcePreparer{
 		workDirs:          options.FFmpeg,
@@ -80,6 +82,9 @@ func validateHandlerOptions(options Options) error {
 	}
 	if options.Publisher == nil {
 		return fmt.Errorf("event publisher is required")
+	}
+	if options.Admission == nil {
+		return fmt.Errorf("job admission is required")
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -12,7 +13,17 @@ import (
 // PublishComplete enqueues a transcode completion result.
 func (p *Publisher) PublishComplete(ctx context.Context, value *apiv1.TranscodeCompleteEvent) error {
 	ensureTimestamp(&value.TimestampMs)
-	if err := p.enqueue(ctx, eventpkg.QueueTranscodeResult, value.EventId, "api.manage.v1.TranscodeCompleteEvent", value); err != nil {
+	const messageType = "api.manage.v1.TranscodeCompleteEvent"
+	if settlement, ok := deliverySettlementFromContext(ctx); ok {
+		startedAt := time.Now()
+		err := settlement.enqueueResultAndComplete(ctx, p.conn.DB(), value, func(txCtx context.Context, executor eventpkg.DBTX) error {
+			return p.enqueueUsing(txCtx, executor, eventpkg.QueueTranscodeResult, value.EventId, messageType, value)
+		})
+		emitQueuePublishResult(ctx, eventpkg.QueueTranscodeResult, value.EventId, time.Since(startedAt), err != nil)
+		if err != nil {
+			return fmt.Errorf("publish transcode result: %w", err)
+		}
+	} else if err := p.enqueue(ctx, eventpkg.QueueTranscodeResult, value.EventId, messageType, value); err != nil {
 		return fmt.Errorf("publish transcode result: %w", err)
 	}
 	slog.Info("Enqueued transcode result", "event_id", value.EventId, "success", value.Success)

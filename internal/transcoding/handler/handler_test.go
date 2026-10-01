@@ -157,6 +157,17 @@ type fakeHandlerStorage struct {
 	removeOnUpload bool
 }
 
+type blockingDownloadHandlerStorage struct {
+	fakeHandlerStorage
+	started chan struct{}
+}
+
+func (s *blockingDownloadHandlerStorage) Download(ctx context.Context, _ string, _ string) error {
+	close(s.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func (s fakeHandlerStorage) Download(_ context.Context, _ string, localPath string) error {
 	if s.downloadErr != nil {
 		return s.downloadErr
@@ -180,9 +191,29 @@ func (s fakeHandlerStorage) Completion(context.Context, string) ([]byte, bool, e
 }
 
 type recordingCleanupStorage struct {
-	uploads       []string
-	completed     map[string][]byte
-	completionErr error
+	uploads          []string
+	completed        map[string][]byte
+	completionErr    error
+	completionChecks int
+}
+
+type cancelAfterReceiptStorage struct {
+	*recordingCleanupStorage
+	afterReceipt func()
+}
+
+func (s *cancelAfterReceiptStorage) UploadCompleted(
+	ctx context.Context,
+	key, localPath, contentType string,
+	completion []byte,
+) error {
+	if err := s.recordingCleanupStorage.UploadCompleted(ctx, key, localPath, contentType, completion); err != nil {
+		return err
+	}
+	if s.afterReceipt != nil {
+		s.afterReceipt()
+	}
+	return nil
 }
 
 func (recordingCleanupStorage) Download(_ context.Context, _ string, localPath string) error {
@@ -204,6 +235,7 @@ func (s *recordingCleanupStorage) UploadCompleted(ctx context.Context, key, loca
 	return nil
 }
 func (s *recordingCleanupStorage) Completion(_ context.Context, key string) ([]byte, bool, error) {
+	s.completionChecks++
 	if s.completionErr != nil {
 		return nil, false, s.completionErr
 	}
@@ -212,14 +244,37 @@ func (s *recordingCleanupStorage) Completion(_ context.Context, key string) ([]b
 }
 
 type recordingHandlerPublisher struct {
-	complete    *apiv1.TranscodeCompleteEvent
-	progress    []*apiv1.TranscodeProgressEvent
-	completeErr error
-	progressErr error
+	complete            *apiv1.TranscodeCompleteEvent
+	completions         []*apiv1.TranscodeCompleteEvent
+	completeContextErr  error
+	completeDeadline    time.Time
+	completeHasDeadline bool
+	completeHook        func(context.Context, *apiv1.TranscodeCompleteEvent) error
+	progress            []*apiv1.TranscodeProgressEvent
+	completeErr         error
+	progressErr         error
 }
 
-func (p *recordingHandlerPublisher) PublishComplete(_ context.Context, event *apiv1.TranscodeCompleteEvent) error {
+type jobAdmissionFunc func(context.Context, JobIdentity) (JobAdmissionDecision, error)
+
+func (f jobAdmissionFunc) Admit(ctx context.Context, identity JobIdentity) (JobAdmissionDecision, error) {
+	return f(ctx, identity)
+}
+
+func allowTestJobAdmission(context.Context, JobIdentity) (JobAdmissionDecision, error) {
+	return JobAdmissionProceed, nil
+}
+
+func (p *recordingHandlerPublisher) PublishComplete(ctx context.Context, event *apiv1.TranscodeCompleteEvent) error {
 	p.complete = event
+	p.completions = append(p.completions, event)
+	p.completeContextErr = ctx.Err()
+	p.completeDeadline, p.completeHasDeadline = ctx.Deadline()
+	if p.completeHook != nil {
+		if err := p.completeHook(ctx, event); err != nil {
+			return err
+		}
+	}
 	return p.completeErr
 }
 
@@ -590,6 +645,183 @@ func TestFailureResultPublicationIsRetryable(t *testing.T) {
 	require.True(t, jobresult.IsRetry(h.video.fail(context.Background(), videoJob("video-fail-result", "entity", "file"), time.Now(), errors.New("failed"))))
 }
 
+func TestDurableCancellationAdmissionPrecedesSuccessReceiptReplay(t *testing.T) {
+	job := audioJob("cancelled-before-redelivery", "entity", "file")
+	storage := &recordingCleanupStorage{completed: map[string][]byte{
+		job.GetHlsOutput().GetObjectPrefix() + "/" + hls.MasterManifestName: []byte("success receipt must lose to durable cancellation"),
+	}}
+	ffmpeg := &fakeHandlerFFmpeg{workDir: t.TempDir(), createErr: errors.New("cancelled command must not create work")}
+	publisher := &recordingHandlerPublisher{}
+	admission := jobAdmissionFunc(func(context.Context, JobIdentity) (JobAdmissionDecision, error) {
+		return JobAdmissionSettled, nil
+	})
+	h := newTestHandlerWithAdmission(t, &config.Config{}, ffmpeg, storage, publisher, admission)
+
+	err := h.HandleAudioJob(context.Background(), job)
+
+	require.NoError(t, err)
+	require.Empty(t, storage.uploads)
+	require.Zero(t, storage.completionChecks, "committed terminal admission must be checked before the success receipt")
+	require.Empty(t, publisher.completions, "durable cancellation must not replay stale success")
+}
+
+func TestAdmissionRunsAfterRegistryStartAndBeforeMediaWork(t *testing.T) {
+	var h *Handler
+	admission := jobAdmissionFunc(func(_ context.Context, identity JobIdentity) (JobAdmissionDecision, error) {
+		require.True(t, h.CancelJob(identity.FileID), "cancellation should find the session started immediately before admission")
+		return JobAdmissionSettled, nil
+	})
+	ffmpeg := &fakeHandlerFFmpeg{workDir: t.TempDir(), createErr: errors.New("admission must stop work")}
+	job := audioJob("cancel-between-start-and-admission", "entity", "file")
+	h = newTestHandlerWithAdmission(t, &config.Config{}, ffmpeg, nil, nil, admission)
+
+	require.NoError(t, h.HandleAudioJob(context.Background(), job))
+	require.False(t, h.CancelJob(job.GetFileId()), "admission no-op must close and remove its session")
+}
+
+func TestAdmissionReadFailureKeepsDeliveryRetryable(t *testing.T) {
+	cause := errors.New("transcode job query unavailable")
+	ffmpeg := &fakeHandlerFFmpeg{workDir: t.TempDir(), createErr: errors.New("admission failure must stop work")}
+	admission := jobAdmissionFunc(func(context.Context, JobIdentity) (JobAdmissionDecision, error) {
+		return 0, cause
+	})
+	h := newTestHandlerWithAdmission(t, &config.Config{}, ffmpeg, nil, nil, admission)
+
+	err := h.HandleAudioJob(context.Background(), audioJob("admission-db-error", "entity", "file"))
+
+	require.ErrorIs(t, err, cause)
+	require.True(t, jobresult.IsRetry(err))
+}
+
+func TestAdmissionIdentityMismatchPreventsTranscode(t *testing.T) {
+	ffmpeg := &fakeHandlerFFmpeg{workDir: t.TempDir(), createErr: errors.New("mismatched command must stop work")}
+	admission := jobAdmissionFunc(func(context.Context, JobIdentity) (JobAdmissionDecision, error) {
+		return JobAdmissionIdentityMismatch, nil
+	})
+	h := newTestHandlerWithAdmission(t, &config.Config{}, ffmpeg, nil, nil, admission)
+
+	err := h.HandleAudioJob(context.Background(), audioJob("admission-identity-mismatch", "entity", "file"))
+
+	require.ErrorIs(t, err, ErrJobAdmissionIdentityMismatch)
+	require.False(t, jobresult.IsRetry(err), "identity mismatch is a permanent command conflict")
+}
+
+func TestExplicitFileCancellationPublishesFailureOnBoundedLiveContext(t *testing.T) {
+	storage := &blockingDownloadHandlerStorage{started: make(chan struct{})}
+	publisher := &recordingHandlerPublisher{}
+	h := newTestHandler(t, &config.Config{}, newFakeHandlerFFmpeg(t.TempDir()), storage, publisher)
+	job := audioJob("cancel-before-completion", "entity", "file")
+	done := make(chan error, 1)
+	go func() { done <- h.HandleAudioJob(context.Background(), job) }()
+
+	select {
+	case <-storage.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transcode did not reach the cancellable download stage")
+	}
+	require.True(t, h.CancelJob(job.GetFileId()))
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled transcode did not settle its result")
+	}
+	require.True(t, jobresult.IsTerminal(err))
+	require.False(t, jobresult.IsRetry(err))
+	require.Len(t, publisher.completions, 1)
+	require.Equal(t, job.GetEventId(), publisher.complete.GetEventId())
+	require.False(t, publisher.complete.GetSuccess())
+	require.Contains(t, publisher.complete.GetError(), "explicitly cancelled")
+	require.NoError(t, publisher.completeContextErr, "terminal result publication must survive session cancellation")
+	require.True(t, publisher.completeHasDeadline, "terminal result publication must use a bounded context")
+	remaining := time.Until(publisher.completeDeadline)
+	require.Greater(t, remaining, time.Duration(0))
+	require.LessOrEqual(t, remaining, 5*time.Second)
+	require.False(t, h.CancelJob(job.GetFileId()), "closed session must not leave a cancellation marker")
+}
+
+func TestWorkerShutdownDuringTranscodeKeepsDeliveryRetryable(t *testing.T) {
+	storage := &blockingDownloadHandlerStorage{started: make(chan struct{})}
+	publisher := &recordingHandlerPublisher{
+		completeHook: func(ctx context.Context, _ *apiv1.TranscodeCompleteEvent) error { return ctx.Err() },
+	}
+	h := newTestHandler(t, &config.Config{}, newFakeHandlerFFmpeg(t.TempDir()), storage, publisher)
+	job := audioJob("shutdown-before-completion", "entity", "file")
+	parent, stop := context.WithCancel(context.Background())
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- h.HandleAudioJob(parent, job) }()
+
+	select {
+	case <-storage.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transcode did not reach the cancellable download stage")
+	}
+	stop()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown-stopped transcode did not return")
+	}
+	require.True(t, jobresult.IsRetry(err))
+	require.False(t, jobresult.IsTerminal(err))
+	require.ErrorIs(t, publisher.completeContextErr, context.Canceled)
+	require.Len(t, publisher.completions, 1)
+	require.False(t, publisher.complete.GetSuccess())
+	require.False(t, h.CancelJob(job.GetFileId()), "closed session must not leave a cancellation marker")
+}
+
+func TestReceiptReplayWithoutPersistedCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		shutdown bool
+	}{
+		{name: "in-memory registry cancellation"},
+		{name: "worker shutdown", shutdown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			job := audioJob("cancel-after-completion-"+tc.name, "entity", "file")
+			storage := &cancelAfterReceiptStorage{recordingCleanupStorage: &recordingCleanupStorage{}}
+			firstPublisher := &recordingHandlerPublisher{}
+			firstPublisher.completeHook = func(ctx context.Context, _ *apiv1.TranscodeCompleteEvent) error {
+				return ctx.Err()
+			}
+			first := newTestHandler(t, &config.Config{}, newFakeHandlerFFmpeg(t.TempDir()), storage, firstPublisher)
+			parent, stop := context.WithCancel(context.Background())
+			defer stop()
+			storage.afterReceipt = func() {
+				if tc.shutdown {
+					stop()
+					return
+				}
+				require.True(t, first.CancelJob(job.GetFileId()))
+			}
+
+			err := first.HandleAudioJob(parent, job)
+			require.True(t, jobresult.IsRetry(err), "uncertain result publication must remain redeliverable")
+			require.Len(t, firstPublisher.completions, 1)
+			require.True(t, firstPublisher.completions[0].GetSuccess())
+			require.ErrorIs(t, firstPublisher.completeContextErr, context.Canceled)
+			if !tc.shutdown {
+				require.False(t, first.CancelJob(job.GetFileId()), "closed session must not leave a cancellation marker")
+			}
+			acceptedUploads := append([]string(nil), storage.uploads...)
+			require.NotEmpty(t, acceptedUploads)
+
+			replayPublisher := &recordingHandlerPublisher{}
+			replay := newTestHandler(t, &config.Config{}, &fakeHandlerFFmpeg{
+				workDir:   t.TempDir(),
+				createErr: errors.New("durable completion must skip transcode work"),
+			}, storage, replayPublisher)
+			require.NoError(t, replay.HandleAudioJob(context.Background(), job))
+			require.Len(t, replayPublisher.completions, 1)
+			require.True(t, replayPublisher.completions[0].GetSuccess())
+			require.Equal(t, acceptedUploads, storage.uploads)
+		})
+	}
+}
+
 func TestHandlerParsesProtobufJobs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -907,6 +1139,17 @@ func newTestHandler(
 	storage StorageClient,
 	publisher EventPublisher,
 ) *Handler {
+	return newTestHandlerWithAdmission(t, cfg, executor, storage, publisher, jobAdmissionFunc(allowTestJobAdmission))
+}
+
+func newTestHandlerWithAdmission(
+	t *testing.T,
+	cfg *config.Config,
+	executor FFmpegExecutor,
+	storage StorageClient,
+	publisher EventPublisher,
+	admission JobAdmission,
+) *Handler {
 	t.Helper()
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -932,6 +1175,7 @@ func newTestHandler(
 		FFmpeg:            executor,
 		Storage:           storage,
 		Publisher:         publisher,
+		Admission:         admission,
 	})
 	require.NoError(t, err)
 	return handler
