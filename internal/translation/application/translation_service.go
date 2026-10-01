@@ -307,7 +307,7 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 			updated = current
 			return nil
 		}
-		now := time.Now().UTC()
+		now := tx.NowFunc().UTC()
 		updates := map[string]any{"updated_at": now}
 		if current.DefaultLocale != requested.DefaultLocale {
 			updates["default_locale"] = requested.DefaultLocale
@@ -315,7 +315,7 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 		if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
 			updates["protected_terms"] = pq.Array(requested.ProtectedTerms)
 		}
-		if err := tx.Model(&row).Updates(updates).Error; err != nil {
+		if err := tx.Model(&row).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
 			return err
 		}
 		if s.auditWriter != nil {
@@ -325,7 +325,7 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 				return err
 			}
 		}
-		requested.UpdatedAt = &now
+		requested.UpdatedAt = &row.UpdatedAt
 		updated = requested
 		return nil
 	})

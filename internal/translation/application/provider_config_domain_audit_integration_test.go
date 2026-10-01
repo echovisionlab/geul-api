@@ -68,8 +68,10 @@ func testTranslationProviderUpdatesAuditExactChangesAndSkipSemanticNoOps(
 	ctx := translationProviderAuditedMemberContext(t, admin)
 	grantTranslationProviderIntegrationAdmin(t, spiceDB, admin)
 
+	writeTime := time.Date(2026, time.October, 2, 3, 4, 5, 123456789, time.UTC)
+	serviceDB := db.Session(&gorm.Session{NowFunc: func() time.Time { return writeTime }})
 	service := newAuditedTranslationProviderService(
-		db, apitelemetry.NewDurableWriter(db), spiceDB,
+		serviceDB, apitelemetry.NewDurableWriter(db), spiceDB,
 	)
 	provider := insertedAuditedTranslationProvider(t, db)
 	created, err := service.CreateTranslationProvider(
@@ -97,9 +99,11 @@ func testTranslationProviderUpdatesAuditExactChangesAndSkipSemanticNoOps(
 			LlmConfig: &managev1.LLMTranslationProviderConfig{Model: providerModel},
 		},
 	}
-	_, err = service.UpdateTranslationProvider(ctx, connect.NewRequest(request))
+	updated, err := service.UpdateTranslationProvider(ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	updatedAt := translationProviderUpdatedAt(t, db, provider.ID)
+	require.Equal(t, writeTime.Truncate(time.Microsecond).UnixNano(), updatedAt.UnixNano())
+	require.Equal(t, updatedAt.UnixNano(), updated.Msg.Provider.UpdatedAt.AsTime().UnixNano())
 	_, err = service.UpdateTranslationProvider(ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, updatedAt, translationProviderUpdatedAt(t, db, provider.ID))
