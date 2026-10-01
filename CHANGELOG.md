@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/echovisionlab/geul-api/compare/v1.0.0...v1.0.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **runtime:** preserve queue outcomes and fresh authority ([#54](https://github.com/echovisionlab/geul-api/issues/54)) ([d3221d7](https://github.com/echovisionlab/geul-api/commit/d3221d76bbf5766d53d6d79d7b81ae6da3137c5c))
+
 ## [1.0.0](https://github.com/echovisionlab/geul-api/compare/v0.5.8...v1.0.0) (2026-10-01)
 
 
