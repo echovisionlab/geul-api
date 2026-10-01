@@ -159,6 +159,17 @@ advertise Bearer authentication merely to share a response format.
 
 ## Concurrent content and delivery contracts
 
+Post configuration writes use `configuration_revision` as an optimistic
+concurrency token. Manage clients read it from `manage.v1.Post` and send it as
+`expected_configuration_revision` on every `UpdatePost` call. The API compares
+it against the row reloaded under the Post root lock after rechecking live edit
+authorization. Stale writes return `ABORTED`; reload the Post before retrying.
+Only changes to slug, comments, map place, or document layout rotate this token.
+Lifecycle and content writes leave it unchanged. Apply the matching
+`geul-schema` migration before starting this API. See
+[`docs/post-configuration-concurrency.md`](docs/post-configuration-concurrency.md)
+for the full contract.
+
 Post and Work public detail reads authorize the locked root and load localized
 metadata and body in one repeatable-read transaction. Content writers lock the
 root before the document. A read started before unpublish may return that

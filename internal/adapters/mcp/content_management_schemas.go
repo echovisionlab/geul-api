@@ -19,12 +19,29 @@ const postCreateInputJSONSchema = `{
 }`
 
 const postSettingsUpdateInputJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["document_id"],
+  "type":"object","additionalProperties":false,"required":["document_id","expected_configuration_revision"],
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,
+    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from document_list or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "comments_enabled":{"type":"boolean"},
     "map_place_id":{"type":"string","description":"Canonical Map Place UUID, or an empty string to remove the relation."}
+  }
+}`
+
+const postConfigurationMutationOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,
+  "required":["document_type","document_id","changed","configuration_revision"],
+  "properties":{
+    "document_type":{"const":"post"},
+    "document_id":` + documentReferenceJSONSchema + `,
+    "changed":{"type":"boolean"},"deleted":{"type":"boolean"},
+    "title":{"type":"string"},"slug":{"type":"string"},
+    "source_locale":{"type":"string"},"status":{"type":"string"},
+    "document_revision":{"type":"string","description":"Content document revision. Separate from the Post settings revision."},
+    "configuration_revision":{"type":"string","format":"uuid","description":"Persisted Post settings revision to supply as expected_configuration_revision on the next settings update."},
+    "updated_at":{"type":"string","format":"date-time"},
+    "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"}
   }
 }`
 

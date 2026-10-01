@@ -31,8 +31,10 @@ const documentListOutputJSONSchema = `{
         "slug":{"type":"string"},
         "source_locale":{"type":"string","minLength":1,"maxLength":35},
         "status":{"type":"string","minLength":1},
-        "updated_at":{"type":"string","format":"date-time"}
-      }
+        "updated_at":{"type":"string","format":"date-time"},
+        "configuration_revision":{"type":"string","format":"uuid","description":"Post settings revision for post_settings_update. Separate from the content document revision."}
+      },
+      "allOf":[{"if":{"properties":{"p":{"const":"post"}},"required":["p"]},"then":{"required":["configuration_revision"]}}]
     }},
     "total":{"type":"integer","minimum":0},
     "next_offset":{"type":["integer","null"],"minimum":0}

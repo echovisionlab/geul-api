@@ -146,7 +146,9 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		documents := make([]map[string]any, len(listed.Items))
 		for index, item := range listed.Items {
-			documents[index] = discoveryDocument("post", item.ID, item.Title, item.Slug, item.SourceLocale, item.Status, item.UpdatedAt)
+			document := discoveryDocument("post", item.ID, item.Title, item.Slug, item.SourceLocale, item.Status, item.UpdatedAt)
+			document["configuration_revision"] = item.ConfigurationRevision
+			documents[index] = document
 		}
 		return documents, listed.Total, listed.Limit, nil
 	case "work":
