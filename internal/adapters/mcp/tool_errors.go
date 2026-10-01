@@ -23,6 +23,7 @@ func expectedToolError(err error) (mcpserver.ToolResult, error) {
 		connect.CodeNotFound,
 		connect.CodeAlreadyExists,
 		connect.CodeFailedPrecondition,
+		connect.CodeAborted,
 		connect.CodePermissionDenied,
 		connect.CodeUnauthenticated,
 		connect.CodeResourceExhausted:

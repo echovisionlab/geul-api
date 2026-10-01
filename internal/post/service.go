@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -23,6 +24,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -395,24 +397,29 @@ func (s *PostService) UpdatePost(
 		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
 	}
 	return connect.NewResponse(&managev1.UpdatePostResponse{
-		Id:              post.ID,
-		Changed:         changed,
-		Slug:            post.Slug,
-		CommentsEnabled: post.CommentsEnabled,
-		MapPlaceId:      post.MapPlaceID,
-		DocumentLayout:  post.DocumentLayout.Proto(),
-		UpdatedAt:       timestamppb.New(post.UpdatedAt),
+		Id:                    post.ID,
+		Changed:               changed,
+		Slug:                  post.Slug,
+		CommentsEnabled:       post.CommentsEnabled,
+		MapPlaceId:            post.MapPlaceID,
+		DocumentLayout:        post.DocumentLayout.Proto(),
+		ConfigurationRevision: post.ConfigurationRevision,
+		UpdatedAt:             timestamppb.New(post.UpdatedAt),
 	}), nil
 }
 
 type postUpdate struct {
-	fields         structured.Fields
-	normalizedSlug *string
-	slugPresent    bool
+	fields                        structured.Fields
+	normalizedSlug                *string
+	slugPresent                   bool
+	expectedConfigurationRevision string
 }
 
 func (s *PostService) buildPostUpdate(ctx context.Context, request *managev1.UpdatePostRequest) (postUpdate, error) {
-	update := postUpdate{fields: structured.Fields{}}
+	update := postUpdate{
+		fields:                        structured.Fields{},
+		expectedConfigurationRevision: request.ExpectedConfigurationRevision,
+	}
 	update.normalizedSlug, update.slugPresent = normalizeOptionalNullableString(request.Slug)
 	if update.normalizedSlug != nil {
 		if err := validateSlugWithoutSlash(*update.normalizedSlug); err != nil {
@@ -464,6 +471,16 @@ func (s *PostService) updatePostWithDB(ctx context.Context, tx *gorm.DB, post *m
 	if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Edit); err != nil {
 		return false, err
 	}
+	if strings.TrimSpace(update.expectedConfigurationRevision) == "" {
+		return false, errs.FailedPrecondition("Post configuration revision is required; reload before saving")
+	}
+	expectedRevision, err := uuidutil.ParseCanonical(update.expectedConfigurationRevision, "expected_configuration_revision")
+	if err != nil {
+		return false, errs.InvalidArgumentMsg("expected_configuration_revision must be a canonical UUID")
+	}
+	if expectedRevision.String() != post.ConfigurationRevision {
+		return false, connect.NewError(connect.CodeAborted, errors.New("Post configuration changed; reload before saving"))
+	}
 	if update.slugPresent && update.normalizedSlug != nil {
 		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "post", "posts", *update.normalizedSlug); err != nil {
 			return false, err
@@ -475,11 +492,9 @@ func (s *PostService) updatePostWithDB(ctx context.Context, tx *gorm.DB, post *m
 	}
 	mutationNow := time.Now()
 	update.fields["updated_at"] = mutationNow
-	if err := tx.Model(post).Updates(update.fields).Error; err != nil {
+	if err := tx.Model(post).Clauses(clause.Returning{}).Updates(update.fields).Error; err != nil {
 		return false, err
 	}
-	applyPostUpdateFields(post, update.fields)
-	post.UpdatedAt = mutationNow
 	if s.auditWriter == nil {
 		return true, nil
 	}
@@ -524,32 +539,6 @@ func optionalPostValueEqual(current, next any) bool {
 	}
 	nextValue, ok := next.(string)
 	return ok && currentValue != nil && *currentValue == nextValue
-}
-
-func applyPostUpdateFields(post *model.Post, fields structured.Fields) {
-	if value, exists := fields["slug"]; exists {
-		post.Slug = structuredStringPointer(value)
-	}
-	if value, ok := fields["comments_enabled"].(bool); ok {
-		post.CommentsEnabled = value
-	}
-	if value, exists := fields["map_place_id"]; exists {
-		post.MapPlaceID = structuredStringPointer(value)
-	}
-	if value, ok := fields["document_layout"].(model.DocumentLayout); ok {
-		post.DocumentLayout = value
-	}
-}
-
-func structuredStringPointer(value any) *string {
-	if value == nil {
-		return nil
-	}
-	text, ok := value.(string)
-	if !ok {
-		return nil
-	}
-	return &text
 }
 
 // DeletePost deletes a post

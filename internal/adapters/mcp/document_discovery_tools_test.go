@@ -26,6 +26,7 @@ func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 		Items: []postdomain.AIDocumentListItem{{
 			ID: discoveryDocumentID, Title: "Test Post", Slug: &slug,
 			SourceLocale: "ko", Status: "POST_STATUS_DRAFT", UpdatedAt: updatedAt,
+			ConfigurationRevision: managementPostConfigurationRevision,
 		}},
 		Total: 3, Limit: 1, Offset: 1,
 	}}
@@ -67,7 +68,7 @@ func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 		t.Fatalf("document_list documents = %#v", result.StructuredContent["documents"])
 	}
 	document, ok := documents[0].(map[string]any)
-	if !ok || document["d"] != discoveryDocumentID || document["slug"] != slug || document["title"] != "Test Post" {
+	if !ok || document["d"] != discoveryDocumentID || document["slug"] != slug || document["title"] != "Test Post" || document["configuration_revision"] != managementPostConfigurationRevision {
 		t.Fatalf("document_list document = %#v", documents[0])
 	}
 	if result.StructuredContent["next_offset"] != float64(2) || result.StructuredContent["total"] != float64(3) {

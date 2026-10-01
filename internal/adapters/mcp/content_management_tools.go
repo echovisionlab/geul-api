@@ -39,8 +39,8 @@ const (
 )
 
 var contentManagementTools = []mcpserver.Tool{
-	contentTool(ToolPostCreate, "Create Post", "Create a new draft Post with an empty typed document in the requested source locale.", postCreateInputJSONSchema, false),
-	contentTool(ToolPostSettingsUpdate, "Update Post settings", "Update Post slug, comment setting, or Map Place relation. Use document_metadata_update for title, summary, categories, or tags.", postSettingsUpdateInputJSONSchema, true),
+	contentToolWithOutput(ToolPostCreate, "Create Post", "Create a new draft Post with an empty typed document in the requested source locale.", postCreateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false),
+	contentToolWithOutput(ToolPostSettingsUpdate, "Update Post settings", "Update Post slug, comment setting, or Map Place relation using the exact configuration_revision returned by document_list or post_create. Reload after a stale-revision error before applying pending edits. Use document_metadata_update for title, summary, categories, or tags.", postSettingsUpdateInputJSONSchema, postConfigurationMutationOutputJSONSchema, true),
 	contentTool(ToolPostPublish, "Publish Post", "Publish a draft Post immediately using the existing Post lifecycle rules.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostUnpublish, "Unpublish Post", "Move a published Post back to draft.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostArchive, "Archive Post", "Archive a published Post. An archived Post must be republished before deletion.", contentIDInputJSONSchema, true),
@@ -61,9 +61,13 @@ var contentManagementTools = []mcpserver.Tool{
 }
 
 func contentTool(name, title, description, inputSchema string, destructive bool) mcpserver.Tool {
+	return contentToolWithOutput(name, title, description, inputSchema, contentMutationOutputJSONSchema, destructive)
+}
+
+func contentToolWithOutput(name, title, description, inputSchema, outputSchema string, destructive bool) mcpserver.Tool {
 	return mcpserver.Tool{
 		Name: name, Title: title, Description: description,
-		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(contentMutationOutputJSONSchema),
+		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(outputSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, destructive, false), Meta: oauthSecurityMeta(),
 	}
 }
@@ -181,14 +185,16 @@ func (tools *ContentManagementTools) createPost(ctx context.Context, arguments m
 		"document_type": "post", "document_id": created.Msg.Id, "changed": true, "title": created.Msg.Title,
 		"slug": optionalStringValue(created.Msg.Slug), "source_locale": created.Msg.SourceLocale,
 		"status": contentStatus(created.Msg.Status.String(), "POST_STATUS_"), "document_revision": created.Msg.Revision,
+		"configuration_revision": created.Msg.ConfigurationRevision,
 	})
 }
 
 type postSettingsArguments struct {
-	DocumentID      string  `json:"document_id"`
-	Slug            *string `json:"slug,omitempty"`
-	CommentsEnabled *bool   `json:"comments_enabled,omitempty"`
-	MapPlaceID      *string `json:"map_place_id,omitempty"`
+	DocumentID                    string  `json:"document_id"`
+	ExpectedConfigurationRevision string  `json:"expected_configuration_revision"`
+	Slug                          *string `json:"slug,omitempty"`
+	CommentsEnabled               *bool   `json:"comments_enabled,omitempty"`
+	MapPlaceID                    *string `json:"map_place_id,omitempty"`
 }
 
 func (tools *ContentManagementTools) updatePost(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -199,11 +205,18 @@ func (tools *ContentManagementTools) updatePost(ctx context.Context, arguments m
 	if input.Slug == nil && input.CommentsEnabled == nil && input.MapPlaceID == nil {
 		return executionError(errors.New("at least one Post setting is required"))
 	}
-	updated, err := tools.posts.UpdatePost(ctx, connect.NewRequest(&managev1.UpdatePostRequest{Id: input.DocumentID, Slug: input.Slug, CommentsEnabled: input.CommentsEnabled, MapPlaceId: input.MapPlaceID}))
+	updated, err := tools.posts.UpdatePost(ctx, connect.NewRequest(&managev1.UpdatePostRequest{
+		Id: input.DocumentID, Slug: input.Slug, CommentsEnabled: input.CommentsEnabled,
+		MapPlaceId: input.MapPlaceID, ExpectedConfigurationRevision: input.ExpectedConfigurationRevision,
+	}))
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "post", "document_id": updated.Msg.Id, "changed": updated.Msg.Changed, "slug": optionalStringValue(updated.Msg.Slug), "updated_at": timestampString(updated.Msg.UpdatedAt)})
+	return contentResult(map[string]any{
+		"document_type": "post", "document_id": updated.Msg.Id, "changed": updated.Msg.Changed,
+		"slug": optionalStringValue(updated.Msg.Slug), "updated_at": timestampString(updated.Msg.UpdatedAt),
+		"configuration_revision": updated.Msg.ConfigurationRevision,
+	})
 }
 
 func (tools *ContentManagementTools) mutatePost(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {

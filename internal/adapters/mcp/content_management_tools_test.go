@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -33,6 +34,30 @@ func TestContentManagementToolDescriptors(t *testing.T) {
 			var object map[string]any
 			if err := json.Unmarshal(schema, &object); err != nil || object["type"] != "object" {
 				t.Fatalf("%s invalid schema: %v", tool.Name, err)
+			}
+		}
+		if tool.Name == ToolPostSettingsUpdate {
+			var inputSchema struct {
+				Required   []string                  `json:"required"`
+				Properties map[string]map[string]any `json:"properties"`
+			}
+			if err := json.Unmarshal(tool.InputSchema, &inputSchema); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(inputSchema.Required, []string{"document_id", "expected_configuration_revision"}) {
+				t.Fatalf("Post settings required input = %#v", inputSchema.Required)
+			}
+			if inputSchema.Properties["expected_configuration_revision"]["format"] != "uuid" {
+				t.Fatalf("Post settings revision schema = %#v", inputSchema.Properties["expected_configuration_revision"])
+			}
+			var outputSchema struct {
+				Required []string `json:"required"`
+			}
+			if err := json.Unmarshal(tool.OutputSchema, &outputSchema); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(outputSchema.Required, []string{"document_type", "document_id", "changed", "configuration_revision"}) {
+				t.Fatalf("Post settings required output = %#v", outputSchema.Required)
 			}
 		}
 	}
@@ -81,7 +106,7 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 		t.Fatalf("Post create = %#v", posts.create)
 	}
 	assertEmptyManagementDocument(t, posts.create.Msg.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, "ko")
-	if postResult.StructuredContent["document_id"] != managementPostID {
+	if postResult.StructuredContent["document_id"] != managementPostID || postResult.StructuredContent["configuration_revision"] != managementPostConfigurationRevision {
 		t.Fatalf("Post result = %#v", postResult.StructuredContent)
 	}
 
@@ -112,6 +137,75 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	}
 }
 
+func TestPostSettingsUpdatePassesExactRevisionAndAcknowledgesPersistedRevision(t *testing.T) {
+	posts := &recordingPostManagement{}
+	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, &recordingPageManagement{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPostSettingsUpdate, toolArguments(t,
+		`{"document_id":"`+managementPostID+`","expected_configuration_revision":"`+managementPostConfigurationRevision+`","slug":"updated-slug"}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posts.updateCalls != 1 || posts.update == nil || posts.update.Msg.ExpectedConfigurationRevision != managementPostConfigurationRevision {
+		t.Fatalf("UpdatePost request = %#v (calls %d)", posts.update, posts.updateCalls)
+	}
+	if posts.update.Msg.Slug == nil || *posts.update.Msg.Slug != "updated-slug" {
+		t.Fatalf("UpdatePost settings = %#v", posts.update.Msg)
+	}
+	if result.StructuredContent["configuration_revision"] != managementPostConfigurationRevisionNext {
+		t.Fatalf("Post settings result = %#v", result.StructuredContent)
+	}
+}
+
+func TestPostSettingsUpdateForwardsMissingMalformedAndStaleRevisionsSafely(t *testing.T) {
+	cases := []struct {
+		name         string
+		arguments    string
+		errorCode    connect.Code
+		apiMessage   string
+		wantRevision string
+	}{
+		{
+			name:      "missing revision remains API precondition error",
+			arguments: `{"document_id":"` + managementPostID + `","slug":"updated-slug"}`,
+			errorCode: connect.CodeFailedPrecondition, apiMessage: "expected_configuration_revision is required",
+			wantRevision: "",
+		},
+		{
+			name:      "malformed revision remains API validation error",
+			arguments: `{"document_id":"` + managementPostID + `","expected_configuration_revision":"bad-revision","slug":"updated-slug"}`,
+			errorCode: connect.CodeInvalidArgument, apiMessage: "expected_configuration_revision must be a canonical UUID",
+			wantRevision: "bad-revision",
+		},
+		{
+			name:      "stale revision is returned without retry or rebase",
+			arguments: `{"document_id":"` + managementPostID + `","expected_configuration_revision":"` + managementPostConfigurationRevision + `","slug":"updated-slug"}`,
+			errorCode: connect.CodeAborted, apiMessage: "Post settings changed; reload before applying this update",
+			wantRevision: managementPostConfigurationRevision,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			posts := &recordingPostManagement{updateErr: connect.NewError(test.errorCode, errors.New(test.apiMessage))}
+			tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, &recordingPageManagement{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPostSettingsUpdate, toolArguments(t, test.arguments))
+			var executionErr *mcpserver.ToolExecutionError
+			if result.Content != nil || !errors.As(err, &executionErr) || executionErr.Message != test.apiMessage {
+				t.Fatalf("Post settings error result = %#v, error = %v", result, err)
+			}
+			if posts.updateCalls != 1 || posts.update == nil || posts.update.Msg.ExpectedConfigurationRevision != test.wantRevision {
+				t.Fatalf("UpdatePost request = %#v (calls %d), want revision %q", posts.update, posts.updateCalls, test.wantRevision)
+			}
+		})
+	}
+}
+
 func TestPostScheduleUsesExactTimestampAndLifecycleResponse(t *testing.T) {
 	posts := &recordingPostManagement{}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, &recordingPageManagement{})
@@ -138,20 +232,36 @@ func assertEmptyManagementDocument(t *testing.T, document *contentv1.RichTextDoc
 }
 
 const (
-	managementPostID = "11111111-1111-4111-8111-111111111111"
-	managementWorkID = "22222222-2222-4222-8222-222222222222"
-	managementPageID = "33333333-3333-4333-8333-333333333333"
+	managementPostID                        = "11111111-1111-4111-8111-111111111111"
+	managementPostConfigurationRevision     = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	managementPostConfigurationRevisionNext = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	managementWorkID                        = "22222222-2222-4222-8222-222222222222"
+	managementPageID                        = "33333333-3333-4333-8333-333333333333"
 )
 
 type recordingPostManagement struct {
 	managev1connect.UnimplementedPostServiceHandler
-	create   *connect.Request[managev1.CreatePostRequest]
-	schedule *connect.Request[managev1.SchedulePostRequest]
+	create      *connect.Request[managev1.CreatePostRequest]
+	update      *connect.Request[managev1.UpdatePostRequest]
+	schedule    *connect.Request[managev1.SchedulePostRequest]
+	updateErr   error
+	updateCalls int
 }
 
 func (r *recordingPostManagement) CreatePost(_ context.Context, req *connect.Request[managev1.CreatePostRequest]) (*connect.Response[managev1.Post], error) {
 	r.create = req
-	return connect.NewResponse(&managev1.Post{Id: managementPostID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PostStatus_POST_STATUS_DRAFT, Revision: "post-revision"}), nil
+	return connect.NewResponse(&managev1.Post{Id: managementPostID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PostStatus_POST_STATUS_DRAFT, Revision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision}), nil
+}
+func (r *recordingPostManagement) UpdatePost(_ context.Context, req *connect.Request[managev1.UpdatePostRequest]) (*connect.Response[managev1.UpdatePostResponse], error) {
+	r.updateCalls++
+	r.update = req
+	if r.updateErr != nil {
+		return nil, r.updateErr
+	}
+	return connect.NewResponse(&managev1.UpdatePostResponse{
+		Id: req.Msg.Id, Changed: true, Slug: req.Msg.Slug,
+		ConfigurationRevision: managementPostConfigurationRevisionNext,
+	}), nil
 }
 func (r *recordingPostManagement) SchedulePost(_ context.Context, req *connect.Request[managev1.SchedulePostRequest]) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
 	r.schedule = req
