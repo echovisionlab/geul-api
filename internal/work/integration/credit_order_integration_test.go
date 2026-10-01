@@ -48,7 +48,6 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 		ItemId:        creditOne,
 		TargetGroupId: ptrString(groupOne),
 		After:         creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, creditTwo),
-		Before:        creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, groupTwoCredit),
 	}))
 	require.NoError(t, err)
 	require.True(t, movedCredit.Msg.Changed)
@@ -58,6 +57,17 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 	reloaded, err := service.GetWorkCredits(ctx, connect.NewRequest(&managev1.GetWorkCreditsRequest{WorkId: workID}))
 	require.NoError(t, err)
 	require.Equal(t, wantOrder, creditOrderKeys(reloaded.Msg.Order))
+	requireCanonicalCreditSortIndices(t, db, workID, wantOrder)
+
+	_, err = service.MoveWorkCreditItem(ctx, connect.NewRequest(&managev1.MoveWorkCreditItemRequest{
+		WorkId:        workID,
+		Kind:          managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT,
+		ItemId:        creditOne,
+		TargetGroupId: ptrString(groupOne),
+		After:         creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, creditTwo),
+		Before:        creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, groupTwoCredit),
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	requireCanonicalCreditSortIndices(t, db, workID, wantOrder)
 
 	transitionCredit := createCreditOrderCredit(t, service, ctx, workID, nil, "Group Change Credit")
@@ -151,14 +161,16 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 	}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
-	unauthorizedCtx := workIntegrationAdminCtx(integrationTestUUID())
+	unauthorizedID := integrationTestUUID()
+	seedExternalKratosIdentityWithTraits(t, db, unauthorizedID, "Work Credit Order Unauthorized")
+	unauthorizedCtx := workIntegrationAdminCtx(unauthorizedID)
 	_, err = service.MoveWorkCreditItem(unauthorizedCtx, connect.NewRequest(&managev1.MoveWorkCreditItemRequest{
 		WorkId:        workID,
 		Kind:          managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT,
 		ItemId:        creditOne,
 		TargetGroupId: ptrString(groupOne),
 	}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
 	deletedAnchorFallback, err := service.MoveWorkCreditItem(ctx, connect.NewRequest(&managev1.MoveWorkCreditItemRequest{
 		WorkId:        workID,

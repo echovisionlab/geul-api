@@ -638,13 +638,10 @@ func (s *ProgramEventService) setProgramEventStatus(
 		if publish && current.Status != managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String() {
 			updates["published_at"] = now
 		}
-		if err := tx.Model(&current).Updates(updates).Error; err != nil {
+		if err := tx.Model(&current).Clauses(clause.Returning{Columns: []clause.Column{
+			{Name: "status"}, {Name: "published_at"}, {Name: "updated_at"},
+		}}).Updates(updates).Error; err != nil {
 			return errs.Internal(err)
-		}
-		current.Status = status
-		current.UpdatedAt = now
-		if publishedAt, ok := updates["published_at"].(time.Time); ok {
-			current.PublishedAt = &publishedAt
 		}
 		return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewProgramEventLifecycleAuditRecord(metadata, current.ID, programEventAuditState(previousStatus), programEventAuditState(status))

@@ -301,7 +301,7 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 
 	name := "Archived segment renamed by admin"
 	description := "Archived segment description updated by admin"
-	createdAfter := timestamppb.New(now.Add(-time.Hour))
+	createdAfter := timestamppb.New(time.Date(2026, time.January, 2, 3, 4, 5, 123456789, time.UTC))
 	updated, err := service.UpdateSegment(
 		adminCtx,
 		connect.NewRequest(&managev1.UpdateSegmentRequest{
@@ -323,7 +323,14 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 	require.Equal(t, name, updated.Msg.Name)
 	require.Equal(t, description, updated.Msg.GetDescription())
 	require.Equal(t, []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN}, updated.Msg.Config.AccountRoles)
-	require.True(t, updated.Msg.Config.CreatedAfter.AsTime().Equal(createdAfter.AsTime()))
+
+	var stored model.AudienceSegment
+	require.NoError(t, db.Select("created_after").First(&stored, "id = ?", segmentID).Error)
+	require.NotNil(t, stored.CreatedAfter)
+	expectedStoredCreatedAfter := createdAfter.AsTime().Truncate(time.Microsecond)
+	require.True(t, expectedStoredCreatedAfter.Equal(*stored.CreatedAfter))
+	require.True(t, stored.CreatedAfter.Equal(updated.Msg.Config.CreatedAfter.AsTime()))
+	require.False(t, createdAfter.AsTime().Equal(*stored.CreatedAfter))
 }
 
 func TestAudienceAdminListDefaultsToActiveAndCanIncludeArchivedUnit(t *testing.T) {

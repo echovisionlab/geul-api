@@ -77,6 +77,15 @@ func (s *TrackService) mergeAndPersistObservedTrackCredits(
 	for _, row := range current {
 		currentByID[row.ID] = row
 	}
+	observedIDs := make(map[string]struct{}, len(observed))
+	for _, input := range observed {
+		if input == nil {
+			continue
+		}
+		if id := input.GetId(); id != "" {
+			observedIDs[id] = struct{}{}
+		}
+	}
 
 	seen := make(map[string]bool, len(desired))
 	for order, input := range desired {
@@ -93,7 +102,9 @@ func (s *TrackService) mergeAndPersistObservedTrackCredits(
 		if id != "" {
 			seen[id] = true
 			if _, belongsToTrack := currentByID[id]; !belongsToTrack {
-				return errs.InvalidArgument("credit.id", "does not belong to track")
+				if _, wasObserved := observedIDs[id]; !wasObserved {
+					return errs.InvalidArgument("credit.id", "does not belong to track")
+				}
 			}
 		}
 		input.SortOrder = int32(order)

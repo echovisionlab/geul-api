@@ -148,4 +148,23 @@ func TestMergeTrackCreditsPreservesConcurrentRowsAndUntouchedValues(t *testing.T
 	}
 }
 
+func TestMergeTrackCreditsDoesNotRecreateObservedCreditDeletedByPeer(t *testing.T) {
+	current := []model.TrackCredit{{
+		ID: "credit-stable", TrackID: "track-1", CreditedName: stringPointer("Still present"), SortOrder: 0,
+	}}
+	observed := []*managev1.TrackCreditInput{
+		{Id: stringPointer("credit-stable"), CreditedName: stringPointer("Still present")},
+		{Id: stringPointer("credit-peer-deleted"), CreditedName: stringPointer("Deleted by peer")},
+	}
+	desired := []*managev1.TrackCreditInput{
+		{Id: stringPointer("credit-stable"), CreditedName: stringPointer("Still present")},
+		{Id: stringPointer("credit-peer-deleted"), CreditedName: stringPointer("Deleted by peer")},
+	}
+
+	merged := mergeTrackCredits("track-1", current, observed, desired)
+	if len(merged) != 1 || merged[0].ID != "credit-stable" {
+		t.Fatalf("stale desired snapshot recreated a peer-deleted credit: %+v", merged)
+	}
+}
+
 func stringPointer(value string) *string { return &value }
