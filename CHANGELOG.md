@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.8](https://github.com/echovisionlab/geul-api/compare/v0.5.7...v0.5.8) (2026-10-01)
+
+
+### Bug Fixes
+
+* **post:** reject stale configuration writes ([#50](https://github.com/echovisionlab/geul-api/issues/50)) ([1b78bc5](https://github.com/echovisionlab/geul-api/commit/1b78bc5ff0faef5e0eaa76dacfee7b3a510ce1f7))
+
 ## [0.5.7](https://github.com/echovisionlab/geul-api/compare/v0.5.6...v0.5.7) (2026-10-01)
 
 
