@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/echovisionlab/geul-api/compare/v0.5.8...v1.0.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* merge editor intent under current resource locks ([#52](https://github.com/echovisionlab/geul-api/issues/52))
+
+### Bug Fixes
+
+* merge editor intent under current resource locks ([#52](https://github.com/echovisionlab/geul-api/issues/52)) ([49ff0ac](https://github.com/echovisionlab/geul-api/commit/49ff0accfd2c62531a6f31a1a9e25f4ca0b742d7))
+
 ## [0.5.8](https://github.com/echovisionlab/geul-api/compare/v0.5.7...v0.5.8) (2026-10-01)
 
 
