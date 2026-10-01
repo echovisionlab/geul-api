@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildWorkCreditOrderUsesUniqueFlattenedIndices(t *testing.T) {
+func TestBuildWorkCreditOrderPreservesCanonicalMixedOrder(t *testing.T) {
 	groups := []model.WorkCreditGroup{{ID: "g1", SortOrder: 1}, {ID: "g2", SortOrder: 4}}
 	credits := []model.WorkCredit{
 		{ID: "c1", GroupID: testStringPointer("g1"), SortOrder: 2},
@@ -16,24 +16,57 @@ func TestBuildWorkCreditOrderUsesUniqueFlattenedIndices(t *testing.T) {
 		{ID: "c2", GroupID: testStringPointer("g2"), SortOrder: 5},
 	}
 
-	order, valid := buildWorkCreditOrder(groups, credits)
+	order, err := buildWorkCreditOrder(groups, credits)
 
-	require.True(t, valid)
+	require.NoError(t, err)
 	require.Equal(t, []string{"g:g1", "c:c1", "c:u1", "g:g2", "c:c2"}, orderKeys(order))
 }
 
-func TestBuildWorkCreditOrderFallsBackForLegacyDuplicates(t *testing.T) {
-	groups := []model.WorkCreditGroup{{ID: "g2", SortOrder: 0}, {ID: "g1", SortOrder: 0}}
-	credits := []model.WorkCredit{
-		{ID: "c2", GroupID: testStringPointer("g1"), SortOrder: 0},
-		{ID: "c1", GroupID: testStringPointer("g1"), SortOrder: 0},
-		{ID: "u1", SortOrder: 0},
+func TestBuildWorkCreditOrderRejectsInvalidPersistedTopology(t *testing.T) {
+	tests := []struct {
+		name    string
+		groups  []model.WorkCreditGroup
+		credits []model.WorkCredit
+	}{
+		{
+			name: "duplicate indices",
+			groups: []model.WorkCreditGroup{
+				{ID: "g1", SortOrder: 1},
+				{ID: "g2", SortOrder: 1},
+			},
+		},
+		{
+			name: "orphan group reference",
+			credits: []model.WorkCredit{
+				{ID: "c1", GroupID: testStringPointer("missing"), SortOrder: 1},
+			},
+		},
+		{
+			name:   "noncontiguous group section",
+			groups: []model.WorkCreditGroup{{ID: "g1", SortOrder: 1}},
+			credits: []model.WorkCredit{
+				{ID: "c1", GroupID: testStringPointer("g1"), SortOrder: 2},
+				{ID: "u1", SortOrder: 3},
+				{ID: "c2", GroupID: testStringPointer("g1"), SortOrder: 4},
+			},
+		},
+		{
+			name:   "noncontiguous global indices",
+			groups: []model.WorkCreditGroup{{ID: "g1", SortOrder: 1}},
+			credits: []model.WorkCredit{
+				{ID: "u1", SortOrder: 3},
+			},
+		},
 	}
 
-	order, valid := buildWorkCreditOrder(groups, credits)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			order, err := buildWorkCreditOrder(test.groups, test.credits)
 
-	require.False(t, valid)
-	require.Equal(t, []string{"g:g1", "c:c1", "c:c2", "g:g2", "c:u1"}, orderKeys(order))
+			require.Error(t, err)
+			require.Nil(t, order)
+		})
+	}
 }
 
 func TestMoveWorkCreditGroupOrderKeepsSectionTogetherAtMixedAnchor(t *testing.T) {

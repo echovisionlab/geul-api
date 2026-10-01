@@ -15,13 +15,27 @@ func TestSuiteBackendPreflightsEveryRuntimeImage(t *testing.T) {
 		testutil.KratosIntegrationImage(),
 		"ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c",
 		"oryd/oathkeeper:v26.2.0@sha256:467329abde34feefca217b7af76fff59e77fe1795a19376e9d479f33c7c198fc",
-		"minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+		testutil.MinIOIntegrationImage(),
 		"darthsim/imgproxy:v3.31.0@sha256:6db046632f568931e165d61ce289382804f7bbce5b791db6fb6b8d4ace507378",
 		suiteReaperImage,
 		"testcontainers/sshd:1.4.0@sha256:bdae17f702908bee93c877ab3e97eddd782e2fb5bdd23a9f29869b9a87b30acd",
 	}
 	if got := requiredSuiteBackendImages(); !slices.Equal(got, want) {
 		t.Fatalf("suite backend images = %q, want %q", got, want)
+	}
+}
+
+func TestMinIOImageOverrideFeedsRuntimeAndPreflight(t *testing.T) {
+	t.Setenv(testutil.AppIntegrationMinIOImageEnv, testutil.AppIntegrationMinIOImage)
+	if err := configureSuiteMinIOImage("geul-test-minio:local"); err != nil {
+		t.Fatalf("configure MinIO image: %v", err)
+	}
+
+	if got := testutil.MinIOIntegrationImage(); got != "geul-test-minio:local" {
+		t.Fatalf("configured MinIO image = %q, want geul-test-minio:local", got)
+	}
+	if !slices.Contains(requiredSuiteBackendImages(), "geul-test-minio:local") {
+		t.Fatal("configured MinIO image is missing from local-image preflight")
 	}
 }
 

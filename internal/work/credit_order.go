@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 
@@ -19,14 +20,14 @@ type workCreditOrderEntry struct {
 	groupID *string
 }
 
-func loadWorkCreditRows(ctx context.Context, db *gorm.DB, workID string) ([]model.WorkCreditGroup, []model.WorkCredit, []workCreditOrderEntry, bool, error) {
+func loadWorkCreditRows(ctx context.Context, db *gorm.DB, workID string) ([]model.WorkCreditGroup, []model.WorkCredit, []workCreditOrderEntry, error) {
 	var groups []model.WorkCreditGroup
 	if err := db.WithContext(ctx).
 		Where("work_id = ?", workID).
 		Order("sort_order ASC").
 		Order("id ASC").
 		Find(&groups).Error; err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, nil, err
 	}
 
 	var credits []model.WorkCredit
@@ -35,18 +36,19 @@ func loadWorkCreditRows(ctx context.Context, db *gorm.DB, workID string) ([]mode
 		Order("sort_order ASC").
 		Order("id ASC").
 		Find(&credits).Error; err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, nil, err
 	}
 
-	order, valid := buildWorkCreditOrder(groups, credits)
-	return groups, credits, order, valid, nil
+	order, err := buildWorkCreditOrder(groups, credits)
+	if err != nil {
+		return nil, nil, nil, errs.Internal(err)
+	}
+	return groups, credits, order, nil
 }
 
 // buildWorkCreditOrder merges the group and credit rows when their sort orders
-// describe a valid flattened list. Older rows used independent sort-order
-// ranges, so invalid layouts fall back to groups and their credits followed by
-// ungrouped credits until the next successful mutation normalizes them.
-func buildWorkCreditOrder(groups []model.WorkCreditGroup, credits []model.WorkCredit) ([]workCreditOrderEntry, bool) {
+// describe a valid canonical flattened list.
+func buildWorkCreditOrder(groups []model.WorkCreditGroup, credits []model.WorkCredit) ([]workCreditOrderEntry, error) {
 	merged := make([]workCreditOrderEntry, 0, len(groups)+len(credits))
 	groupSortOrders := make(map[string]int, len(groups))
 	creditSortOrders := make(map[string]int, len(credits))
@@ -76,10 +78,10 @@ func buildWorkCreditOrder(groups []model.WorkCreditGroup, credits []model.WorkCr
 		}
 		return merged[i].id < merged[j].id
 	})
-	if validPersistedWorkCreditOrder(merged, groups, credits, groupSortOrders, creditSortOrders) {
-		return merged, true
+	if !validPersistedWorkCreditOrder(merged, groups, credits, groupSortOrders, creditSortOrders) {
+		return nil, errors.New("persisted Work credit order is invalid")
 	}
-	return legacyWorkCreditOrder(groups, credits), false
+	return merged, nil
 }
 
 func orderEntrySortOrder(entry workCreditOrderEntry, groupSortOrders, creditSortOrders map[string]int) int {
@@ -108,13 +110,11 @@ func validPersistedWorkCreditOrder(
 		creditIDs[credit.ID] = struct{}{}
 	}
 
-	sortOrders := make(map[int]struct{}, len(order))
-	for _, entry := range order {
+	for index, entry := range order {
 		sortOrder := orderEntrySortOrder(entry, groupSortOrders, creditSortOrders)
-		if _, exists := sortOrders[sortOrder]; exists {
+		if sortOrder != index+1 {
 			return false
 		}
-		sortOrders[sortOrder] = struct{}{}
 	}
 
 	activeGroup := ""
@@ -151,49 +151,6 @@ func validPersistedWorkCreditOrder(
 		}
 	}
 	return len(seenGroups) == len(groups) && len(seenCredits) == len(credits)
-}
-
-func legacyWorkCreditOrder(groups []model.WorkCreditGroup, credits []model.WorkCredit) []workCreditOrderEntry {
-	orderedGroups := append([]model.WorkCreditGroup(nil), groups...)
-	orderedCredits := append([]model.WorkCredit(nil), credits...)
-	sort.Slice(orderedGroups, func(i, j int) bool {
-		if orderedGroups[i].SortOrder != orderedGroups[j].SortOrder {
-			return orderedGroups[i].SortOrder < orderedGroups[j].SortOrder
-		}
-		return orderedGroups[i].ID < orderedGroups[j].ID
-	})
-	sort.Slice(orderedCredits, func(i, j int) bool {
-		if orderedCredits[i].SortOrder != orderedCredits[j].SortOrder {
-			return orderedCredits[i].SortOrder < orderedCredits[j].SortOrder
-		}
-		return orderedCredits[i].ID < orderedCredits[j].ID
-	})
-
-	order := make([]workCreditOrderEntry, 0, len(groups)+len(credits))
-	for _, group := range orderedGroups {
-		order = append(order, workCreditOrderEntry{
-			kind: managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP,
-			id:   group.ID,
-		})
-		for _, credit := range orderedCredits {
-			if credit.GroupID != nil && *credit.GroupID == group.ID {
-				order = append(order, workCreditOrderEntry{
-					kind:    managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT,
-					id:      credit.ID,
-					groupID: cloneGroupID(credit.GroupID),
-				})
-			}
-		}
-	}
-	for _, credit := range orderedCredits {
-		if credit.GroupID == nil {
-			order = append(order, workCreditOrderEntry{
-				kind: managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT,
-				id:   credit.ID,
-			})
-		}
-	}
-	return order
 }
 
 func moveWorkCreditGroupOrder(order []workCreditOrderEntry, groupID string, after, before *managev1.WorkCreditOrderItem) ([]workCreditOrderEntry, bool) {

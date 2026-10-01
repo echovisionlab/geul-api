@@ -146,6 +146,11 @@ var ProgramEventSeriesFilterConfig = &queryutil.FilterConfig{
 
 var ProgramEventTypeFilterConfig = &queryutil.FilterConfig{
 	Fields: map[string]queryutil.FieldDef{
+		"id": {
+			Column:     "id",
+			Type:       queryutil.TypeID,
+			AllowedOps: queryutil.IDOps,
+		},
 		"status": {
 			Column:     "status",
 			Type:       queryutil.TypeEnum,

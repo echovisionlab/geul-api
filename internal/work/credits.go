@@ -40,9 +40,10 @@ func (s *WorkService) GetWorkCredits(
 
 	var groups []model.WorkCreditGroup
 	var credits []model.WorkCredit
+	var order []workCreditOrderEntry
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		groups, credits, _, _, err = loadWorkCreditRows(ctx, tx, req.Msg.WorkId)
+		groups, credits, order, err = loadWorkCreditRows(ctx, tx, req.Msg.WorkId)
 		return err
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}); err != nil {
 		return nil, errs.Wrap(err)
@@ -57,8 +58,6 @@ func (s *WorkService) GetWorkCredits(
 	for i := range credits {
 		protoCredits[i] = s.toProtoCredit(ctx, &credits[i])
 	}
-	order, _ := buildWorkCreditOrder(groups, credits)
-
 	return connect.NewResponse(&managev1.GetWorkCreditsResponse{
 		Groups:  protoGroups,
 		Credits: protoCredits,
@@ -98,7 +97,7 @@ func (s *WorkService) MoveWorkCreditItem(
 		if err := s.lockWorkAdmin(ctx, tx, req.Msg.WorkId); err != nil {
 			return err
 		}
-		groups, credits, currentOrder, persistedOrderValid, err := loadWorkCreditRows(ctx, tx, req.Msg.WorkId)
+		groups, credits, currentOrder, err := loadWorkCreditRows(ctx, tx, req.Msg.WorkId)
 		if err != nil {
 			return err
 		}
@@ -116,7 +115,7 @@ func (s *WorkService) MoveWorkCreditItem(
 			}
 			var changed bool
 			nextOrder, changed = moveWorkCreditGroupOrder(currentOrder, req.Msg.ItemId, req.Msg.After, req.Msg.Before)
-			if !changed && persistedOrderValid {
+			if !changed {
 				result = &managev1.MoveWorkCreditItemResponse{Items: protoWorkCreditOrder(currentOrder)}
 				return nil
 			}
@@ -139,7 +138,7 @@ func (s *WorkService) MoveWorkCreditItem(
 			}
 			var changed bool
 			nextOrder, changed = moveWorkCreditOrder(currentOrder, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before)
-			if !changed && persistedOrderValid {
+			if !changed {
 				result = &managev1.MoveWorkCreditItemResponse{Items: protoWorkCreditOrder(currentOrder)}
 				return nil
 			}
@@ -224,7 +223,7 @@ func (s *WorkService) CreateWorkCreditGroup(
 		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
 		}
-		_, _, order, _, err := loadWorkCreditRows(ctx, tx, group.WorkID)
+		_, _, order, err := loadWorkCreditRows(ctx, tx, group.WorkID)
 		if err != nil {
 			return err
 		}
@@ -278,10 +277,6 @@ func (s *WorkService) UpdateWorkCreditGroup(
 		}
 		updates["name"] = name
 	}
-	if name, ok := updates["name"].(string); ok && name == group.Name {
-		delete(updates, "name")
-	}
-
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
@@ -345,7 +340,7 @@ func (s *WorkService) DeleteWorkCreditGroup(
 			}
 			return err
 		}
-		groups, credits, order, _, err := loadWorkCreditRows(ctx, tx, group.WorkID)
+		groups, credits, order, err := loadWorkCreditRows(ctx, tx, group.WorkID)
 		if err != nil {
 			return err
 		}
@@ -425,7 +420,7 @@ func (s *WorkService) AddWorkCredit(
 		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
 			return err
 		}
-		_, _, order, _, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
+		_, _, order, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
 		if err != nil {
 			return err
 		}
@@ -496,7 +491,7 @@ func (s *WorkService) UpdateWorkCredit(
 			return err
 		}
 
-		_, _, order, _, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
+		_, _, order, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
 		if err != nil {
 			return err
 		}
@@ -577,7 +572,7 @@ func (s *WorkService) DeleteWorkCredit(
 			}
 			return err
 		}
-		_, _, order, _, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
+		_, _, order, err := loadWorkCreditRows(ctx, tx, credit.WorkID)
 		if err != nil {
 			return err
 		}

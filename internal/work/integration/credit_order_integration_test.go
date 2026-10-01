@@ -5,7 +5,9 @@ package integration
 import (
 	"context"
 	"sort"
+	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -171,6 +173,78 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 		[]string{"g:" + groupOne, "c:" + creditOne, "c:" + creditTwo, "c:" + groupTwoCredit, "c:" + ungrouped},
 		creditOrderKeys(deletedAnchorFallback.Msg.Items),
 	)
+}
+
+func TestUpdateWorkCreditGroupPreservesRequestEqualToStaleNameIntegration(t *testing.T) {
+	db := newConcurrentServiceIntegrationDB(t)
+	adminID := integrationTestUUID()
+	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Credit Group Update Admin")
+	ctx, cancel := context.WithTimeout(workIntegrationAdminCtx(adminID), 10*time.Second)
+	defer cancel()
+	service := newWorkIntegrationService(t, db, adminID, referenceNoopFileDeleter{})
+	workID := createCreditOrderWork(t, service, ctx, "Credit Group Update")
+	initialName := "Initial Group Name"
+	groupID := createCreditOrderGroup(t, service, ctx, workID, initialName)
+	concurrentName := "Concurrent Group Name"
+
+	blocker := db.WithContext(ctx).Begin()
+	require.NoError(t, blocker.Error)
+	lockHeld := true
+	t.Cleanup(func() {
+		if lockHeld {
+			_ = blocker.Rollback().Error
+		}
+	})
+	require.NoError(t, blocker.Exec("SELECT id FROM work WHERE id = ? FOR UPDATE", workID).Error)
+
+	groupRead := make(chan struct{})
+	var groupReadOnce sync.Once
+	callbackName := "test:signal_work_credit_group_stale_read"
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "work_credit_group" {
+			groupReadOnce.Do(func() { close(groupRead) })
+		}
+	}))
+	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
+
+	updateResult := make(chan struct {
+		response *connect.Response[managev1.WorkCreditGroup]
+		err      error
+	}, 1)
+	go func() {
+		response, err := service.UpdateWorkCreditGroup(ctx, connect.NewRequest(&managev1.UpdateWorkCreditGroupRequest{
+			GroupId: groupID,
+			Name:    &initialName,
+		}))
+		updateResult <- struct {
+			response *connect.Response[managev1.WorkCreditGroup]
+			err      error
+		}{response: response, err: err}
+	}()
+
+	select {
+	case <-groupRead:
+	case <-ctx.Done():
+		require.FailNow(t, "group update did not perform its initial read")
+	}
+	require.NoError(t, blocker.Model(&model.WorkCreditGroup{}).
+		Where("id = ? AND work_id = ?", groupID, workID).
+		Update("name", concurrentName).Error)
+	require.NoError(t, blocker.Commit().Error)
+	lockHeld = false
+
+	select {
+	case result := <-updateResult:
+		require.NoError(t, result.err)
+		require.NotNil(t, result.response)
+		require.Equal(t, initialName, result.response.Msg.Name)
+	case <-ctx.Done():
+		require.FailNow(t, "group update did not resume after the Work lock was released")
+	}
+
+	var persisted model.WorkCreditGroup
+	require.NoError(t, db.First(&persisted, "id = ? AND work_id = ?", groupID, workID).Error)
+	require.Equal(t, initialName, persisted.Name)
 }
 
 func createCreditOrderWork(t *testing.T, service *workdomain.WorkService, ctx context.Context, title string) string {

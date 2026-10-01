@@ -57,6 +57,9 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
+	if err := configureSuiteMinIOImage(options.MinIOImage); err != nil {
+		return fmt.Errorf("configure MinIO integration image: %w", err)
+	}
 	options.GoWork, err = validateIntegrationGoWork(options.GoWork)
 	if err != nil {
 		return err
@@ -111,7 +114,7 @@ func run() (runErr error) {
 		"./internal/testutil", "-run", "^TestStartAppPostgresAdminLeasesAreDistinctAndDropped$",
 		"-args", "-geul-integration-lease-file=" + leasePath,
 	}
-	if err := runSuiteCommand(ctx, repoRoot, options.GoWork, preflight); err != nil {
+	if err := runSuiteCommand(ctx, repoRoot, options.GoWork, options.MinIOImage, preflight); err != nil {
 		return fmt.Errorf("verify logical database leases: %w", err)
 	}
 	var backend *suiteBackend
@@ -134,7 +137,7 @@ func run() (runErr error) {
 				bandGoTestArguments(band, options.Jobs),
 				"-args", "-geul-integration-lease-file="+leasePath,
 			)
-			if err := runSuiteCommand(ctx, repoRoot, options.GoWork, arguments); err != nil {
+			if err := runSuiteCommand(ctx, repoRoot, options.GoWork, options.MinIOImage, arguments); err != nil {
 				return fmt.Errorf("run integration band %s: %w", band.Name, err)
 			}
 			continue
@@ -144,7 +147,7 @@ func run() (runErr error) {
 				packageGoTestArguments(packagePath, options.Run),
 				"-args", "-geul-integration-lease-file="+leasePath,
 			)
-			return runSuiteCommand(ctx, repoRoot, options.GoWork, arguments)
+			return runSuiteCommand(ctx, repoRoot, options.GoWork, options.MinIOImage, arguments)
 		}); err != nil {
 			return err
 		}
@@ -272,16 +275,32 @@ func updateSuiteLeaseBackend(path string, backend *testutil.AppIntegrationBacken
 	return nil
 }
 
-func runSuiteCommand(ctx context.Context, repoRoot, goWork string, arguments []string) error {
+func runSuiteCommand(ctx context.Context, repoRoot, goWork, minioImage string, arguments []string) error {
 	command := exec.CommandContext(ctx, "go", arguments...)
 	command.Dir = repoRoot
-	command.Env = integrationCommandEnvironment(goWork)
+	command.Env = environmentWithMinIOImage(integrationCommandEnvironment(goWork), minioImage)
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	if err := runCommandInProcessGroup(command, 2*time.Second); err != nil {
 		return fmt.Errorf("go %s: %w", strings.Join(arguments, " "), err)
 	}
 	return nil
+}
+
+func environmentWithMinIOImage(base []string, image string) []string {
+	key := testutil.AppIntegrationMinIOImageEnv + "="
+	environment := make([]string, 0, len(base)+1)
+	for _, entry := range base {
+		if strings.HasPrefix(entry, key) {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	return append(environment, key+image)
+}
+
+func configureSuiteMinIOImage(image string) error {
+	return os.Setenv(testutil.AppIntegrationMinIOImageEnv, image)
 }
 
 func runCommandInProcessGroup(command *exec.Cmd, terminationGrace time.Duration) error {

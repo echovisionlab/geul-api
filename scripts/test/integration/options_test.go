@@ -1,6 +1,30 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/testutil"
+)
+
+func TestParseOptionsUsesMinIOEnvironmentDefaultAndExplicitOverride(t *testing.T) {
+	t.Setenv(testutil.AppIntegrationMinIOImageEnv, "environment-minio:local")
+
+	defaults, err := parseOptions(nil)
+	if err != nil {
+		t.Fatalf("parse default options: %v", err)
+	}
+	if defaults.MinIOImage != "environment-minio:local" {
+		t.Fatalf("default MinIO image = %q, want environment-minio:local", defaults.MinIOImage)
+	}
+
+	override, err := parseOptions([]string{"--minio-image", " geul-test-minio:local "})
+	if err != nil {
+		t.Fatalf("parse explicit MinIO image: %v", err)
+	}
+	if override.MinIOImage != "geul-test-minio:local" {
+		t.Fatalf("explicit MinIO image = %q, want geul-test-minio:local", override.MinIOImage)
+	}
+}
 
 func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 	t.Parallel()
@@ -23,6 +47,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--package", "./internal/member"},
 		{"--package", "./internal/testutil"},
 		{"--go-work", "/workspace/go.work"},
+		{"--minio-image", "geul-test-minio:local"},
 	} {
 		if _, err := parseOptions(args); err != nil {
 			t.Fatalf("parseOptions(%q): %v", args, err)
@@ -40,6 +65,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--package", "./internal/filemedia", "--run", "["},
 		{"--package", "./internal/filemedia", "--run", ""},
 		{"--cdn-image", ""},
+		{"--minio-image", ""},
 		{"--go-work", "../go.work"},
 	} {
 		if _, err := parseOptions(args); err == nil {
