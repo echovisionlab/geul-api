@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
@@ -66,6 +68,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
 		&compositionProgramEventApplication{},
+		&compositionReleaseApplication{},
+		&compositionArtistApplication{},
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
@@ -99,7 +103,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "8", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "9", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -108,6 +112,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"not proof that concurrent edits are disjoint",
 			"3 cycles per task edit",
 			"not routine version changes",
+			"p=release",
+			"p=artist",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
@@ -120,6 +126,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
 		&compositionProgramEventApplication{},
+		&compositionReleaseApplication{},
+		&compositionArtistApplication{},
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
@@ -143,6 +151,8 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
 		&compositionProgramEventApplication{},
+		&compositionReleaseApplication{},
+		&compositionArtistApplication{},
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
@@ -190,6 +200,8 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
 		&compositionProgramEventApplication{},
+		&compositionReleaseApplication{},
+		&compositionArtistApplication{},
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		files,
@@ -529,3 +541,72 @@ func compositionMCPJSONRequest(authorization, body string) *http.Request {
 
 var _ aidocument.DomainPort = (*compositionDomainPort)(nil)
 var _ filemediaadapter.MCPFileRuntime = (*compositionFileRuntime)(nil)
+
+type compositionReleaseApplication struct {
+	managev1connect.UnimplementedReleaseServiceHandler
+	principal *auth.UserInfo
+}
+
+func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.Context, _ *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
+	application.principal = auth.GetUser(ctx)
+	return connect.NewResponse(&managev1.ListReleasesAdminResponse{Releases: []*managev1.ReleaseWithStats{{Release: &managev1.Release{
+		Id: "44444444-4444-4444-8444-444444444444", Title: "Release A", Status: "draft", SourceLocale: "ko", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
+	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}), nil
+}
+
+type compositionArtistApplication struct {
+	managev1connect.UnimplementedArtistServiceHandler
+	principal *auth.UserInfo
+}
+
+func (application *compositionArtistApplication) ListArtistsAdmin(ctx context.Context, _ *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
+	application.principal = auth.GetUser(ctx)
+	return connect.NewResponse(&managev1.ListArtistsAdminResponse{Artists: []*managev1.ArtistWithStats{{Artist: &managev1.Artist{
+		Id: "55555555-5555-4555-8555-555555555555", Name: "Artist A", Status: "published", SourceLocale: "en", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
+	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}), nil
+}
+
+func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContext(t *testing.T) {
+	releases, artists := &compositionReleaseApplication{}, &compositionArtistApplication{}
+	composition, err := newAIDocumentMCPComposition(
+		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
+		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &compositionProgramEventApplication{},
+		releases, artists, compositionReferenceApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
+		compositionInternalSecret, compositionAuthHeaderName, compositionInternalServiceHeaderName, "http://collab.invalid", http.DefaultClient, &compositionSignalPublisher{}, nil, nil,
+	)
+	require.NoError(t, err)
+	for _, test := range []struct{ profile, id, title string }{
+		{"release", "44444444-4444-4444-8444-444444444444", "Release A"},
+		{"artist", "55555555-5555-4555-8555-555555555555", "Artist A"},
+	} {
+		t.Run(test.profile, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"document_list","arguments":{"p":"`+test.profile+`"}}}`))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var envelope struct {
+				Result struct {
+					IsError           bool `json:"isError"`
+					StructuredContent struct {
+						Documents  []struct{ P, D, Title string }
+						NextOffset *int `json:"next_offset"`
+					} `json:"structuredContent"`
+				} `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
+			require.False(t, envelope.Result.IsError)
+			require.Len(t, envelope.Result.StructuredContent.Documents, 1)
+			document := envelope.Result.StructuredContent.Documents[0]
+			require.Equal(t, test.profile, document.P)
+			require.Equal(t, test.id, document.D)
+			require.Equal(t, test.title, document.Title)
+			require.Nil(t, envelope.Result.StructuredContent.NextOffset)
+			principal := releases.principal
+			if test.profile == "artist" {
+				principal = artists.principal
+			}
+			require.NotNil(t, principal)
+			require.Equal(t, compositionIdentityID, principal.IdentityID.String())
+			require.Equal(t, compositionMemberID, principal.MemberID.String())
+		})
+	}
+}

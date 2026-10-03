@@ -120,7 +120,7 @@ func (m musicServiceRegistration) registerLabel() *label.LabelService {
 	return labelService
 }
 
-func (m musicServiceRegistration) registerRelease() *releasepkg.InternalReleaseService {
+func (m musicServiceRegistration) registerRelease() (*releasepkg.ReleaseService, *releasepkg.InternalReleaseService) {
 	deps := m.dependencies
 	trackFileManager := filemediaadapter.NewTrackFileManager(m.files)
 	releaseTrackFiles := releaseadapter.NewTrackFiles(trackFileManager)
@@ -168,7 +168,7 @@ func (m musicServiceRegistration) registerRelease() *releasepkg.InternalReleaseS
 	)
 	m.registerPublic(openv1connect.NewReleaseServiceHandler(publicReleaseService, m.publicOptions...))
 
-	return internalReleaseService
+	return releaseService, internalReleaseService
 }
 
 func (m musicServiceRegistration) registerTaxonomy() {

@@ -420,7 +420,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	artistService, internalArtistService := music.registerArtist()
 	labelService := music.registerLabel()
-	internalReleaseService := music.registerRelease()
+	releaseService, internalReleaseService := music.registerRelease()
 	music.registerTaxonomy()
 
 	aiService := ai.NewService(metadataAIJobs)
@@ -810,6 +810,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workService,
 		pageService,
 		programEventService,
+		releaseService,
+		artistService,
 		contentReferenceApplications{
 			categories: categoryService,
 			tags:       tagService,

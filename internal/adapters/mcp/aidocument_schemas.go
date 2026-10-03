@@ -9,8 +9,8 @@ const documentListInputJSONSchema = `{
   "additionalProperties":false,
   "required":["p"],
   "properties":{
-    "p":{"enum":["post","work","page","program_event"],"description":"The discoverable DCDP document domain."},
-    "q":{"type":"string","maxLength":200,"description":"Optional case-insensitive source-title substring."},
+    "p":{"enum":["post","work","page","program_event","release","artist"],"description":"The discoverable DCDP document domain."},
+    "q":{"type":"string","maxLength":200,"description":"Optional case-insensitive source-title substring, or Artist source-name or real-name substring."},
     "limit":{"type":"integer","minimum":1,"maximum":50,"default":20},
     "offset":{"type":"integer","minimum":0,"default":0}
   }
@@ -25,7 +25,7 @@ const documentListOutputJSONSchema = `{
       "type":"object","additionalProperties":false,
       "required":["p","d","title","source_locale","status","updated_at"],
       "properties":{
-        "p":{"enum":["post","work","page","program_event"]},
+        "p":{"enum":["post","work","page","program_event","release","artist"]},
         "d":` + documentReferenceJSONSchema + `,
         "title":{"type":"string"},
         "slug":{"type":"string"},

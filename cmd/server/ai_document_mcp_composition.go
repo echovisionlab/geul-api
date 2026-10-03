@@ -18,9 +18,9 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "8"
+const mcpServerImplementationVersion = "9"
 
-const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, or p=program_event when a document UUID is unknown. " +
+const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist when a document UUID is unknown. " +
 	"Pass the returned d unchanged to document_open and document_read; never use a slug or URL as d. " +
 	"Use the focused Post, Work, and Page creation, settings, lifecycle, scheduling, and deletion tools for root management actions. " +
 	"Use the focused featured-image, Post participant, Work credit, version, and slug-check tools for related management actions. " +
@@ -112,6 +112,8 @@ func newAIDocumentMCPComposition(
 		mcpadapter.PageRelatedApplication
 	},
 	programEvents mcpadapter.ProgramEventDocumentDiscovery,
+	releases mcpadapter.ReleaseDocumentDiscovery,
+	artists mcpadapter.ArtistDocumentDiscovery,
 	references contentReferenceApplications,
 	translation managev1connect.TranslationServiceHandler,
 	files interface {
@@ -170,7 +172,7 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP AI document tools: %w", err)
 	}
-	discoveryTools, err := mcpadapter.NewDocumentDiscoveryTools(posts, works, pages, programEvents)
+	discoveryTools, err := mcpadapter.NewDocumentDiscoveryTools(posts, works, pages, programEvents, releases, artists)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document discovery tools: %w", err)
 	}
