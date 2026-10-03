@@ -317,10 +317,8 @@ func (h *handler) handleInitialize(ctx context.Context, response http.ResponseWr
 		writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
 		return
 	}
-	if params.ProtocolVersion != ProtocolVersion {
-		writeRPCError(response, http.StatusOK, message.id, -32602, "Unsupported protocol version")
-		return
-	}
+	// Negotiate our supported revision even when the client requests a different
+	// one; the client decides whether it can continue with this revision.
 
 	serverInfo := h.serverInfo
 	if h.serverTitleSource != nil {

@@ -198,6 +198,73 @@ func TestInitializeAcceptsPublishedVersionAndOnlyToolsCapability(t *testing.T) {
 	}
 }
 
+func TestInitializeNegotiatesSupportedVersion(t *testing.T) {
+	handler := newTestHandler(t, testDependencies{
+		instructions:      "Use document_list before document_open.",
+		serverTitleSource: serverTitleSourceFunc(func(context.Context) (string, error) { return "Current Site", nil }),
+	})
+	initialize := func(version string, headers []string) *httptest.ResponseRecorder {
+		t.Helper()
+		params, err := json.Marshal(map[string]any{
+			"protocolVersion": version,
+			"capabilities":    map[string]any{},
+			"clientInfo":      Implementation{Name: "test-client", Version: "1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := rpcRequest(`{"jsonrpc":"2.0","id":"init-negotiated","method":"initialize","params":` + string(params) + `}`)
+		request.Header.Del("MCP-Protocol-Version")
+		for _, header := range headers {
+			request.Header.Add("MCP-Protocol-Version", header)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	baseline := initialize(ProtocolVersion, nil)
+	if baseline.Code != http.StatusOK || !strings.Contains(baseline.Body.String(), `"protocolVersion":"2025-11-25"`) {
+		t.Fatalf("baseline response = %d %s", baseline.Code, baseline.Body.String())
+	}
+	for _, test := range []struct {
+		name    string
+		version string
+		headers []string
+	}{
+		{name: "older revision", version: "2025-06-18"},
+		{name: "legacy revision", version: "2024-11-05"},
+		{name: "unknown revision", version: "future-version"},
+		{name: "supported optional header", version: "2025-06-18", headers: []string{ProtocolVersion}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := initialize(test.version, test.headers)
+			if response.Code != http.StatusOK || response.Body.String() != baseline.Body.String() {
+				t.Fatalf("response = %d %s, want unchanged supported initialize result %s", response.Code, response.Body.String(), baseline.Body.String())
+			}
+			if response.Header().Get("MCP-Session-Id") != "" {
+				t.Fatal("stateless handler issued a session")
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name    string
+		headers []string
+	}{
+		{name: "unsupported optional header", headers: []string{"2025-06-18"}},
+		{name: "empty optional header", headers: []string{""}},
+		{name: "duplicate optional header", headers: []string{ProtocolVersion, ProtocolVersion}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := initialize("2025-06-18", test.headers)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":-32600`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestInitializeUsesCurrentHumanFacingServerTitle(t *testing.T) {
 	title := "Geul"
 	handler := newTestHandler(t, testDependencies{
@@ -246,7 +313,7 @@ func TestInitializeFailsClosedWhenServerTitleCannotBeRead(t *testing.T) {
 	}
 }
 
-func TestInitializeRejectsUnsupportedOrMissingVersion(t *testing.T) {
+func TestInitializeRejectsMalformedOrMissingVersion(t *testing.T) {
 	handler := newTestHandler(t, testDependencies{})
 	tests := []struct {
 		name        string
@@ -254,9 +321,19 @@ func TestInitializeRejectsUnsupportedOrMissingVersion(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name:        "unsupported published revision",
-			params:      `{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}`,
-			wantMessage: "Unsupported protocol version",
+			name:        "null version",
+			params:      `{"protocolVersion":null,"capabilities":{},"clientInfo":{"name":"test","version":"1"}}`,
+			wantMessage: "Invalid params",
+		},
+		{
+			name:        "malformed capabilities with unsupported version",
+			params:      `{"protocolVersion":"2025-06-18","capabilities":[],"clientInfo":{"name":"test","version":"1"}}`,
+			wantMessage: "Invalid params",
+		},
+		{
+			name:        "missing client info with unsupported version",
+			params:      `{"protocolVersion":"2025-06-18","capabilities":{}}`,
+			wantMessage: "Invalid params",
 		},
 		{
 			name:        "empty version",
