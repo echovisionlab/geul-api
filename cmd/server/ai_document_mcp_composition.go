@@ -18,7 +18,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "7"
+const mcpServerImplementationVersion = "8"
 
 const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, or p=program_event when a document UUID is unknown. " +
 	"Pass the returned d unchanged to document_open and document_read; never use a slug or URL as d. " +
@@ -30,7 +30,12 @@ const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, or
 	"Use document_metadata_update for title or summary, and for Post categories or tags, after reading exact current revisions. " +
 	"For ordinary plain-text paragraph creation, update, or deletion, read the target and use the focused document_paragraph_create, document_paragraph_update, or document_block_delete tool with the exact current revisions. " +
 	"Use document_validate only when the user explicitly requests a dry run. Use document_apply only for advanced typed batches that focused tools cannot represent. " +
-	"On a revision conflict, read again before retrying."
+	"A sync_required result with isError=false and applied=false is a routine refresh; no requested change was applied. " +
+	"Follow its document_read recipe. For read_continuation_invalid, discard previous pages and restart without a cursor. " +
+	"For document_revision_changed or target_revision_changed on a mutation or validation, reread the latest actual targets, compare the previous read, latest values, and intended edit, preserve current values, and retry the adjusted intention with revisions from the fresh read. " +
+	"Never just replace an expected revision and resend stale operations. affected_handles are pending operation targets, not proof that concurrent edits are disjoint. " +
+	"The server cannot perform a semantic merge without a stored base. Limit automatic reread/reassess retries to 3 cycles per task edit; if changes continue, briefly report the edit as pending. " +
+	"Ask the user only for incompatible semantic intentions or an ambiguous deleted target, not routine version changes."
 
 // aiDocumentDomainRegistrations makes the complete production DCDP catalog
 // explicit at the composition root. The adapter registry independently rejects
