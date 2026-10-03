@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/echovisionlab/geul-api/compare/v1.1.0...v1.1.1) (2026-10-03)
+
+
+### Performance Improvements
+
+* **mcp:** reduce response allocations and clarify transport settings ([#61](https://github.com/echovisionlab/geul-api/issues/61)) ([2319cfa](https://github.com/echovisionlab/geul-api/commit/2319cfaaead562b2666e12bd515f495ff7270c5e))
+
 ## [1.1.0](https://github.com/echovisionlab/geul-api/compare/v1.0.2...v1.1.0) (2026-10-03)
 
 
