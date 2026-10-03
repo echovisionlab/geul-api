@@ -44,11 +44,11 @@ func estimateClusterMinBreakoutZoom(
 }
 
 func longitudeToWorldPixel(lng float64, zoom float64) float64 {
-	return (NormalizeLongitude(lng) + 180.0) / 360.0 * (256.0 * math.Pow(2, zoom))
+	return (NormalizeLongitude(lng) + 180.0) / 360.0 * (WorldTileSize * math.Pow(2, zoom))
 }
 
 func latitudeToWorldPixel(lat float64, zoom float64) float64 {
 	safeLat := Clamp(lat, -85.05112878, 85.05112878)
 	sinLat := math.Sin(safeLat * math.Pi / 180.0)
-	return (0.5 - math.Log((1+sinLat)/(1-sinLat))/(4*math.Pi)) * (256.0 * math.Pow(2, zoom))
+	return (0.5 - math.Log((1+sinLat)/(1-sinLat))/(4*math.Pi)) * (WorldTileSize * math.Pow(2, zoom))
 }
