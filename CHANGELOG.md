@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/echovisionlab/geul-api/compare/v1.0.1...v1.0.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **mcp:** negotiate supported initialization version ([#56](https://github.com/echovisionlab/geul-api/issues/56)) ([9d3c9e2](https://github.com/echovisionlab/geul-api/commit/9d3c9e2140d81c5eec26edc45460eaa035c11a21))
+
 ## [1.0.1](https://github.com/echovisionlab/geul-api/compare/v1.0.0...v1.0.1) (2026-10-01)
 
 
