@@ -73,13 +73,14 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
-		compositionInternalSecret,
-		compositionAuthHeaderName,
-		compositionInternalServiceHeaderName,
-		"http://collab.invalid",
-		http.DefaultClient,
+		aiDocumentMCPConfig{
+			internalServiceSecret:     compositionInternalSecret,
+			authHeaderName:            compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid",
+			editorCollabHTTPClient:    http.DefaultClient,
+		},
 		&compositionSignalPublisher{},
-		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -131,13 +132,14 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
-		compositionInternalSecret,
-		compositionAuthHeaderName,
-		compositionInternalServiceHeaderName,
-		"http://collab.invalid",
-		http.DefaultClient,
+		aiDocumentMCPConfig{
+			internalServiceSecret:     compositionInternalSecret,
+			authHeaderName:            compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid",
+			editorCollabHTTPClient:    http.DefaultClient,
+		},
 		&compositionSignalPublisher{},
-		nil,
 		nil,
 	)
 	require.Error(t, err)
@@ -156,13 +158,14 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
-		compositionInternalSecret,
-		compositionAuthHeaderName,
-		compositionInternalServiceHeaderName,
-		"http://collab.invalid",
-		http.DefaultClient,
+		aiDocumentMCPConfig{
+			internalServiceSecret:     compositionInternalSecret,
+			authHeaderName:            compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid",
+			editorCollabHTTPClient:    http.DefaultClient,
+		},
 		&compositionSignalPublisher{},
-		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -205,13 +208,14 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		compositionReferenceApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		files,
-		compositionInternalSecret,
-		compositionAuthHeaderName,
-		compositionInternalServiceHeaderName,
-		"http://collab.invalid",
-		http.DefaultClient,
+		aiDocumentMCPConfig{
+			internalServiceSecret:     compositionInternalSecret,
+			authHeaderName:            compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid",
+			editorCollabHTTPClient:    http.DefaultClient,
+		},
 		&compositionSignalPublisher{},
-		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -572,7 +576,14 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &compositionProgramEventApplication{},
 		releases, artists, compositionReferenceApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
-		compositionInternalSecret, compositionAuthHeaderName, compositionInternalServiceHeaderName, "http://collab.invalid", http.DefaultClient, &compositionSignalPublisher{}, nil, nil,
+		aiDocumentMCPConfig{
+			internalServiceSecret:     compositionInternalSecret,
+			authHeaderName:            compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid",
+			editorCollabHTTPClient:    http.DefaultClient,
+		},
+		&compositionSignalPublisher{}, nil,
 	)
 	require.NoError(t, err)
 	for _, test := range []struct{ profile, id, title string }{

@@ -84,6 +84,17 @@ type aiDocumentMCPComposition struct {
 	mcpHandler        http.Handler
 }
 
+// aiDocumentMCPConfig names the transport and relay settings shared by the MCP
+// HTTP handler and the interactive mutation relay.
+type aiDocumentMCPConfig struct {
+	internalServiceSecret     string
+	authHeaderName            string
+	internalServiceHeaderName string
+	editorCollabURL           string
+	editorCollabHTTPClient    connect.HTTPClient
+	allowedOrigins            []string
+}
+
 type contentReferenceApplications struct {
 	categories mcpadapter.CategoryReferenceDiscovery
 	tags       mcpadapter.TagReferenceDiscovery
@@ -120,13 +131,8 @@ func newAIDocumentMCPComposition(
 		filemediaadapter.MCPFileRuntime
 		mcpadapter.FileBlockManagement
 	},
-	internalServiceSecret string,
-	authHeaderName string,
-	internalServiceHeaderName string,
-	editorCollabURL string,
-	editorCollabHTTPClient connect.HTTPClient,
+	cfg aiDocumentMCPConfig,
 	fallbackPublisher aidocumentadapter.InteractiveMutationSignalPublisher,
-	allowedOrigins []string,
 	serverTitleSource mcpserver.ServerTitleSource,
 ) (aiDocumentMCPComposition, error) {
 	registry, err := aidocumentadapter.NewRegistry(registrations.values()...)
@@ -142,10 +148,10 @@ func newAIDocumentMCPComposition(
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize AI document Connect service: %w", err)
 	}
 	relay, err := newInteractiveMutationRelay(
-		editorCollabHTTPClient,
-		editorCollabURL,
-		internalServiceSecret,
-		internalServiceHeaderName,
+		cfg.editorCollabHTTPClient,
+		cfg.editorCollabURL,
+		cfg.internalServiceSecret,
+		cfg.internalServiceHeaderName,
 	)
 	if err != nil {
 		return aiDocumentMCPComposition{}, err
@@ -217,9 +223,9 @@ func newAIDocumentMCPComposition(
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP tool set: %w", err)
 	}
 	mcpHandler, err := mcpadapter.NewHTTPHandler(mcpadapter.HTTPConfig{
-		InternalServiceSecret:     internalServiceSecret,
-		AuthHeaderName:            authHeaderName,
-		InternalServiceHeaderName: internalServiceHeaderName,
+		InternalServiceSecret:     cfg.internalServiceSecret,
+		AuthHeaderName:            cfg.authHeaderName,
+		InternalServiceHeaderName: cfg.internalServiceHeaderName,
 		Registry:                  toolSet,
 		Dispatcher:                toolSet,
 		ServerInfo: mcpserver.Implementation{
@@ -227,7 +233,7 @@ func newAIDocumentMCPComposition(
 		},
 		ServerTitleSource: serverTitleSource,
 		Instructions:      mcpServerInstructions,
-		AllowedOrigins:    append([]string(nil), allowedOrigins...),
+		AllowedOrigins:    append([]string(nil), cfg.allowedOrigins...),
 	})
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP HTTP handler: %w", err)
