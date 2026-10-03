@@ -605,7 +605,13 @@ func normalizeWorkMapViewport(viewport *openv1.WorkMapViewport) (normalizedWorkM
 	east := mapcluster.NormalizeLongitude(viewport.Bounds.East)
 
 	zoom := viewport.Zoom
-	if zoom <= 0 {
+	if math.IsNaN(zoom) || math.IsInf(zoom, 0) {
+		return normalizedWorkMapViewport{}, errs.InvalidArgument("viewport.zoom", "zoom must be finite")
+	}
+	// Signed MapLibre zooms down to the renderer's minimum are valid with
+	// measured dimensions. Preserve legacy defaults for missing-size inputs
+	// at zoom zero or below, and for zooms below the supported minimum.
+	if zoom < mapcluster.MinViewportZoom || (zoom <= 0 && (viewport.WidthPx <= 0 || viewport.HeightPx <= 0)) {
 		zoom = 1.5
 	}
 
@@ -624,7 +630,7 @@ func normalizeWorkMapViewport(viewport *openv1.WorkMapViewport) (normalizedWorkM
 		clusterRadiusPx = mapcluster.DefaultMapClusterRadiusPxForZoom(zoom, widthPx)
 	}
 
-	worldScale := 256 * math.Pow(2, zoom)
+	worldScale := mapcluster.WorldTileSize * math.Pow(2, zoom)
 	fullLongitude := widthPx >= worldScale-1
 	fullLatitude := heightPx >= worldScale-1
 
