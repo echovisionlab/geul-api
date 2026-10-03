@@ -328,3 +328,40 @@ const projectionOutputJSONSchema = `{
     ],"items":false,"minItems":8,"maxItems":8}
   }
 }`
+
+const documentSyncOutputJSONSchema = `{
+  "type":"object",
+  "additionalProperties":false,
+  "required":["status","reason","applied","current_document_revision","current_target_revision","affected_handles","discard_previous_pages","read","instructions"],
+  "properties":{
+    "status":{"const":"sync_required"},
+    "reason":{"enum":["read_continuation_invalid","document_revision_changed","target_revision_changed"]},
+    "applied":{"const":false},
+    "current_document_revision":{"type":"string","minLength":1},
+    "current_target_revision":{"type":["string","null"]},
+    "affected_handles":{"type":"array","items":{"type":"string"},"description":"Pending operation targets from the conflict; not handles known to have changed."},
+    "discard_previous_pages":{"type":"boolean"},
+    "read":{
+      "type":"object","additionalProperties":false,"required":["tool","arguments"],
+      "properties":{
+        "tool":{"const":"document_read"},
+        "arguments":{
+          "type":"object","additionalProperties":false,"required":["p","d","l","m"],
+          "properties":{
+            "p":` + domainJSONSchema + `,
+            "d":` + documentReferenceJSONSchema + `,
+            "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
+            "m":{"enum":["outline","blocks","fields"]},
+            "b":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":160}},
+            "f":{"type":"array","maxItems":256,"items":{"oneOf":[
+              {"type":"array","prefixItems":[{"type":"string"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
+              {"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"string"},{"type":"string"}],"items":false,"minItems":4,"maxItems":4}
+            ]}},
+            "n":{"type":"integer","minimum":0,"maximum":256}
+          }
+        }
+      }
+    },
+    "instructions":{"type":"string","minLength":1}
+  }
+}`

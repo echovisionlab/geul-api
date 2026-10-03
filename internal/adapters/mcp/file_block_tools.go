@@ -32,22 +32,22 @@ var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileAdd, Title: "Add an existing File to a document",
 		Description: "Add a new File Block that reuses an existing File; this does not upload or copy bytes. " +
-			"Read the document first and pass its exact current revision. New File Block download policy starts disabled.",
-		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: json.RawMessage(documentFileMutationOutputJSONSchema),
+			"Read the document first and pass its exact current revision. New File Block download policy starts disabled." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta(),
 	},
 	{
 		Name: ToolDocumentFileReplace, Title: "Replace a document File Block attachment",
 		Description: "Replace the existing File attached to one File Block with another existing File; this does not upload or delete File bytes. " +
-			"The server verifies the target is a File Block and resets that attachment's download policy to disabled.",
-		InputSchema: json.RawMessage(documentFileReplaceInputJSONSchema), OutputSchema: json.RawMessage(documentFileMutationOutputJSONSchema),
+			"The server verifies the target is a File Block and resets that attachment's download policy to disabled." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(documentFileReplaceInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	},
 	{
 		Name: ToolDocumentFileRemove, Title: "Remove a File Block from a document",
 		Description: "Remove one verified File Block and its attachment policy from a document. " +
-			"The reusable File and its bytes remain in File Manager.",
-		InputSchema: json.RawMessage(documentFileRemoveInputJSONSchema), OutputSchema: json.RawMessage(documentFileMutationOutputJSONSchema),
+			"The reusable File and its bytes remain in File Manager." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(documentFileRemoveInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	},
 	{

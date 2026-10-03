@@ -159,13 +159,10 @@ func TestDocumentFileReplaceReturnsStructuredDocumentRevisionConflict(t *testing
 	}}
 	tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileReplace, fileBlockMutationArguments(t, `,"file_id":"`+fileBlockReplacementID+`"`))
-	if err != nil || !result.IsError {
+	if err != nil || result.IsError {
 		t.Fatalf("revision conflict = %+v, %v", result, err)
 	}
-	conflict := result.StructuredContent["x"].([]any)
-	if conflict[0] != string(core.ConflictDocumentRevision) || conflict[1] != "revision-current" {
-		t.Fatalf("structured conflict = %+v", result.StructuredContent)
-	}
+	assertDocumentSync(t, result, "document_revision_changed", "revision-current", nil, []string{"field:" + fileBlockTestBlockID + "/attachment"}, false, map[string]any{"p": "post", "d": fileBlockTestDocumentID, "l": "ko", "m": "outline"})
 	if application.applyRequest.ExpectedDocumentRevision != "revision-a" {
 		t.Fatalf("replace lost expected revision: %+v", application.applyRequest)
 	}

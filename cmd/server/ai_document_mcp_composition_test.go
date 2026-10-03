@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,6 +82,36 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 	require.NotNil(t, composition.editorApplication)
 	require.NotNil(t, composition.connectService)
 	require.NotNil(t, composition.mcpHandler)
+
+	t.Run("initialize exposes sync recovery guidance", func(t *testing.T) {
+		response := httptest.NewRecorder()
+		request := compositionMCPJSONRequest("", `{
+			"jsonrpc":"2.0","id":1,"method":"initialize",
+			"params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}
+		}`)
+		request.Header.Del("MCP-Protocol-Version")
+		composition.mcpHandler.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var envelope struct {
+			Result struct {
+				ServerInfo   mcpserver.Implementation `json:"serverInfo"`
+				Instructions string                   `json:"instructions"`
+			} `json:"result"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
+		require.Equal(t, "8", envelope.Result.ServerInfo.Version)
+		for _, guardrail := range []string{
+			"sync_required result with isError=false and applied=false",
+			"discard previous pages and restart without a cursor",
+			"compare the previous read, latest values, and intended edit",
+			"Never just replace an expected revision and resend stale operations",
+			"not proof that concurrent edits are disjoint",
+			"3 cycles per task edit",
+			"not routine version changes",
+		} {
+			require.Contains(t, envelope.Result.Instructions, guardrail)
+		}
+	})
 
 	registrations.emailLayout = aidocumentadapter.DomainRegistration{}
 	_, err = newAIDocumentMCPComposition(

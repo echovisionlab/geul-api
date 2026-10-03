@@ -38,7 +38,7 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentRead, Title: "Read AI document",
 		Description: "Read a compact outline, selected blocks, or selected fields by stable handles. " +
-			"Pass the canonical document UUID d returned by document_list or document_open.",
+			"Pass the canonical document UUID d returned by document_list or document_open." + syncRequiredGuidance,
 		InputSchema: readInputSchema(), OutputSchema: projectionOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -47,8 +47,8 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolParagraphCreate, Title: "Create document paragraph",
 		Description: "Create one plain-text Paragraph Block in an existing document. " +
-			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID.",
-		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
 		Meta:            oauthSecurityMeta(),
@@ -56,8 +56,8 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolParagraphUpdate, Title: "Update document paragraph",
 		Description: "Replace the plain text of one existing Paragraph Block. " +
-			"Read the Block first and pass its stable block_id with the exact current document and target revisions.",
-		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the Block first and pass its stable block_id with the exact current document and target revisions." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -65,8 +65,8 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
-			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale.",
-		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -74,8 +74,8 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
 		Description: "Update locale-owned title or summary for a Post, Work, or Page, and source-owned category_ids or tag_ids for a Post. " +
-			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation.",
-		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -83,7 +83,7 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentValidate, Title: "Validate AI document mutation",
 		Description: "Dry-run compact typed DCDP/1 operations without mutating the document when the user explicitly asks to validate or preview an advanced batch. " +
-			"If the user then chooses to apply it, pass the returned normalized operations to document_apply.",
+			"If the user then chooses to apply it, pass the returned normalized operations to document_apply." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: validationOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -92,7 +92,7 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentApply, Title: "Apply AI document mutation",
 		Description: "Apply an advanced typed DCDP/1 operation batch that the focused paragraph tools cannot represent. " +
-			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run.",
+			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: acceptedOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -105,14 +105,16 @@ func mutationInputSchema() json.RawMessage {
 }
 
 func validationOutputSchema() json.RawMessage {
-	return json.RawMessage(validationOutputJSONSchema)
+	return outputSchemaWithSync(validationOutputJSONSchema)
 }
 
-func openInputSchema() json.RawMessage        { return json.RawMessage(openInputJSONSchema) }
-func openOutputSchema() json.RawMessage       { return json.RawMessage(openOutputJSONSchema) }
-func readInputSchema() json.RawMessage        { return json.RawMessage(readInputJSONSchema) }
-func projectionOutputSchema() json.RawMessage { return json.RawMessage(projectionOutputJSONSchema) }
-func acceptedOutputSchema() json.RawMessage   { return json.RawMessage(acceptedOutputJSONSchema) }
+func openInputSchema() json.RawMessage  { return json.RawMessage(openInputJSONSchema) }
+func openOutputSchema() json.RawMessage { return json.RawMessage(openOutputJSONSchema) }
+func readInputSchema() json.RawMessage  { return json.RawMessage(readInputJSONSchema) }
+func projectionOutputSchema() json.RawMessage {
+	return outputSchemaWithSync(projectionOutputJSONSchema)
+}
+func acceptedOutputSchema() json.RawMessage { return outputSchemaWithSync(acceptedOutputJSONSchema) }
 
 // AIDocumentTools is a static MCP registry and dispatcher backed by the same
 // application service used by the generated AIDocumentService transport.
@@ -266,6 +268,10 @@ func (tools *AIDocumentTools) read(ctx context.Context, arguments mcpserver.Tool
 	}
 	projection, err := tools.application.Read(ctx, request)
 	if err != nil {
+		var cursorError *core.CursorError
+		if errors.As(err, &cursorError) {
+			return syncRequiredResult("read_continuation_invalid", cursorError.CurrentDocumentRevision, cursorError.CurrentTargetRevision, nil, input, true)
+		}
 		return expectedToolError(err)
 	}
 	encoded, err := core.EncodeProjection(projection)
@@ -401,7 +407,13 @@ func (tools *AIDocumentTools) validate(ctx context.Context, arguments mcpserver.
 	}
 	validation, err := tools.application.Validate(ctx, request)
 	if err != nil {
+		if conflict := mutationConflict(err); conflict != nil {
+			return mutationSyncResult(request, conflict)
+		}
 		return expectedToolError(err)
+	}
+	if validation.Conflict != nil {
+		return mutationSyncResult(request, validation.Conflict)
 	}
 	encoded, err := encodeValidation(validation)
 	if err != nil {
@@ -421,19 +433,14 @@ func (tools *AIDocumentTools) apply(ctx context.Context, arguments mcpserver.Too
 func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.ApplyRequest, createdBlock core.BlockID) (mcpserver.ToolResult, error) {
 	result, err := tools.application.Apply(ctx, request)
 	if err != nil {
+		if conflict := mutationConflict(err); conflict != nil {
+			return mutationSyncResult(request, conflict)
+		}
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
 			encoded, encodeErr := encodeValidation(validationError.Result)
 			if encodeErr != nil {
 				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document rejection: %w", encodeErr)
-			}
-			return structuredResult(encoded, true)
-		}
-		var conflictError *core.ConflictError
-		if errors.As(err, &conflictError) {
-			encoded, encodeErr := encodeValidation(core.ValidationResult{Conflict: &conflictError.Conflict})
-			if encodeErr != nil {
-				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document conflict: %w", encodeErr)
 			}
 			return structuredResult(encoded, true)
 		}

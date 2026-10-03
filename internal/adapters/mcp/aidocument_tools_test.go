@@ -569,14 +569,14 @@ func TestAIDocumentToolsReturnsTypedMutationRejections(t *testing.T) {
 			application: &recordingAIDocumentApplication{applyError: &core.ConflictError{Conflict: core.Conflict{
 				Code: core.ConflictDocumentRevision, CurrentDocumentRevision: "revision-new", AffectedHandles: []string{"paragraph-a"},
 			}}},
-			want: `"x":["document_revision_conflict","revision-new",null,["paragraph-a"]]`,
+			want: `"reason":"document_revision_changed"`,
 		},
 		{
 			name: "target conflict",
 			application: &recordingAIDocumentApplication{applyError: &core.ConflictError{Conflict: core.Conflict{
 				Code: core.ConflictTargetRevision, CurrentDocumentRevision: "revision-new", CurrentTargetRevision: &targetRevision, AffectedHandles: []string{"paragraph-a"},
 			}}},
-			want: `"x":["target_revision_conflict","revision-new","target-revision-a",["paragraph-a"]]`,
+			want: `"reason":"target_revision_changed"`,
 		},
 	}
 	for _, test := range tests {
@@ -586,7 +586,7 @@ func TestAIDocumentToolsReturnsTypedMutationRejections(t *testing.T) {
 			if err != nil {
 				t.Fatalf("document_apply error = %v", err)
 			}
-			if !result.IsError || !strings.Contains(result.Content[0]["text"].(string), test.want) {
+			if result.IsError != (test.name == "validation") || !strings.Contains(result.Content[0]["text"].(string), test.want) {
 				t.Fatalf("document_apply rejection = %+v, want %s", result, test.want)
 			}
 		})
@@ -670,6 +670,8 @@ type recordingAIDocumentApplication struct {
 	readError       error
 	validateError   error
 	applyError      error
+	applyCalls      int
+	readCalls       int
 }
 
 func (application *recordingAIDocumentApplication) Open(_ context.Context, request core.OpenRequest) (core.OpenMetadata, error) {
@@ -678,6 +680,7 @@ func (application *recordingAIDocumentApplication) Open(_ context.Context, reque
 }
 
 func (application *recordingAIDocumentApplication) Read(_ context.Context, request core.ReadRequest) (core.Projection, error) {
+	application.readCalls++
 	application.readRequest = request
 	return application.readResult, application.readError
 }
@@ -688,6 +691,7 @@ func (application *recordingAIDocumentApplication) Validate(_ context.Context, r
 }
 
 func (application *recordingAIDocumentApplication) Apply(_ context.Context, request core.ApplyRequest) (core.ApplyResult, error) {
+	application.applyCalls++
 	application.applyRequest = request
 	return application.applyResult, application.applyError
 }
