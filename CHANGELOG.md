@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/echovisionlab/geul-api/compare/v1.0.2...v1.1.0) (2026-10-03)
+
+
+### Features
+
+* **mcp:** discover Release and Artist documents ([#60](https://github.com/echovisionlab/geul-api/issues/60)) ([5f9dbc7](https://github.com/echovisionlab/geul-api/commit/5f9dbc73ab08684058f1e03dc20034734e4552f5))
+* **mcp:** recover document revision changes as sync states ([#58](https://github.com/echovisionlab/geul-api/issues/58)) ([5098819](https://github.com/echovisionlab/geul-api/commit/50988192ecd5de8702ce568d4f4b0987077c6016))
+
 ## [1.0.2](https://github.com/echovisionlab/geul-api/compare/v1.0.1...v1.0.2) (2026-10-03)
 
 
