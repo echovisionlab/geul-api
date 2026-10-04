@@ -370,7 +370,7 @@ func (s *FileService) finalizeStrongManageFileURLResponses(
 		}
 		var locked []model.File
 		query := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "uploaded_by_member_id", "delete_requested_at").
+			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "uploaded_by_member_id", "delete_requested_at", "client_media_bundle_id").
 			Where("id IN ?", fileIDs).
 			Order("id ASC")
 		if tx.Dialector.Name() == "postgres" {
@@ -479,7 +479,7 @@ func (s *FileService) finalizeUsageManageFileURLResponse(
 		}
 		var file model.File
 		fileQuery := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "delete_requested_at").
+			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "delete_requested_at", "client_media_bundle_id").
 			Where("id = ?", fileID)
 		if tx.Dialector.Name() == "postgres" {
 			fileQuery = fileQuery.Clauses(clause.Locking{Strength: "SHARE"})
@@ -649,6 +649,9 @@ func manageDeliveryUsageLockResult(result *gorm.DB) (bool, error) {
 }
 
 func manageDeliveryResponseMatchesFile(response *managev1.GetMediaDeliveryResponse, file model.File) bool {
+	if response != nil && !equalOptionalString(response.ClientMediaBundleId, file.ClientMediaBundleID) {
+		return false
+	}
 	if response == nil || !fileManagerDeliveryMatchesFile(response.GetDelivery(), file) ||
 		!equalOptionalString(response.IngestSlotId, file.IngestSlotID) ||
 		!equalOptionalString(response.IngestAttemptId, file.IngestAttemptID) {

@@ -120,11 +120,18 @@ func (s *FileService) attachTrackOriginalAudio(
 			return errs.FailedPrecondition("File ingest binding does not match the Track")
 		}
 
+		ready, readyErr := clientMediaFileReady(ctx, tx, file)
+		if readyErr != nil {
+			return readyErr
+		}
+		if file.ClientMediaBundleID != nil && !ready {
+			return errs.FailedPrecondition("client media derivatives are not ready")
+		}
 		var err error
 		attachment, err = trackAttachment.AttachOriginalWithDB(ctx, tx, TrackOriginalAudioInput{
-			TrackID: trackID, VerifiedFileID: fileID, ExpectedCurrentFileID: expectedCurrentFileID,
+			TrackID: trackID, VerifiedFileID: fileID, ExpectedCurrentFileID: expectedCurrentFileID, ClientMediaReady: ready, DurationSeconds: file.DurationSeconds,
 		})
-		if err != nil || attachment.AlreadyApplied {
+		if err != nil || attachment.AlreadyApplied || ready {
 			return err
 		}
 		job, shouldEnqueue, err := newStableFileIngestAudioTranscodeJob(

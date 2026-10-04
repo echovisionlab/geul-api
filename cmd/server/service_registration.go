@@ -395,6 +395,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	// Authenticated multipart upload plane. Managed public-asset bytes are
 	// relayed through the API; approved editor and large-media types use the
 	// short-lived public S3 presigned control endpoints.
+	mux.Handle("/upload/media-artifact", auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleClientMediaArtifact)))
 	mux.Handle(
 		"/upload/part",
 		auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleUploadPart)),

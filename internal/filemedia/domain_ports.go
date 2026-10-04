@@ -66,6 +66,8 @@ type MemberSummaries interface {
 }
 
 type TrackOriginalAudioInput struct {
+	ClientMediaReady      bool
+	DurationSeconds       *int
 	TrackID               string
 	VerifiedFileID        string
 	ExpectedCurrentFileID *string

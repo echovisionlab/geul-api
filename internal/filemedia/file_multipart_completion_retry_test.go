@@ -213,7 +213,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 
 func createMultipartPromotionRetrySessionTable(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -239,7 +239,7 @@ func newMultipartCompletionRetryDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:multipart-completion-retry-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -255,7 +255,7 @@ func newMultipartCompletionRetryDB(t *testing.T) *gorm.DB {
 		updated_at DATETIME NOT NULL,
 		PRIMARY KEY (upload_id, part_number)
 	)`).Error)
-	require.NoError(t, db.Exec(`CREATE TABLE file (id TEXT PRIMARY KEY)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY)`).Error)
 	return db
 }
 

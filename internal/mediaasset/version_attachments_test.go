@@ -15,7 +15,7 @@ import (
 func TestLoadUnavailableVersionAttachmentKindsUsesFileAuthority(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE file (
+	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,
 		id TEXT PRIMARY KEY,
 		mime_type TEXT NOT NULL,
 		delete_requested_at DATETIME

@@ -15,7 +15,7 @@ import (
 func TestContentBlockFileReuseAuthority(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:content-block-file-reuse?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE file (id TEXT PRIMARY KEY, uploaded_by_member_id TEXT)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY, uploaded_by_member_id TEXT)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE content_block (id TEXT PRIMARY KEY, document_id TEXT NOT NULL)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE content_block_attachment (block_id TEXT NOT NULL, reference_path TEXT NOT NULL, selector_kind TEXT NOT NULL, file_id TEXT, missing_kind TEXT)`).Error)
 

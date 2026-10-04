@@ -445,7 +445,7 @@ func newFileDeleteWorkerUnitDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
-			CREATE TABLE file (
+			CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY, file_name TEXT NOT NULL, mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL, extension TEXT NOT NULL, sha256 BLOB NOT NULL,
 			duration_seconds INTEGER, ingest_slot_id TEXT, ingest_attempt_id TEXT,

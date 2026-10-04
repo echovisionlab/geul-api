@@ -233,6 +233,7 @@ func applyMultipartCandidateRequestFilters(
 func multipartCandidateResponse(session model.UploadSession) *managev1.FindMultipartUploadCandidateResponse {
 	extension := mediaExtension(&session.RequestedMime)
 	return &managev1.FindMultipartUploadCandidateResponse{
+		ClientMediaBundleId:   session.ClientMediaBundleID,
 		UploadId:              &session.UploadID,
 		FileId:                &session.FileID,
 		Extension:             &extension,

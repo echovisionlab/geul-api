@@ -431,7 +431,7 @@ func newFileDeliveryAuthorizationDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE file_ingest_binding (file_id TEXT PRIMARY KEY, upload_type TEXT NOT NULL, entity_type TEXT, entity_id TEXT NOT NULL, created_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
 			file_name TEXT,
 			extension TEXT,
