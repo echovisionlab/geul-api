@@ -65,6 +65,14 @@ hostnames and signed paths can keep pointing to the delivery listener.
 Set `IMGPROXY_KEY` and `IMGPROXY_SALT` to the same hex secrets as imgproxy and
 `CDN_IMGPROXY_URL` to its address (default `http://127.0.0.1:8080`).
 
+`CLOUDFLARE_CACHE_PURGE_ENABLED` defaults to `true`, requiring
+`CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_API_TOKEN` for public asset deletion.
+Set it to `false` when CDN/media DNS records point directly to the origin
+without Cloudflare proxy caching. Credentials are then optional, and cleanup
+still deletes objects and finalizes the asset lifecycle without a Cloudflare
+request. Canonical asset-prefix validation and delivery cache headers remain
+in effect. Disable purging only after traffic no longer uses Cloudflare's cache.
+
 For source execution after `make media-build`, also set:
 
 ```sh
