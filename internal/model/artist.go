@@ -53,20 +53,21 @@ func (ArtistFile) TableName() string {
 
 // File represents the file table
 type File struct {
-	ID                 string     `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
-	FileName           string     `gorm:"column:file_name;type:text;not null"`
-	MimeType           string     `gorm:"column:mime_type;type:text;not null"`
-	FileSize           int64      `gorm:"column:file_size;type:bigint;not null"`
-	Extension          string     `gorm:"column:extension;type:text;not null"`
-	SHA256             []byte     `gorm:"column:sha256;type:bytea"`
-	DurationSeconds    *int       `gorm:"column:duration_seconds"`
-	IngestSlotID       *string    `gorm:"column:ingest_slot_id;type:text"`
-	IngestAttemptID    *string    `gorm:"column:ingest_attempt_id;type:text"`
-	FolderID           *string    `gorm:"column:folder_id;type:uuid;->"`
-	UploadedByMemberID *string    `gorm:"column:uploaded_by_member_id;type:uuid;->"`
-	DeleteRequestedAt  *time.Time `gorm:"column:delete_requested_at"`
-	CreatedAt          time.Time  `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt          time.Time  `gorm:"column:updated_at;->"`
+	ClientMediaBundleID *string    `gorm:"column:client_media_bundle_id;type:uuid"`
+	ID                  string     `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
+	FileName            string     `gorm:"column:file_name;type:text;not null"`
+	MimeType            string     `gorm:"column:mime_type;type:text;not null"`
+	FileSize            int64      `gorm:"column:file_size;type:bigint;not null"`
+	Extension           string     `gorm:"column:extension;type:text;not null"`
+	SHA256              []byte     `gorm:"column:sha256;type:bytea"`
+	DurationSeconds     *int       `gorm:"column:duration_seconds"`
+	IngestSlotID        *string    `gorm:"column:ingest_slot_id;type:text"`
+	IngestAttemptID     *string    `gorm:"column:ingest_attempt_id;type:text"`
+	FolderID            *string    `gorm:"column:folder_id;type:uuid;->"`
+	UploadedByMemberID  *string    `gorm:"column:uploaded_by_member_id;type:uuid;->"`
+	DeleteRequestedAt   *time.Time `gorm:"column:delete_requested_at"`
+	CreatedAt           time.Time  `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt           time.Time  `gorm:"column:updated_at;->"`
 }
 
 // TableName returns the table name for GORM

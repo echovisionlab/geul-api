@@ -94,6 +94,9 @@ func (s *FileService) abortUploadSession(
 		}
 		progressEmitter.publishFailed(reason, 0, nil)
 	}
+	if err := s.cleanupClientMediaStaging(cleanupCtx, session); err != nil {
+		return err
+	}
 	if err := s.deleteAbortedUploadSession(cleanupCtx, session.UploadID); err != nil {
 		return fmt.Errorf("delete aborted upload session %s: %w", session.UploadID, err)
 	}

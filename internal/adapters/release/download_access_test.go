@@ -38,7 +38,7 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 			expires_at DATETIME,
 			created_at DATETIME NOT NULL
 		);
-		CREATE TABLE file (id TEXT PRIMARY KEY, extension TEXT NOT NULL, mime_type TEXT NOT NULL, file_size INTEGER NOT NULL, file_name TEXT, delete_requested_at DATETIME);
+		CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY, extension TEXT NOT NULL, mime_type TEXT NOT NULL, file_size INTEGER NOT NULL, file_name TEXT, delete_requested_at DATETIME);
 		CREATE TABLE track (id TEXT PRIMARY KEY, release_id TEXT NOT NULL, audio_original_file_id TEXT, download_audience TEXT NOT NULL DEFAULT 'disabled');
 		CREATE TABLE track_download_audience_segment (track_id TEXT NOT NULL, audience_segment_id TEXT NOT NULL, PRIMARY KEY (track_id, audience_segment_id));
 		CREATE TABLE audience_segment (id TEXT PRIMARY KEY);

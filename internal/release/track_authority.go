@@ -55,6 +55,8 @@ func NewTrackAuthority(audit domainaudit.Appender) *TrackAuthority {
 }
 
 type TrackOriginalAudioInput struct {
+	ClientMediaReady      bool
+	DurationSeconds       *int
 	TrackID               string
 	VerifiedFileID        string
 	ExpectedCurrentFileID *string
@@ -141,11 +143,12 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 	if !sameOptionalString(track.AudioOriginalFileID, input.ExpectedCurrentFileID) {
 		return TrackOriginalAudioAttachment{}, errs.FailedPrecondition("Track original audio changed before attachment")
 	}
-	if err := tx.WithContext(ctx).Model(&track).Updates(structured.Fields{
-		"audio_original_file_id": input.VerifiedFileID,
-		"processing_status":      managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String(),
-		"download_audience":      "disabled",
-	}).Error; err != nil {
+	updates := structured.Fields{"audio_original_file_id": input.VerifiedFileID, "processing_status": managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String(), "download_audience": "disabled"}
+	if input.ClientMediaReady {
+		updates["processing_status"] = managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_COMPLETED.String()
+		updates["duration_seconds"] = input.DurationSeconds
+	}
+	if err := tx.WithContext(ctx).Model(&track).Updates(updates).Error; err != nil {
 		return TrackOriginalAudioAttachment{}, err
 	}
 	if err := tx.WithContext(ctx).Where("track_id = ?", track.ID).

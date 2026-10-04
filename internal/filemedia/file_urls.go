@@ -20,14 +20,15 @@ import (
 )
 
 type storedFileDeliveryRow struct {
-	ID              string  `gorm:"column:id"`
-	Extension       string  `gorm:"column:extension"`
-	MimeType        string  `gorm:"column:mime_type"`
-	FileSize        int64   `gorm:"column:file_size"`
-	DurationSeconds *int    `gorm:"column:duration_seconds"`
-	FileName        *string `gorm:"column:file_name"`
-	IngestSlotID    *string `gorm:"column:ingest_slot_id"`
-	IngestAttemptID *string `gorm:"column:ingest_attempt_id"`
+	ClientMediaBundleID *string `gorm:"column:client_media_bundle_id"`
+	ID                  string  `gorm:"column:id"`
+	Extension           string  `gorm:"column:extension"`
+	MimeType            string  `gorm:"column:mime_type"`
+	FileSize            int64   `gorm:"column:file_size"`
+	DurationSeconds     *int    `gorm:"column:duration_seconds"`
+	FileName            *string `gorm:"column:file_name"`
+	IngestSlotID        *string `gorm:"column:ingest_slot_id"`
+	IngestAttemptID     *string `gorm:"column:ingest_attempt_id"`
 }
 
 type storedDerivativeDeliveryRow struct {
@@ -215,7 +216,7 @@ func (s *FileService) loadFileURLResponses(
 	var files []storedFileDeliveryRow
 	if err := s.db.WithContext(ctx).
 		Table("file").
-		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id").
+		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id", "client_media_bundle_id").
 		Where("id IN ? AND delete_requested_at IS NULL", fileIDs).
 		Find(&files).Error; err != nil {
 		return nil, errs.Internal(fmt.Errorf("failed to query files: %w", err))
@@ -278,6 +279,7 @@ func (s *FileService) loadFileURLResponses(
 		if err != nil {
 			return nil, errs.Internal(err)
 		}
+		response.ClientMediaBundleId = file.ClientMediaBundleID
 		if file.FileName != nil {
 			response.Delivery.FileName = file.FileName
 		}
@@ -315,7 +317,7 @@ func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*man
 	var file storedFileDeliveryRow
 	if err := s.db.WithContext(ctx).
 		Table("file").
-		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id").
+		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id", "client_media_bundle_id").
 		Where("id = ? AND delete_requested_at IS NULL", fileID).
 		First(&file).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -334,6 +336,7 @@ func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*man
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
+	response.ClientMediaBundleId = file.ClientMediaBundleID
 	if file.FileName != nil {
 		response.Delivery.FileName = file.FileName
 	}

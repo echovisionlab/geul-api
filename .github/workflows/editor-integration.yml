@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: echovisionlab/geul-schema
-          ref: 0a8a72f5a541a306f4843bbcf453f7deee679efe
+          ref: 4d9a50f2efe7091a5c6544ef2eb42ec595e5cd42
           path: geul-schema
           persist-credentials: false
 

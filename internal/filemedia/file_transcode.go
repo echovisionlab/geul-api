@@ -24,6 +24,16 @@ func (s *FileService) triggerFileScopedProcessingIfNeeded(ctx context.Context, f
 		return errs.FailedPrecondition("File is pending deletion")
 	}
 
+	if file.ClientMediaBundleID != nil {
+		ready, err := clientMediaFileReady(ctx, s.db, file)
+		if err != nil {
+			return errs.Internal(err)
+		}
+		if !ready {
+			return errs.FailedPrecondition("client media derivatives are not ready")
+		}
+		return nil
+	}
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE
 	registrar, err := s.fileIngestTranscodeJobRegistrar()
 	if err != nil {

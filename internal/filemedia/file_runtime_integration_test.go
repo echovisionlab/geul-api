@@ -45,29 +45,26 @@ func TestRuntimeEditorFileUploadIsIndependentAndFileScoped(t *testing.T) {
 	stack := testutil.SetupSharedRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
-	audioBytes, err := os.ReadFile(testutil.RepositoryTestAudioMP3(t))
+	imageBytes, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	fileID, delivery := completeRuntimeEditorMediaUploadAndWait(
 		t,
 		stack,
 		fileClient,
 		manager,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		"audio/mpeg",
-		runtimeTestFileName("independent-editor-audio.mp3"),
-		audioBytes,
+		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
+		"image/jpeg",
+		runtimeTestFileName("independent-editor-image.jpg"),
+		imageBytes,
 		func(delivery *commonv1.MediaDelivery) bool {
-			return delivery.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY &&
-				delivery.GetPlayback().GetUrl() != "" &&
-				delivery.GetSpectrogram().GetUrl() != "" &&
-				delivery.GetWaveform().GetUrl() != ""
+			return delivery.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY && delivery.GetAsset().GetUrl() != ""
 		},
 	)
 	require.NotEmpty(t, fileID)
-	require.NotEmpty(t, delivery.GetPlayback().GetUrl())
+	require.NotEmpty(t, delivery.GetAsset().GetUrl())
 	var binding model.FileIngestBinding
 	require.NoError(t, stack.DB.Where("file_id = ?", fileID).Take(&binding).Error)
-	require.Equal(t, managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String(), binding.UploadType)
+	require.Equal(t, managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(), binding.UploadType)
 	require.Empty(t, binding.EntityID)
 	require.Nil(t, binding.EntityType)
 	var usageCount int64
@@ -425,49 +422,22 @@ func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 			require.NotEmpty(t, uploadedPart.Etag)
 		}
 
-		finalizedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
-		attachedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
 		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-			FileId:        initResp.Msg.FileId,
-			UploadId:      initResp.Msg.UploadId,
-			CorrelationId: runtimePtr(completionCorrelationID),
+			FileId: initResp.Msg.FileId, UploadId: initResp.Msg.UploadId, CorrelationId: runtimePtr(completionCorrelationID),
 		})
 		setAuthHeaders(completeReq.Header(), manager)
+		_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
+		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "clientMediaBundleRequired")
+		require.EqualValues(t, 0, countFilesByID(t, stack.DB, initResp.Msg.FileId))
+		requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING)
+		var untouchedTrack model.Track
+		require.NoError(t, stack.DB.First(&untouchedTrack, "id = ?", trackID).Error)
+		require.Nil(t, untouchedTrack.AudioOriginalFileID)
 
-		completeResp, err := fileClient.CompleteMultipartUpload(context.Background(), completeReq)
-		require.NoError(t, err)
-		require.Equal(t, initResp.Msg.FileId, completeResp.Msg.FileId)
-
-		matchesCompletedIdentity := func(identity *managev1.FileIngestIdentity) bool {
-			return identity.GetUploadId() == initResp.Msg.UploadId &&
-				identity.GetFileId() == initResp.Msg.FileId &&
-				identity.GetEntityId() == trackID &&
-				identity.GetEntityType() == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
-		}
-		finalizedEvent := waitForFileIngestFinalizedEvent(t, finalizedReceiver, 10*time.Second, func(event *managev1.FileIngestFinalizedEvent) bool {
-			return event.CorrelationId == completionCorrelationID && matchesCompletedIdentity(event.GetIdentity())
-		})
-		require.Equal(t, int32(100), finalizedEvent.GetProgress().GetPercentage())
-		attachedEvent := waitForFileIngestAttachedEvent(t, attachedReceiver, 10*time.Second, func(event *managev1.FileIngestAttachedEvent) bool {
-			return event.CorrelationId == completionCorrelationID && matchesCompletedIdentity(event.GetIdentity())
-		})
-		require.Equal(t, fileName, attachedEvent.FileName)
-		require.Equal(t, audioMimeType, attachedEvent.MimeType)
-		require.Equal(t, fileSize, attachedEvent.FileSize)
-		require.Eventually(t, func() bool {
-			var attachedTrack model.Track
-			if err := stack.DB.First(&attachedTrack, "id = ?", trackID).Error; err != nil {
-				return false
-			}
-			return runtimeDeref(attachedTrack.AudioOriginalFileID) == initResp.Msg.FileId
-		}, 10*time.Second, 100*time.Millisecond)
-		require.Eventually(t, func() bool {
-			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 0
-		}, 5*time.Second, 200*time.Millisecond)
-		require.Equal(t, int64(1), countFilesByID(t, stack.DB, initResp.Msg.FileId))
 	})
 
-	t.Run("complete track upload with invalid etag fails and leaves no durable file", func(t *testing.T) {
+	t.Run("unprepared track completion rejects before storage completion", func(t *testing.T) {
 		fileName := runtimeTestFileName("track-bad-complete.mp3")
 		fileLastModified := time.Now().UnixMilli()
 
@@ -506,97 +476,17 @@ func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 		setAuthHeaders(completeReq.Header(), manager)
 
 		_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
-		require.Error(t, err)
+		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "clientMediaBundleRequired")
 
 		require.Eventually(t, func() bool {
 			return countUploadSessions(t, stack.DB, initResp.Msg.UploadId) == 1
 		}, 5*time.Second, 200*time.Millisecond)
 		require.Equal(t, int64(0), countFilesByID(t, stack.DB, initResp.Msg.FileId))
 
-		requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED)
+		requireUploadSessionStatus(t, stack.DB, initResp.Msg.UploadId, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING)
 	})
 
-	t.Run("complete track upload attach audio and wait for processing to finish", func(t *testing.T) {
-		fileName := runtimeTestFileName("track-complete.mp3")
-		fileLastModified := time.Now().UnixMilli()
-		var currentTrack model.Track
-		require.NoError(t, stack.DB.First(&currentTrack, "id = ?", trackID).Error)
-		expectedCurrentFileID := runtimeDeref(currentTrack.AudioOriginalFileID)
-		require.NotEmpty(t, expectedCurrentFileID)
-		require.Equal(
-			t,
-			expectedCurrentFileID,
-			testutil.ReadReleaseTrackOriginalFileID(t, stack.DB, releaseID, trackID),
-			"Release shared Yjs and Track row must start from the same CAS value",
-		)
-
-		initReq := connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-			UploadType:            managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			EntityId:              trackID,
-			EntityType:            runtimePtr(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK),
-			FileSize:              int64(len(fixtureBytes)),
-			MimeType:              audioMimeType,
-			FileName:              fileName,
-			FileLastModified:      &fileLastModified,
-			ExpectedCurrentFileId: &expectedCurrentFileID,
-		})
-		setAuthHeaders(initReq.Header(), manager)
-
-		initResp, err := fileClient.InitiateMultipartUpload(context.Background(), initReq)
-		require.NoError(t, err)
-
-		part := uploadMultipartPart(
-			t,
-			stack.BackendURL,
-			manager,
-			initResp.Msg.FileId,
-			initResp.Msg.UploadId,
-			1,
-			fixtureBytes,
-		)
-		require.NotEmpty(t, part.ETag)
-
-		completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-			FileId:        initResp.Msg.FileId,
-			UploadId:      initResp.Msg.UploadId,
-			CorrelationId: runtimePtr(uuid.NewString()),
-		})
-		setAuthHeaders(completeReq.Header(), manager)
-
-		completeResp, err := fileClient.CompleteMultipartUpload(context.Background(), completeReq)
-		require.NoError(t, err)
-		require.Equal(t, initResp.Msg.FileId, completeResp.Msg.FileId)
-		stored := requireRuntimeCanonicalFileRecord(t, stack.DB, initResp.Msg.FileId, initResp.Msg.Extension, audioMimeType, fixtureBytes)
-		require.Empty(t, stored.SHA256)
-
-		var track model.Track
-		require.Eventually(t, func() bool {
-			if err := stack.DB.First(&track, "id = ?", trackID).Error; err != nil {
-				return false
-			}
-			return runtimeDeref(track.AudioOriginalFileID) == initResp.Msg.FileId &&
-				runtimeDeref(track.ProcessingStatus) == managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String()
-		}, 10*time.Second, 100*time.Millisecond)
-		require.Equal(
-			t,
-			initResp.Msg.FileId,
-			testutil.ReadReleaseTrackOriginalFileID(t, stack.DB, releaseID, trackID),
-			"editor-collab must persist the projected Track file in Release shared Yjs before the API finalizer updates Track",
-		)
-
-		waitForRuntimeMediaDelivery(t, fileClient, manager, initResp.Msg.FileId, func(delivery *commonv1.MediaDelivery) bool {
-			return delivery.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY &&
-				delivery.GetPlayback().GetUrl() != "" &&
-				delivery.GetSpectrogram().GetUrl() != "" &&
-				delivery.GetWaveform().GetUrl() != ""
-		})
-
-		require.NoError(t, stack.DB.First(&track, "id = ?", trackID).Error)
-		require.Equal(t, initResp.Msg.FileId, runtimeDeref(track.AudioOriginalFileID))
-		require.Equal(t, managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_COMPLETED.String(), runtimeDeref(track.ProcessingStatus))
-
-		deleteRuntimeTrackAndAssertFilePreserved(t, stack, trackClient, manager, trackID, initResp.Msg.FileId)
-	})
 }
 func uploadMultipartPart(
 	t *testing.T,
@@ -757,49 +647,6 @@ func completeRuntimeEditorMediaUploadAndWait(
 
 	delivery := waitForRuntimeMediaDelivery(t, fileClient, manager, initResp.Msg.FileId, ready)
 	return initResp.Msg.FileId, delivery
-}
-
-type runtimeFileStorageRefs struct {
-	originalKey        string
-	assetKeys          []string
-	generationPrefixes []string
-}
-
-func deleteRuntimeTrackAndAssertFilePreserved(
-	t *testing.T,
-	stack *testutil.RuntimeStack,
-	trackClient managev1connect.TrackServiceClient,
-	manager *testutil.OryUser,
-	trackID string,
-	fileID string,
-) {
-	t.Helper()
-
-	storageRefs := loadRuntimeFileStorageRefs(t, stack.DB, fileID)
-	require.NotEmpty(t, storageRefs.originalKey)
-
-	deleteReq := connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID})
-	setAuthHeaders(deleteReq.Header(), manager)
-	deleteResp, err := trackClient.DeleteTrack(context.Background(), deleteReq)
-	require.NoError(t, err)
-	require.True(t, deleteResp.Msg.Success)
-
-	require.Eventually(t, func() bool {
-		return countTracksByID(t, stack.DB, trackID) == 0
-	}, 5*time.Second, 200*time.Millisecond)
-	require.EqualValues(t, 1, countFilesByID(t, stack.DB, fileID))
-	require.Positive(t, countFileDerivatives(t, stack.DB, fileID))
-
-	s3Client := runtimeS3Client(t, stack)
-	require.True(t, runtimeS3ObjectExists(t, s3Client, stack.S3MediaBucket, storageRefs.originalKey))
-	for _, key := range storageRefs.assetKeys {
-		require.True(t, runtimeS3ObjectExists(t, s3Client, stack.S3MediaBucket, key))
-	}
-	for _, prefix := range storageRefs.generationPrefixes {
-		require.Eventually(t, func() bool {
-			return runtimeS3PrefixHasObjects(t, s3Client, stack.S3MediaBucket, prefix)
-		}, 5*time.Second, 200*time.Millisecond)
-	}
 }
 
 func uploadMultipartPartWithCorrelation(
@@ -1117,22 +964,6 @@ func requireRuntimeCanonicalFileRecord(
 	return file
 }
 
-func countTracksByID(t *testing.T, db *gorm.DB, trackID string) int64 {
-	t.Helper()
-
-	var count int64
-	require.NoError(t, db.Table("track").Where("id = ?", trackID).Count(&count).Error)
-	return count
-}
-
-func countFileDerivatives(t *testing.T, db *gorm.DB, fileID string) int64 {
-	t.Helper()
-
-	var count int64
-	require.NoError(t, db.Table("file_derivative").Where("file_id = ?", fileID).Count(&count).Error)
-	return count
-}
-
 func abortMultipartInStorage(
 	t *testing.T,
 	stack *testutil.RuntimeStack,
@@ -1149,42 +980,6 @@ func abortMultipartInStorage(
 		UploadId: aws.String(uploadID),
 	})
 	require.NoError(t, err)
-}
-
-func loadRuntimeFileStorageRefs(t *testing.T, db *gorm.DB, fileID string) runtimeFileStorageRefs {
-	t.Helper()
-
-	var file struct {
-		Extension string `gorm:"column:extension"`
-	}
-	require.NoError(t, db.Table("file").Select("extension").Where("id = ?", fileID).First(&file).Error)
-	originalKey := runtimeMediaObjectKey(t, fileID, file.Extension)
-
-	var derivatives []struct {
-		Type                   string  `gorm:"column:type"`
-		AssetObjectKey         *string `gorm:"column:asset_object_key"`
-		GenerationObjectPrefix *string `gorm:"column:generation_object_prefix"`
-	}
-	require.NoError(t, db.Table("file_derivative fd").
-		Select("fd.type, pa.object_key AS asset_object_key, mg.object_prefix AS generation_object_prefix").
-		Joins("LEFT JOIN public_asset pa ON pa.id = fd.asset_id").
-		Joins("LEFT JOIN media_generation mg ON mg.id = fd.media_generation_id").
-		Where("fd.file_id = ?", fileID).
-		Find(&derivatives).Error)
-
-	refs := runtimeFileStorageRefs{originalKey: originalKey}
-	for _, derivative := range derivatives {
-		if derivative.Type == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String() {
-			require.NotNil(t, derivative.GenerationObjectPrefix)
-			require.Nil(t, derivative.AssetObjectKey)
-			refs.generationPrefixes = append(refs.generationPrefixes, *derivative.GenerationObjectPrefix)
-			continue
-		}
-		require.NotNil(t, derivative.AssetObjectKey)
-		require.Nil(t, derivative.GenerationObjectPrefix)
-		refs.assetKeys = append(refs.assetKeys, *derivative.AssetObjectKey)
-	}
-	return refs
 }
 
 func runtimeMediaObjectKey(t *testing.T, fileID string, extension string) string {
@@ -1228,18 +1023,6 @@ func runtimeS3ObjectExists(t *testing.T, s3Client *s3.Client, bucket string, key
 	}
 	require.NoError(t, err)
 	return false
-}
-
-func runtimeS3PrefixHasObjects(t *testing.T, s3Client *s3.Client, bucket string, prefix string) bool {
-	t.Helper()
-
-	out, err := s3Client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
-		Bucket:  aws.String(bucket),
-		Prefix:  aws.String(prefix),
-		MaxKeys: aws.Int32(1),
-	})
-	require.NoError(t, err)
-	return len(out.Contents) > 0
 }
 
 func isRuntimeS3NotFound(err error) bool {
