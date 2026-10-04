@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/echovisionlab/geul-api/compare/v1.1.2...v1.2.0) (2026-10-04)
+
+
+### Features
+
+* accept complete browser-prepared media uploads ([7502a84](https://github.com/echovisionlab/geul-api/commit/7502a842a707a4ff9d3c785fe5cb72993d402515))
+
 ## [1.1.2](https://github.com/echovisionlab/geul-api/compare/v1.1.1...v1.1.2) (2026-10-03)
 
 
