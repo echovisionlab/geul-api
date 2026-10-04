@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/echovisionlab/geul-api/compare/v1.2.0...v1.2.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* allow public asset cleanup without Cloudflare ([#67](https://github.com/echovisionlab/geul-api/issues/67)) ([600b854](https://github.com/echovisionlab/geul-api/commit/600b8543c2e0f05d8c74f787858e710e21df3a3e))
+
 ## [1.2.0](https://github.com/echovisionlab/geul-api/compare/v1.1.2...v1.2.0) (2026-10-04)
 
 
