@@ -107,9 +107,8 @@ const readInputJSONSchema = `{
   }
 }`
 
-// Tuple tags make these alternatives disjoint. Use anyOf so
-// connectors that project tuples to array types can still accept valid values
-// when their projection makes alternatives overlap.
+// Advertise compact inputs as homogeneous arrays for connector compatibility.
+// The server decoder enforces each tag's exact positions, length, and types.
 const mutationInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
@@ -124,54 +123,18 @@ const mutationInputJSONSchema = `{
     "o":{"type":"array","minItems":1,"maxItems":100,"description":"Typed DCDP operations for advanced batches. For ordinary plain-text paragraph writes, use the focused paragraph tools. A prior document_validate dry run is optional.","items":{"$ref":"#/$defs/operation"}}
   },
   "$defs":{
-    "handle":{"type":"string","minLength":1,"maxLength":160,"description":"Stable block, relation, item, field, or File handle returned by document_read. For a new block or relation item, supply a new unique stable handle."},
-    "optionalHandle":{"type":"string","maxLength":160,"description":"A stable handle, or the empty string when no parent, predecessor, relation, or relation item applies."},
-    "fieldPathSegment":{"anyOf":[
-      {"type":"array","prefixItems":[{"const":"f"},{"type":"string","minLength":1,"maxLength":120}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"i"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":2,"maxItems":2}
-    ]},
-    "fieldPath":{"type":"array","minItems":1,"maxItems":32,"items":{"$ref":"#/$defs/fieldPathSegment"}},
-    "fieldTarget":{"description":"Field address. Use [block,\"\",\"\",field] for a block field or [block,relation,item,field] for a relation-item field. The optional fifth item is a typed nested field path.","oneOf":[
-      {"type":"array","prefixItems":[
-        {"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/handle"}
-      ],"items":false,"minItems":4,"maxItems":4},
-      {"type":"array","prefixItems":[
-        {"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/fieldPath"}
-      ],"items":false,"minItems":5,"maxItems":5}
-    ]},
-    "inline":{"anyOf":[
-      {"type":"array","prefixItems":[{"const":"t"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"enum":["b","em","u","s","code"]},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"enum":["fg","bg"]},{"type":"string","minLength":1,"maxLength":64},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","prefixItems":[{"const":"a"},{"type":"string","minLength":1,"maxLength":2048},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","prefixItems":[{"const":"br"}],"items":false,"minItems":1,"maxItems":1},
-      {"type":"array","prefixItems":[{"const":"math"},{"type":"string","minLength":1}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","prefixItems":[{"const":"ph"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":2,"maxItems":2}
-    ]},
-    "listItem":{"type":"array","prefixItems":[{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
-    "objectField":{"type":"array","prefixItems":[{"type":"string","minLength":1,"maxLength":120},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
-    "value":{"description":"Typed field value; do not send an untagged JSON scalar.","anyOf":[
-      {"type":"array","description":"Text value [\"t\",text].","prefixItems":[{"const":"t"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Boolean value [\"b\",boolean].","prefixItems":[{"const":"b"},{"type":"boolean"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Numeric value [\"n\",canonical-number-string].","prefixItems":[{"const":"n"},{"type":"string","minLength":1}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Rich inline value [\"i\",inline-items].","prefixItems":[{"const":"i"},{"type":"array","items":{"$ref":"#/$defs/inline"}}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Typed list value [\"l\",items].","prefixItems":[{"const":"l"},{"type":"array","items":{"$ref":"#/$defs/listItem"}}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Typed object value [\"o\",fields].","prefixItems":[{"const":"o"},{"type":"array","items":{"$ref":"#/$defs/objectField"}}],"items":false,"minItems":2,"maxItems":2}
-    ]},
-    "operation":{"description":"One compact typed mutation. Tuple positions are authoritative and must not be reordered or replaced with an object.","anyOf":[
-      {"type":"array","description":"Set field: [\"fs\",fieldTarget,typedValue]. For paragraph text, the field is normally content and the value is [\"i\",[[\"t\",text]]].","prefixItems":[{"const":"fs"},{"$ref":"#/$defs/fieldTarget"},{"$ref":"#/$defs/value"}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","description":"Unset field: [\"fu\",fieldTarget].","prefixItems":[{"const":"fu"},{"$ref":"#/$defs/fieldTarget"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Insert block: [\"bi\",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]. Use empty parent or after when document_read returns no such handle. Set the new block content with fs in the same batch.","prefixItems":[{"const":"bi"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"}],"items":false,"minItems":5,"maxItems":5},
-      {"type":"array","description":"Delete block: [\"bd\",blockHandle].","prefixItems":[{"const":"bd"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Move block: [\"bm\",blockHandle,parentBlockHandle,afterBlockHandle].","prefixItems":[{"const":"bm"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"}],"items":false,"minItems":4,"maxItems":4},
-      {"type":"array","description":"Replace block kind: [\"bk\",blockHandle,newBlockKind].","prefixItems":[{"const":"bk"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","description":"Insert relation item: [\"ri\",blockHandle,relationHandle,newItemHandle,itemKind,afterItemHandle].","prefixItems":[{"const":"ri"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"}],"items":false,"minItems":6,"maxItems":6},
-      {"type":"array","description":"Delete relation item: [\"rd\",blockHandle,relationHandle,itemHandle].","prefixItems":[{"const":"rd"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":4,"maxItems":4},
-      {"type":"array","description":"Move relation item: [\"rm\",sourceBlockHandle,sourceRelationHandle,itemHandle,targetBlockHandle,targetRelationHandle,afterItemHandle].","prefixItems":[{"const":"rm"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"}],"items":false,"minItems":7,"maxItems":7},
-      {"type":"array","description":"Attach verified File: [\"fa\",fieldTarget,fileHandle].","prefixItems":[{"const":"fa"},{"$ref":"#/$defs/fieldTarget"},{"type":"string","minLength":1,"maxLength":256}],"items":false,"minItems":3,"maxItems":3},
-      {"type":"array","description":"Detach File: [\"fd\",fieldTarget].","prefixItems":[{"const":"fd"},{"$ref":"#/$defs/fieldTarget"}],"items":false,"minItems":2,"maxItems":2},
-      {"type":"array","description":"Translation lifecycle: [\"lc\"] creates the requested non-source translation; [\"ld\"] deletes it. This operation must be the only operation in its batch.","prefixItems":[{"enum":["lc","ld"]}],"items":false,"minItems":1,"maxItems":1}
-    ]}
+    "operation":{
+      "type":"array","minItems":1,"maxItems":7,"items":{"$ref":"#/$defs/compactPayload"},
+      "description":"One compact typed mutation. Preserve the following exact tag, positions, length, and types; the server decoder validates them. Set field: [\"fs\",fieldTarget,typedValue]. For paragraph text use field content and value [\"i\",[[\"t\",text]]]. Unset field: [\"fu\",fieldTarget]. Insert block: [\"bi\",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]; set content with fs in the same batch. Delete block: [\"bd\",blockHandle]. Move block: [\"bm\",blockHandle,parentBlockHandle,afterBlockHandle]. Replace block kind: [\"bk\",blockHandle,newBlockKind]. Insert relation item: [\"ri\",blockHandle,relationHandle,newItemHandle,itemKind,afterItemHandle]. Delete relation item: [\"rd\",blockHandle,relationHandle,itemHandle]. Move relation item: [\"rm\",sourceBlockHandle,sourceRelationHandle,itemHandle,targetBlockHandle,targetRelationHandle,afterItemHandle]. Attach verified File: [\"fa\",fieldTarget,fileHandle]. Detach File: [\"fd\",fieldTarget]. Translation lifecycle: [\"lc\"] creates the requested non-source translation; [\"ld\"] deletes it. Either must be the only operation in its batch. Use stable handles from document_read and new unique stable handles for inserted blocks/items. Use the empty string when no parent, predecessor, relation, or relation item applies."
+    },
+    "compactPayload":{
+      "description":"Compact wire payloads use strings, booleans, and nested arrays. Field target: [block,\"\",\"\",field] for a block field or [block,relation,item,field] for a relation-item field; an optional fifth item is a nested field path of [\"f\",field] or [\"i\",stableItemHandle] segments. Typed values: [\"t\",text], [\"b\",boolean], [\"n\",canonical-number-string], [\"i\",inline-items], [\"l\",[[optionalStableItemHandle,typedValue],...]], or [\"o\",[[field,typedValue],...]]. Inline items: [\"t\",text], [mark,inline-items] where mark is b/em/u/s/code, [colorMark,color,inline-items] where colorMark is fg/bg, [\"a\",URL,inline-items], [\"br\"], [\"math\",expression], or [\"ph\",placeholderHandle]. Do not send untagged field scalars, null, objects, or native JSON numbers; numeric values use canonical decimal strings. The server decoder validates all tag-specific slot constraints.",
+      "anyOf":[
+        {"type":"string"},
+        {"type":"boolean"},
+        {"type":"array","items":{"$ref":"#/$defs/compactPayload"}}
+      ]
+    }
   }
 }`
 
