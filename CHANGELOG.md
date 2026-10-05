@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/echovisionlab/geul-api/compare/v1.3.4...v1.4.0) (2026-10-05)
+
+
+### Features
+
+* **mcp:** add admin content and file management workflows ([#79](https://github.com/echovisionlab/geul-api/issues/79)) ([a5cc7c2](https://github.com/echovisionlab/geul-api/commit/a5cc7c2a97472384fb140a117c0ff66a70e955e6))
+
 ## [1.3.4](https://github.com/echovisionlab/geul-api/compare/v1.3.3...v1.3.4) (2026-10-05)
 
 
