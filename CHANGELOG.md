@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.4](https://github.com/echovisionlab/geul-api/compare/v1.3.3...v1.3.4) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** preserve document state and owning outcomes ([#77](https://github.com/echovisionlab/geul-api/issues/77)) ([146ab2e](https://github.com/echovisionlab/geul-api/commit/146ab2ec6a78661a0e24ae455f4975314fd1d83e))
+
 ## [1.3.3](https://github.com/echovisionlab/geul-api/compare/v1.3.2...v1.3.3) (2026-10-05)
 
 
