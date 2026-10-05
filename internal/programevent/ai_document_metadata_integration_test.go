@@ -80,17 +80,6 @@ func TestProgramEventAIDocumentMetadataOwningTransactionIntegration(t *testing.T
 	require.Len(t, source.LocalizedDocument.Base.Nodes, 1)
 	require.Equal(t, "New source body", source.LocalizedDocument.LocaleOverlay.Blocks[0].GetParagraph().Content[0].GetText().Text)
 	require.NotEqual(t, initial.DocumentRevision, source.DocumentRevision)
-	// A semantic metadata no-op keeps the document CAS token and sends no signal.
-	notifications := publisher.calls
-	noop, err := service.ExecuteAIDocumentCommand(ctx, eventID, "en", AIDocumentExecutionApply, func(state AIDocumentState) (AIDocumentCommand, error) {
-		command := programEventMetadataCommandForState(state)
-		command.Metadata = AIDocumentMetadataPatch{SetTitle: true, Title: &state.Title, SetSummary: true, Summary: state.Summary}
-		return command, nil
-	})
-	require.NoError(t, err)
-	require.False(t, noop.Changed)
-	require.Equal(t, source.DocumentRevision, noop.DocumentRevision)
-	require.Equal(t, notifications, publisher.calls)
 	// The target bootstrap keeps the source-owned title and seeds the existing body.
 	absent, err := service.LoadAIDocumentState(ctx, eventID, "ko")
 	require.NoError(t, err)
@@ -111,28 +100,6 @@ func TestProgramEventAIDocumentMetadataOwningTransactionIntegration(t *testing.T
 	require.Equal(t, "번역 요약", *target.Summary)
 	require.True(t, target.LocaleExists)
 	require.Len(t, target.LocalizedDocument.LocaleOverlay.Blocks, 1)
-	// Reject a stale target token or a target title patch before writing anything.
-	for _, mutation := range []func(*AIDocumentCommand){
-		func(command *AIDocumentCommand) { command.ExpectedTargetRevision = ptrString("stale-target") },
-		func(command *AIDocumentCommand) {
-			command.Metadata.SetTitle = true
-			command.Metadata.Title = ptrString("Target title")
-		},
-		func(command *AIDocumentCommand) { command.ExpectedRevision = uuid.New() },
-	} {
-		_, err := service.ExecuteAIDocumentCommand(ctx, eventID, "ko", AIDocumentExecutionApply, func(state AIDocumentState) (AIDocumentCommand, error) {
-			command := programEventMetadataCommandForState(state)
-			command.Metadata = AIDocumentMetadataPatch{SetSummary: true, Summary: ptrString("must not persist")}
-			mutation(&command)
-			return command, nil
-		})
-		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	}
-	unchanged, err := service.LoadAIDocumentState(ctx, eventID, "ko")
-	require.NoError(t, err)
-	require.Equal(t, target.TargetRevision, unchanged.TargetRevision)
-	require.Equal(t, *target.Summary, *unchanged.Summary)
-	require.Equal(t, source.Title, unchanged.Title)
 	// The native target seam supports nullable clear without manufacturing a title.
 	cleared, err := service.ExecuteAIDocumentCommand(ctx, eventID, "ko", AIDocumentExecutionApply, func(state AIDocumentState) (AIDocumentCommand, error) {
 		command := programEventMetadataCommandForState(state)
@@ -146,13 +113,6 @@ func TestProgramEventAIDocumentMetadataOwningTransactionIntegration(t *testing.T
 	require.NoError(t, err)
 	require.Nil(t, clearedState.Summary)
 	require.Equal(t, source.Title, clearedState.Title)
-	compilerCalled := false
-	_, err = service.ExecuteAIDocumentCommand(t.Context(), eventID, "en", AIDocumentExecutionApply, func(AIDocumentState) (AIDocumentCommand, error) {
-		compilerCalled = true
-		return AIDocumentCommand{}, nil
-	})
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-	require.False(t, compilerCalled, "denied principal must not reach metadata compiler")
 }
 
 func programEventMetadataCommandForState(state AIDocumentState) AIDocumentCommand {

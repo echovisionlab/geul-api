@@ -166,39 +166,44 @@ returning individual Member data.
 relations, and File ownership; domain defaults and constraints remain with the
 owning compiler.
 
-## Integration tests
+## Tests
 
-Build the matching Identity Kratos image before running integration tests:
+CI runs unit and package tests with `go test ./...`, media-tool tests, `go vet`,
+and the server build. Input validation, authorization decisions, state
+transitions, and adapter mappings belong in unit tests. Reuse the owning
+service's tests when an adapter only delegates to it.
 
-```sh
-docker build -f ../geul-identity/Dockerfile.kratos -t geul-identity-kratos:local ../geul-identity
-```
-
-An explicit test image can be selected with `GEUL_TEST_KRATOS_IMAGE`. Stock
-Kratos omits the credential inventory required by account settings policy and
-is not a substitute for this source-built runtime.
-
-Unit and package tests run with `go test ./...`. Integration tests are
-explicitly tagged and require a local reviewed schema checkout plus the
-already available runtime images:
+Use integration tests for PostgreSQL constraints, transaction rollback, and
+storage or external-service behavior that an in-process test cannot exercise.
+They use the `integration` build tag. The local database suite needs only a
+reviewed schema checkout and the pinned PostgreSQL image:
 
 ```sh
-make test-integration
+make test-integration-db
 ```
 
-The harness never pulls images or applies production schema automatically.
-Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact local inputs.
-Media delivery and processing run from this API checkout; imgproxy remains a
-preinstalled native-engine image.
+Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
+local inputs. The runner starts its own PostgreSQL container and creates
+disposable databases.
 
-The editor integration workflow runs every test in its selected packages through
-the protected lease runner. It does not maintain individual test-name allowlists.
-The workflow checks out pinned schema, Identity, collaboration, Common, Contracts,
-and Telemetry sources and prepares the native media runtime before testing. Local
-runtime integration also needs those sibling sources, their frozen-lockfile
-Node dependencies, FFmpeg/FFprobe, and `cwebp` for client media fixtures.
-`--package` runs the entire package; `--run` is available for
-focused local investigation.
+Existing native system tests are available locally for changes to the relevant
+service boundary. For a focused regression, pass its package and test name:
+
+```sh
+GOWORK=off go run -tags=integration ./scripts/test/integration \
+  --schema-root ../geul-schema \
+  --package ./internal/page \
+  --run '^TestPageAIDocumentLayoutExactMutationIntegration$'
+```
+
+The native runner currently requires pinned runtime images, the sibling
+Identity, collaboration, Common, Contracts, and Telemetry checkouts, their
+frozen-lockfile Node dependencies, media assets, FFmpeg/FFprobe, and `cwebp`.
+Prepare the matching Kratos image with
+`docker build -f ../geul-identity/Dockerfile.kratos -t geul-identity-kratos:local ../geul-identity`,
+or select one with `GEUL_TEST_KRATOS_IMAGE`. Stock Kratos lacks the required
+settings inventory. The runner does not pull images automatically. These
+system tests are not a second full-stack CI gate for every API change.
 
 ## License
 

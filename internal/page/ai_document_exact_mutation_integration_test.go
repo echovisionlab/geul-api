@@ -220,27 +220,6 @@ func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.Changed)
 	require.Equal(t, stored.Revision, result.DocumentRevision)
-	_, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
-			mutation, err := compile(state, false)
-			mutation.ExpectedRevision = before.Snapshot.Document.Revision
-			mutation.Batch.ExpectedRevision = mutation.ExpectedRevision
-			return mutation, err
-		})
-	var conflict *AIDocumentRevisionConflictError
-	require.ErrorAs(t, err, &conflict)
-	_, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "ko", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, false) })
-	require.ErrorContains(t, err, "only the source locale")
-	checker.allowed = false
-	compilerCalled := false
-	_, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
-			compilerCalled = true
-			return compile(state, false)
-		})
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-	require.False(t, compilerCalled)
 	var auditCount int64
 	require.NoError(t, db.Table("public.domain_audit").Where("target_id = ? AND attributes->'changed_fields' @> '[\"document_layout\"]'::jsonb", created.Msg.Id).Count(&auditCount).Error)
 	require.EqualValues(t, 1, auditCount, "Validate rollback and no-op must not append layout audit")
