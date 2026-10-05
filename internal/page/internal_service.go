@@ -232,6 +232,9 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			if req.Msg.ExpectedTargetRevision != nil {
 				return errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 			}
+			if err := validatePageSourceLocaleMutations(req.Msg.PageId, domain.SourceLocale, batch.LocaleGroups); err != nil {
+				return err
+			}
 			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(req.Msg.PageId, locale, pageLockedTargetFence(documentID, domain)))
 		} else {
 			result, targetRevision, err = applyPageTargetLocaleBatch(
@@ -254,11 +257,6 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 				ctx, tx, s.auditWriter, contributorMemberID, req.Msg.PageId, locale,
 				sharedtelemetry.AuditItemOperationUpdated,
 			)
-		}
-		if err := ValidateSourceLocaleChanges(
-			ctx, tx, req.Msg.PageId, domain.SourceLocale, result.ChangedLocales,
-		); err != nil {
-			return err
 		}
 		if !result.Changed {
 			return nil
@@ -507,6 +505,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	}
 
 	changed := advance.Changed
+	var changedLocales []string
 	documentRevision := advance.DocumentRevision.String()
 	sourceChanged := advance.TranslationSourceChanged
 	if targetPath {
@@ -515,6 +514,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 		sourceChanged = false
 	}
 	if changed {
+		changedLocales = []string{locale}
 		fields := make([]string, 0, 2)
 		if req.Msg.Title != nil {
 			fields = append(fields, "title")
@@ -536,7 +536,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	}
 	return connect.NewResponse(&intrav1.UpdatePageLocaleMetadataResponse{
 		DocumentRevision: documentRevision, Changed: changed, SourceChanged: sourceChanged,
-		ChangedLocales: []string{locale}, Locale: locale,
+		ChangedLocales: changedLocales, Locale: locale,
 		TargetRevision: targetRevision,
 	}), nil
 }
@@ -666,43 +666,7 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 				s.spiceDB, req.Msg.PageId, policyv1.Page.Manage, req.Msg.ContributorMemberIds,
 			)),
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				var row struct {
-					DocumentLayout model.DocumentLayout `gorm:"column:document_layout"`
-				}
-				if err := tx.WithContext(ctx).
-					Table("page").
-					Select("document_layout").
-					Where("id = ?", req.Msg.PageId).
-					Take(&row).Error; err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				if row.DocumentLayout == nextLayout {
-					return contentblock.MetadataEffect{}, nil
-				}
-				if err := tx.WithContext(ctx).Model(&model.Page{}).
-					Where("id = ?", req.Msg.PageId).
-					Updates(structured.Fields{
-						"document_layout": nextLayout,
-						"updated_at":      now,
-					}).Error; err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				if s.auditWriter != nil {
-					if err := domainaudit.AppendRequest(
-						ctx,
-						tx,
-						s.auditWriter,
-						sharedtelemetry.AuditPageUpdated,
-						func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-							return sharedtelemetry.NewPageConfigurationAuditRecord(
-								metadata, req.Msg.PageId, []string{"document_layout"},
-							)
-						},
-					); err != nil {
-						return contentblock.MetadataEffect{}, err
-					}
-				}
-				return contentblock.MetadataEffect{Changed: true}, nil
+				return applyPageDocumentLayoutMetadata(ctx, tx, req.Msg.PageId, nextLayout, now, s.auditWriter)
 			},
 		)
 		if err != nil {
@@ -872,4 +836,44 @@ func (s *InternalPageService) appendPageVersionCheckpointAudit(
 			)
 		},
 	)
+}
+
+func applyPageDocumentLayoutMetadata(ctx context.Context, tx *gorm.DB, pageID string, nextLayout model.DocumentLayout, now time.Time, auditWriter domainaudit.Appender) (contentblock.MetadataEffect, error) {
+	var row struct {
+		DocumentLayout model.DocumentLayout `gorm:"column:document_layout"`
+	}
+	if err := tx.WithContext(ctx).
+		Table("page").
+		Select("document_layout").
+		Where("id = ?", pageID).
+		Take(&row).Error; err != nil {
+		return contentblock.MetadataEffect{}, err
+	}
+	if row.DocumentLayout == nextLayout {
+		return contentblock.MetadataEffect{}, nil
+	}
+	if err := tx.WithContext(ctx).Model(&model.Page{}).
+		Where("id = ?", pageID).
+		Updates(structured.Fields{
+			"document_layout": nextLayout,
+			"updated_at":      now,
+		}).Error; err != nil {
+		return contentblock.MetadataEffect{}, err
+	}
+	if auditWriter != nil {
+		if err := domainaudit.AppendRequest(
+			ctx,
+			tx,
+			auditWriter,
+			sharedtelemetry.AuditPageUpdated,
+			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageConfigurationAuditRecord(
+					metadata, pageID, []string{"document_layout"},
+				)
+			},
+		); err != nil {
+			return contentblock.MetadataEffect{}, err
+		}
+	}
+	return contentblock.MetadataEffect{Changed: true}, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -173,6 +174,27 @@ func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t 
 		Take(&targetBeforeSwitch).Error)
 	currentRevision, err := uuid.Parse(versionB.Msg.DocumentRevision)
 	require.NoError(t, err)
+	documentID, err := loadPageContentDocumentID(ctx, db, created.Msg.Id)
+	require.NoError(t, err)
+	beforePromotion, err := loadPageTargetLocaleState(ctx, db, store, created.Msg.Id, documentID, "en", false)
+	require.NoError(t, err)
+	providerSource, err := contentblock.SnapshotToLocalizedPageDocument(beforePromotion.Snapshot, "en")
+	require.NoError(t, err)
+	lateJob := activeJob
+	lateJob.TargetLocale = "ko"
+	requestSource := &translation.SourceDocument{
+		Title: derefString(beforePromotion.SourceMetadata.Title), Summary: beforePromotion.SourceMetadata.Summary,
+		ContentDocumentRevision: beforePromotion.Snapshot.Document.Revision.String(), PageDocument: providerSource,
+	}
+	latePlan, err := BuildTranslationExtractionPlan(&lateJob, requestSource)
+	require.NoError(t, err)
+	lateResults := make(map[string]translation.UnitResult)
+	for _, unit := range latePlan.Units {
+		lateResults[unit.UnitID] = translation.UnitResult{UnitID: unit.UnitID, TranslatedText: "Late provider result"}
+	}
+	lateCandidate, err := BuildTranslationCandidate(latePlan, requestSource, lateResults)
+	require.NoError(t, err)
+	require.NoError(t, lateCandidate.SetProviderUnitPatch(latePlan, lateResults))
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		return switchBlockVersionRestoreSourceLocale(
 			ctx,
@@ -187,6 +209,22 @@ func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t 
 		)
 	}))
 	require.Equal(t, "ko", loadPageVersionRootSourceLocale(t, db, created.Msg.Id))
+	promotedState, err := loadPageTargetLocaleState(ctx, db, store, created.Msg.Id, documentID, "ko", false)
+	require.NoError(t, err)
+	promotedSource, err := contentblock.SnapshotToLocalizedPageDocument(promotedState.Snapshot, "ko")
+	require.NoError(t, err)
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return ApplyTranslationCandidateWithDB(ctx, tx, store, &lateJob, lateCandidate,
+			translation.EntryWrite{Now: jobNow.Add(2 * time.Second)}, apitelemetry.NewDurableWriter(db))
+	})
+	require.ErrorIs(t, err, translation.ErrSourceNoLongerCurrent, "a formerly-target job must not overwrite promoted source content")
+	afterRejectedProvider, err := loadPageTargetLocaleState(ctx, db, store, created.Msg.Id, documentID, "ko", false)
+	require.NoError(t, err)
+	require.Equal(t, promotedState.Snapshot.Document.Revision, afterRejectedProvider.Snapshot.Document.Revision)
+	afterRejectedSource, err := contentblock.SnapshotToLocalizedPageDocument(afterRejectedProvider.Snapshot, "ko")
+	require.NoError(t, err)
+	require.True(t, proto.Equal(promotedSource, afterRejectedSource))
+	require.Equal(t, promotedState.SourceMetadata.Title, afterRejectedProvider.SourceMetadata.Title)
 
 	restored, err := pageService.RestorePageVersion(
 		ctx,

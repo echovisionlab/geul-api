@@ -79,11 +79,16 @@ func (s *CleanupStorage) DeletePrefix(ctx context.Context, prefix string) error 
 		for _, object := range page.Contents {
 			objects = append(objects, s3types.ObjectIdentifier{Key: object.Key})
 		}
-		if _, err := s.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		result, err := s.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(s.bucket),
 			Delete: &s3types.Delete{Objects: objects, Quiet: aws.Bool(true)},
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("delete media object prefix: %w", err)
+		}
+		if len(result.Errors) != 0 {
+			failed := result.Errors[0]
+			return fmt.Errorf("delete media object prefix: %d objects failed: %s (%s)", len(result.Errors), aws.ToString(failed.Key), aws.ToString(failed.Code))
 		}
 	}
 	return nil

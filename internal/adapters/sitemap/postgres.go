@@ -108,6 +108,36 @@ func (s *PostgresStore) ListWorks(ctx context.Context) ([]sitemapdomain.Entry, e
 	)
 }
 
+func (s *PostgresStore) ListArtists(ctx context.Context) ([]sitemapdomain.Entry, error) {
+	return s.listEntries(
+		ctx,
+		"artist",
+		[]string{managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()},
+		"published_at DESC NULLS LAST, created_at DESC",
+		false,
+	)
+}
+
+func (s *PostgresStore) ListLabels(ctx context.Context) ([]sitemapdomain.Entry, error) {
+	return s.listEntries(
+		ctx,
+		"label",
+		[]string{managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()},
+		"published_at DESC NULLS LAST, updated_at DESC",
+		false,
+	)
+}
+
+func (s *PostgresStore) ListReleases(ctx context.Context) ([]sitemapdomain.Entry, error) {
+	return s.listEntries(
+		ctx,
+		"release",
+		[]string{managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()},
+		"published_at DESC NULLS LAST, updated_at DESC",
+		false,
+	)
+}
+
 func (s *PostgresStore) ListCategories(ctx context.Context) ([]sitemapdomain.Entry, error) {
 	var rows []entryRow
 	if err := s.db.WithContext(ctx).

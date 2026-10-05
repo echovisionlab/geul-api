@@ -85,6 +85,7 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{
 		DocumentRevision: "revision-b", Changed: true,
+		Changes: []core.Change{{Operation: 1, Kind: core.OperationUnsetField, AffectedHandles: []string{"field:document/summary"}}},
 	}}
 	tools := mustAIDocumentTools(t, application)
 	categoryID := "11111111-1111-4111-8111-111111111111"
@@ -98,6 +99,33 @@ func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	}
 	if result.StructuredContent["dr"] != "revision-b" {
 		t.Fatalf("document_metadata_update result = %#v", result.StructuredContent)
+	}
+	var outputSchema struct {
+		Properties struct {
+			Changes struct {
+				Items struct {
+					PrefixItems []struct {
+						Enum []string `json:"enum"`
+					} `json:"prefixItems"`
+				} `json:"items"`
+			} `json:"c"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(focusedMutationOutputJSONSchema), &outputSchema); err != nil {
+		t.Fatal(err)
+	}
+	change := result.StructuredContent["c"].([]any)[0].([]any)
+	if change[1] != string(core.OperationUnsetField) {
+		t.Fatalf("clear summary change=%v", change)
+	}
+	allowed := false
+	for _, kind := range outputSchema.Properties.Changes.Items.PrefixItems[1].Enum {
+		if kind == change[1] {
+			allowed = true
+		}
+	}
+	if !allowed {
+		t.Fatalf("accepted clear summary kind %q excluded by output schema", change[1])
 	}
 	request := application.applyRequest
 	if request.Profile != core.DomainPost || request.Document != "44444444-4444-4444-8444-444444444444" || request.ExpectedDocumentRevision != "revision-a" {
@@ -120,6 +148,103 @@ func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	}
 }
 
+func TestDocumentMetadataUpdateRejectsNullInsteadOfApplyingOtherFields(t *testing.T) {
+	for _, field := range []string{"title", "summary", "clear_summary", "category_ids", "tag_ids"} {
+		t.Run(field, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			arguments := toolArguments(t, `{
+				"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444",
+				"locale":"ko","expected_document_revision":"revision-a","title":"Changed","tag_ids":[]
+			}`)
+			arguments[field] = json.RawMessage("null")
+			result, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, arguments)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.applyCalls != 0 || result.Content != nil {
+				t.Fatalf("null %s partially applied metadata: calls=%d result=%+v error=%v", field, application.applyCalls, result, err)
+			}
+		})
+	}
+}
+
+func TestParagraphCreateRejectsNullPlacementHandles(t *testing.T) {
+	for _, field := range []string{"parent_block_id", "after_block_id"} {
+		t.Run(field, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			arguments := toolArguments(t, `{
+				"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444",
+				"locale":"ko","expected_document_revision":"revision-a","text":"New paragraph"
+			}`)
+			arguments[field] = json.RawMessage("null")
+			_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolParagraphCreate, arguments)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.applyCalls != 0 {
+				t.Fatalf("null %s became root/first placement: calls=%d error=%v", field, application.applyCalls, err)
+			}
+		})
+	}
+}
+
+func TestMutationToolsDeclareStructuredValidationRejections(t *testing.T) {
+	operation := core.SetFieldOperation("paragraph-a", "content", core.Text("wrong kind"))
+	for _, name := range []string{ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply} {
+		t.Run(name, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyError: &core.ValidationError{Result: core.ValidationResult{
+				Normalized: []core.Operation{operation},
+				Issues:     []core.OperationIssue{{Operation: 0, Code: core.IssueValueKindMismatch, Handle: "field:paragraph-a/content", Message: "wrong value kind"}},
+			}}}
+			arguments := toolArguments(t, `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"}`)
+			switch name {
+			case ToolParagraphCreate:
+				arguments["text"] = json.RawMessage(`"paragraph"`)
+			case ToolParagraphUpdate:
+				arguments["text"] = json.RawMessage(`"paragraph"`)
+				arguments["block_id"] = json.RawMessage(`"paragraph-a"`)
+			case ToolBlockDelete:
+				arguments["block_id"] = json.RawMessage(`"paragraph-a"`)
+			case ToolMetadataUpdate:
+				arguments["title"] = json.RawMessage(`"Changed"`)
+			case ToolDocumentApply:
+				arguments = toolArguments(t, `{"v":"dcdp/1","p":"post","d":"44444444-4444-4444-8444-444444444444","l":"ko","edr":"revision-a","o":[["fs",["paragraph-a","","","content"],["t","wrong kind"]]]}`)
+			}
+			tools := mustAIDocumentTools(t, application)
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, arguments)
+			if err != nil || !result.IsError || result.StructuredContent["i"] == nil || result.StructuredContent["o"] == nil {
+				t.Fatalf("missing structured rejection: %+v %v", result, err)
+			}
+			listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range listed {
+				if tool.Name != name {
+					continue
+				}
+				var schema struct {
+					OneOf []struct {
+						OneOf []struct {
+							Properties map[string]json.RawMessage `json:"properties"`
+						} `json:"oneOf"`
+					} `json:"oneOf"`
+				}
+				if err := json.Unmarshal(tool.OutputSchema, &schema); err != nil {
+					t.Fatal(err)
+				}
+				declared := false
+				for _, branch := range schema.OneOf {
+					for _, resultBranch := range branch.OneOf {
+						if resultBranch.Properties["i"] != nil && resultBranch.Properties["o"] != nil {
+							declared = true
+						}
+					}
+				}
+				if !declared {
+					t.Fatalf("actual i/o validation rejection excluded by %s output schema: %s", name, tool.OutputSchema)
+				}
+			}
+		})
+	}
+}
+
 func assertMCPToolOAuthSecurity(t *testing.T, tool mcpserver.Tool) {
 	t.Helper()
 	if len(tool.SecuritySchemes) != 1 || tool.SecuritySchemes[0].Type != "oauth2" ||
@@ -139,7 +264,7 @@ func assertMCPToolAnnotations(t *testing.T, tool mcpserver.Tool, want map[string
 	}
 }
 
-func TestAIDocumentSchemasCoverRecursiveCompactWire(t *testing.T) {
+func TestAIDocumentProjectionSchemaCoversRecursiveCompactWire(t *testing.T) {
 	decodeDefs := func(raw string) map[string]json.RawMessage {
 		t.Helper()
 		var schema struct {
@@ -180,22 +305,6 @@ func TestAIDocumentSchemasCoverRecursiveCompactWire(t *testing.T) {
 		return false
 	}
 
-	input := decodeDefs(mutationInputJSONSchema)
-	fieldTargets := decodeVariants(input["fieldTarget"])
-	if len(fieldTargets) != 2 || fieldTargets[0]["maxItems"] != float64(4) || fieldTargets[1]["maxItems"] != float64(5) {
-		t.Fatalf("mutation fieldTarget does not expose scalar and typed-path forms: %s", input["fieldTarget"])
-	}
-	for _, kind := range []string{"l", "o"} {
-		if !hasKind(decodeVariants(input["value"]), kind) {
-			t.Fatalf("mutation value schema omitted recursive kind %q", kind)
-		}
-	}
-	for _, kind := range []string{"u", "s", "code", "fg", "bg"} {
-		if !hasKind(decodeVariants(input["inline"]), kind) {
-			t.Fatalf("mutation inline schema omitted mark %q", kind)
-		}
-	}
-
 	output := decodeDefs(projectionOutputJSONSchema)
 	for _, kind := range []string{"l", "o"} {
 		if !hasKind(decodeVariants(output["value"]), kind) {
@@ -234,47 +343,159 @@ func TestParagraphCreateSchemaRequiresPageRichTextParent(t *testing.T) {
 
 func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 	var schema struct {
+		Definitions map[string]struct {
+			Description string `json:"description"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal([]byte(mutationInputJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	operation := schema.Definitions["operation"].Description
+	for _, tuple := range []string{
+		`["fs",fieldTarget,typedValue]`, `["fu",fieldTarget]`,
+		`["bi",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]`, `["bd",blockHandle]`,
+		`["bm",blockHandle,parentBlockHandle,afterBlockHandle]`, `["bk",blockHandle,newBlockKind]`,
+		`["ri",blockHandle,relationHandle,newItemHandle,itemKind,afterItemHandle]`,
+		`["rd",blockHandle,relationHandle,itemHandle]`,
+		`["rm",sourceBlockHandle,sourceRelationHandle,itemHandle,targetBlockHandle,targetRelationHandle,afterItemHandle]`,
+		`["fa",fieldTarget,fileHandle]`, `["fd",fieldTarget]`, `["lc"]`, `["ld"]`,
+		`["i",[["t",text]]]`,
+	} {
+		if !strings.Contains(operation, tuple) {
+			t.Errorf("operation description omitted %s", tuple)
+		}
+	}
+	if !strings.Contains(operation, "server decoder validates") || !strings.Contains(operation, "only operation in its batch") {
+		t.Fatalf("operation validation/lifecycle instructions missing: %s", operation)
+	}
+	payload := schema.Definitions["compactPayload"].Description
+	for _, syntax := range []string{
+		`[block,"","",field]`, `[block,relation,item,field]`, `optional fifth item`,
+		`["f",field]`, `["i",stableItemHandle]`,
+		`["t",text]`, `["b",boolean]`, `["n",canonical-number-string]`, `["i",inline-items]`,
+		`["l",[[optionalStableItemHandle,typedValue],...]]`, `["o",[[field,typedValue],...]]`,
+		`b/em/u/s/code`, `fg/bg`, `["a",URL,inline-items]`, `["br"]`, `["math",expression]`, `["ph",placeholderHandle]`,
+	} {
+		if !strings.Contains(payload, syntax) {
+			t.Errorf("compact payload description omitted %s", syntax)
+		}
+	}
+}
+
+func TestMutationSchemaAdvertisesRecursiveHomogeneousArrays(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Items struct {
+				Ref string `json:"$ref"`
+			} `json:"items"`
+		} `json:"properties"`
 		Definitions map[string]json.RawMessage `json:"$defs"`
 	}
 	if err := json.Unmarshal([]byte(mutationInputJSONSchema), &schema); err != nil {
-		t.Fatalf("decode mutation schema: %v", err)
+		t.Fatal(err)
+	}
+	if len(schema.Definitions) != 2 || schema.Properties["o"].Items.Ref != "#/$defs/operation" {
+		t.Fatal("mutation operations must use only the operation and compactPayload definitions")
 	}
 	var operation struct {
-		Description string `json:"description"`
-		OneOf       []struct {
-			Description string           `json:"description"`
-			PrefixItems []map[string]any `json:"prefixItems"`
-		} `json:"oneOf"`
+		Type     string `json:"type"`
+		MinItems int    `json:"minItems"`
+		MaxItems int    `json:"maxItems"`
+		Items    struct {
+			Ref string `json:"$ref"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(schema.Definitions["operation"], &operation); err != nil {
-		t.Fatalf("decode operation definition: %v", err)
+		t.Fatal(err)
 	}
-	if operation.Description == "" {
-		t.Fatal("operation definition does not explain compact tuple semantics")
+	if operation.Type != "array" || operation.MinItems != 1 || operation.MaxItems != 7 || operation.Items.Ref != "#/$defs/compactPayload" {
+		t.Fatalf("operation array contract = %+v", operation)
 	}
-	want := map[string]bool{
-		"fs": false, "fu": false, "bi": false, "bd": false, "bm": false, "bk": false,
-		"ri": false, "rd": false, "rm": false, "fa": false, "fd": false, "lc": false, "ld": false,
+	var payload struct {
+		AnyOf []struct {
+			Type  string `json:"type"`
+			Items struct {
+				Ref string `json:"$ref"`
+			} `json:"items"`
+		} `json:"anyOf"`
 	}
-	for _, variant := range operation.OneOf {
-		if variant.Description == "" || len(variant.PrefixItems) == 0 {
-			t.Fatalf("operation variant is not self-describing: %s", schema.Definitions["operation"])
+	if err := json.Unmarshal(schema.Definitions["compactPayload"], &payload); err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, branch := range payload.AnyOf {
+		types = append(types, branch.Type)
+		if branch.Type == "array" && branch.Items.Ref != "#/$defs/compactPayload" {
+			t.Fatal("nested compact arrays must recursively preserve the same payload types")
 		}
-		if kind, ok := variant.PrefixItems[0]["const"].(string); ok {
-			want[kind] = true
-		}
-		if kinds, ok := variant.PrefixItems[0]["enum"].([]any); ok {
-			for _, value := range kinds {
-				if kind, ok := value.(string); ok {
-					want[kind] = true
-				}
+	}
+	if !reflect.DeepEqual(types, []string{"string", "boolean", "array"}) {
+		t.Fatalf("compact payload must have disjoint string, boolean, and array alternatives, got %v", types)
+	}
+	for _, definition := range schema.Definitions {
+		for _, unsupported := range []string{`"prefixItems":`, `"items":false`, `"oneOf":`, `"const":`, `"enum":`} {
+			if strings.Contains(string(definition), unsupported) {
+				t.Fatalf("compact input definition retained tuple projection constraints: %s", definition)
 			}
 		}
 	}
-	for kind, described := range want {
-		if !described {
-			t.Errorf("compact operation %q has no described schema variant", kind)
-		}
+}
+
+func TestCompactOperationsReachApplyThroughHTTPWhileMalformedTuplesDoNot(t *testing.T) {
+	const documentID = "0c314c79-103b-4e0e-953e-5f9370851639"
+	const block = "51e895a2-24c4-4aaa-a28c-fc466c5590fd"
+	const parent = "0bb8af09-e358-488b-9950-c07b6d056ca5"
+	const after = "8272c725-6186-4c0c-a244-3cb7025ca92e"
+	for _, test := range []struct {
+		name       string
+		operations string
+		want       []core.Operation
+	}{
+		{"valid move batch", `[["bm","` + block + `","` + parent + `","` + after + `"],["bm","` + after + `","` + parent + `",""],["bm","` + block + `","` + parent + `","` + after + `"]]`, []core.Operation{
+			core.MoveBlockOperation(block, parent, after), core.MoveBlockOperation(after, parent, ""), core.MoveBlockOperation(block, parent, after),
+		}},
+		{"mixed recursive values", `[["fs",["` + block + `","","","enabled"],["b",true]],["fs",["` + block + `","","","width"],["n","12.5"]],["fs",["` + block + `","","","metadata"],["o",[["nested",["l",[["",["i",[["b",[["t","text"]]]]]]]]]]]]]`, []core.Operation{
+			core.SetFieldOperation(block, "enabled", core.Boolean(true)),
+			core.SetFieldOperation(block, "width", core.Number("12.5")),
+			core.SetFieldOperation(block, "metadata", core.Object(core.ObjectValue("nested", core.List(core.PositionalItem(core.RichText(core.Bold(core.InlineText("text")))))))),
+		}},
+		{"missing predecessor", `[["bm","` + block + `","` + parent + `"]]`, nil},
+		{"extra position", `[["bm","` + block + `","` + parent + `","` + after + `","extra"]]`, nil},
+		{"non-string parent", `[["bm","` + block + `",false,"` + after + `"]]`, nil},
+		{"null predecessor", `[["bm","` + block + `","` + parent + `",null]]`, nil},
+		{"unknown tag", `[["move","` + block + `","` + parent + `","` + after + `"]]`, nil},
+		{"native numeric payload", `[["fs",["` + block + `","","","width"],["n",12.5]]]`, nil},
+		{"object payload", `[["fs",["` + block + `","","","metadata"],{"t":"text"}]]`, nil},
+		{"null inline payload", `[["fs",["` + block + `","","","content"],["i",[["t",null]]]]]`, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b", Normalized: test.want}}
+			tools := mustAIDocumentTools(t, application)
+			config := validHTTPConfig(nil)
+			config.Registry, config.Dispatcher = tools, tools
+			response := httptest.NewRecorder()
+			request := mcpHTTPRequest(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_apply","arguments":{"v":"dcdp/1","p":"page","d":"` + documentID + `","l":"en","edr":"0af8a257-9da1-4a5d-9ae3-22682b3b4219","o":` + test.operations + `}}}`)
+			newHTTPTestHandler(t, config).ServeHTTP(response, request)
+			var reply struct {
+				Result struct {
+					IsError bool `json:"isError"`
+				} `json:"result"`
+				Error json.RawMessage `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &reply); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != 200 || reply.Error != nil || reply.Result.IsError != (test.want == nil) {
+				t.Fatalf("HTTP result = %d %s", response.Code, response.Body.String())
+			}
+			if test.want == nil {
+				if application.applyCalls != 0 {
+					t.Fatal("malformed tuple reached the application")
+				}
+			} else if application.applyCalls != 1 || !reflect.DeepEqual(application.applyRequest.Operations, test.want) {
+				t.Fatalf("decoded compact batch = %+v", application.applyRequest)
+			}
+		})
 	}
 }
 
@@ -408,6 +629,44 @@ func TestFocusedDocumentToolsTranslatePlainParagraphActionsToTypedApply(t *testi
 			t.Fatalf("delete operations = %+v, want %+v", application.applyRequest.Operations, want)
 		}
 	})
+}
+
+func TestFocusedParagraphTextRequiresPresenceAndPreservesExplicitEmpty(t *testing.T) {
+	for _, tool := range []string{ToolParagraphCreate, ToolParagraphUpdate} {
+		for _, test := range []struct {
+			name  string
+			text  string
+			valid bool
+		}{
+			{"missing", "", false},
+			{"null", `,"text":null`, false},
+			{"explicit empty", `,"text":""`, true},
+		} {
+			t.Run(tool+"/"+test.name, func(t *testing.T) {
+				application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+				arguments := `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"`
+				if tool == ToolParagraphUpdate {
+					arguments += `,"block_id":"paragraph-a"`
+				}
+				arguments += test.text + `}`
+				_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, tool, toolArguments(t, arguments))
+				if !test.valid {
+					var execution *mcpserver.ToolExecutionError
+					if !errors.As(err, &execution) || application.applyCalls != 0 {
+						t.Fatalf("invalid required text reached Apply: calls=%d, err=%v", application.applyCalls, err)
+					}
+					return
+				}
+				if err != nil || application.applyCalls != 1 {
+					t.Fatalf("explicit empty text rejected: calls=%d, err=%v", application.applyCalls, err)
+				}
+				operation := application.applyRequest.Operations[len(application.applyRequest.Operations)-1]
+				if !reflect.DeepEqual(operation.SetField.Value, core.RichText(core.InlineText(""))) {
+					t.Fatalf("explicit empty replacement=%+v", operation.SetField.Value)
+				}
+			})
+		}
+	}
 }
 
 func TestAIDocumentToolsOpenAndRead(t *testing.T) {
@@ -569,14 +828,14 @@ func TestAIDocumentToolsReturnsTypedMutationRejections(t *testing.T) {
 			application: &recordingAIDocumentApplication{applyError: &core.ConflictError{Conflict: core.Conflict{
 				Code: core.ConflictDocumentRevision, CurrentDocumentRevision: "revision-new", AffectedHandles: []string{"paragraph-a"},
 			}}},
-			want: `"x":["document_revision_conflict","revision-new",null,["paragraph-a"]]`,
+			want: `"reason":"document_revision_changed"`,
 		},
 		{
 			name: "target conflict",
 			application: &recordingAIDocumentApplication{applyError: &core.ConflictError{Conflict: core.Conflict{
 				Code: core.ConflictTargetRevision, CurrentDocumentRevision: "revision-new", CurrentTargetRevision: &targetRevision, AffectedHandles: []string{"paragraph-a"},
 			}}},
-			want: `"x":["target_revision_conflict","revision-new","target-revision-a",["paragraph-a"]]`,
+			want: `"reason":"target_revision_changed"`,
 		},
 	}
 	for _, test := range tests {
@@ -586,7 +845,7 @@ func TestAIDocumentToolsReturnsTypedMutationRejections(t *testing.T) {
 			if err != nil {
 				t.Fatalf("document_apply error = %v", err)
 			}
-			if !result.IsError || !strings.Contains(result.Content[0]["text"].(string), test.want) {
+			if result.IsError != (test.name == "validation") || !strings.Contains(result.Content[0]["text"].(string), test.want) {
 				t.Fatalf("document_apply rejection = %+v, want %s", result, test.want)
 			}
 		})
@@ -670,6 +929,8 @@ type recordingAIDocumentApplication struct {
 	readError       error
 	validateError   error
 	applyError      error
+	applyCalls      int
+	readCalls       int
 }
 
 func (application *recordingAIDocumentApplication) Open(_ context.Context, request core.OpenRequest) (core.OpenMetadata, error) {
@@ -678,6 +939,7 @@ func (application *recordingAIDocumentApplication) Open(_ context.Context, reque
 }
 
 func (application *recordingAIDocumentApplication) Read(_ context.Context, request core.ReadRequest) (core.Projection, error) {
+	application.readCalls++
 	application.readRequest = request
 	return application.readResult, application.readError
 }
@@ -688,6 +950,7 @@ func (application *recordingAIDocumentApplication) Validate(_ context.Context, r
 }
 
 func (application *recordingAIDocumentApplication) Apply(_ context.Context, request core.ApplyRequest) (core.ApplyResult, error) {
+	application.applyCalls++
 	application.applyRequest = request
 	return application.applyResult, application.applyError
 }
@@ -717,4 +980,44 @@ func stringValue(t *testing.T, values map[string]any, key string) string {
 		t.Fatalf("structured content %q = %T, want string", key, values[key])
 	}
 	return value
+}
+
+func TestDocumentMetadataUpdateSupportsProgramEventExactRevisions(t *testing.T) {
+	application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-a", Changed: true, TargetRevision: revisionPointer("target-b"), Changes: []core.Change{{Operation: 0, Kind: core.OperationSetField, AffectedHandles: []string{"document:summary"}}}}}
+	result, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, toolArguments(t, `{"document_type":"program_event","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a","expected_target_revision":"target-a","summary":"번역 요약"}`))
+	if err != nil || result.IsError {
+		t.Fatalf("Program Event metadata update = %+v, %v", result, err)
+	}
+	request := application.applyRequest
+	if request.Profile != core.DomainProgramEvent || request.Locale != "ko" || request.ExpectedTargetRevision == nil || *request.ExpectedTargetRevision != "target-a" {
+		t.Fatalf("metadata identity/CAS = %+v", request)
+	}
+	if len(request.Operations) != 1 || request.Operations[0].SetField.Target.Block != "document" || request.Operations[0].SetField.Target.Field != "summary" {
+		t.Fatalf("metadata operations = %+v", request.Operations)
+	}
+	var schema struct {
+		Properties struct {
+			DocumentType struct {
+				Enum []string `json:"enum"`
+			} `json:"document_type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(documentMetadataUpdateInputJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, domain := range schema.Properties.DocumentType.Enum {
+		if domain == "program_event" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Program Event excluded from advertised metadata input schema")
+	}
+	application.applyCalls = 0
+	result, err = mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, toolArguments(t, `{"document_type":"program_event","document_id":"44444444-4444-4444-8444-444444444444","locale":"en","expected_document_revision":"revision-a","title":"Event title","tag_ids":[]}`))
+	var execution *mcpserver.ToolExecutionError
+	if !errors.As(err, &execution) || application.applyCalls != 0 {
+		t.Fatalf("Program Event accepted Post-only metadata: %+v %v calls=%d", result, err, application.applyCalls)
+	}
 }

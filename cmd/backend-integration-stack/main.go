@@ -21,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	"github.com/echovisionlab/geul-api/internal/handler"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -108,12 +107,8 @@ func main() {
 		publisher,
 		accountadapter.MemberEmailProjection{},
 	)
-	hooksHandler := handler.NewHooksHandler(
-		loginHooks,
-		registrationHooks,
-		accountSettingsHooks,
-		credentialHooks,
-	)
+	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
+	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
 		emaildelivery.NewEmailCourierService(
 			publisher,
@@ -126,7 +121,7 @@ func main() {
 		stack.TokenSigningSecret,
 		rawCourierHandler,
 	)
-	hookServer.SetHandlers(hooksHandler, courierHandler)
+	hookServer.SetHandlers(authenticationHooks, accountHooks, courierHandler)
 
 	fmt.Fprintln(os.Stderr, "backend integration stack ready")
 
@@ -140,7 +135,7 @@ type hookServer struct {
 	listener net.Listener
 
 	mu             sync.RWMutex
-	hooksHandler   *handler.HooksHandler
+	hooksHandler   http.Handler
 	courierHandler http.Handler
 }
 
@@ -159,32 +154,9 @@ func startHookServer() (*hookServer, string, error) {
 			h,
 		)
 	}
-	mux.Handle("/hooks/after-login", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.AfterLogin(w, r)
-	})))
-	mux.Handle("/hooks/reject-credential-registration", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.RejectCredentialRegistration(w, r)
-	})))
-	mux.Handle("/hooks/pre-settings-oidc", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.PreSettingsOIDC(w, r)
-	})))
-	mux.Handle("/hooks/post-settings-oidc", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.PostSettingsOIDC(w, r)
-	})))
-	mux.Handle("/hooks/pre-settings-passkey", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.PreSettingsPasskey(w, r)
-	})))
-	mux.Handle("/hooks/post-settings-passkey", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.PostSettingsPasskey(w, r)
-	})))
-	mux.Handle("/hooks/after-settings", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.AfterSettings(w, r)
-	})))
-	mux.Handle("/hooks/after-verification", protectHook(server.callHook(func(h *handler.HooksHandler, w http.ResponseWriter, r *http.Request) {
-		h.AfterVerification(w, r)
-	})))
 	mux.Handle("/api.intra.v1.EmailCourierService/", http.HandlerFunc(server.callCourier))
 
+	mux.Handle("/hooks/", protectHook(http.HandlerFunc(server.callHook)))
 	server.server = &http.Server{Handler: mux}
 	errCh := make(chan error, 1)
 	go func() {
@@ -207,10 +179,18 @@ func startHookServer() (*hookServer, string, error) {
 	}
 }
 
-func (s *hookServer) SetHandlers(hooksHandler *handler.HooksHandler, courierHandler http.Handler) {
+func (s *hookServer) SetHandlers(authenticationHooks *authenticationadapter.HooksHandler, accountHooks *accountadapter.SettingsHooksHandler, courierHandler http.Handler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.hooksHandler = hooksHandler
+	if authenticationHooks != nil && accountHooks != nil {
+		mux := http.NewServeMux()
+		direct := func(h http.HandlerFunc) http.Handler { return h }
+		authenticationHooks.RegisterRoutes(mux, direct)
+		accountHooks.RegisterRoutes(mux, direct)
+		s.hooksHandler = mux
+	} else {
+		s.hooksHandler = nil
+	}
 	s.courierHandler = courierHandler
 }
 
@@ -220,17 +200,15 @@ func (s *hookServer) Close() error {
 	return s.server.Shutdown(ctx)
 }
 
-func (s *hookServer) callHook(fn func(*handler.HooksHandler, http.ResponseWriter, *http.Request)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s.mu.RLock()
-		hooksHandler := s.hooksHandler
-		s.mu.RUnlock()
-		if hooksHandler == nil {
-			http.Error(w, "backend integration hooks are not ready", http.StatusServiceUnavailable)
-			return
-		}
-		fn(hooksHandler, w, r)
+func (s *hookServer) callHook(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	hooksHandler := s.hooksHandler
+	s.mu.RUnlock()
+	if hooksHandler == nil {
+		http.Error(w, "backend integration hooks are not ready", http.StatusServiceUnavailable)
+		return
 	}
+	hooksHandler.ServeHTTP(w, r)
 }
 
 func (s *hookServer) callCourier(w http.ResponseWriter, r *http.Request) {

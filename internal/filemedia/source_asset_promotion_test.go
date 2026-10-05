@@ -20,9 +20,9 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 func TestValidateSourceAssetPromotionFileEnforcesKindMediaContract(t *testing.T) {

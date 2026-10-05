@@ -290,13 +290,59 @@ func (s *ProgramEventService) List(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
+	posterFilesByEvent, posterQueryErr := loadProgramEventPosterFileIDs(ctx, s.db, collectPublicProgramEventIDs(events))
+	posterAssetsByEvent := make(map[string]*commonv1.AssetRef, len(posterFilesByEvent))
+	if posterQueryErr != nil {
+		for i := range events {
+			posterAssetsByEvent[events[i].ID] = loadProgramEventPosterAsset(ctx, s.db, s.assets, events[i].ID)
+		}
+	} else {
+		posterFileIDs := make([]string, 0, len(posterFilesByEvent))
+		for _, fileID := range posterFilesByEvent {
+			posterFileIDs = append(posterFileIDs, fileID)
+		}
+		assetsByFile := make(map[string]*commonv1.AssetRef)
+		if len(posterFileIDs) > 0 {
+			resolved, resolveErr := s.assets.ResolveReadyAssetsForSourceFiles(ctx, posterFileIDs, "poster", "image")
+			if resolveErr == nil {
+				assetsByFile = resolved
+			} else {
+				for _, fileID := range posterFileIDs {
+					assetsByFile[fileID] = s.assets.ResolveReadyAssetForSourceFile(ctx, fileID, "poster", "image")
+				}
+			}
+		}
+		for eventID, fileID := range posterFilesByEvent {
+			posterAssetsByEvent[eventID] = assetsByFile[fileID]
+		}
+	}
+	eventTypeIDs := collectPublicProgramEventTypeIDs(events)
+	eventTypes, err := loadPublicProgramEventTypes(ctx, s.db, eventTypeIDs)
+	if err != nil {
+		return nil, err
+	}
+	typeLocales, err := loadPublicProgramEventTypeLocales(ctx, s.db, eventTypeIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	summaries := make([]*openv1.ProgramEventSummary, 0, len(events))
 	for i := range events {
-		item, err := s.toProtoProgramEventSummary(ctx, &events[i], localizations[events[i].ID])
-		if err != nil {
-			return nil, err
+		event := &events[i]
+		localization := localizations[event.ID]
+		posterAsset := posterAssetsByEvent[event.ID]
+		var eventType *openv1.ProgramEventType
+		if event.TypeID != "" {
+			typeRow, ok := eventTypes[event.TypeID]
+			if !ok {
+				return nil, errs.Internal(gorm.ErrRecordNotFound)
+			}
+			eventType, err = publicProgramEventTypeProto(typeRow, typeLocales[typeRow.ID], localization.DisplayedLocale)
+			if err != nil {
+				return nil, err
+			}
 		}
+		item := s.toProtoProgramEventSummary(event, localization, posterAsset, eventType)
 		summaries = append(summaries, item)
 	}
 
@@ -430,9 +476,17 @@ func (s *ProgramEventTypeService) List(
 	if err := query.Find(&rows).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
+	typeIDs := make([]string, 0, len(rows))
+	for i := range rows {
+		typeIDs = append(typeIDs, rows[i].ID)
+	}
+	localesByType, err := loadPublicProgramEventTypeLocales(ctx, s.db, typeIDs)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]*openv1.ProgramEventType, 0, len(rows))
 	for i := range rows {
-		item, err := loadPublicProgramEventType(ctx, s.db, rows[i].ID, req.Header().Get("Accept-Language"))
+		item, err := publicProgramEventTypeProto(rows[i], localesByType[rows[i].ID], req.Header().Get("Accept-Language"))
 		if err != nil {
 			return nil, err
 		}
@@ -646,10 +700,11 @@ func (s *ProgramEventService) loadPublishedProgramEventSeries(
 }
 
 func (s *ProgramEventService) toProtoProgramEventSummary(
-	ctx context.Context,
 	event *model.ProgramEvent,
 	localization publiccontent.Selection,
-) (*openv1.ProgramEventSummary, error) {
+	posterAsset *commonv1.AssetRef,
+	eventType *openv1.ProgramEventType,
+) *openv1.ProgramEventSummary {
 	mapPlaceID := event.MapPlaceID
 	if !publicProgramEventLocationModeUsesMapPlace(event.LocationMode) {
 		mapPlaceID = nil
@@ -673,17 +728,13 @@ func (s *ProgramEventService) toProtoProgramEventSummary(
 		UpdatedAt:        timestamppb.New(event.UpdatedAt),
 		LocalizationInfo: publiccontent.ToProtoLocalizationInfo(localization),
 	}
-	if posterAsset := loadProgramEventPosterAsset(ctx, s.db, s.assets, event.ID); posterAsset != nil {
+	if posterAsset != nil {
 		summary.PosterAsset = posterAsset
 	}
-	if event.TypeID != "" {
-		eventType, err := loadPublicProgramEventType(ctx, s.db, event.TypeID, localization.DisplayedLocale)
-		if err != nil {
-			return nil, err
-		}
+	if eventType != nil {
 		summary.Type = eventType
 	}
-	return summary, nil
+	return summary
 }
 
 func (s *ProgramEventSeriesService) toProtoProgramEventSeries(
@@ -956,7 +1007,56 @@ func loadPublicProgramEventType(ctx context.Context, db *gorm.DB, typeID string,
 	if err := db.WithContext(ctx).First(&eventType, "id = ?", typeID).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
-	localeRow, err := selectPublicProgramEventTypeLocale(ctx, db, eventType.ID, acceptLanguage)
+	localesByType, err := loadPublicProgramEventTypeLocales(ctx, db, []string{eventType.ID})
+	if err != nil {
+		return nil, err
+	}
+	return publicProgramEventTypeProto(eventType, localesByType[eventType.ID], acceptLanguage)
+}
+
+func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string]model.ProgramEventType, error) {
+	ids := uniqueProgramEventIDs(typeIDs)
+	result := make(map[string]model.ProgramEventType, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var rows []model.ProgramEventType
+	if err := db.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, errs.Internal(err)
+	}
+	for i := range rows {
+		result[rows[i].ID] = rows[i]
+	}
+	return result, nil
+}
+
+func loadPublicProgramEventTypeLocales(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string][]publicProgramEventTypeLocaleRow, error) {
+	ids := uniqueProgramEventIDs(typeIDs)
+	result := make(map[string][]publicProgramEventTypeLocaleRow, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var rows []publicProgramEventTypeLocaleRow
+	if err := db.WithContext(ctx).
+		Table("program_event_type_locale").
+		Select("type_id, locale, name, description").
+		Where("type_id IN ?", ids).
+		Order("type_id ASC, locale ASC").
+		Find(&rows).Error; err != nil {
+		return nil, errs.Internal(err)
+	}
+	for _, row := range rows {
+		result[row.TypeID] = append(result[row.TypeID], row)
+	}
+	return result, nil
+}
+
+func publicProgramEventTypeProto(
+	eventType model.ProgramEventType,
+	locales []publicProgramEventTypeLocaleRow,
+	acceptLanguage string,
+) (*openv1.ProgramEventType, error) {
+	localeRow, err := selectPublicProgramEventTypeLocaleRows(locales, eventType.ID, acceptLanguage)
 	if err != nil {
 		return nil, err
 	}
@@ -973,21 +1073,13 @@ func loadPublicProgramEventType(ctx context.Context, db *gorm.DB, typeID string,
 }
 
 type publicProgramEventTypeLocaleRow struct {
+	TypeID      string  `gorm:"column:type_id"`
 	Locale      string  `gorm:"column:locale"`
 	Name        string  `gorm:"column:name"`
 	Description *string `gorm:"column:description"`
 }
 
-func selectPublicProgramEventTypeLocale(ctx context.Context, db *gorm.DB, typeID string, acceptLanguage string) (publicProgramEventTypeLocaleRow, error) {
-	var rows []publicProgramEventTypeLocaleRow
-	if err := db.WithContext(ctx).
-		Table("program_event_type_locale").
-		Select("locale, name, description").
-		Where("type_id = ?", typeID).
-		Order("locale ASC").
-		Find(&rows).Error; err != nil {
-		return publicProgramEventTypeLocaleRow{}, errs.Internal(err)
-	}
+func selectPublicProgramEventTypeLocaleRows(rows []publicProgramEventTypeLocaleRow, typeID string, acceptLanguage string) (publicProgramEventTypeLocaleRow, error) {
 	if len(rows) == 0 {
 		return publicProgramEventTypeLocaleRow{}, errs.NotFound("program event type locale", typeID)
 	}
@@ -999,6 +1091,65 @@ func selectPublicProgramEventTypeLocale(ctx context.Context, db *gorm.DB, typeID
 		return matched, nil
 	}
 	return rows[0], nil
+}
+
+func uniqueProgramEventIDs(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func collectPublicProgramEventTypeIDs(events []model.ProgramEvent) []string {
+	typeIDs := make([]string, 0, len(events))
+	for i := range events {
+		if events[i].TypeID != "" {
+			typeIDs = append(typeIDs, events[i].TypeID)
+		}
+	}
+	return uniqueProgramEventIDs(typeIDs)
+}
+
+// loadProgramEventPosterFileIDs applies the public poster selection rule to an entire result page.
+func loadProgramEventPosterFileIDs(ctx context.Context, db *gorm.DB, eventIDs []string) (map[string]string, error) {
+	ids := uniqueProgramEventIDs(eventIDs)
+	fileByEvent := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return fileByEvent, nil
+	}
+	var rows []struct {
+		EventID string `gorm:"column:event_id"`
+		FileID  string `gorm:"column:file_id"`
+	}
+	err := db.WithContext(ctx).Raw(`
+		SELECT pem.event_id, pem.file_id
+		FROM program_event_media AS pem
+		WHERE pem.event_id IN ? AND pem.role = 'poster'
+		ORDER BY pem.event_id ASC,
+			pem.is_primary DESC,
+			pem.sort_order ASC,
+			pem.created_at ASC,
+			pem.id ASC
+	`, ids).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if _, exists := fileByEvent[row.EventID]; !exists && strings.TrimSpace(row.FileID) != "" {
+			fileByEvent[row.EventID] = row.FileID
+		}
+	}
+	return fileByEvent, nil
 }
 
 func findProgramEventTypeLocale(rows []publicProgramEventTypeLocaleRow, locale string) (publicProgramEventTypeLocaleRow, bool) {

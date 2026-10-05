@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -34,6 +35,16 @@ func resolveInitialSourceLocale(
 		return settings.DefaultLocale
 	}
 	return translation.DefaultLocale
+}
+
+func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, identity auth.IdentityManager, requestedLocale, acceptLanguage string) (string, error) {
+	if requestedLocale != "" {
+		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
+			return *locale, nil
+		}
+		return "", errs.InvalidArgument("source_locale", "must be a supported canonical locale")
+	}
+	return resolveInitialSourceLocale(ctx, db, identity, acceptLanguage), nil
 }
 
 func nullableStringEqual(left *string, right *string) bool {

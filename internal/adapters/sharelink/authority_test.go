@@ -47,8 +47,11 @@ func TestAuthorityChecksOrdinaryShareLinkActionExactlyOnceForEveryTarget(t *test
 		{name: "post", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, expectedAction: policyv1.Post.ManageShareLinks},
 		{name: "page", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, expectedAction: policyv1.Page.ManageShareLinks},
 		{name: "work", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, expectedAction: policyv1.Work.ManageShareLinks},
+		{name: "release", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, expectedAction: policyv1.Release.ManageShareLinks},
 		{name: "form", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, expectedAction: policyv1.Form.ManageShareLinks},
 		{name: "form dashboard", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD, expectedAction: policyv1.Form.ManageShareLinks},
+		{name: "artist", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, expectedAction: policyv1.Artist.ManageShareLinks},
+		{name: "label", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, expectedAction: policyv1.Label.ManageShareLinks},
 		{name: "privacy", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY, expectedAction: policyv1.PrivacyHistory.ManageShareLinks},
 		{name: "terms", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS, expectedAction: policyv1.TermsHistory.ManageShareLinks},
 	}
@@ -198,16 +201,16 @@ func TestAuthorityMapsSpiceDBFailureWithoutRunningMutation(t *testing.T) {
 
 	db := newAuthorityUnitDB(t)
 	entityID := uuid.NewString()
-	seedAuthorityTarget(t, db, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, entityID, false)
+	seedAuthorityTarget(t, db, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, entityID, false)
 	checker := &recordingPermissionChecker{err: errors.New("spicedb unavailable")}
 	authority := newAuthority(db, checker, nil)
 
 	continued, err := executeAuthorityOperation(
-		t, authority, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, entityID, authorityOperationDelete,
+		t, authority, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, entityID, authorityOperationDelete,
 	)
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
 	require.False(t, continued)
-	requirePermissionCheck(t, checker, policyv1.Work.ManageShareLinks, entityID)
+	requirePermissionCheck(t, checker, policyv1.Label.ManageShareLinks, entityID)
 }
 
 type authorityTestOperation string
@@ -286,7 +289,10 @@ func newAuthorityUnitDB(t *testing.T) *gorm.DB {
 		CREATE TABLE post (id TEXT PRIMARY KEY, status TEXT NOT NULL);
 		CREATE TABLE page (id TEXT PRIMARY KEY);
 		CREATE TABLE work (id TEXT PRIMARY KEY, status TEXT NOT NULL);
+		CREATE TABLE release (id TEXT PRIMARY KEY);
 		CREATE TABLE form (id TEXT PRIMARY KEY);
+		CREATE TABLE label (id TEXT PRIMARY KEY);
+		CREATE TABLE artist (id TEXT PRIMARY KEY);
 		CREATE TABLE privacy_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME);
 		CREATE TABLE terms_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME);
 	`).Error)

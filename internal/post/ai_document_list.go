@@ -31,12 +31,13 @@ type AIDocumentListInput struct {
 // AIDocumentListItem contains the minimum Post identity and display metadata
 // needed to select a document for a later DCDP open call.
 type AIDocumentListItem struct {
-	ID           string
-	Title        string
-	Slug         *string
-	SourceLocale string
-	Status       string
-	UpdatedAt    time.Time
+	ID                    string
+	Title                 string
+	Slug                  *string
+	SourceLocale          string
+	Status                string
+	UpdatedAt             time.Time
+	ConfigurationRevision string
 }
 
 // AIDocumentListResult is one stable offset page of authorized Post results.
@@ -93,12 +94,13 @@ func (s *PostService) ListAIDocuments(
 	}
 
 	type row struct {
-		ID           string           `gorm:"column:id"`
-		Title        string           `gorm:"column:title"`
-		Slug         *string          `gorm:"column:slug"`
-		SourceLocale string           `gorm:"column:source_locale"`
-		Status       model.PostStatus `gorm:"column:status"`
-		UpdatedAt    time.Time        `gorm:"column:updated_at"`
+		ID                    string           `gorm:"column:id"`
+		Title                 string           `gorm:"column:title"`
+		Slug                  *string          `gorm:"column:slug"`
+		SourceLocale          string           `gorm:"column:source_locale"`
+		Status                model.PostStatus `gorm:"column:status"`
+		UpdatedAt             time.Time        `gorm:"column:updated_at"`
+		ConfigurationRevision string           `gorm:"column:configuration_revision"`
 	}
 	var rows []row
 	if err := query.
@@ -109,6 +111,7 @@ func (s *PostService) ListAIDocuments(
 			"post.source_locale",
 			"post.status",
 			"post.updated_at",
+			"post.configuration_revision::text AS configuration_revision",
 		).
 		Order("post.updated_at DESC, post.id ASC").
 		Limit(limit).
@@ -122,6 +125,7 @@ func (s *PostService) ListAIDocuments(
 		items[index] = AIDocumentListItem{
 			ID: item.ID, Title: item.Title, Slug: item.Slug,
 			SourceLocale: item.SourceLocale, Status: string(item.Status), UpdatedAt: item.UpdatedAt,
+			ConfigurationRevision: item.ConfigurationRevision,
 		}
 	}
 	return AIDocumentListResult{

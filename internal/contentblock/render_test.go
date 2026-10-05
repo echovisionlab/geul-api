@@ -8,6 +8,7 @@ import (
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestMaterializeLocalizedRichTextDocumentEscapesTextAndKeepsVariablesLiteral(t *testing.T) {
@@ -29,6 +30,37 @@ func TestMaterializeLocalizedRichTextDocumentEscapesTextAndKeepsVariablesLiteral
 	require.Contains(t, result.HTML, "&lt;script&gt;{{member.name}}&lt;/script&gt;")
 	require.Contains(t, result.HTML, `href="https://example.com/?a=1&amp;b=2"`)
 	require.Equal(t, `<script>{{member.name}}</script> safe link `, result.Text)
+}
+
+func TestMaterializeCalloutLocaleHonorsTargetPresenceWithoutAppendingSource(t *testing.T) {
+	blockID := uuid.NewString()
+	text := func(value string) []*contentv1.RichTextInline {
+		return []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: value}}}}
+	}
+	source := &contentv1.RichTextBlockLocale{BlockId: blockID, Value: &contentv1.RichTextBlockLocale_Callout{Callout: &contentv1.CalloutBlockLocale{Content: text("source")}}}
+	for _, test := range []struct {
+		name   string
+		target *contentv1.RichTextBlockLocale
+		want   string
+	}{
+		{"translated", &contentv1.RichTextBlockLocale{BlockId: blockID, Value: &contentv1.RichTextBlockLocale_Callout{Callout: &contentv1.CalloutBlockLocale{Content: text("translated")}}}, "translated"},
+		{"explicit empty", &contentv1.RichTextBlockLocale{BlockId: blockID, Value: &contentv1.RichTextBlockLocale_Callout{Callout: &contentv1.CalloutBlockLocale{}}}, ""},
+		{"missing", nil, "source"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := &contentv1.RichTextDocument{BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Profile: contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, SourceLocale: "en", Base: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{{Block: &contentv1.RichTextBlock{Id: blockID, Value: &contentv1.RichTextBlock_Callout{Callout: &contentv1.CalloutBlock{Props: &contentv1.CalloutProps{}}}}, Placement: &contentv1.ContentBlockPlacement{}}}}, LocaleOverlays: []*contentv1.RichTextLocaleOverlay{{Locale: "en", Blocks: []*contentv1.RichTextBlockLocale{source}}}}
+			if test.target != nil {
+				document.LocaleOverlays = append(document.LocaleOverlays, &contentv1.RichTextLocaleOverlay{Locale: "ko", Blocks: []*contentv1.RichTextBlockLocale{test.target}})
+			}
+			before := proto.Clone(document)
+			localized, err := MaterializeSnapshotRichTextLocale(snapshotFromRichDocument(t, document), "ko")
+			require.NoError(t, err)
+			rendered, err := MaterializeLocalizedRichTextDocument(t.Context(), localized, nil)
+			require.NoError(t, err)
+			require.Equal(t, test.want, rendered.Text)
+			require.True(t, proto.Equal(before, document))
+		})
+	}
 }
 
 func TestMaterializeLocalizedRichTextDocumentRendersParagraphPresentationDeterministically(t *testing.T) {
@@ -402,3 +434,24 @@ func snapshotFromRichDocument(t *testing.T, document *contentv1.RichTextDocument
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestMaterializeMermaidKeepsSourceAndEscapesAuthoredMarkup(t *testing.T) {
+	blockID := uuid.New()
+	document := paragraphDocument(blockID, "")
+	source := "flowchart LR\n  A[<script>unsafe</script>] --> B"
+	document.Base.Nodes[0].Block.Value = &contentv1.RichTextBlock_Mermaid{Mermaid: &contentv1.MermaidBlock{
+		Props: &contentv1.MermaidProps{Source: stringPointer(source)},
+	}}
+	document.LocaleOverlays[0].Blocks[0].Value = &contentv1.RichTextBlockLocale_Mermaid{Mermaid: &contentv1.MermaidBlockLocale{
+		Props: &contentv1.MermaidLocaleProps{Title: stringPointer("<caption>")},
+	}}
+	localized, err := SnapshotToLocalizedRichTextDocument(snapshotFromRichDocument(t, document), "en")
+	require.NoError(t, err)
+	result, err := MaterializeLocalizedRichTextDocument(t.Context(), localized, nil)
+	require.NoError(t, err)
+	require.Contains(t, result.HTML, `class="language-mermaid"`)
+	require.Contains(t, result.HTML, "&lt;script&gt;")
+	require.Contains(t, result.HTML, "&lt;caption&gt;")
+	require.NotContains(t, result.HTML, "<script>")
+	require.Equal(t, "<caption>\n"+source, result.Text)
+}

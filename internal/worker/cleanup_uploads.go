@@ -10,7 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -51,6 +51,8 @@ func (h *Handlers) handleCleanupIncompleteUploads(ctx context.Context) error {
 }
 
 type expiredUploadSession struct {
+	ClientMediaBundleID   *string `gorm:"column:client_media_bundle_id"`
+	ClientMediaManifest   *string `gorm:"column:client_media_manifest"`
 	UploadType            string  `gorm:"column:upload_type"`
 	UploadID              string  `gorm:"column:upload_id"`
 	FileID                string  `gorm:"column:file_id"`
@@ -70,7 +72,7 @@ func (h *Handlers) findExpiredUploadSessions(ctx context.Context, cutoff time.Ti
 		Select(
 			"upload_type", "upload_id", "file_id", "requested_mime", "entity_id", "entity_type",
 			"slot_id", "attempt_id",
-			"expected_current_file_id", "status",
+			"expected_current_file_id", "status", "client_media_bundle_id", "client_media_manifest",
 		).
 		Where("status IN ? AND last_activity_at < ?", expiredUploadCleanupStatuses(), cutoff).
 		Find(&sessions).Error
@@ -122,6 +124,11 @@ func (h *Handlers) cleanupExpiredUploadSession(
 		return false, fmt.Errorf("abort expired multipart upload %s: %w", session.UploadID, err)
 	}
 
+	if session.ClientMediaBundleID != nil && session.ClientMediaManifest != nil {
+		if err := filemedia.CleanupClientMediaStaging(ctx, h.s3Client, h.config.S3Bucket, *session.ClientMediaBundleID, *session.ClientMediaManifest); err != nil {
+			return false, err
+		}
+	}
 	if isExpiredFileIngestLifecycleUploadType(session.UploadType) {
 		if _, err := h.publishExpiredFileIngest(ctx, session, expiredAt); err != nil {
 			// This event is a realtime UI projection. Storage cleanup remains

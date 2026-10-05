@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/httpadmission"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/config"
+	"github.com/echovisionlab/geul-api/internal/mediaruntime"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
@@ -19,6 +22,10 @@ import (
 )
 
 type applicationRuntime struct {
+	ogProcess                          *mediaruntime.OGProcess
+	mediaWorkers                       *mediaruntime.Workers
+	mediaServer                        *http.Server
+	mediaListener                      net.Listener
 	consumerManager                    *mq.ConsumerManager
 	transcodeProgressSubscriber        *mq.BroadcastSubscriber
 	waveformProgressSubscriber         *mq.BroadcastSubscriber
@@ -50,6 +57,28 @@ func initializeApplicationRuntime(
 	}
 	if err := runtime.initializeSubscribers(deps); err != nil {
 		return nil, err
+	}
+
+	runtime.mediaServer, resultErr = newMediaHTTPServer(cfg)
+	if resultErr != nil {
+		return nil, resultErr
+	}
+	runtime.mediaListener, resultErr = net.Listen("tcp", runtime.mediaServer.Addr)
+	if resultErr != nil {
+		return nil, resultErr
+	}
+	runtime.wg.Go(func() {
+		if err := runtime.mediaServer.Serve(runtime.mediaListener); err != nil && err != http.ErrServerClosed {
+			reportRuntimeFailure(runtimeFailures, fmt.Errorf("media delivery: %w", err))
+		}
+	})
+	runtime.mediaWorkers, resultErr = mediaruntime.StartWorkers(ctx, cfg)
+	if resultErr != nil {
+		return nil, fmt.Errorf("initialize media runtime: %w", resultErr)
+	}
+	runtime.ogProcess, resultErr = mediaruntime.NewOGProcess(cfg)
+	if resultErr != nil {
+		return nil, resultErr
 	}
 	runtime.initializeScheduler(cfg, deps)
 	return runtime, nil
@@ -131,8 +160,16 @@ func (r *applicationRuntime) Start(
 	runtimeFailures chan<- error,
 ) {
 	r.wg.Go(func() { authInterceptor.Start(ctx) })
-	r.startHTTPServer("HTTP server", server, runtimeFailures)
-	r.startHTTPServer("MCP private HTTP server", mcpPrivateServer, runtimeFailures)
+	if !r.startHTTPServer("HTTP server", server, runtimeFailures) {
+		return
+	}
+	if !r.startHTTPServer("MCP private HTTP server", mcpPrivateServer, runtimeFailures) {
+		return
+	}
+	if err := r.ogProcess.Start(func(err error) { reportRuntimeFailure(runtimeFailures, err) }); err != nil {
+		reportRuntimeFailure(runtimeFailures, err)
+		return
+	}
 	r.startSubscriber(ctx, "Transcode progress", r.transcodeProgressSubscriber)
 	r.startSubscriber(ctx, "Waveform progress", r.waveformProgressSubscriber)
 	r.startSubscriber(ctx, "Mesh optimization progress", r.meshOptimizationProgressSubscriber)
@@ -144,18 +181,19 @@ func (r *applicationRuntime) Start(
 	}
 }
 
-func (r *applicationRuntime) startHTTPServer(
-	name string,
-	server *http.Server,
-	runtimeFailures chan<- error,
-) {
+func (r *applicationRuntime) startHTTPServer(name string, server *http.Server, runtimeFailures chan<- error) bool {
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		reportRuntimeFailure(runtimeFailures, fmt.Errorf("%s: %w", name, err))
+		return false
+	}
 	r.wg.Go(func() {
 		slog.Info(name+" starting", "address", server.Addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error(name+" error", "error", err)
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			reportRuntimeFailure(runtimeFailures, fmt.Errorf("%s: %w", name, err))
 		}
 	})
+	return true
 }
 
 func newApplicationHTTPServer(mux *http.ServeMux, cfg *config.Config) *http.Server {
@@ -163,7 +201,7 @@ func newApplicationHTTPServer(mux *http.ServeMux, cfg *config.Config) *http.Serv
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Connect-Protocol-Version", "MCP-Protocol-Version"},
-		ExposedHeaders:   []string{"Grpc-Status", "Grpc-Message", "Retry-After", telemetry.RequestIDHeader},
+		ExposedHeaders:   []string{"Grpc-Status", "Grpc-Message", httpadmission.RetryAfter, httpadmission.Challenge, httpadmission.RateLimit, httpadmission.RateLimitPolicy, "Link", telemetry.RequestIDHeader},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -200,6 +238,17 @@ func (r *applicationRuntime) Shutdown(
 	server *http.Server,
 	mcpPrivateServer *http.Server,
 ) bool {
+	if r.ogProcess != nil {
+		if err := r.ogProcess.Shutdown(ctx); err != nil {
+			slog.Error("OG shutdown error", "error", err)
+		}
+	}
+	if r.mediaWorkers != nil {
+		_ = r.mediaWorkers.Close()
+	}
+	if r.mediaServer != nil {
+		shutdownHTTPServer(ctx, "Media delivery", r.mediaServer)
+	}
 	shutdownHTTPServer(ctx, "HTTP server", server)
 	shutdownHTTPServer(ctx, "MCP private HTTP server", mcpPrivateServer)
 	if r.scheduler != nil {
@@ -222,6 +271,20 @@ func shutdownHTTPServer(ctx context.Context, name string, server *http.Server) {
 }
 
 func (r *applicationRuntime) Close() {
+	if r.ogProcess != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = r.ogProcess.Shutdown(ctx)
+		cancel()
+	}
+	if r.mediaWorkers != nil {
+		_ = r.mediaWorkers.Close()
+	}
+	if r.mediaServer != nil {
+		_ = r.mediaServer.Close()
+	}
+	if r.mediaListener != nil {
+		_ = r.mediaListener.Close()
+	}
 	if r.scheduler != nil {
 		r.scheduler.Stop()
 	}

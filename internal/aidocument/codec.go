@@ -186,6 +186,9 @@ func (v *Value) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(parts[0], &v.Kind); err != nil {
 		return err
 	}
+	if bytes.Equal(bytes.TrimSpace(parts[1]), []byte("null")) {
+		return errors.New("compact value payload cannot be null")
+	}
 	switch v.Kind {
 	case ValueKindBoolean:
 		if err := json.Unmarshal(parts[1], &v.Boolean); err != nil {
@@ -248,6 +251,9 @@ func (i *InlineItem) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("inline item %q must contain exactly %d items", i.Kind, want)
 		}
 		for index, target := range targets {
+			if bytes.Equal(bytes.TrimSpace(parts[index+1]), []byte("null")) {
+				return fmt.Errorf("inline item %q item %d cannot be null", i.Kind, index+1)
+			}
 			if err := json.Unmarshal(parts[index+1], target); err != nil {
 				return fmt.Errorf("inline item %q item %d: %w", i.Kind, index+1, err)
 			}

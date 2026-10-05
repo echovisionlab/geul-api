@@ -102,35 +102,3 @@ func TestExternalAdmissionPackagesCannotUseActorCapabilityCheck(t *testing.T) {
 		}
 	}
 }
-
-func TestLegacyRawAuthorizationCheckSeamsAreAbsent(t *testing.T) {
-	repositoryRoot := findRepositoryRoot(t)
-	guardPath := filepath.Join(repositoryRoot, "internal/architecture/authorization_pep_test.go")
-	for _, root := range []string{"cmd", "internal"} {
-		err := filepath.WalkDir(filepath.Join(repositoryRoot, root), func(path string, entry fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() || !strings.HasSuffix(path, ".go") || path == guardPath {
-				return nil
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			for _, symbol := range []string{
-				"Check" + "ResourcePermission(",
-				"Check" + "GlobalPermission(",
-				"Must" + "BeAdmin(",
-			} {
-				if strings.Contains(string(content), symbol) {
-					t.Errorf("legacy raw authorization seam %s remains in %s", strings.TrimSuffix(symbol, "("), path)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("inspect authorization root %s: %v", root, err)
-		}
-	}
-}

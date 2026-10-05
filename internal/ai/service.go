@@ -100,8 +100,16 @@ func canUseAI(
 			return false, nil
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
+	case managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST:
+		can, err := policyv1.Artist.Edit(targetID)
+		if err != nil {
+			return false, nil
+		}
+		return canManageAIResource(ctx, spiceDB, can, user)
 	case managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE,
 		managev1.AIResourceType_AI_RESOURCE_TYPE_FORM,
+		managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE,
+		managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL,
 		managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN,
 		managev1.AIResourceType_AI_RESOURCE_TYPE_EMAIL_TEMPLATE:
 		return false, nil

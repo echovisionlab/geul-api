@@ -2,6 +2,7 @@ package query
 
 import (
 	"database/sql"
+	"math"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -38,6 +39,29 @@ func TestNormalizePaginationParams(t *testing.T) {
 	limit, offset := NormalizePaginationParams(&commonv1.PaginationRequest{Limit: 500, Offset: -10})
 	assert.Equal(t, int32(100), limit)
 	assert.Zero(t, offset)
+}
+
+func TestPaginationHasMoreAtInt32Boundary(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		page  Pagination
+		total int64
+		want  bool
+	}{
+		{name: "maximum offset exhausted", page: Pagination{Limit: 100, Offset: math.MaxInt32}, total: 6},
+		{name: "sum reaches maximum", page: Pagination{Limit: 100, Offset: math.MaxInt32 - 100}, total: math.MaxInt32},
+		{name: "one more row near maximum", page: Pagination{Limit: 100, Offset: math.MaxInt32 - 101}, total: math.MaxInt32, want: true},
+		{name: "sum crosses maximum", page: Pagination{Limit: 100, Offset: math.MaxInt32 - 99}, total: math.MaxInt32},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, test.page.HasMore(test.total))
+			response := test.page.BuildResponse(test.total)
+			assert.Equal(t, test.want, response.HasMore)
+			assert.Equal(t, test.page.Offset, response.Offset)
+			assert.Equal(t, test.page.Limit, response.Limit)
+			assert.Equal(t, int32(test.total), response.Total)
+		})
+	}
 }
 
 func TestSortConfig(t *testing.T) {

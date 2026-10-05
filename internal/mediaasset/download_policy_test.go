@@ -322,7 +322,7 @@ func newFileDownloadPolicyDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`ATTACH DATABASE ':memory:' AS kratos`).Error)
 	require.NoError(t, db.Exec(`
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
 			extension TEXT NOT NULL,
 			mime_type TEXT NOT NULL,

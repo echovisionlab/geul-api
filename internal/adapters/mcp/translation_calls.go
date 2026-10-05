@@ -11,6 +11,9 @@ import (
 )
 
 func (tools *TranslationTools) listJobs(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if err := rejectNullArguments(arguments, "p", "d", "tl", "sl", "s", "n", "o", "k", "z"); err != nil {
+		return executionError(err)
+	}
 	var input translationJobsListArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)

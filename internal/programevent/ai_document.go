@@ -37,6 +37,8 @@ type AIDocumentState struct {
 	LocaleExists      bool
 	LocalizedDocument *contentv1.LocalizedRichTextDocument
 	ViewerMemberID    string
+	Title             string
+	Summary           *string
 }
 
 // AIDocumentCommand is the already generated-catalog-compiled Program Event
@@ -53,6 +55,16 @@ type AIDocumentCommand struct {
 	Batch                  *contentblock.Batch
 	CreateTranslation      bool
 	DeleteTranslation      bool
+	Metadata               AIDocumentMetadataPatch
+}
+
+// AIDocumentMetadataPatch keeps Program Event-owned metadata separate from
+// the generated Rich Text batch while sharing its authorization and CAS.
+type AIDocumentMetadataPatch struct {
+	SetTitle   bool
+	Title      *string
+	SetSummary bool
+	Summary    *string
 }
 
 type AIDocumentResult struct {
@@ -161,7 +173,7 @@ func loadProgramEventAIDocumentRoot(
 	lock string,
 ) (model.ProgramEvent, error) {
 	query := tx.WithContext(ctx).
-		Select("id", "content_document_id", "status", "source_locale").
+		Select("id", "title", "content_document_id", "status", "source_locale").
 		Where("id = ?", eventID)
 	if lock != "" {
 		query = query.Clauses(clause.Locking{Strength: lock})
@@ -211,12 +223,17 @@ func (s *ProgramEventService) loadAIDocumentStateAfterAuthorization(
 	if locale == sourceState.SourceLocale && !localeExists {
 		return AIDocumentState{}, errs.FailedPrecondition("Program Event source locale metadata is not initialized")
 	}
+	var summary *string
+	if localeState.TargetMetadata != nil {
+		summary = localeState.TargetMetadata.Summary
+	}
 	return AIDocumentState{
 		EventID: root.ID, ContentDocumentID: documentID,
 		DocumentRevision: localeState.Snapshot.Document.Revision.String(),
 		SourceLocale:     sourceState.SourceLocale, RequestedLocale: locale,
 		LocaleExists: localeExists, LocalizedDocument: document, ViewerMemberID: viewerMemberID,
 		TargetRevision: optionalProgramEventTargetRevision(localeState, locale),
+		Title:          root.Title, Summary: summary,
 	}, nil
 }
 
@@ -375,6 +392,9 @@ func validateCompiledProgramEventAIDocumentCommand(
 		command.Batch.ContributorMemberIDs[0] != command.ContributorMemberID) {
 		return errs.InvalidArgument("operations", "compiled Program Event content batch must match the locked state")
 	}
+	if command.Metadata.SetTitle && command.RequestedLocale != state.SourceLocale {
+		return errs.InvalidArgument("title", "Program Event title is source-owned")
+	}
 	return nil
 }
 
@@ -425,7 +445,7 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 	if command.DeleteTranslation {
 		lifecycleOperations++
 	}
-	if lifecycleOperations > 1 || (lifecycleOperations != 0 && command.Batch != nil) || (lifecycleOperations == 0 && command.Batch == nil) {
+	if lifecycleOperations > 1 || (lifecycleOperations != 0 && (command.Batch != nil || command.Metadata.SetTitle || command.Metadata.SetSummary)) || (lifecycleOperations == 0 && command.Batch == nil) {
 		return AIDocumentResult{}, errs.InvalidArgument("operations", "translation lifecycle must be exclusive and content mutations require one compiled batch")
 	}
 
@@ -516,7 +536,18 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 			if command.ExpectedTargetRevision != nil {
 				return AIDocumentResult{}, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 			}
-			blockResult, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+			if command.Metadata.SetTitle || command.Metadata.SetSummary {
+				blockResult, err = s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, batch, fence,
+					func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+						changed, sourceChanged, _, err := applyProgramEventLocaleMetadataMutation(
+							ctx, tx, command.EventID, locale, command.Metadata.Title, command.Metadata.SetTitle,
+							command.Metadata.Summary, command.Metadata.SetSummary, now,
+						)
+						return contentblock.MetadataEffect{Changed: changed, AffectsTranslationSource: sourceChanged, ChangedLocales: []string{locale}}, err
+					})
+			} else {
+				blockResult, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+			}
 			if err != nil {
 				return AIDocumentResult{}, err
 			}
@@ -528,6 +559,7 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 					Batch: batch, ExpectedDocumentRevision: command.ExpectedRevision,
 					ExpectedTargetRevision: command.ExpectedTargetRevision,
 					AllowCreate:            true, SeedSourceOnCreate: true, Now: now, Fence: fence,
+					SetSummary: command.Metadata.SetSummary, Summary: command.Metadata.Summary,
 				},
 			)
 			if applyErr != nil {

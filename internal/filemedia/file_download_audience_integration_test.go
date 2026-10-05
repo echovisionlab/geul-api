@@ -105,6 +105,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 			Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
 			AudienceSegmentIds: []string{segmentID},
+			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED),
 		}),
 	)
 	require.NoError(t, err)
@@ -154,6 +155,10 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 			EntityId:   postID,
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 			Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
+			ObservedPolicy: observedFileDownloadPolicy(
+				managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
+				segmentID,
+			),
 		}),
 	)
 	require.NoError(t, err)

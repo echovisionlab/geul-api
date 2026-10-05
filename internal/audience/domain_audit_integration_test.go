@@ -195,6 +195,10 @@ func TestAudienceDomainAuditsArchiveCascadeAndRestoreIntegration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.UpdateSegment(ctx, connect.NewRequest(&managev1.UpdateSegmentRequest{
 		Id: segmentID, Name: &name, Config: &managev1.SegmentConfig{},
+		Observed: &managev1.SegmentConfigSnapshot{
+			SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER,
+			Config:      &managev1.SegmentConfig{},
+		},
 	}))
 	require.NoError(t, err)
 

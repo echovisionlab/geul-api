@@ -23,6 +23,13 @@ func TestShareLinkValidateRequiresContractedExistingTarget(t *testing.T) {
 	db := newShareLinkValidationUnitDB(t)
 	service := sharelinkpublic.NewService(db, NewPublicTargetResolver(db))
 
+	artistID := uuid.NewString()
+	require.NoError(t, db.Exec(`INSERT INTO artist (id, slug) VALUES (?, ?)`, artistID, "artist-slug").Error)
+	insertShareLinkValidationFixture(t, db, "artist-token", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST.String(), artistID)
+	artist := validateShareLinkUnit(t, service, "artist-token")
+	require.True(t, artist.Valid)
+	require.Equal(t, "artist-slug", artist.GetSlug())
+
 	privacyID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO privacy_history (id, status, effective_from) VALUES (?, ?, ?)`, privacyID, managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(), time.Now().Add(time.Hour)).Error)
 	insertShareLinkValidationFixture(t, db, "privacy-token", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(), privacyID)
@@ -95,7 +102,10 @@ func newShareLinkValidationUnitDB(t *testing.T) *gorm.DB {
 		CREATE TABLE post (id TEXT PRIMARY KEY, slug TEXT);
 		CREATE TABLE page (id TEXT PRIMARY KEY, slug TEXT);
 		CREATE TABLE work (id TEXT PRIMARY KEY, slug TEXT);
+		CREATE TABLE release (id TEXT PRIMARY KEY, slug TEXT);
 		CREATE TABLE form (id TEXT PRIMARY KEY, slug TEXT);
+		CREATE TABLE label (id TEXT PRIMARY KEY, slug TEXT);
+		CREATE TABLE artist (id TEXT PRIMARY KEY, slug TEXT);
 		CREATE TABLE privacy_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME);
 		CREATE TABLE terms_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME);
 	`).Error)

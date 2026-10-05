@@ -16,10 +16,11 @@ import (
 )
 
 type pageLocaleMetadataRow struct {
-	Locale    string    `gorm:"column:locale"`
-	Title     *string   `gorm:"column:title"`
-	Summary   *string   `gorm:"column:summary"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
+	Locale        string    `gorm:"column:locale"`
+	Title         *string   `gorm:"column:title"`
+	Summary       *string   `gorm:"column:summary"`
+	IncarnationID uuid.UUID `gorm:"column:incarnation_id"`
+	UpdatedAt     time.Time `gorm:"column:updated_at"`
 }
 
 type pageTargetLocaleState struct {
@@ -71,7 +72,7 @@ func loadOptionalPageLocaleMetadataRow(
 	forUpdate bool,
 ) (pageLocaleMetadataRow, bool, error) {
 	query := tx.WithContext(ctx).Table("page_translation").
-		Select("locale", "title", "summary", "updated_at").
+		Select("locale", "title", "summary", "incarnation_id", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", pageID, locale)
 	if forUpdate {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -87,12 +88,16 @@ func loadOptionalPageLocaleMetadataRow(
 }
 
 func derivePageTargetRevision(documentRevision string, metadata pageLocaleMetadataRow) (string, error) {
+	if metadata.IncarnationID == uuid.Nil {
+		return "", errors.New("Page translation locale incarnation is missing")
+	}
 	updatedAt := metadata.UpdatedAt
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
-		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
+		LocaleExists: true, DocumentRevision: documentRevision,
+		LocaleIncarnation: metadata.IncarnationID.String(), LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -166,7 +171,7 @@ func loadPageTargetLocaleState(
 	state.TargetMetadata = &target
 	state.TargetRevision, err = derivePageTargetRevision(snapshot.Document.Revision.String(), target)
 	if err != nil {
-		return pageTargetLocaleState{}, err
+		return pageTargetLocaleState{}, errs.Internal(err)
 	}
 	return state, nil
 }
@@ -322,17 +327,23 @@ func applyPageTargetLocaleBatchWithRevisionPolicy(
 				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 			}
 			if state.TargetMetadata == nil {
-				created := tx.WithContext(ctx).Exec(
-					"INSERT INTO page_translation (entity_id, locale, title, summary, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?, ?)",
+				var inserted struct {
+					IncarnationID uuid.UUID `gorm:"column:incarnation_id"`
+				}
+				created := tx.WithContext(ctx).Raw(
+					"INSERT INTO page_translation (entity_id, locale, title, summary, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?, ?) RETURNING incarnation_id",
 					pageID, locale, patch.Title, patch.Summary, now, now,
-				)
+				).Scan(&inserted)
 				if created.Error != nil {
 					return contentblock.MetadataEffect{}, errs.Internal(created.Error)
 				}
-				if created.RowsAffected != 1 {
+				if created.RowsAffected != 1 || inserted.IncarnationID == uuid.Nil {
 					return contentblock.MetadataEffect{}, errs.InternalMsg("Page target locale could not be created")
 				}
-				final = pageLocaleMetadataRow{Locale: locale, Title: cloneOptionalString(patch.Title), Summary: cloneOptionalString(patch.Summary), UpdatedAt: now}
+				final = pageLocaleMetadataRow{
+					Locale: locale, Title: cloneOptionalString(patch.Title), Summary: cloneOptionalString(patch.Summary),
+					IncarnationID: inserted.IncarnationID, UpdatedAt: now,
+				}
 				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 			}
 			final = *state.TargetMetadata

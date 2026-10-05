@@ -98,6 +98,9 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	_, err = workSvc.UpdateWork(ctx, connect.NewRequest(&managev1.UpdateWorkRequest{
 		Id:         published.Msg.Id,
 		MapPlaceId: &place.Msg.Id,
+		ObservedClients: &managev1.WorkClientsUpdate{
+			ClientIds: []string{},
+		},
 		Clients: &managev1.WorkClientsUpdate{
 			ClientIds: []string{secondClient.Msg.Id, firstClient.Msg.Id},
 		},
@@ -105,6 +108,9 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	require.NoError(t, err)
 	_, err = workSvc.UpdateWork(ctx, connect.NewRequest(&managev1.UpdateWorkRequest{
 		Id: published.Msg.Id,
+		ObservedClients: &managev1.WorkClientsUpdate{
+			ClientIds: []string{secondClient.Msg.Id, firstClient.Msg.Id},
+		},
 		Clients: &managev1.WorkClientsUpdate{
 			ClientIds: []string{uuid.NewString()},
 		},

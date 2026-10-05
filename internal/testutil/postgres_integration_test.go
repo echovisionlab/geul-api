@@ -5,12 +5,14 @@ package testutil
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +27,6 @@ func TestSplitRepoPathForLegacySuffix(t *testing.T) {
 	tests := map[string]string{
 		"apps/collab":                        filepath.Join(string(filepath.Separator), "workspace", "geul-editor-collab"),
 		"apps/web/.next":                     filepath.Join(string(filepath.Separator), "workspace", "geul-web", ".next"),
-		"apps/transcoder":                    filepath.Join(string(filepath.Separator), "workspace", "geul-transcoder"),
 		"infra/kratos/kratos.yml":            filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "kratos", "kratos.yml"),
 		"infra/oathkeeper/rules.yml":         filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "oathkeeper", "rules.yml"),
 		"infra/spicedb/schema.generated.zed": filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "spicedb", "schema.generated.zed"),
@@ -139,6 +140,21 @@ func TestWaitForAppPostgresStopsOnCanceledContext(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("waitForAppPostgres did not stop after context cancellation")
 	}
+}
+
+func TestWaitForAppPostgresRetriesTransientPingFailure(t *testing.T) {
+	database, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if database != nil {
+		t.Cleanup(func() { require.NoError(t, database.Close()) })
+	}
+	require.NoError(t, err)
+	mock.ExpectPing().WillReturnError(errors.New("connection refused during network attachment"))
+	mock.ExpectPing()
+	mock.ExpectClose()
+
+	require.NoError(t, waitForAppPostgres(t.Context(), database))
+	require.NoError(t, database.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestIntegrationProcessCleanupRegistryRunsOnceInLIFOOrder(t *testing.T) {

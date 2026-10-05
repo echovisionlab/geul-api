@@ -78,6 +78,13 @@ func (m *TranslationJobManager) resolveDeliveryGenerators(
 			return generators, nil
 		}
 	}
+	// Provider availability and persisted provider-document mismatches are
+	// durable configuration failures. Other resolver failures (for example a
+	// temporary database/network error while loading provider configuration)
+	// must leave the job untouched so the queue can retry it.
+	if !permanentTranslationGeneratorResolutionFailure(err) {
+		return nil, err
+	}
 	if resumeRunning {
 		return nil, m.handleRunningDeliveryFailure(
 			ctx,
@@ -87,6 +94,11 @@ func (m *TranslationJobManager) resolveDeliveryGenerators(
 		)
 	}
 	return nil, m.handleQueuedDeliveryFailure(ctx, job, err)
+}
+
+func permanentTranslationGeneratorResolutionFailure(err error) bool {
+	return errors.Is(err, errTranslationProviderUnavailable) ||
+		errors.Is(err, errTranslationProviderDocumentHandleMismatch)
 }
 
 func exactTranslationProviderDocumentGenerator(

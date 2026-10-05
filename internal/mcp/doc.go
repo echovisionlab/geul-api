@@ -1,11 +1,11 @@
 // Package mcp implements Geul's MCP 2025-11-25 Streamable HTTP boundary.
 //
-// Public Geul Personal Access Token authentication terminates at Oathkeeper.
+// Public Geul MCP OAuth authentication terminates at Oathkeeper.
 // The handler accepts only an already authenticated Principal in its request
 // context and rejects any residual Authorization header.
 //
-// The PAT owner supplies the credential ID and user-facing credential name
-// used for security audit and presence attribution. initialize.clientInfo is
+// The trusted gateway supplies the OAuth client ID and user-facing delegation
+// name used for security audit and presence attribution. initialize.clientInfo is
 // untrusted protocol metadata only; it never determines the Member, credential,
 // actor, or display attribution.
 //

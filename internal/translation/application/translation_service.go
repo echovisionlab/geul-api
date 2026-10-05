@@ -251,7 +251,7 @@ func (s *TranslationService) UpdateTranslationSettings(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	updated, err := s.updateTranslationRuntimeSettings(ctx, settingsCan, req.Msg.Settings)
+	updated, err := s.updateTranslationRuntimeSettings(ctx, settingsCan, req.Msg)
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
@@ -279,7 +279,7 @@ func requireTranslationAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) e
 func (s *TranslationService) updateTranslationRuntimeSettings(
 	ctx context.Context,
 	settingsCan policyv1.Can,
-	requestedSettings *managev1.TranslationSettings,
+	request *managev1.UpdateTranslationSettingsRequest,
 ) (translationRuntimeSettings, error) {
 	var updated translationRuntimeSettings
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -290,10 +290,6 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, settingsCan); err != nil {
 			return err
 		}
-		requested, err := translationRuntimeSettingsFromProto(requestedSettings)
-		if err != nil {
-			return errs.InvalidArgument("settings", err.Error())
-		}
 		current, err := normalizeTranslationRuntimeSettings(translationRuntimeSettings{
 			DefaultLocale:  row.DefaultLocale,
 			ProtectedTerms: append([]string(nil), row.ProtectedTerms...),
@@ -302,17 +298,24 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 		if err != nil {
 			return err
 		}
+		requested, err := applyTranslationRuntimeSettingsUpdate(current, request)
+		if err != nil {
+			return errs.InvalidArgument("settings", err.Error())
+		}
 		fields := translationRuntimeSettingsChangedFields(current, requested)
 		if len(fields) == 0 {
 			updated = current
 			return nil
 		}
-		now := time.Now().UTC()
-		if err := tx.Model(&row).Updates(map[string]any{
-			"default_locale":  requested.DefaultLocale,
-			"protected_terms": pq.Array(requested.ProtectedTerms),
-			"updated_at":      now,
-		}).Error; err != nil {
+		now := tx.NowFunc().UTC()
+		updates := map[string]any{"updated_at": now}
+		if current.DefaultLocale != requested.DefaultLocale {
+			updates["default_locale"] = requested.DefaultLocale
+		}
+		if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
+			updates["protected_terms"] = pq.Array(requested.ProtectedTerms)
+		}
+		if err := tx.Model(&row).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
 			return err
 		}
 		if s.auditWriter != nil {
@@ -322,7 +325,7 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 				return err
 			}
 		}
-		requested.UpdatedAt = &now
+		requested.UpdatedAt = &row.UpdatedAt
 		updated = requested
 		return nil
 	})
@@ -361,7 +364,7 @@ func (s *TranslationService) ListTranslationJobs(
 	}
 
 	limit, offset := queryutil.NormalizePaginationParams(req.Msg.Pagination)
-	query, err = translationJobSortConfig.ApplySort(query, req.Msg.Sorts)
+	query, err = applyTranslationJobSort(query, req.Msg.Sorts)
 	if err != nil {
 		return nil, err
 	}
@@ -371,7 +374,7 @@ func (s *TranslationService) ListTranslationJobs(
 
 	resp := &managev1.ListTranslationJobsResponse{
 		Jobs:       make([]*managev1.TranslationJob, 0, len(jobs)),
-		Pagination: &commonv1.PaginationResponse{Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total)},
+		Pagination: &commonv1.PaginationResponse{Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total},
 	}
 	for _, job := range jobs {
 		if err := validateTranslationJobRequester(&job); err != nil {
@@ -380,4 +383,17 @@ func (s *TranslationService) ListTranslationJobs(
 		resp.Jobs = append(resp.Jobs, toProtoTranslationJob(job))
 	}
 	return connect.NewResponse(resp), nil
+}
+
+func applyTranslationJobSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.DB, error) {
+	query, err := translationJobSortConfig.ApplySort(query, sorts)
+	if err != nil {
+		return nil, err
+	}
+	if len(sorts) != 0 {
+		// Explicit sort fields can tie. Preserve a unique order across offset
+		// pages just as the default sort does.
+		query = query.Order("id ASC")
+	}
+	return query, nil
 }

@@ -3,7 +3,7 @@ package application
 import (
 	"testing"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 

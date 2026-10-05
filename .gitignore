@@ -12,3 +12,7 @@ integration.test
 main
 service.test
 *.test
+
+media/**/node_modules/
+media/**/dist/
+media/**/coverage/

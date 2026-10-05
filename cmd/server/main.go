@@ -49,7 +49,6 @@ func run() int {
 	defer deps.Close()
 
 	mux := http.NewServeMux()
-	registerHealthRoutes(mux, newPostgresPGMQReadinessCheck(deps.sqlDB))
 	if err := registerAuthenticationRoutes(mux, cfg, deps); err != nil {
 		return logStartupFailure("register authentication routes", err)
 	}
@@ -82,6 +81,16 @@ func run() int {
 	if err != nil {
 		return logStartupFailure("initialize application runtime", err)
 	}
+	postgresReady := newPostgresPGMQReadinessCheck(deps.sqlDB)
+	registerHealthRoutes(mux, func(ctx context.Context) error {
+		if err := postgresReady(ctx); err != nil {
+			return err
+		}
+		if runtime.mediaWorkers == nil || !runtime.mediaWorkers.Healthy() {
+			return fmt.Errorf("media consumers not ready")
+		}
+		return runtime.ogProcess.Ready(ctx)
+	})
 	shutdownComplete := false
 	defer func() {
 		if !shutdownComplete {
@@ -103,7 +112,7 @@ func run() int {
 	sig, runtimeErr := awaitShutdown(ctx, cancel, signals, runtimeFailures)
 	logShutdownReason(sig, runtimeErr)
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Duration(cfg.Media.OGShutdownTimeoutMS)*time.Millisecond+10*time.Second)
 	defer shutdownCancel()
 	shutdownComplete = true
 	if !runtime.Shutdown(shutdownCtx, server, mcpPrivateServer) {

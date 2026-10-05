@@ -76,6 +76,31 @@ func TestSitemapServiceDocumentsUsePublishedReadModelEntitiesIntegration(t *test
 		managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), now, 2026, 5, workID,
 	).Error)
 
+	artistID := insertSitemapContentDocument(t, db, "compact")
+	artistSlug := "sitemap-artist-" + suffix
+	require.NoError(t, db.Exec(`
+		INSERT INTO artist (id, slug, status, published_at, content_document_id)
+		VALUES (?::uuid, ?, ?, ?, ?::uuid)`,
+		artistID, artistSlug, managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String(), now, artistID,
+	).Error)
+
+	labelID := insertSitemapContentDocument(t, db, "compact")
+	labelSlug := "sitemap-label-" + suffix
+	require.NoError(t, db.Exec(`
+		INSERT INTO label (id, slug, status, published_at, content_document_id)
+		VALUES (?::uuid, ?, ?, ?, ?::uuid)`,
+		labelID, labelSlug, managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String(), now, labelID,
+	).Error)
+
+	releaseID := insertSitemapContentDocument(t, db, "compact")
+	releaseSlug := "sitemap-release-" + suffix
+	require.NoError(t, db.Exec(`
+		INSERT INTO release (id, slug, type, status, published_at, content_document_id)
+		VALUES (?::uuid, ?, ?::release_type, ?, ?, ?::uuid)`,
+		releaseID, releaseSlug, managev1.ReleaseType_RELEASE_TYPE_SINGLE.String(),
+		managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), now, releaseID,
+	).Error)
+
 	categorySlug := "sitemap-category-" + suffix
 	tagSlug := "sitemap-tag-" + suffix
 	require.NoError(t, db.Exec(
@@ -122,6 +147,9 @@ func TestSitemapServiceDocumentsUsePublishedReadModelEntitiesIntegration(t *test
 	require.Equal(t, 1, strings.Count(pageDoc.Msg.Content, "<loc>"+origin+"/sitemap</loc>"))
 	assertSitemapDocumentContains(t, svc, openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_POST, origin+"/posts/"+postSlug)
 	assertSitemapDocumentContains(t, svc, openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_WORK, origin+"/works/"+workSlug)
+	assertSitemapDocumentContains(t, svc, openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_ARTIST, origin+"/artist/"+artistSlug)
+	assertSitemapDocumentContains(t, svc, openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_LABEL, origin+"/label/"+labelSlug)
+	assertSitemapDocumentContains(t, svc, openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_RELEASE, origin+"/release/"+releaseSlug)
 	assertSitemapDocumentContains(t, svc, openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_TAXONOMY,
 		origin+"/category/"+categorySlug,
 		origin+"/tag/"+tagSlug,

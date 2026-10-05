@@ -11,6 +11,9 @@ const (
 	KindPage          Kind = "page"
 	KindPost          Kind = "post"
 	KindWork          Kind = "work"
+	KindRelease       Kind = "release"
+	KindArtist        Kind = "artist"
+	KindLabel         Kind = "label"
 	KindMenu          Kind = "menu"
 	KindEmailTemplate Kind = "email_template"
 	KindEmailLayout   Kind = "email_layout"
@@ -43,6 +46,14 @@ var definitions = mustDefinitions([]Definition{
 	definition(KindProgramEvent, managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_PROGRAM_EVENT,
 		"program_event", "program_event_translation",
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PROGRAM_EVENT),
+	definition(KindRelease, managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_RELEASE,
+		"release", "release_translation",
+		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE),
+	definition(KindArtist, managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_ARTIST,
+		"artist", "artist_translation",
+		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST),
+	definition(KindLabel, managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_LABEL, "label", "label_translation",
+		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_LABEL),
 	definition(KindMenu, managev1.TranslationEntityType_TRANSLATION_ENTITY_TYPE_MENU,
 		"menu", "menu_translation",
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_MENU),

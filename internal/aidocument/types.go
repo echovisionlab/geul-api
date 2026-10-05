@@ -20,6 +20,9 @@ const (
 	DomainPage          Domain = "page"
 	DomainWork          Domain = "work"
 	DomainProgramEvent  Domain = "program_event"
+	DomainRelease       Domain = "release"
+	DomainArtist        Domain = "artist"
+	DomainLabel         Domain = "label"
 	DomainMenu          Domain = "menu"
 	DomainEmailTemplate Domain = "email_template"
 	DomainEmailLayout   Domain = "email_layout"
@@ -35,6 +38,9 @@ var supportedDomains = [...]Domain{
 	DomainPage,
 	DomainWork,
 	DomainProgramEvent,
+	DomainRelease,
+	DomainArtist,
+	DomainLabel,
 	DomainMenu,
 	DomainEmailTemplate,
 	DomainEmailLayout,

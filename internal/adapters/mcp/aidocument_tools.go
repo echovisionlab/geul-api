@@ -1,12 +1,10 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
@@ -38,7 +36,7 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentRead, Title: "Read AI document",
 		Description: "Read a compact outline, selected blocks, or selected fields by stable handles. " +
-			"Pass the canonical document UUID d returned by document_list or document_open.",
+			"Pass the canonical document UUID d returned by document_list or document_open." + syncRequiredGuidance,
 		InputSchema: readInputSchema(), OutputSchema: projectionOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -47,8 +45,8 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolParagraphCreate, Title: "Create document paragraph",
 		Description: "Create one plain-text Paragraph Block in an existing document. " +
-			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID.",
-		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
 		Meta:            oauthSecurityMeta(),
@@ -56,8 +54,8 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolParagraphUpdate, Title: "Update document paragraph",
 		Description: "Replace the plain text of one existing Paragraph Block. " +
-			"Read the Block first and pass its stable block_id with the exact current document and target revisions.",
-		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the Block first and pass its stable block_id with the exact current document and target revisions." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -65,17 +63,18 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
-			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale.",
-		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
 	},
 	{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
-		Description: "Update locale-owned title or summary for a Post, Work, or Page, and source-owned category_ids or tag_ids for a Post. " +
-			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation.",
-		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: json.RawMessage(focusedMutationOutputJSONSchema),
+		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release has no summary field. " +
+			"For Program Event, clear_summary removes the source summary; use an empty summary string for an existing target locale's explicit empty value. " +
+			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -83,7 +82,7 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentValidate, Title: "Validate AI document mutation",
 		Description: "Dry-run compact typed DCDP/1 operations without mutating the document when the user explicitly asks to validate or preview an advanced batch. " +
-			"If the user then chooses to apply it, pass the returned normalized operations to document_apply.",
+			"If the user then chooses to apply it, pass the returned normalized operations to document_apply." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: validationOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
@@ -92,7 +91,7 @@ var documentTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentApply, Title: "Apply AI document mutation",
 		Description: "Apply an advanced typed DCDP/1 operation batch that the focused paragraph tools cannot represent. " +
-			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run.",
+			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: acceptedOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -105,14 +104,20 @@ func mutationInputSchema() json.RawMessage {
 }
 
 func validationOutputSchema() json.RawMessage {
-	return json.RawMessage(validationOutputJSONSchema)
+	return outputSchemaWithSync(validationOutputJSONSchema)
 }
 
-func openInputSchema() json.RawMessage        { return json.RawMessage(openInputJSONSchema) }
-func openOutputSchema() json.RawMessage       { return json.RawMessage(openOutputJSONSchema) }
-func readInputSchema() json.RawMessage        { return json.RawMessage(readInputJSONSchema) }
-func projectionOutputSchema() json.RawMessage { return json.RawMessage(projectionOutputJSONSchema) }
-func acceptedOutputSchema() json.RawMessage   { return json.RawMessage(acceptedOutputJSONSchema) }
+func openInputSchema() json.RawMessage  { return json.RawMessage(openInputJSONSchema) }
+func openOutputSchema() json.RawMessage { return json.RawMessage(openOutputJSONSchema) }
+func readInputSchema() json.RawMessage  { return json.RawMessage(readInputJSONSchema) }
+func projectionOutputSchema() json.RawMessage {
+	return outputSchemaWithSync(projectionOutputJSONSchema)
+}
+func acceptedOutputSchema() json.RawMessage { return mutationOutputSchema(acceptedOutputJSONSchema) }
+
+func mutationOutputSchema(successJSON string) json.RawMessage {
+	return outputSchemaWithSync(`{"type":"object","oneOf":[` + successJSON + `,` + validationOutputJSONSchema + `]}`)
+}
 
 // AIDocumentTools is a static MCP registry and dispatcher backed by the same
 // application service used by the generated AIDocumentService transport.
@@ -198,13 +203,13 @@ type paragraphCreateArguments struct {
 	focusedMutationArguments
 	Parent core.BlockID `json:"parent_block_id,omitempty"`
 	After  core.BlockID `json:"after_block_id,omitempty"`
-	Text   string       `json:"text"`
+	Text   *string      `json:"text"`
 }
 
 type paragraphUpdateArguments struct {
 	focusedMutationArguments
 	Block core.BlockID `json:"block_id"`
-	Text  string       `json:"text"`
+	Text  *string      `json:"text"`
 }
 
 type blockDeleteArguments struct {
@@ -214,11 +219,12 @@ type blockDeleteArguments struct {
 
 type metadataUpdateArguments struct {
 	focusedMutationArguments
-	Title        *string   `json:"title,omitempty"`
-	Summary      *string   `json:"summary,omitempty"`
-	ClearSummary bool      `json:"clear_summary,omitempty"`
-	CategoryIDs  *[]string `json:"category_ids,omitempty"`
-	TagIDs       *[]string `json:"tag_ids,omitempty"`
+	Title          *string                  `json:"title,omitempty"`
+	Summary        *string                  `json:"summary,omitempty"`
+	ClearSummary   bool                     `json:"clear_summary,omitempty"`
+	CategoryIDs    *[]string                `json:"category_ids,omitempty"`
+	TagIDs         *[]string                `json:"tag_ids,omitempty"`
+	DocumentLayout *documentLayoutArguments `json:"document_layout,omitempty"`
 }
 
 func (tools *AIDocumentTools) open(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -266,6 +272,10 @@ func (tools *AIDocumentTools) read(ctx context.Context, arguments mcpserver.Tool
 	}
 	projection, err := tools.application.Read(ctx, request)
 	if err != nil {
+		var cursorError *core.CursorError
+		if errors.As(err, &cursorError) {
+			return syncRequiredResult("read_continuation_invalid", cursorError.CurrentDocumentRevision, cursorError.CurrentTargetRevision, nil, input, true)
+		}
 		return expectedToolError(err)
 	}
 	encoded, err := core.EncodeProjection(projection)
@@ -280,10 +290,16 @@ func (tools *AIDocumentTools) createParagraph(ctx context.Context, arguments mcp
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if input.Text == nil {
+		return executionError(errors.New("text is required and must be a string"))
+	}
+	if err := rejectNullArguments(arguments, "parent_block_id", "after_block_id"); err != nil {
+		return executionError(err)
+	}
 	block := core.BlockID(uuid.NewString())
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
 		core.InsertBlockOperation(block, "paragraph", input.Parent, input.After),
-		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(input.Text))),
+		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
 	if err != nil {
 		return executionError(err)
@@ -296,8 +312,11 @@ func (tools *AIDocumentTools) updateParagraph(ctx context.Context, arguments mcp
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if input.Text == nil {
+		return executionError(errors.New("text is required and must be a string"))
+	}
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
-		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(input.Text))),
+		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
 	if err != nil {
 		return executionError(err)
@@ -322,11 +341,20 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcps
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if err := rejectNullArguments(arguments, "title", "summary", "clear_summary", "category_ids", "tag_ids", "document_layout"); err != nil {
+		return executionError(err)
+	}
 	if input.Summary != nil && input.ClearSummary {
 		return executionError(errors.New("summary and clear_summary cannot be used together"))
 	}
+	if input.Profile == core.DomainRelease && (input.Summary != nil || input.ClearSummary) {
+		return executionError(errors.New("Release documents have no summary field"))
+	}
 	if input.Profile != core.DomainPost && (input.CategoryIDs != nil || input.TagIDs != nil) {
 		return executionError(errors.New("category_ids and tag_ids are supported only for Post documents"))
+	}
+	if input.DocumentLayout != nil && input.Profile != core.DomainPage {
+		return executionError(errors.New("document_layout here is supported only for Page documents; use post_settings_update for Post layout"))
 	}
 	operations := make([]core.Operation, 0, 4)
 	if input.Title != nil {
@@ -350,6 +378,16 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcps
 			return executionError(fmt.Errorf("tag_ids: %w", err))
 		}
 		operations = append(operations, core.SetFieldOperation("document", "tagIds", value))
+	}
+	if input.DocumentLayout != nil {
+		if _, err := input.DocumentLayout.proto(); err != nil {
+			return executionError(err)
+		}
+		operations = append(operations, core.SetFieldOperation("document", "documentLayout", core.Object(
+			core.ObjectValue("contentHeight", core.Text(input.DocumentLayout.ContentHeight)),
+			core.ObjectValue("pageChrome", core.Text(input.DocumentLayout.PageChrome)),
+			core.ObjectValue("footer", core.Text(input.DocumentLayout.Footer)),
+		)))
 	}
 	if len(operations) == 0 {
 		return executionError(errors.New("at least one metadata field is required"))
@@ -401,7 +439,13 @@ func (tools *AIDocumentTools) validate(ctx context.Context, arguments mcpserver.
 	}
 	validation, err := tools.application.Validate(ctx, request)
 	if err != nil {
+		if conflict := mutationConflict(err); conflict != nil {
+			return mutationSyncResult(request, conflict)
+		}
 		return expectedToolError(err)
+	}
+	if validation.Conflict != nil {
+		return mutationSyncResult(request, validation.Conflict)
 	}
 	encoded, err := encodeValidation(validation)
 	if err != nil {
@@ -421,19 +465,14 @@ func (tools *AIDocumentTools) apply(ctx context.Context, arguments mcpserver.Too
 func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.ApplyRequest, createdBlock core.BlockID) (mcpserver.ToolResult, error) {
 	result, err := tools.application.Apply(ctx, request)
 	if err != nil {
+		if conflict := mutationConflict(err); conflict != nil {
+			return mutationSyncResult(request, conflict)
+		}
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
 			encoded, encodeErr := encodeValidation(validationError.Result)
 			if encodeErr != nil {
 				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document rejection: %w", encodeErr)
-			}
-			return structuredResult(encoded, true)
-		}
-		var conflictError *core.ConflictError
-		if errors.As(err, &conflictError) {
-			encoded, encodeErr := encodeValidation(core.ValidationResult{Conflict: &conflictError.Conflict})
-			if encodeErr != nil {
-				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document conflict: %w", encodeErr)
 			}
 			return structuredResult(encoded, true)
 		}
@@ -444,35 +483,6 @@ func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.App
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP accepted mutation: %w", err)
 	}
 	return structuredResult(encoded, false)
-}
-
-func encodeFocusedAccepted(result core.ApplyResult, createdBlock core.BlockID) ([]byte, error) {
-	encoded, err := encodeAccepted(result)
-	if err != nil || createdBlock == "" {
-		return encoded, err
-	}
-	var output map[string]any
-	if err := json.Unmarshal(encoded, &output); err != nil {
-		return nil, err
-	}
-	output["block_id"] = createdBlock
-	return json.Marshal(output)
-}
-
-func decodeArguments(arguments mcpserver.ToolArguments, target any) error {
-	encoded, err := json.Marshal(arguments)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("multiple argument values are not allowed")
-	}
-	return nil
 }
 
 func decodeMutation(arguments mcpserver.ToolArguments) (core.ApplyRequest, error) {
@@ -493,132 +503,6 @@ func decodeMutation(arguments mcpserver.ToolArguments) (core.ApplyRequest, error
 func validateMCPDocumentReference(reference core.DocumentReference) error {
 	_, err := uuidutil.ParseCanonical(string(reference), "d")
 	return err
-}
-
-func encodeValidation(validation core.ValidationResult) ([]byte, error) {
-	output := make(map[string]any, 3)
-	if len(validation.Normalized) != 0 {
-		for _, operation := range validation.Normalized {
-			if _, err := json.Marshal(operation); err != nil {
-				return nil, fmt.Errorf("invalid normalized operation: %w", err)
-			}
-		}
-		output["o"] = validation.Normalized
-	}
-	if len(validation.Issues) != 0 {
-		issues := make([][4]any, 0, len(validation.Issues))
-		for _, issue := range validation.Issues {
-			if issue.Operation < 0 {
-				return nil, errors.New("application returned a negative validation operation index")
-			}
-			if !supportedIssueCode(issue.Code) {
-				return nil, fmt.Errorf("application returned unsupported validation issue code %q", issue.Code)
-			}
-			issues = append(issues, [4]any{issue.Operation, issue.Code, issue.Handle, issue.Message})
-		}
-		output["i"] = issues
-	}
-	if validation.Conflict != nil {
-		if validation.Conflict.Code != core.ConflictDocumentRevision &&
-			validation.Conflict.Code != core.ConflictTargetRevision {
-			return nil, fmt.Errorf("application returned unsupported conflict code %q", validation.Conflict.Code)
-		}
-		if validation.Conflict.CurrentDocumentRevision == "" {
-			return nil, errors.New("application returned a conflict without current document revision")
-		}
-		output["x"] = [4]any{
-			validation.Conflict.Code,
-			validation.Conflict.CurrentDocumentRevision,
-			validation.Conflict.CurrentTargetRevision,
-			append([]string(nil), validation.Conflict.AffectedHandles...),
-		}
-	}
-	return json.Marshal(output)
-}
-
-func encodeAccepted(result core.ApplyResult) ([]byte, error) {
-	if result.DocumentRevision == "" {
-		return nil, errors.New("application returned an accepted mutation without document revision")
-	}
-	changes := make([][3]any, 0, len(result.Changes))
-	for _, change := range result.Changes {
-		if change.Operation < 0 {
-			return nil, errors.New("application returned a negative accepted operation index")
-		}
-		if !supportedOperationKind(change.Kind) {
-			return nil, fmt.Errorf("application returned unsupported accepted operation kind %q", change.Kind)
-		}
-		changes = append(changes, [3]any{
-			change.Operation,
-			change.Kind,
-			append([]string(nil), change.AffectedHandles...),
-		})
-	}
-	output := map[string]any{"dr": result.DocumentRevision, "c": changes}
-	if result.TargetRevision != nil {
-		output["tr"] = result.TargetRevision
-	}
-	return json.Marshal(output)
-}
-
-func supportedOperationKind(kind core.OperationKind) bool {
-	switch kind {
-	case core.OperationSetField, core.OperationUnsetField,
-		core.OperationInsertBlock, core.OperationDeleteBlock,
-		core.OperationMoveBlock, core.OperationReplaceBlockKind,
-		core.OperationInsertRelationItem, core.OperationDeleteRelationItem,
-		core.OperationMoveRelationItem, core.OperationAttachFile,
-		core.OperationDetachFile, core.OperationCreateTranslation,
-		core.OperationDeleteTranslation:
-		return true
-	default:
-		return false
-	}
-}
-
-func supportedIssueCode(code core.IssueCode) bool {
-	switch code {
-	case core.IssueInvalidOperation, core.IssueUnknownBlock,
-		core.IssueDuplicateBlock, core.IssueUnknownBlockKind,
-		core.IssueUnknownField, core.IssueUnknownRelation,
-		core.IssueUnknownRelationItem, core.IssueDuplicateRelationItem,
-		core.IssueInvalidRelationItemMove, core.IssueValueKindMismatch,
-		core.IssueSourceAuthorityRequired, core.IssueTargetFieldForbidden,
-		core.IssueInvalidBlockRelation, core.IssueBlockCycle,
-		core.IssueInvalidFileReference, core.IssueTranslationIsSource,
-		core.IssueTranslationAlreadyExists, core.IssueTranslationMissing,
-		core.IssueLocaleOperationNotExclusive:
-		return true
-	default:
-		return false
-	}
-}
-
-func structuredResult(encoded []byte, isError bool) (mcpserver.ToolResult, error) {
-	var structured map[string]any
-	if err := json.Unmarshal(encoded, &structured); err != nil {
-		return mcpserver.ToolResult{}, err
-	}
-	return mcpserver.ToolResult{
-		Content:           []mcpserver.ContentBlock{mcpserver.TextContent(string(encoded))},
-		StructuredContent: structured,
-		IsError:           isError,
-	}, nil
-}
-
-func executionError(err error) (mcpserver.ToolResult, error) {
-	return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: err.Error()}
-}
-
-func cloneAnnotations(values map[string]any) map[string]any {
-	if values == nil {
-		return nil
-	}
-	result := make(map[string]any, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
 }
 
 var (

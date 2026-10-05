@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 

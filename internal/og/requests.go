@@ -36,7 +36,9 @@ func (r *Resolver) Resolve(
 		return nil, errs.InvalidEntityType(request.GetEntityType().String())
 	}
 	if !SupportsNewGeneration(policy) {
-		return nil, errs.FailedPrecondition("OG generation is disabled for this entity")
+		return nil, errs.FailedPrecondition(
+			"release OG generation is disabled; the artwork public asset is used directly",
+		)
 	}
 	for _, source := range r.sources {
 		if source != nil && source.Handles(policy.Name) {

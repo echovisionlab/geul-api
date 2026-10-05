@@ -39,7 +39,7 @@ func newMeshOptimizationUnitDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE file (id text PRIMARY KEY, file_name text NOT NULL, mime_type text NOT NULL, file_size integer NOT NULL, extension text NOT NULL, sha256 blob NOT NULL, duration_seconds integer, ingest_slot_id text, ingest_attempt_id text, delete_requested_at datetime, created_at datetime NOT NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,id text PRIMARY KEY, file_name text NOT NULL, mime_type text NOT NULL, file_size integer NOT NULL, extension text NOT NULL, sha256 blob NOT NULL, duration_seconds integer, ingest_slot_id text, ingest_attempt_id text, delete_requested_at datetime, created_at datetime NOT NULL)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE public_asset (id text PRIMARY KEY, source_file_id text, kind text, object_key text NOT NULL, extension text NOT NULL, mime_type text NOT NULL)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE media_generation (id text PRIMARY KEY, file_id text NOT NULL, kind text NOT NULL, object_prefix text NOT NULL, manifest_name text, manifest_sha256 blob, object_count integer, total_size integer, status text, ready_at datetime, retired_at datetime, delete_after datetime, created_at datetime, updated_at datetime)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id text PRIMARY KEY, file_id text NOT NULL, type text NOT NULL, asset_id text, media_generation_id text, created_at datetime)`).Error)

@@ -2,13 +2,22 @@ package aidocumentadapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
 
+	"connectrpc.com/connect"
+
+	mcpadapter "github.com/echovisionlab/geul-api/internal/adapters/mcp"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 type stubEmailRichTextDomain struct {
@@ -292,4 +301,120 @@ func newEmailRichTextPortForTest(
 	}
 	identity := core.DocumentIdentity{Domain: domainName, Reference: core.DocumentReference(reference.String())}
 	return port, service, identity
+}
+
+func TestEmailRichTextMixedMetadataRejectionKeepsOriginalOperationIndex(t *testing.T) {
+	for _, domain := range []core.Domain{core.DomainCampaign, core.DomainEmailTemplate} {
+		t.Run(string(domain), func(t *testing.T) {
+			port, api, identity := newEmailRichTextPortForTest(t, domain, "en", true)
+			document, err := port.Load(t.Context(), identity, "en")
+			require.NoError(t, err)
+			request := core.ApplyRequest{
+				Protocol: core.ProtocolVersion, Profile: domain, Document: identity.Reference,
+				Locale: "en", ExpectedDocumentRevision: document.DocumentRevision,
+				Operations: []core.Operation{
+					core.SetFieldOperation(emailMetadataBlockID, emailSubjectField, core.Text("Changed subject")),
+					core.SetFieldOperation(document.Nodes[1].ID, "textAlignment", core.Text("bogus")),
+				},
+			}
+			_, generic := core.ValidateLoadedApply(document, request)
+			require.True(t, generic.Valid(), "%+v", generic)
+			application, err := core.NewService(port)
+			require.NoError(t, err)
+			validation, err := application.Validate(t.Context(), request)
+			require.NoError(t, err)
+			require.Len(t, validation.Issues, 1)
+			require.Equal(t, 1, validation.Issues[0].Operation)
+			require.Contains(t, validation.Issues[0].Message, "bogus")
+			_, err = application.Apply(t.Context(), request)
+			var rejected *core.ValidationError
+			require.ErrorAs(t, err, &rejected)
+			require.Len(t, rejected.Result.Issues, 1)
+			require.Equal(t, 1, rejected.Result.Issues[0].Operation)
+			require.False(t, api.validateInput.SetSubject, "rejected batch reached validation persistence")
+			require.False(t, api.applyInput.SetSubject, "rejected batch reached persistence")
+		})
+	}
+}
+
+func TestEmailRichTextBatchRangeErrorPreservesTransportRejection(t *testing.T) {
+	for _, domain := range []core.Domain{core.DomainCampaign, core.DomainEmailTemplate} {
+		t.Run(string(domain), func(t *testing.T) {
+			port, api, identity := newEmailRichTextPortForTest(t, domain, "en", true)
+			document, err := port.Load(t.Context(), identity, "en")
+			require.NoError(t, err)
+			request := core.ApplyRequest{
+				Protocol: core.ProtocolVersion, Profile: domain, Document: identity.Reference,
+				Locale: "en", ExpectedDocumentRevision: document.DocumentRevision,
+				Operations: []core.Operation{core.SetFieldOperation(document.Nodes[1].ID, "previewWidth", core.Number("5"))},
+			}
+			_, generic := core.ValidateLoadedApply(document, request)
+			require.True(t, generic.Valid(), "%+v", generic)
+			application, err := core.NewService(port)
+			require.NoError(t, err)
+			assertBatchRangeErrorBoundaries(t, application, request)
+			require.Nil(t, api.validateInput.Batch, "rejected batch reached validation persistence")
+			require.Nil(t, api.applyInput.Batch, "rejected batch reached persistence")
+		})
+	}
+}
+
+// Exercise the owning adapter through the core application and both public
+// transports so an unindexed batch rejection cannot become an encoding error.
+func assertBatchRangeErrorBoundaries(t *testing.T, application *core.Service, request core.ApplyRequest) {
+	t.Helper()
+	validation, err := application.Validate(t.Context(), request)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "value is below minimum")
+	require.Empty(t, validation.Issues)
+	_, err = application.Apply(t.Context(), request)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "value is below minimum")
+	transport, err := NewService(application)
+	require.NoError(t, err)
+	_, err = transport.ApplyAIDocumentOperations(t.Context(), connect.NewRequest(&managev1.ApplyAIDocumentOperationsRequest{
+		Mutation: &managev1.AIDocumentMutation{
+			ProtocolVersion: request.Protocol, Document: documentToProto(request.Identity()), Locale: localeToProto(request.Locale),
+			ExpectedDocumentRevision: string(request.ExpectedDocumentRevision), Operations: operationsToProto(request.Operations),
+		},
+	}))
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "value is below minimum")
+	tools, err := mcpadapter.NewAIDocumentTools(application)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	var arguments mcpserver.ToolArguments
+	require.NoError(t, json.Unmarshal(encoded, &arguments))
+	for _, tool := range []string{mcpadapter.ToolDocumentValidate, mcpadapter.ToolDocumentApply} {
+		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, tool, arguments)
+		var execution *mcpserver.ToolExecutionError
+		require.ErrorAs(t, err, &execution, "tool %s", tool)
+		require.Contains(t, execution.Message, "value is below minimum")
+	}
+}
+
+func TestDomainIssuesRequireIdentifiableFileOperation(t *testing.T) {
+	set := core.SetFieldOperation("paragraph", "content", core.RichText(core.InlineText("text")))
+	attach := core.AttachFileOperation("file", "attachment", "reference")
+	detach := core.DetachFileOperation("other-file", "attachment")
+	for name, issueFor := range map[string]func(error, []core.Operation) *core.OperationIssue{
+		"email":         emailRichTextDomainIssue,
+		"program event": programEventDomainIssue,
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, err := range []error{
+				errs.InvalidArgument("operations", "invalid batch"),
+				errs.FailedPrecondition("source changed"), contentblock.ErrInvalidMutation,
+			} {
+				require.Nil(t, issueFor(err, []core.Operation{set}))
+			}
+			require.Nil(t, issueFor(contentblock.ErrFileReference, []core.Operation{set}))
+			require.Nil(t, issueFor(contentblock.ErrFileReference, []core.Operation{attach, detach}))
+			issue := issueFor(contentblock.ErrFileReference, []core.Operation{set, attach})
+			require.NotNil(t, issue)
+			require.Equal(t, 1, issue.Operation)
+			require.Equal(t, core.IssueInvalidFileReference, issue.Code)
+		})
+	}
 }

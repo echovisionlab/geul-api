@@ -47,21 +47,20 @@ func LoadTranslationSourceDocument(
 	}, nil
 }
 
-// ValidateSourceLocaleChanges rejects shared-runtime attempts to write Page
-// target documents through the source synchronization path.
-func ValidateSourceLocaleChanges(
-	_ context.Context,
-	_ *gorm.DB,
+// validatePageSourceLocaleMutations checks explicit locale writes in a source
+// request. Structural deletion may also remove target overlays, so the Store's
+// ChangedLocales result is not an authorization input.
+func validatePageSourceLocaleMutations(
 	pageID string,
 	sourceLocale string,
-	changedLocales []string,
+	groups []contentblock.LocaleMutationGroup,
 ) error {
 	if strings.TrimSpace(pageID) == "" || strings.TrimSpace(sourceLocale) == "" {
 		return errs.Internal(fmt.Errorf("invalid Page source locale"))
 	}
 
-	for _, locale := range changedLocales {
-		locale = strings.TrimSpace(locale)
+	for _, group := range groups {
+		locale := strings.TrimSpace(group.Locale)
 		if locale == "" {
 			return errs.Internal(fmt.Errorf("page target locale is empty"))
 		}

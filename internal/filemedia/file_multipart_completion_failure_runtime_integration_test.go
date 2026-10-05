@@ -37,6 +37,60 @@ type runtimeMultipartCompletionFailureResult struct {
 	failedEvent   *managev1.FileIngestFailedEvent
 }
 
+// This coverage exercises the real backend and S3 multipart protocol without a
+// Web fault header or production test backdoor.
+func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
+	stack := testutil.SetupSharedRuntimeCompleteMultipartFailureStack(t)
+	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	releaseID := testutil.CreateReleaseViaAPI(t, stack.BackendURL, admin)
+	trackID := testutil.CreateManagedReleaseTrackViaAPI(
+		t,
+		stack.BackendURL,
+		admin,
+		releaseID,
+		"Runtime multipart completion failure",
+	)
+
+	body, err := os.ReadFile(testutil.RepositoryTestAudioMP3(t))
+	require.NoError(t, err)
+	result := runRuntimeMultipartCompletionFailure(t, stack, admin, runtimeMultipartCompletionFailureInput{
+		uploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		entityID:   trackID,
+		entityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
+		fileName:   runtimeTestFileName("track-complete-failure.mp3"),
+		mimeType:   "audio/mpeg",
+		body:       body,
+	})
+
+	var track model.Track
+	require.NoError(t, stack.DB.First(&track, "id = ?", trackID).Error)
+	require.Nil(t, track.AudioOriginalFileID)
+	require.Equal(t, int64(0), countFilesByID(t, stack.DB, result.fileID))
+	require.Equal(t, int64(1), countUploadSessions(t, stack.DB, result.uploadID))
+	require.EqualValues(t, result.totalParts, countUploadParts(t, stack.DB, result.uploadID))
+	requireUploadSessionStatus(
+		t,
+		stack.DB,
+		result.uploadID,
+		managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED,
+	)
+	require.EqualValues(t, 1, stack.MultipartCompletionFailureCount(t, result.uploadID))
+
+	var transcodeJobCount int64
+	require.NoError(t, stack.DB.Table("transcode_job").Where("file_id = ?", result.fileID).Count(&transcodeJobCount).Error)
+	require.Zero(t, transcodeJobCount)
+	var waveformJobCount int64
+	require.NoError(t, stack.DB.Table("waveform_job").Where("file_id = ?", result.fileID).Count(&waveformJobCount).Error)
+	require.Zero(t, waveformJobCount)
+
+	identity := result.failedEvent.GetIdentity()
+	require.Equal(t, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, identity.GetEntityType())
+	require.Equal(t, trackID, identity.GetEntityId())
+	require.Equal(t, result.fileID, identity.GetFileId())
+	require.Equal(t, result.uploadID, identity.GetUploadId())
+	require.Empty(t, identity.GetSlotId())
+}
+
 // Editor completion failures remain File-scoped and never create document
 // relations, regardless of the media kind.
 func TestRuntimeEditorMediaCompleteMultipartFailureIntegration(t *testing.T) {
@@ -133,13 +187,22 @@ func runRuntimeMultipartCompletionFailure(
 	)
 	require.EqualValues(t, initResp.Msg.GetTotalParts(), countUploadParts(t, stack.DB, initResp.Msg.GetUploadId()))
 
+	var bundleID *string
+	switch input.uploadType {
+	case managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO:
+		bundleID = runtimePtr(prepareRuntimeCompletionFailureMediaBundle(t, fileClient, stack.BackendURL, user, initResp.Msg, "audio"))
+	case managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO:
+		bundleID = runtimePtr(prepareRuntimeCompletionFailureMediaBundle(t, fileClient, stack.BackendURL, user, initResp.Msg, "video"))
+	}
+
 	stack.MarkMultipartCompletionFailure(t, initResp.Msg.GetUploadId())
 	correlationID := uuid.NewString()
 	failedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
 	completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-		FileId:        initResp.Msg.GetFileId(),
-		UploadId:      initResp.Msg.GetUploadId(),
-		CorrelationId: &correlationID,
+		FileId:              initResp.Msg.GetFileId(),
+		UploadId:            initResp.Msg.GetUploadId(),
+		CorrelationId:       &correlationID,
+		ClientMediaBundleId: bundleID,
 	})
 	setAuthHeaders(completeReq.Header(), user)
 
@@ -172,6 +235,24 @@ func runRuntimeMultipartCompletionFailure(
 		totalParts:    initResp.Msg.GetTotalParts(),
 		failedEvent:   failedEvent,
 	}
+}
+
+func prepareRuntimeCompletionFailureMediaBundle(
+	t *testing.T,
+	fileClient managev1connect.FileServiceClient,
+	backendURL string,
+	user *testutil.OryUser,
+	upload *managev1.InitiateMultipartUploadResponse,
+	kind string,
+) string {
+	t.Helper()
+
+	// Reuse the sealed-plan fixture, but prepare and stage it through the real
+	// browser API before injecting failure of the original S3 multipart object.
+	session, objects := clientMediaTestBundle(t, kind)
+	plan, err := decodeClientMediaPlan(session)
+	require.NoError(t, err)
+	return uploadRuntimeClientMediaBundle(t, fileClient, backendURL, user, upload, plan, objects)
 }
 
 func uploadRuntimeMultipartBody(

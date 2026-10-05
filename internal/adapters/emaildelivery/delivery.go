@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -39,6 +40,41 @@ func (s *CampaignDeliveryStore) NeedsDelivery(ctx context.Context, recipientID s
 		return false, fmt.Errorf("campaign delivery database is required")
 	}
 	return campaign.CampaignDeliveryRecipientNeedsDelivery(ctx, s.db, recipientID)
+}
+
+func (s *CampaignDeliveryStore) ClaimDelivery(ctx context.Context, recipientID string) (string, bool, error) {
+	if s == nil || s.db == nil {
+		return "", false, fmt.Errorf("campaign delivery database is required")
+	}
+	claimID := uuid.NewString()
+	claimed, err := campaign.ClaimCampaignDeliveryRecipient(ctx, s.db, recipientID, claimID)
+	if err != nil || !claimed {
+		return "", false, err
+	}
+	return claimID, true, nil
+}
+
+func (s *CampaignDeliveryStore) ReleaseDeliveryClaim(ctx context.Context, recipientID, claimID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("campaign delivery database is required")
+	}
+	return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, s.db, recipientID, claimID)
+}
+
+func (s *CampaignDeliveryStore) MarkClaimedResult(
+	ctx context.Context,
+	recipientID string,
+	claimID string,
+	status string,
+	providerMessageID string,
+	errorType string,
+) error {
+	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
+		return fmt.Errorf("campaign delivery persistence dependencies are required")
+	}
+	return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(
+		ctx, s.db, s.audit, recipientID, claimID, status, providerMessageID, errorType, s.metrics,
+	)
 }
 
 func (s *CampaignDeliveryStore) MarkResult(

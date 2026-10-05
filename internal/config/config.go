@@ -8,35 +8,39 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 	"github.com/kelseyhightower/envconfig"
 )
 
 type Config struct {
-	Port           int `envconfig:"PORT" required:"true"`
-	MCPPrivatePort int `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
+	PATVerificationSecret string      `envconfig:"PAT_VERIFICATION_SECRET"`
+	Media                 MediaConfig `envconfig:""`
+	Port                  int         `envconfig:"PORT" required:"true"`
+	MCPPrivatePort        int         `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
 
 	AuthHeaderName            string `envconfig:"AUTH_HEADER_NAME" required:"true"`
 	InternalServiceHeaderName string `envconfig:"INTERNAL_SERVICE_HEADER_NAME" required:"true"`
 
-	DatabaseDSN        string   `envconfig:"DATABASE_DSN" required:"true"`
-	DatabaseMaxOpen    int      `envconfig:"DATABASE_MAX_OPEN_CONNECTIONS" default:"20"`
-	DatabaseMaxIdle    int      `envconfig:"DATABASE_MAX_IDLE_CONNECTIONS" default:"10"`
-	CORSOrigins        []string `envconfig:"CORS_ORIGINS" required:"true"`
-	S3Bucket           string   `envconfig:"S3_MEDIA_BUCKET" required:"true"`
-	S3CacheBucket      string   `envconfig:"S3_CACHE_BUCKET" required:"true"`
-	S3Region           string   `envconfig:"S3_REGION" required:"true"`
-	S3Endpoint         string   `envconfig:"S3_ENDPOINT" required:"true"`
-	S3PublicEndpoint   string   `envconfig:"S3_PUBLIC_ENDPOINT" required:"true"`
-	S3AccessKeyID      string   `envconfig:"S3_ACCESS_KEY_ID" required:"true"`
-	S3SecretAccessKey  string   `envconfig:"S3_SECRET_ACCESS_KEY" required:"true"`
-	S3ForcePathStyle   bool     `envconfig:"S3_FORCE_PATH_STYLE" required:"true"`
-	CDNURL             string   `envconfig:"CDN_URL" required:"true"`
-	MediaURL           string   `envconfig:"MEDIA_URL" required:"true"`
-	CloudflareZoneID   string   `envconfig:"CLOUDFLARE_ZONE_ID" required:"true"`
-	CloudflareAPIToken string   `envconfig:"CLOUDFLARE_API_TOKEN" required:"true"`
-	CloudflareAPIURL   string   `envconfig:"CLOUDFLARE_API_URL" default:"https://api.cloudflare.com/client/v4"`
+	DatabaseDSN       string   `envconfig:"DATABASE_DSN" required:"true"`
+	DatabaseMaxOpen   int      `envconfig:"DATABASE_MAX_OPEN_CONNECTIONS" default:"20"`
+	DatabaseMaxIdle   int      `envconfig:"DATABASE_MAX_IDLE_CONNECTIONS" default:"10"`
+	CORSOrigins       []string `envconfig:"CORS_ORIGINS" required:"true"`
+	S3Bucket          string   `envconfig:"S3_MEDIA_BUCKET" required:"true"`
+	S3CacheBucket     string   `envconfig:"S3_CACHE_BUCKET" required:"true"`
+	S3Region          string   `envconfig:"S3_REGION" required:"true"`
+	S3Endpoint        string   `envconfig:"S3_ENDPOINT" required:"true"`
+	S3PublicEndpoint  string   `envconfig:"S3_PUBLIC_ENDPOINT" required:"true"`
+	S3AccessKeyID     string   `envconfig:"S3_ACCESS_KEY_ID" required:"true"`
+	S3SecretAccessKey string   `envconfig:"S3_SECRET_ACCESS_KEY" required:"true"`
+	S3ForcePathStyle  bool     `envconfig:"S3_FORCE_PATH_STYLE" required:"true"`
+	CDNURL            string   `envconfig:"CDN_URL" required:"true"`
+	MediaURL          string   `envconfig:"MEDIA_URL" required:"true"`
+
+	CloudflareCachePurgeEnabled bool   `envconfig:"CLOUDFLARE_CACHE_PURGE_ENABLED" default:"true"`
+	CloudflareZoneID            string `envconfig:"CLOUDFLARE_ZONE_ID"`
+	CloudflareAPIToken          string `envconfig:"CLOUDFLARE_API_TOKEN"`
+	CloudflareAPIURL            string `envconfig:"CLOUDFLARE_API_URL" default:"https://api.cloudflare.com/client/v4"`
 	// SpiceDB is the authorization authority for the target runtime. The
 	// preshared key name matches the deployment Secret contract.
 	SpiceDBEndpoint               string `envconfig:"SPICEDB_ENDPOINT" required:"true"`
@@ -81,6 +85,23 @@ func Load() (*Config, error) {
 	}
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.CloudflareCachePurgeEnabled {
+		for _, credential := range []struct{ name, value string }{
+			{"CLOUDFLARE_ZONE_ID", cfg.CloudflareZoneID},
+			{"CLOUDFLARE_API_TOKEN", cfg.CloudflareAPIToken},
+		} {
+			if strings.TrimSpace(credential.value) == "" {
+				return nil, fmt.Errorf("%s is required when CLOUDFLARE_CACHE_PURGE_ENABLED is true", credential.name)
+			}
+			if credential.value != strings.TrimSpace(credential.value) {
+				return nil, fmt.Errorf("%s must not contain leading or trailing whitespace", credential.name)
+			}
+		}
+	}
+
+	if err := cfg.Media.validate(cfg.Port, cfg.MCPPrivatePort); err != nil {
 		return nil, err
 	}
 

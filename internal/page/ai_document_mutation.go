@@ -192,6 +192,9 @@ func pageAIDocumentContentUpdatedFields(mutation AIDocumentMutation) []string {
 	if mutation.Metadata.SetSummary {
 		fields = append(fields, "summary")
 	}
+	if mutation.Metadata.SetDocumentLayout {
+		fields = append(fields, "documentLayout")
+	}
 	if hasPageAIDocumentBatchChanges(mutation.Batch) || mutation.Metadata.EnsureLocale || mutation.DeleteTranslation {
 		fields = append(fields, "content")
 	}

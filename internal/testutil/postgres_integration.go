@@ -275,9 +275,16 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 	if err != nil {
 		return failBeforeDatabase(fmt.Errorf("open integration database admin connection: %w", err))
 	}
-	if err := admin.PingContext(ctx); err != nil {
+	if err := waitForAppPostgres(ctx, admin); err != nil {
+		inspectCtx, cancelInspect := context.WithTimeout(context.Background(), 5*time.Second)
+		containerState, inspectErr := inspectAppIntegrationPostgresContainer(inspectCtx, lease.PostgresContainerID)
+		cancelInspect()
+		stateDetail := "container state unavailable: " + fmt.Sprint(inspectErr)
+		if inspectErr == nil {
+			stateDetail = "container state: " + containerState
+		}
 		return failBeforeDatabase(errors.Join(
-			fmt.Errorf("ping integration database admin connection: %w", err),
+			fmt.Errorf("wait for integration database admin connection: %w (%s)", err, stateDetail),
 			admin.Close(),
 		))
 	}
@@ -380,6 +387,16 @@ func runAppIntegrationDockerCommand(ctx context.Context, arguments ...string) er
 		return fmt.Errorf("docker %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func inspectAppIntegrationPostgresContainer(ctx context.Context, containerID string) (string, error) {
+	const format = `{{.State.Status}} running={{.State.Running}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}} ports={{json .NetworkSettings.Ports}}`
+	command := exec.CommandContext(ctx, "docker", "inspect", "--format", format, containerID)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker inspect PostgreSQL lease container: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func appIntegrationCleanupContext() (context.Context, context.CancelFunc) {
@@ -813,7 +830,6 @@ func splitRepoPathForLegacySuffix(moduleRoot, suffix string) (string, bool) {
 	}{
 		{legacy: "apps/collab", split: "geul-editor-collab"},
 		{legacy: "apps/web", split: "geul-web"},
-		{legacy: "apps/transcoder", split: "geul-transcoder"},
 		{legacy: "infra/kratos", split: "geul-identity/config/kratos"},
 		{legacy: "infra/oathkeeper", split: "geul-identity/config/oathkeeper"},
 		{legacy: "infra/spicedb", split: "geul-identity/config/spicedb"},

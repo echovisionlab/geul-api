@@ -442,6 +442,7 @@ func postAllowedActions(postID string, status model.PostStatus, authority PostAu
 				managev1.PostAction_POST_ACTION_MODERATE_COMMENTS,
 				managev1.PostAction_POST_ACTION_RESTORE_VERSION,
 				managev1.PostAction_POST_ACTION_REPUBLISH,
+				managev1.PostAction_POST_ACTION_UNPUBLISH,
 			)
 		}
 		return actions

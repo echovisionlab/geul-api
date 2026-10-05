@@ -22,15 +22,15 @@ import (
 func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 	tests := []struct {
 		name   string
-		invoke func(context.Context, *postdomain.PostService, string) error
+		invoke func(context.Context, *postdomain.PostService, string, string) error
 		assert func(*testing.T, *gorm.DB, string)
 	}{
 		{
 			name: "update",
-			invoke: func(ctx context.Context, service *postdomain.PostService, postID string) error {
+			invoke: func(ctx context.Context, service *postdomain.PostService, postID string, revision string) error {
 				commentsEnabled := false
 				_, err := service.UpdatePost(ctx, connect.NewRequest(&managev1.UpdatePostRequest{
-					Id: postID, CommentsEnabled: &commentsEnabled,
+					Id: postID, ExpectedConfigurationRevision: revision, CommentsEnabled: &commentsEnabled,
 				}))
 				return err
 			},
@@ -42,7 +42,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "publish",
-			invoke: func(ctx context.Context, service *postdomain.PostService, postID string) error {
+			invoke: func(ctx context.Context, service *postdomain.PostService, postID string, _ string) error {
 				_, err := service.PublishPost(ctx, connect.NewRequest(&managev1.PublishPostRequest{Id: postID}))
 				return err
 			},
@@ -54,7 +54,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "delete",
-			invoke: func(ctx context.Context, service *postdomain.PostService, postID string) error {
+			invoke: func(ctx context.Context, service *postdomain.PostService, postID string, _ string) error {
 				_, err := service.DeletePost(ctx, connect.NewRequest(&managev1.DeletePostRequest{Id: postID}))
 				return err
 			},
@@ -74,6 +74,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 				testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 				testutil.NewPostContentBlockStore(t),
 			)
+			revision := requirePostConfigurationRevision(t, db, postID)
 
 			lockTx := db.Begin()
 			require.NoError(t, lockTx.Error)
@@ -87,7 +88,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 
 			result := make(chan error, 1)
 			go func() {
-				result <- test.invoke(postAuthorRaceContext(actorID), service, postID)
+				result <- test.invoke(postAuthorRaceContext(actorID), service, postID, revision)
 			}()
 			requirePostMutationStillWaiting(t, result)
 			require.NoError(t, lockTx.Exec(
@@ -102,6 +103,38 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 			test.assert(t, db, postID)
 		})
 	}
+}
+
+func TestPostUpdateRechecksExistenceAfterRootLockIntegration(t *testing.T) {
+	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
+	service := postintegration.NewPostDomainService(
+		t, db, "", spiceDB,
+		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
+		testutil.NewPostContentBlockStore(t),
+	)
+	revision := requirePostConfigurationRevision(t, db, postID)
+
+	lockTx := db.Begin()
+	require.NoError(t, lockTx.Error)
+	t.Cleanup(func() { _ = lockTx.Rollback().Error })
+	require.NoError(t, lockTx.Exec("SELECT id FROM post WHERE id = ?::uuid FOR UPDATE", postID).Error)
+
+	result := make(chan error, 1)
+	commentsEnabled := false
+	go func() {
+		_, err := service.UpdatePost(postAuthorRaceContext(actorID), connect.NewRequest(&managev1.UpdatePostRequest{
+			Id: postID, ExpectedConfigurationRevision: revision, CommentsEnabled: &commentsEnabled,
+		}))
+		result <- err
+	}()
+	requirePostMutationStillWaiting(t, result)
+	require.NoError(t, lockTx.Exec("DELETE FROM post WHERE id = ?::uuid", postID).Error)
+	require.NoError(t, lockTx.Commit().Error)
+
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-result))
+	var count int64
+	require.NoError(t, db.Table("post").Where("id = ?", postID).Count(&count).Error)
+	require.Zero(t, count)
 }
 
 func TestExportedLockedPostAccessChecksAuthorityAfterRootLockIntegration(t *testing.T) {

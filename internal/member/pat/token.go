@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	tokenPrefix        = "geul_pat_"
+	tokenPrefix        = "pat_"
 	tokenSelectorBytes = 16
 	tokenSecretBytes   = 32
 )

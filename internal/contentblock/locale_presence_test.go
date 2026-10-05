@@ -66,7 +66,7 @@ func TestPresentRichTextLocaleValuesPreservesExplicitEmptyAndExactSparseLeaves(t
 	}
 }
 
-func TestPresentRichTextLocaleValuesLoadsLegacyTableWithoutDurableIdentities(t *testing.T) {
+func TestPresentRichTextLocaleValuesRejectsMissingAndInvalidTableIdentities(t *testing.T) {
 	snapshot := Snapshot{
 		Document: Document{Profile: "policy"},
 		Blocks: []BaseBlock{
@@ -77,19 +77,15 @@ func TestPresentRichTextLocaleValuesLoadsLegacyTableWithoutDurableIdentities(t *
 			Locale: "en",
 			Blocks: []LocaleBlockUpdate{
 				{BlockID: uuid.MustParse(presenceParagraphID), LocalizedData: []byte(`{"paragraph":{"props":{},"content":[]}}`)},
-				{BlockID: uuid.MustParse(presenceTableID), LocalizedData: []byte(`{"table":{"props":{},"content":{"rows":[{"cells":[{"content":[]}] }]}}}`)},
+				{BlockID: uuid.MustParse(presenceTableID), LocalizedData: []byte(`{"table":{"props":{},"content":{"rows":[{"rowId":"not-a-uuid","cells":[{"content":[]}] }]}}}`)},
 			},
 		}},
 	}
 
-	targets, err := PresentRichTextLocaleValues(snapshot, "en")
-	if err != nil {
-		t.Fatalf("project legacy table locale values: %v", err)
+	_, err := PresentRichTextLocaleValues(snapshot, "en")
+	if err == nil || !strings.Contains(err.Error(), "rowId must be a canonical UUID") {
+		t.Fatalf("invalid table row identity error = %v", err)
 	}
-	if len(targets) != 1 {
-		t.Fatalf("got %d targets, want only paragraph presence: %#v", len(targets), targets)
-	}
-	assertLocaleValueTarget(t, targets[0], presenceParagraphID, "content", nil)
 }
 
 func TestPresentRichTextLocaleValuesRejectsPartiallyMigratedTableIdentities(t *testing.T) {
@@ -109,7 +105,7 @@ func TestPresentRichTextLocaleValuesRejectsPartiallyMigratedTableIdentities(t *t
 	}
 
 	_, err := PresentRichTextLocaleValues(snapshot, "en")
-	if err == nil || !strings.Contains(err.Error(), "partially migrated durable identities") {
+	if err == nil || !strings.Contains(err.Error(), "rowId must be a canonical UUID") {
 		t.Fatalf("partially migrated table error = %v", err)
 	}
 }
@@ -130,8 +126,78 @@ func TestPresentRichTextLocaleValuesRejectsDurableRowsWithLegacyCells(t *testing
 	}
 
 	_, err := PresentRichTextLocaleValues(snapshot, "en")
-	if err == nil || !strings.Contains(err.Error(), "partially migrated durable identities") {
+	if err == nil || !strings.Contains(err.Error(), "cellId must be a canonical UUID") {
 		t.Fatalf("partially migrated table error = %v", err)
+	}
+}
+
+func TestPresentRichTextLocaleValuesPreservesEmptyDurableTable(t *testing.T) {
+	snapshot := Snapshot{
+		Document: Document{Profile: "policy"},
+		Blocks:   []BaseBlock{{ID: uuid.MustParse(presenceTableID), Kind: "table"}},
+		LocaleOverlays: []LocaleOverlay{{
+			Locale: "en",
+			Blocks: []LocaleBlockUpdate{{
+				BlockID: uuid.MustParse(presenceTableID),
+				LocalizedData: []byte(`{"table":{"props":{},"content":{"rows":[{"rowId":"` +
+					presenceRowID + `","cells":[]}]}}}`),
+			}},
+		}},
+	}
+
+	targets, err := PresentRichTextLocaleValues(snapshot, "en")
+	if err != nil {
+		t.Fatalf("project empty durable table: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("empty table projected locale targets: %#v", targets)
+	}
+
+	snapshot.LocaleOverlays[0].Blocks[0].LocalizedData = []byte(`{"table":{"props":{},"content":{"rows":[]}}}`)
+	targets, err = PresentRichTextLocaleValues(snapshot, "en")
+	if err != nil {
+		t.Fatalf("project table with no rows: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("empty row list projected locale targets: %#v", targets)
+	}
+}
+
+func TestPresentRichTextLocaleValuesRejectsDuplicateTableIdentities(t *testing.T) {
+	for name, value := range map[string]struct {
+		data string
+		want string
+	}{
+		"rows": {
+			data: `{"table":{"props":{},"content":{"rows":[` +
+				`{"rowId":"` + presenceRowID + `","cells":[]},` +
+				`{"rowId":"` + presenceRowID + `","cells":[]}]}}}`,
+			want: "duplicate table row UUID",
+		},
+		"cells": {
+			data: `{"table":{"props":{},"content":{"rows":[{"rowId":"` + presenceRowID + `","cells":[` +
+				`{"cellId":"` + presenceCellID + `","content":[]},` +
+				`{"cellId":"` + presenceCellID + `","content":[]}] }]}}}`,
+			want: "duplicate table cell UUID",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := Snapshot{
+				Document: Document{Profile: "policy"},
+				Blocks:   []BaseBlock{{ID: uuid.MustParse(presenceTableID), Kind: "table"}},
+				LocaleOverlays: []LocaleOverlay{{
+					Locale: "en",
+					Blocks: []LocaleBlockUpdate{{
+						BlockID:       uuid.MustParse(presenceTableID),
+						LocalizedData: []byte(value.data),
+					}},
+				}},
+			}
+			_, err := PresentRichTextLocaleValues(snapshot, "en")
+			if err == nil || !strings.Contains(err.Error(), value.want) {
+				t.Fatalf("duplicate table identity error = %v", err)
+			}
+		})
 	}
 }
 

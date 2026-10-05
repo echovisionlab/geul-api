@@ -80,8 +80,14 @@ func targetFor(entityType managev1.ShareLinkEntityType) (target, error) {
 			viewArchived:     policyv1.Work.ViewArchived,
 			editArchived:     policyv1.Work.EditArchived,
 		}, nil
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE:
+		return target{table: "release", name: "release", entityType: entityType, manageShareLinks: policyv1.Release.ManageShareLinks}, nil
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD:
 		return target{table: "form", name: "form", entityType: entityType, manageShareLinks: policyv1.Form.ManageShareLinks}, nil
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL:
+		return target{table: "label", name: "label", entityType: entityType, manageShareLinks: policyv1.Label.ManageShareLinks}, nil
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST:
+		return target{table: "artist", name: "artist", entityType: entityType, manageShareLinks: policyv1.Artist.ManageShareLinks}, nil
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
 		return target{
 			table:                "privacy_history",
@@ -275,6 +281,21 @@ func (a *Authority) appendAudit(ctx context.Context, tx *gorm.DB, entityType man
 		action = sharedtelemetry.AuditWorkUpdated
 		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewWorkShareLinkAuditRecord(m, entityID, linkID, operation)
+		}
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE:
+		action = sharedtelemetry.AuditReleaseUpdated
+		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewReleaseShareLinkAuditRecord(m, entityID, linkID, operation)
+		}
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST:
+		action = sharedtelemetry.AuditArtistUpdated
+		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewArtistShareLinkAuditRecord(m, entityID, linkID, operation)
+		}
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL:
+		action = sharedtelemetry.AuditLabelUpdated
+		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewLabelShareLinkAuditRecord(m, entityID, linkID, operation)
 		}
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD:
 		action = sharedtelemetry.AuditFormUpdated

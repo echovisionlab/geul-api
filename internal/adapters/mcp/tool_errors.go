@@ -23,13 +23,18 @@ func expectedToolError(err error) (mcpserver.ToolResult, error) {
 		connect.CodeNotFound,
 		connect.CodeAlreadyExists,
 		connect.CodeFailedPrecondition,
+		connect.CodeAborted,
 		connect.CodePermissionDenied,
 		connect.CodeUnauthenticated,
 		connect.CodeResourceExhausted:
 		return executionError(errors.New(connectErr.Message()))
 	case connect.CodeUnavailable:
-		return executionError(errors.New("Geul service is temporarily unavailable"))
+		return executionError(errors.New("The service is temporarily unavailable"))
 	default:
 		return mcpserver.ToolResult{}, err
 	}
+}
+
+func executionError(err error) (mcpserver.ToolResult, error) {
+	return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: err.Error()}
 }

@@ -219,18 +219,12 @@ func (s *PrivacyService) CreatePrivacyVersion(
 		if s.contentBlocks == nil {
 			return errs.InternalMsg("privacy content Block store is not configured")
 		}
-		if req.Msg.Document == nil {
-			return errs.Required("document")
-		}
 		title := "Privacy Policy"
 		if req.Msg.Title != nil && *req.Msg.Title != "" {
 			title = *req.Msg.Title
 		}
 		now := time.Now().UTC()
 		sourceLocale := resolveInitialSourceLocale(ctx, tx, req.Header().Get("Accept-Language"))
-		if req.Msg.Document.GetSourceLocale() != sourceLocale {
-			return errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
-		}
 		created, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile: legalContentDocumentProfile, SourceLocale: sourceLocale,
 		})
@@ -245,17 +239,22 @@ func (s *PrivacyService) CreatePrivacyVersion(
 		`, title, managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT.String(), now, now, contentDocumentID, sourceLocale).Scan(&privacy).Error; err != nil {
 			return err
 		}
-		replacement, err := contentblock.ReplaceFromRichTextProto(
-			created.Document.ID, created.Document.Revision, req.Msg.Document,
-		)
-		if err != nil {
-			return normalizeLegalContentBlockError("privacy", err)
-		}
-		_, err = s.contentBlocks.ReplaceSnapshot(
-			ctx, tx, replacement, legalDocumentOwnershipFence("privacy", privacy.ID),
-		)
-		if err != nil {
-			return normalizeLegalContentBlockError("privacy", err)
+		if req.Msg.Document != nil {
+			if req.Msg.Document.GetSourceLocale() != sourceLocale {
+				return errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
+			}
+			replacement, err := contentblock.ReplaceFromRichTextProto(
+				created.Document.ID, created.Document.Revision, req.Msg.Document,
+			)
+			if err != nil {
+				return normalizeLegalContentBlockError("privacy", err)
+			}
+			_, err = s.contentBlocks.ReplaceSnapshot(
+				ctx, tx, replacement, legalDocumentOwnershipFence("privacy", privacy.ID),
+			)
+			if err != nil {
+				return normalizeLegalContentBlockError("privacy", err)
+			}
 		}
 		finalSnapshot, err := s.contentBlocks.LoadSnapshotInTransaction(
 			ctx, tx, created.Document.ID, sourceLocale,

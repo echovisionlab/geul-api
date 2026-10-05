@@ -46,6 +46,9 @@ func TestServiceAuthenticateRegenerateAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldSecret := issued.Secret.Reveal()
+	if !strings.HasPrefix(oldSecret, "pat_") {
+		t.Fatal("issuance must use the public pat_ prefix")
+	}
 	principal, err := service.Authenticate(t.Context(), oldSecret)
 	if err != nil || principal.MemberID != "member-1" || principal.TokenID != issued.Metadata.ID {
 		t.Fatalf("Authenticate() = %+v, %v", principal, err)
@@ -58,6 +61,9 @@ func TestServiceAuthenticateRegenerateAndDelete(t *testing.T) {
 	regenerated, err := service.Regenerate(t.Context(), "member-1", issued.Metadata.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(regenerated.Secret.Reveal(), "pat_") {
+		t.Fatal("regeneration must use the public pat_ prefix")
 	}
 	if regenerated.Metadata.ID != issued.Metadata.ID || regenerated.Secret.Reveal() == oldSecret ||
 		!regenerated.Metadata.CreatedAt.Equal(issued.Metadata.CreatedAt) ||

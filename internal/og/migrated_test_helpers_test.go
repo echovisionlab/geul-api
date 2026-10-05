@@ -60,7 +60,7 @@ func newServiceUnitDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	for _, statement := range []string{
-		`CREATE TABLE file (
+		`CREATE TABLE file ( client_media_bundle_id TEXT,
 			id text PRIMARY KEY, file_name text, mime_type text, file_size integer,
 			extension text, sha256 blob, duration_seconds integer,
 			ingest_slot_id text, ingest_attempt_id text,
@@ -118,7 +118,7 @@ func setupOgLifecycleUnitTables(t *testing.T, db *gorm.DB) {
 	for _, table := range []string{"post_translation", "page_translation", "series_translation", "form_translation"} {
 		require.NoError(t, db.Exec("CREATE TABLE "+table+" (entity_id text, locale text, og_asset_id text)").Error)
 	}
-	for _, table := range []string{"work"} {
+	for _, table := range []string{"work", "label", "artist", "release"} {
 		require.NoError(t, db.Exec("CREATE TABLE "+table+" (id text PRIMARY KEY, title text, featured_image_file_id text, og_asset_id text, updated_at datetime)").Error)
 	}
 	require.NoError(t, db.Exec(`INSERT INTO site_settings (id) VALUES (1)`).Error)

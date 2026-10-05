@@ -240,7 +240,7 @@ func newContentBlockMediaUnitDB(t *testing.T) *gorm.DB {
 			audience_segment_id TEXT NOT NULL,
 			PRIMARY KEY (block_id, reference_path, audience_segment_id)
 		);
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
 			file_name TEXT,
 			extension TEXT NOT NULL,

@@ -2,6 +2,8 @@ package public
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -9,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -19,6 +22,7 @@ import (
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
@@ -142,73 +146,16 @@ func (s *PostService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPostRequest],
 ) (*connect.Response[openv1.GetPostResponse], error) {
-	slugOrID := req.Msg.Slug
-	shareToken := req.Msg.ShareToken
-
-	var post model.Post
-	var err error
-	query := s.db.WithContext(ctx).
-		Preload("Categories").
-		Preload("Tags").
-		Preload("Series").
-		Preload("MapPlace")
-
-	// UUID-first approach
-	if isValidUUID(slugOrID) {
-		err = query.First(&post, "id = ?", slugOrID).Error
-	} else {
-		err = query.First(&post, "slug = ?", slugOrID).Error
-	}
-
+	projection, err := s.loadPublicPostSnapshot(ctx, req)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("post not found")
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.overlayPostSourceLocaleDocument(ctx, &post); err != nil {
 		return nil, err
 	}
-
-	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{
-		ResourceType: "post",
-		ResourceID:   post.ID,
-		Status:       string(post.Status),
-		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
-	}
-	if post.ContentDocumentID != nil {
-		mediaAuthorization.DocumentID = *post.ContentDocumentID
-	}
-
-	// Private states are hidden unless the current verified account has exact
-	// Post authority or a bounded ShareLink/password proof succeeds.
-	if !isPublicPostStatus(post.Status) {
-		mode, link, accessErr := s.requireDraftPostAccess(
-			ctx, post.ID, optionalStringValue(shareToken), req.Msg.GetSharePassword(),
-		)
-		if accessErr != nil {
-			return nil, accessErr
-		}
-		mediaAuthorization.Mode = mode
-		mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-		if mode == mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft {
-			if user := auth.GetUser(ctx); user != nil {
-				mediaAuthorization.IdentityID = user.IdentityID.String()
-				mediaAuthorization.MemberID = user.MemberID.String()
-			}
-		}
-	}
-
-	return s.buildPostResponse(
-		mediaasset.WithContentDownloadOwnerAuthorization(ctx, mediaAuthorization),
-		req.Header().Get("Accept-Language"),
-		&post,
-	)
+	return s.buildPostResponse(ctx, req.Header().Get("Accept-Language"), projection)
 }
 
 func (s *PostService) requireDraftPostAccess(
 	ctx context.Context,
+	db *gorm.DB,
 	postID string,
 	shareToken string,
 	sharePassword string,
@@ -221,13 +168,118 @@ func (s *PostService) requireDraftPostAccess(
 		return mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft, nil, nil
 	}
 	link, err := requireDraftShareLinkAccess(
-		ctx, s.db, shareToken, sharePassword,
+		ctx, db, shareToken, sharePassword,
 		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, postID, "post", s.shareLinks,
 	)
 	if err != nil {
 		return "", nil, err
 	}
 	return mediaasset.ContentDownloadOwnerAccessShare, link, nil
+}
+
+type publicPostSnapshot struct {
+	post               model.Post
+	localization       LocalizedContentSelection
+	document           *contentv1.LocalizedRichTextDocument
+	revision           string
+	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
+}
+
+// loadPublicPostSnapshot holds the Post root SHARE lock while checking its
+// public/draft visibility and reading the localized body from the same RR
+// snapshot. Post content writers take UPDATE on this root before the document
+// lock, matching the page read/write lock order.
+func (s *PostService) loadPublicPostSnapshot(
+	ctx context.Context,
+	req *connect.Request[openv1.GetPostRequest],
+) (*publicPostSnapshot, error) {
+	slugOrID := req.Msg.Slug
+	var snapshot publicPostSnapshot
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "SHARE"}).
+			Preload("Categories").
+			Preload("Tags").
+			Preload("Series").
+			Preload("MapPlace")
+		var loadErr error
+		if isValidUUID(slugOrID) {
+			loadErr = query.First(&snapshot.post, "id = ?", slugOrID).Error
+		} else {
+			loadErr = query.First(&snapshot.post, "slug = ?", slugOrID).Error
+		}
+		if loadErr != nil {
+			if errors.Is(loadErr, gorm.ErrRecordNotFound) {
+				return errs.NotFoundMsg("post not found")
+			}
+			return errs.Internal(loadErr)
+		}
+
+		post := &snapshot.post
+		snapshot.mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
+			ResourceType: "post",
+			ResourceID:   post.ID,
+			Status:       string(post.Status),
+			Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
+		}
+		if post.ContentDocumentID != nil {
+			snapshot.mediaAuthorization.DocumentID = *post.ContentDocumentID
+		}
+		if !isPublicPostStatus(post.Status) {
+			mode, link, accessErr := s.requireDraftPostAccess(
+				ctx, tx, post.ID, optionalStringValue(req.Msg.ShareToken), req.Msg.GetSharePassword(),
+			)
+			if accessErr != nil {
+				return accessErr
+			}
+			snapshot.mediaAuthorization.Mode = mode
+			snapshot.mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+			if mode == mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft {
+				if user := auth.GetUser(ctx); user != nil {
+					snapshot.mediaAuthorization.IdentityID = user.IdentityID.String()
+					snapshot.mediaAuthorization.MemberID = user.MemberID.String()
+				}
+			}
+		}
+
+		state, stateErr := postdomain.LoadPostSourceLocaleDocumentStateForPublic(ctx, tx, post.ID)
+		if stateErr != nil {
+			return stateErr
+		}
+		if state == nil {
+			return errs.NotFound("post_translation", post.ID)
+		}
+		postdomain.OverlayPostSourceLocaleDocumentForPublic(post, state)
+		localization, localizationErr := s.localizer.ResolveSelectionWithPolicy(
+			ctx, tx, "post", post.ID, req.Header().Get("Accept-Language"), true,
+		)
+		if localizationErr != nil {
+			slog.Warn("failed to resolve post localization", "postId", post.ID, "error", localizationErr)
+		}
+		localization, localizationErr = s.localizer.ResolveOgConsistency(
+			ctx, tx, s.cdnDomain, "post", post.ID, localization,
+		)
+		if localizationErr != nil {
+			return errs.Internal(localizationErr)
+		}
+		if s.blocks == nil {
+			return errs.Internal(fmt.Errorf("post content Block store is not configured"))
+		}
+		document, revision, projectionErr := postdomain.LoadLocalizedPostContentProjectionForPublic(
+			ctx, tx, s.blocks, post.ID, localization.DisplayedLocale,
+		)
+		if projectionErr != nil {
+			return projectionErr
+		}
+		snapshot.localization = localization
+		snapshot.document = document
+		snapshot.revision = revision
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
 }
 
 // List returns public posts, including archived read-only posts.
@@ -456,7 +508,13 @@ func normalizePostMapViewport(viewport *openv1.PostMapViewport) (normalizedPostM
 	east := mapcluster.NormalizeLongitude(viewport.Bounds.East)
 
 	zoom := viewport.Zoom
-	if zoom <= 0 {
+	if math.IsNaN(zoom) || math.IsInf(zoom, 0) {
+		return normalizedPostMapViewport{}, errs.InvalidArgument("viewport.zoom", "zoom must be finite")
+	}
+	// Signed MapLibre zooms down to the renderer's minimum are valid with
+	// measured dimensions. Preserve legacy defaults for missing-size inputs
+	// at zoom zero or below, and for zooms below the supported minimum.
+	if zoom < mapcluster.MinViewportZoom || (zoom <= 0 && (viewport.WidthPx <= 0 || viewport.HeightPx <= 0)) {
 		zoom = 1.5
 	}
 
@@ -475,7 +533,7 @@ func normalizePostMapViewport(viewport *openv1.PostMapViewport) (normalizedPostM
 		clusterRadiusPx = mapcluster.DefaultMapClusterRadiusPxForZoom(zoom, widthPx)
 	}
 
-	worldScale := 256 * math.Pow(2, zoom)
+	worldScale := mapcluster.WorldTileSize * math.Pow(2, zoom)
 	fullLongitude := widthPx >= worldScale-1
 	fullLatitude := heightPx >= worldScale-1
 
@@ -684,38 +742,14 @@ func (s *PostService) Search(
 func (s *PostService) buildPostResponse(
 	ctx context.Context,
 	acceptLanguage string,
-	post *model.Post,
+	projection *publicPostSnapshot,
 ) (*connect.Response[openv1.GetPostResponse], error) {
-	localization, err := s.localizer.ResolveSelectionWithPolicy(
-		ctx,
-		s.db,
-		"post",
-		post.ID,
-		acceptLanguage,
-		true,
-	)
-	if err != nil {
-		slog.Warn("failed to resolve post localization", "postId", post.ID, "error", err)
-	}
-	localization, err = s.localizer.ResolveOgConsistency(
-		ctx, s.db, s.cdnDomain, "post", post.ID, localization,
-	)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if s.blocks == nil {
-		return nil, errs.Internal(fmt.Errorf("post content Block store is not configured"))
-	}
-	document, revision, err := postdomain.LoadLocalizedPostContentProjectionForPublic(
-		ctx,
-		s.db,
-		s.blocks,
-		post.ID,
-		localization.DisplayedLocale,
-	)
-	if err != nil {
-		return nil, err
-	}
+	post := &projection.post
+	localization := projection.localization
+	document := projection.document
+	revision := projection.revision
+	ctx = mediaasset.WithContentDownloadOwnerAuthorization(ctx, projection.mediaAuthorization)
+	var err error
 
 	protoPost := &openv1.Post{
 		Id:              post.ID,

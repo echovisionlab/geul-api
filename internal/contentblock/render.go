@@ -293,7 +293,8 @@ func mergeRichTextLocaleBlock(
 		target.GetBulletListItem() != nil,
 		target.GetNumberedListItem() != nil,
 		target.GetCheckListItem() != nil,
-		target.GetQuote() != nil:
+		target.GetQuote() != nil,
+		target.GetCallout() != nil:
 		return proto.Clone(target).(*contentv1.RichTextBlockLocale)
 	case target.GetTable() != nil:
 		return mergeRichTextTableLocaleBlock(source, target)
@@ -435,6 +436,19 @@ func renderRichTextBlock(
 		return MaterializedContent{HTML: "<hr>"}, nil
 	case *contentv1.RichTextBlock_Table:
 		return renderTable(base.Table.GetContent(), localized.GetTable().GetContent())
+	case *contentv1.RichTextBlock_Mermaid:
+		source := base.Mermaid.GetProps().GetSource()
+		title := localized.GetMermaid().GetProps().GetTitle()
+		caption := ""
+		text := source
+		if title != "" {
+			caption = "<figcaption>" + html.EscapeString(title) + "</figcaption>"
+			text = title + "\n" + source
+		}
+		return MaterializedContent{
+			HTML: `<figure data-block-kind="mermaid">` + caption + `<pre><code class="language-mermaid">` + html.EscapeString(source) + "</code></pre></figure>",
+			Text: text,
+		}, nil
 	case *contentv1.RichTextBlock_P5Sketch:
 		return renderInteractive("p5-sketch", localized.GetP5Sketch().GetProps().GetTitle()), nil
 	case *contentv1.RichTextBlock_ThreeScene:

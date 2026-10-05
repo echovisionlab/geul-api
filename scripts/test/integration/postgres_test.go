@@ -5,16 +5,20 @@ import (
 	"testing"
 )
 
-func TestSuitePostgresUsesOneLocalEphemeralContainer(t *testing.T) {
+func TestSuitePostgresUsesOneLocalContainerWithFixedLoopbackPort(t *testing.T) {
 	t.Parallel()
 
+	const port = "49152"
 	arguments := suitePostgresDockerArguments(suiteOptions{
 		PostgresImage: "local-postgres@sha256:test",
-	}, "geul_it_template_test")
+	}, "geul_it_template_test", port)
 	for _, required := range []string{"--pull=never", "--rm", "--tmpfs", "/var/lib/postgresql:rw"} {
 		if !slices.Contains(arguments, required) {
 			t.Fatalf("docker arguments %q do not contain %q", arguments, required)
 		}
+	}
+	if !slices.Contains(arguments, "127.0.0.1:"+port+":5432") {
+		t.Fatalf("docker arguments do not publish the reserved loopback port %s: %q", port, arguments)
 	}
 	if got := arguments[len(arguments)-1]; got != "local-postgres@sha256:test" {
 		t.Fatalf("image argument = %q", got)

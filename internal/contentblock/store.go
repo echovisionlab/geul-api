@@ -514,21 +514,11 @@ func (s *Store) applyBatchAfterFenceWithMetadata(
 		if err != nil {
 			return Result{}, err
 		}
-		if metadataEffect.AffectsTranslationSource && !metadataEffect.Changed {
-			return Result{}, fmt.Errorf("%w: unchanged metadata cannot affect translation source", ErrInvalidMutation)
+		if err := validateMetadataEffect(metadataEffect, domain.SourceLocale, "metadata"); err != nil {
+			return Result{}, err
 		}
-		if metadataEffect.SourceLocale != "" {
-			if err := validateLocale(metadataEffect.SourceLocale); err != nil {
-				return Result{}, fmt.Errorf("%w: metadata source locale: %v", ErrInvalidMutation, err)
-			}
-			if metadataEffect.SourceLocale != domain.SourceLocale && !metadataEffect.AffectsTranslationSource {
-				return Result{}, fmt.Errorf("%w: source locale change must affect translation source", ErrInvalidMutation)
-			}
-		}
-		for _, locale := range metadataEffect.ChangedLocales {
-			if err := validateLocale(locale); err != nil {
-				return Result{}, fmt.Errorf("%w: metadata changed locale: %v", ErrInvalidMutation, err)
-			}
+		if err := validateMetadataChangedLocales(metadataEffect.ChangedLocales); err != nil {
+			return Result{}, err
 		}
 		localesChanged = mergeChangedLocales(localesChanged, metadataEffect.ChangedLocales)
 		sourceChanged = sourceChanged || metadataEffect.AffectsTranslationSource
@@ -575,6 +565,33 @@ func mergeChangedLocales(left, right []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// validateMetadataEffect checks invariants shared by batch and revision-only
+// metadata mutations. Batch-only changed-locale validation stays at its caller.
+func validateMetadataEffect(effect MetadataEffect, sourceLocale, sourceLocaleLabel string) error {
+	if effect.AffectsTranslationSource && !effect.Changed {
+		return fmt.Errorf("%w: unchanged metadata cannot affect translation source", ErrInvalidMutation)
+	}
+	if effect.SourceLocale == "" {
+		return nil
+	}
+	if err := validateLocale(effect.SourceLocale); err != nil {
+		return fmt.Errorf("%w: %s source locale: %v", ErrInvalidMutation, sourceLocaleLabel, err)
+	}
+	if effect.SourceLocale != sourceLocale && !effect.AffectsTranslationSource {
+		return fmt.Errorf("%w: source locale change must affect translation source", ErrInvalidMutation)
+	}
+	return nil
+}
+
+func validateMetadataChangedLocales(locales []string) error {
+	for _, locale := range locales {
+		if err := validateLocale(locale); err != nil {
+			return fmt.Errorf("%w: metadata changed locale: %v", ErrInvalidMutation, err)
+		}
+	}
+	return nil
 }
 
 func deriveTranslationSourceChanged(
@@ -737,16 +754,8 @@ func (s *Store) AdvanceRevision(
 	if err != nil {
 		return AdvanceResult{}, err
 	}
-	if effect.AffectsTranslationSource && !effect.Changed {
-		return AdvanceResult{}, fmt.Errorf("%w: unchanged metadata cannot affect translation source", ErrInvalidMutation)
-	}
-	if effect.SourceLocale != "" {
-		if err := validateLocale(effect.SourceLocale); err != nil {
-			return AdvanceResult{}, fmt.Errorf("%w: result source locale: %v", ErrInvalidMutation, err)
-		}
-		if effect.SourceLocale != domain.SourceLocale && !effect.AffectsTranslationSource {
-			return AdvanceResult{}, fmt.Errorf("%w: source locale change must affect translation source", ErrInvalidMutation)
-		}
+	if err := validateMetadataEffect(effect, domain.SourceLocale, "result"); err != nil {
+		return AdvanceResult{}, err
 	}
 	if !effect.Changed {
 		return AdvanceResult{

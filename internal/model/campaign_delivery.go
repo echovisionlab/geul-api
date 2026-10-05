@@ -82,6 +82,8 @@ type CampaignDeliveryRecipient struct {
 	ErrorType                *string    `gorm:"column:error_type;type:varchar(100)"`
 	ProviderMessageID        *string    `gorm:"column:provider_message_id;type:text"`
 	TerminalAt               *time.Time `gorm:"column:terminal_at;type:timestamptz"`
+	DeliveryClaimID          *string    `gorm:"column:delivery_claim_id;type:uuid"`
+	DeliveryClaimExpiresAt   *time.Time `gorm:"column:delivery_claim_expires_at;type:timestamptz"`
 	CreatedAt                time.Time  `gorm:"column:created_at;not null;default:now()"`
 	UpdatedAt                time.Time  `gorm:"column:updated_at;not null;default:now()"`
 }

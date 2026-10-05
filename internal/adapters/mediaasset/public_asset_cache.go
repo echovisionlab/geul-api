@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -29,21 +29,23 @@ type HTTPDoer interface {
 }
 
 type PublicAssetCache struct {
-	cdnURL     string
-	apiURL     string
-	zoneID     string
-	apiToken   string
-	httpClient HTTPDoer
+	purgeEnabled bool
+	cdnURL       string
+	apiURL       string
+	zoneID       string
+	apiToken     string
+	httpClient   HTTPDoer
 }
 
 var _ mediaassetdomain.PublicAssetCache = (*PublicAssetCache)(nil)
 
-func NewPublicAssetCache(cdnURL, apiURL, zoneID, apiToken string, client HTTPDoer) *PublicAssetCache {
+func NewPublicAssetCache(cdnURL, apiURL, zoneID, apiToken string, purgeEnabled bool, client HTTPDoer) *PublicAssetCache {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &PublicAssetCache{
-		cdnURL: strings.TrimSpace(cdnURL), apiURL: strings.TrimSpace(apiURL),
+		purgeEnabled: purgeEnabled,
+		cdnURL:       strings.TrimSpace(cdnURL), apiURL: strings.TrimSpace(apiURL),
 		zoneID: strings.TrimSpace(zoneID), apiToken: strings.TrimSpace(apiToken), httpClient: client,
 	}
 }
@@ -81,6 +83,12 @@ type purgeResponse struct {
 func (c *PublicAssetCache) PurgePrefixes(ctx context.Context, prefixes []string) error {
 	if len(prefixes) == 0 || len(prefixes) > purgeBatchSize {
 		return fmt.Errorf("cloudflare purge requires 1 to %d prefixes", purgeBatchSize)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !c.purgeEnabled {
+		return nil
 	}
 	payload, err := json.Marshal(PurgeRequest{Prefixes: prefixes})
 	if err != nil {

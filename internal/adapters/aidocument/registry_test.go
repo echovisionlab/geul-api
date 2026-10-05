@@ -94,8 +94,8 @@ func TestNewRegistryRejectsIncompleteDuplicateUnsupportedAndNilRegistrations(t *
 
 func TestRegistryRoutesLoadAndMutationToExactDomain(t *testing.T) {
 	domains := core.SupportedDomains()
-	if len(domains) != 12 {
-		t.Fatalf("registry domain count = %d, want 12", len(domains))
+	if len(domains) != 15 {
+		t.Fatalf("registry domain count = %d, want 15", len(domains))
 	}
 	for _, domain := range domains {
 		t.Run(string(domain), func(t *testing.T) {

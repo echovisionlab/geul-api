@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -81,6 +83,20 @@ type workMapFeatureRow struct {
 	PlaceLng     float64 `gorm:"column:place_lng"`
 }
 
+type workPublicClientRow struct {
+	ID          string
+	Name        string
+	Website     *string
+	LightFileID *string `gorm:"column:light_file_id"`
+	DarkFileID  *string `gorm:"column:dark_file_id"`
+}
+
+type workPublicRelationsSnapshot struct {
+	CreditGroups []model.WorkCreditGroup
+	Credits      []model.WorkCredit
+	Clients      []workPublicClientRow
+}
+
 type workMapPlaceGroup struct {
 	PlaceID          string
 	Name             string
@@ -148,58 +164,7 @@ func (s *WorkService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetWorkRequest],
 ) (*connect.Response[openv1.GetWorkResponse], error) {
-	slugOrID := req.Msg.Slug
-	shareToken := req.Msg.ShareToken
-	sharePassword := req.Msg.GetSharePassword()
-
-	var work model.Work
-	var err error
-
-	// UUID-first approach
-	if workdomain.IsValidUUID(slugOrID) {
-		err = s.db.WithContext(ctx).Preload("MapPlace").First(&work, "id = ?", slugOrID).Error
-	} else {
-		err = s.db.WithContext(ctx).Preload("MapPlace").First(&work, "slug = ?", slugOrID).Error
-	}
-
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("work not found")
-		}
-		return nil, errs.Internal(err)
-	}
-	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{
-		ResourceType: "work",
-		ResourceID:   work.ID,
-		Status:       work.Status,
-		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
-	}
-	// Check access for draft works
-	if !isPublicWorkStatus(work.Status) {
-		allowed, permissionErr := hasDraftWorkView(ctx, s.spiceDB, work.ID)
-		if permissionErr != nil {
-			return nil, errs.Internal(fmt.Errorf("check work draft view permission: %w", permissionErr))
-		}
-		if allowed {
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
-			if user := auth.GetUser(ctx); user != nil {
-				mediaAuthorization.IdentityID = user.IdentityID.String()
-				mediaAuthorization.MemberID = user.MemberID.String()
-			}
-		} else {
-			link, accessErr := requireDraftShareLinkAccess(
-				ctx, s.db, optionalStringValue(shareToken), sharePassword,
-				managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, work.ID, "work",
-			)
-			if accessErr != nil {
-				return nil, accessErr
-			}
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-			mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-		}
-	}
-
-	return s.buildWorkResponse(ctx, req.Header().Get("Accept-Language"), &work, mediaAuthorization)
+	return s.buildWorkResponse(ctx, req)
 }
 
 // List returns published and archived works.
@@ -335,18 +300,63 @@ func (s *WorkService) ListMapFeatures(
 // buildWorkResponse builds a GetWorkResponse with the work
 func (s *WorkService) buildWorkResponse(
 	ctx context.Context,
-	acceptLanguage string,
-	work *model.Work,
-	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
+	req *connect.Request[openv1.GetWorkRequest],
 ) (*connect.Response[openv1.GetWorkResponse], error) {
 	if s.blocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
+	work := &model.Work{}
+	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{}
 	var localization publiccontent.Selection
 	var document *contentv1.LocalizedRichTextDocument
 	var revision string
 	var blockMedia []*contentv1.ContentBlockMediaItem
+	var relations workPublicRelationsSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "SHARE"}).
+			Preload("MapPlace")
+		var loadErr error
+		if workdomain.IsValidUUID(req.Msg.Slug) {
+			loadErr = query.First(work, "id = ?", req.Msg.Slug).Error
+		} else {
+			loadErr = query.First(work, "slug = ?", req.Msg.Slug).Error
+		}
+		if loadErr != nil {
+			if errors.Is(loadErr, gorm.ErrRecordNotFound) {
+				return errs.NotFoundMsg("work not found")
+			}
+			return errs.Internal(loadErr)
+		}
+		mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
+			ResourceType: "work",
+			ResourceID:   work.ID,
+			Status:       work.Status,
+			Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
+		}
+		if !isPublicWorkStatus(work.Status) {
+			allowed, permissionErr := hasDraftWorkView(ctx, s.spiceDB, work.ID)
+			if permissionErr != nil {
+				return errs.Internal(fmt.Errorf("check work draft view permission: %w", permissionErr))
+			}
+			if allowed {
+				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
+				if user := auth.GetUser(ctx); user != nil {
+					mediaAuthorization.IdentityID = user.IdentityID.String()
+					mediaAuthorization.MemberID = user.MemberID.String()
+				}
+			} else {
+				link, accessErr := requireDraftShareLinkAccess(
+					ctx, tx, optionalStringValue(req.Msg.ShareToken), req.Msg.GetSharePassword(),
+					managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, work.ID, "work",
+				)
+				if accessErr != nil {
+					return accessErr
+				}
+				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
+				mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+			}
+		}
 		documentID, loadErr := workdomain.LoadWorkContentDocumentIDForPublicRead(ctx, tx, work.ID)
 		if loadErr != nil {
 			return loadErr
@@ -360,7 +370,7 @@ func (s *WorkService) buildWorkResponse(
 			return errs.InternalMsg("Work source locale is not initialized")
 		}
 		workdomain.OverlayWorkSourceLocaleDocumentForPublic(work, sourceState)
-		localization, loadErr = publiccontent.Resolve(ctx, tx, workLocalizationSpec, work.ID, acceptLanguage)
+		localization, loadErr = publiccontent.Resolve(ctx, tx, workLocalizationSpec, work.ID, req.Header().Get("Accept-Language"))
 		if loadErr != nil {
 			return errs.Internal(loadErr)
 		}
@@ -382,6 +392,10 @@ func (s *WorkService) buildWorkResponse(
 				documentID,
 				localization.DisplayedLocale,
 			)
+		if loadErr != nil {
+			return loadErr
+		}
+		relations, loadErr = s.loadWorkPublicRelationsSnapshot(ctx, tx, work)
 		return loadErr
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
@@ -441,7 +455,7 @@ func (s *WorkService) buildWorkResponse(
 		return nil, errs.Internal(err)
 	}
 
-	if imageAsset := s.getWorkFeaturedImageAsset(ctx, work.ID); imageAsset != nil {
+	if imageAsset := s.getWorkFeaturedImageAssetForSourceFile(ctx, work.FeaturedImageFileID); imageAsset != nil {
 		protoWork.FeaturedImageAsset = imageAsset
 	}
 
@@ -459,15 +473,15 @@ func (s *WorkService) buildWorkResponse(
 
 	// OG image key
 	// Get credit groups and credits with artist/user details
-	protoWork.CreditGroups = s.getWorkCreditGroups(ctx, work.ID)
+	protoWork.CreditGroups = workCreditGroupsToProto(relations.CreditGroups)
 	// Get credits with artist/Member details.
-	protoWork.Credits, err = s.getWorkCredits(ctx, work.ID)
+	protoWork.Credits, err = s.getWorkCredits(ctx, relations.Credits)
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
 
 	// Get clients
-	protoWork.Clients = s.getWorkClients(ctx, work.ID)
+	protoWork.Clients = s.getWorkClients(ctx, relations.Clients)
 
 	return connect.NewResponse(&openv1.GetWorkResponse{
 		Work:       protoWork,
@@ -517,7 +531,7 @@ func (s *WorkService) toWorkSummary(
 		summary.UntilMonth = work.UntilMonth
 	}
 
-	if imageAsset := s.getWorkFeaturedImageAsset(ctx, work.ID); imageAsset != nil {
+	if imageAsset := s.getWorkFeaturedImageAssetForSourceFile(ctx, work.FeaturedImageFileID); imageAsset != nil {
 		summary.FeaturedImageAsset = imageAsset
 	}
 	return summary
@@ -591,7 +605,13 @@ func normalizeWorkMapViewport(viewport *openv1.WorkMapViewport) (normalizedWorkM
 	east := mapcluster.NormalizeLongitude(viewport.Bounds.East)
 
 	zoom := viewport.Zoom
-	if zoom <= 0 {
+	if math.IsNaN(zoom) || math.IsInf(zoom, 0) {
+		return normalizedWorkMapViewport{}, errs.InvalidArgument("viewport.zoom", "zoom must be finite")
+	}
+	// Signed MapLibre zooms down to the renderer's minimum are valid with
+	// measured dimensions. Preserve legacy defaults for missing-size inputs
+	// at zoom zero or below, and for zooms below the supported minimum.
+	if zoom < mapcluster.MinViewportZoom || (zoom <= 0 && (viewport.WidthPx <= 0 || viewport.HeightPx <= 0)) {
 		zoom = 1.5
 	}
 
@@ -610,7 +630,7 @@ func normalizeWorkMapViewport(viewport *openv1.WorkMapViewport) (normalizedWorkM
 		clusterRadiusPx = mapcluster.DefaultMapClusterRadiusPxForZoom(zoom, widthPx)
 	}
 
-	worldScale := 256 * math.Pow(2, zoom)
+	worldScale := mapcluster.WorldTileSize * math.Pow(2, zoom)
 	fullLongitude := widthPx >= worldScale-1
 	fullLatitude := heightPx >= worldScale-1
 
@@ -744,16 +764,7 @@ func workMapItem(group *workMapPlaceGroup) *openv1.WorkMapItem {
 	}
 }
 
-func (s *WorkService) getWorkCreditGroups(ctx context.Context, workID string) []*openv1.WorkCreditGroup {
-	var groups []model.WorkCreditGroup
-	if err := s.db.WithContext(ctx).
-		Where("work_id = ?", workID).
-		Order("sort_order ASC").
-		Order("id ASC").
-		Find(&groups).Error; err != nil {
-		return nil
-	}
-
+func workCreditGroupsToProto(groups []model.WorkCreditGroup) []*openv1.WorkCreditGroup {
 	protoGroups := make([]*openv1.WorkCreditGroup, 0, len(groups))
 	for _, group := range groups {
 		protoGroups = append(protoGroups, &openv1.WorkCreditGroup{
@@ -765,15 +776,44 @@ func (s *WorkService) getWorkCreditGroups(ctx context.Context, workID string) []
 	return protoGroups
 }
 
-// getWorkCredits gets work credits with artist/Member details.
-func (s *WorkService) getWorkCredits(ctx context.Context, workID string) ([]*openv1.WorkCredit, error) {
-	var credits []model.WorkCredit
-	if err := s.db.WithContext(ctx).
-		Where("work_id = ?", workID).
+func (s *WorkService) loadWorkPublicRelationsSnapshot(
+	ctx context.Context,
+	tx *gorm.DB,
+	work *model.Work,
+) (workPublicRelationsSnapshot, error) {
+	snapshot := workPublicRelationsSnapshot{}
+	// These two legacy projections intentionally suppress read errors. Isolate
+	// them with savepoints so a failed optional read does not poison the RR tx.
+	_ = tx.Transaction(func(savepoint *gorm.DB) error {
+		return savepoint.WithContext(ctx).
+			Where("work_id = ?", work.ID).
+			Order("sort_order ASC").
+			Order("id ASC").
+			Find(&snapshot.CreditGroups).Error
+	})
+
+	if err := tx.WithContext(ctx).
+		Where("work_id = ?", work.ID).
 		Order("sort_order ASC").
-		Find(&credits).Error; err != nil {
-		return nil, err
+		Find(&snapshot.Credits).Error; err != nil {
+		return workPublicRelationsSnapshot{}, errs.Internal(err)
 	}
+
+	_ = tx.Transaction(func(savepoint *gorm.DB) error {
+		return savepoint.WithContext(ctx).
+			Table("work_client wc").
+			Select("c.id, c.name, c.website, c.logo_light_file_id AS light_file_id, c.logo_dark_file_id AS dark_file_id").
+			Joins("JOIN client c ON c.id = wc.client_id").
+			Where("wc.work_id = ?", work.ID).
+			Order("wc.sort_order ASC").
+			Scan(&snapshot.Clients).Error
+	})
+
+	return snapshot, nil
+}
+
+// getWorkCredits gets work credits with artist/Member details.
+func (s *WorkService) getWorkCredits(ctx context.Context, credits []model.WorkCredit) ([]*openv1.WorkCredit, error) {
 	memberIDs := make([]string, 0, len(credits))
 	for _, credit := range credits {
 		if credit.MemberID != nil {
@@ -833,21 +873,14 @@ func (s *WorkService) loadPublicCreditArtist(ctx context.Context, artistID strin
 	return result
 }
 
-func (s *WorkService) getWorkFeaturedImageAsset(ctx context.Context, workID string) *commonv1.AssetRef {
-	var result struct {
-		FileID *string `gorm:"column:file_id"`
-	}
-
-	err := s.db.WithContext(ctx).
-		Table("work").
-		Select("work.featured_image_file_id AS file_id").
-		Where("work.id = ?", workID).
-		Scan(&result).Error
-
-	if err != nil || result.FileID == nil {
+func (s *WorkService) getWorkFeaturedImageAssetForSourceFile(
+	ctx context.Context,
+	sourceFileID *string,
+) *commonv1.AssetRef {
+	if sourceFileID == nil {
 		return nil
 	}
-	return s.assets.ResolveReadyAssetForSourceFile(ctx, *result.FileID, "image")
+	return s.assets.ResolveReadyAssetForSourceFile(ctx, *sourceFileID, "image")
 }
 
 func (s *WorkService) getArtistImageAsset(ctx context.Context, artistID string) *commonv1.AssetRef {
@@ -855,25 +888,8 @@ func (s *WorkService) getArtistImageAsset(ctx context.Context, artistID string) 
 }
 
 // getWorkClients fetches clients associated with a work
-func (s *WorkService) getWorkClients(ctx context.Context, workID string) []*openv1.WorkClient {
-	type clientRow struct {
-		ID          string
-		Name        string
-		Website     *string
-		LightFileID *string `gorm:"column:light_file_id"`
-		DarkFileID  *string `gorm:"column:dark_file_id"`
-	}
-
-	var rows []clientRow
-	err := s.db.WithContext(ctx).
-		Table("work_client wc").
-		Select("c.id, c.name, c.website, c.logo_light_file_id AS light_file_id, c.logo_dark_file_id AS dark_file_id").
-		Joins("JOIN client c ON c.id = wc.client_id").
-		Where("wc.work_id = ?", workID).
-		Order("wc.sort_order ASC").
-		Scan(&rows).Error
-
-	if err != nil || len(rows) == 0 {
+func (s *WorkService) getWorkClients(ctx context.Context, rows []workPublicClientRow) []*openv1.WorkClient {
+	if len(rows) == 0 {
 		return nil
 	}
 

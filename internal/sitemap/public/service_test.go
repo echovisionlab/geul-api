@@ -156,6 +156,9 @@ type recordingSitemapStore struct {
 	terms       []sitemapdomain.Entry
 	posts       []sitemapdomain.Entry
 	works       []sitemapdomain.Entry
+	artists     []sitemapdomain.Entry
+	labels      []sitemapdomain.Entry
+	releases    []sitemapdomain.Entry
 	categories  []sitemapdomain.Entry
 	tags        []sitemapdomain.Entry
 	snapshot    *sitemapdomain.Snapshot
@@ -191,6 +194,18 @@ func (s *recordingSitemapStore) ListPosts(context.Context) ([]sitemapdomain.Entr
 
 func (s *recordingSitemapStore) ListWorks(context.Context) ([]sitemapdomain.Entry, error) {
 	return s.works, nil
+}
+
+func (s *recordingSitemapStore) ListArtists(context.Context) ([]sitemapdomain.Entry, error) {
+	return s.artists, nil
+}
+
+func (s *recordingSitemapStore) ListLabels(context.Context) ([]sitemapdomain.Entry, error) {
+	return s.labels, nil
+}
+
+func (s *recordingSitemapStore) ListReleases(context.Context) ([]sitemapdomain.Entry, error) {
+	return s.releases, nil
 }
 
 func (s *recordingSitemapStore) ListCategories(context.Context) ([]sitemapdomain.Entry, error) {

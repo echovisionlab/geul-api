@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	fileauthority "github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -35,6 +36,7 @@ func TestFileBlockToolDescriptorsAreFocusedAndAnnotated(t *testing.T) {
 		{ToolDocumentFileAdd, toolAnnotations(false, false, false)},
 		{ToolDocumentFileReplace, toolAnnotations(false, true, false)},
 		{ToolDocumentFileRemove, toolAnnotations(false, true, false)},
+		{ToolDocumentFileCaptionUpdate, toolAnnotations(false, true, false)},
 		{ToolDocumentFileDownloadPolicyGet, toolAnnotations(true, false, false)},
 		{ToolDocumentFileDownloadPolicyUpdate, toolAnnotations(false, true, true)},
 		{ToolFileUsageList, toolAnnotations(true, false, false)},
@@ -56,11 +58,11 @@ func TestFileBlockToolDescriptorsAreFocusedAndAnnotated(t *testing.T) {
 			}
 		}
 	}
-	getSchema := string(listed[3].InputSchema)
+	getSchema := string(listed[4].InputSchema)
 	if strings.Contains(getSchema, "reference_path") || strings.Contains(getSchema, "file_id") {
 		t.Fatalf("policy get schema lets callers assert relation authority: %s", getSchema)
 	}
-	updateSchema := string(listed[4].InputSchema)
+	updateSchema := string(listed[5].InputSchema)
 	if strings.Contains(updateSchema, "reference_path") || !strings.Contains(updateSchema, "expected_file_id") {
 		t.Fatalf("policy update schema does not expose only the File CAS: %s", updateSchema)
 	}
@@ -92,6 +94,117 @@ func TestDocumentFileAddReusesExistingFileWithDocumentCAS(t *testing.T) {
 	}
 	if application.applyRequest.ExpectedDocumentRevision != "revision-a" || application.applyRequest.Document != fileBlockTestDocumentID {
 		t.Fatalf("apply CAS identity = %+v", application.applyRequest)
+	}
+}
+
+func TestDocumentFileAddIncludesOptionalCaptionInAtomicBatch(t *testing.T) {
+	for _, caption := range []string{"image caption", ""} {
+		t.Run(caption, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+			encodedCaption, err := json.Marshal(caption)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileAdd, toolArguments(t, `{
+				"document_type":"page","document_id":"`+fileBlockTestDocumentID+`","locale":"en",
+				"expected_document_revision":"revision-a","parent_block_id":"page-rich-text-section",
+				"file_id":"`+fileBlockTestFileID+`","caption":`+string(encodedCaption)+`
+			}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			created := core.BlockID(stringValue(t, result.StructuredContent, "block_id"))
+			want := []core.Operation{
+				core.InsertBlockOperation(created, "file", "page-rich-text-section", ""),
+				core.AttachFileOperation(created, "attachment", fileBlockTestFileID),
+				core.SetFieldOperation(created, "caption", core.Text(caption)),
+			}
+			if !reflect.DeepEqual(application.applyRequest.Operations, want) {
+				t.Fatalf("operations = %+v, want %+v", application.applyRequest.Operations, want)
+			}
+		})
+	}
+}
+
+func TestDocumentFileCaptionUpdateUsesLocaleFieldAndExactRevisions(t *testing.T) {
+	for _, caption := range []string{"translated caption", ""} {
+		t.Run(caption, func(t *testing.T) {
+			application := fileBlockDocumentApplication(core.Node{ID: fileBlockTestBlockID, Kind: "file"})
+			application.applyResult = core.ApplyResult{DocumentRevision: "revision-a", TargetRevision: revisionPointer("target-b"), Changes: []core.Change{{Operation: 0, Kind: core.OperationSetField}}}
+			tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+			encoded, _ := json.Marshal(caption)
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, toolArguments(t, `{
+				"document_type":"page","document_id":"`+fileBlockTestDocumentID+`","locale":"ko",
+				"expected_document_revision":"revision-a","expected_target_revision":"target-a",
+				"block_id":"`+fileBlockTestBlockID+`","caption":`+string(encoded)+`
+			}`))
+			if err != nil || result.IsError {
+				t.Fatalf("caption update=%+v,%v", result, err)
+			}
+			wantRead := core.ReadRequest{Document: core.DocumentIdentity{Domain: core.DomainPage, Reference: fileBlockTestDocumentID}, Locale: "ko", Mode: core.ReadBlocks, Blocks: []core.BlockID{fileBlockTestBlockID}, Limit: 1}
+			if !reflect.DeepEqual(application.readRequest, wantRead) {
+				t.Fatalf("read=%+v,want %+v", application.readRequest, wantRead)
+			}
+			want := []core.Operation{core.SetFieldOperation(fileBlockTestBlockID, "caption", core.Text(caption))}
+			if !reflect.DeepEqual(application.applyRequest.Operations, want) {
+				t.Fatalf("operations=%+v,want %+v", application.applyRequest.Operations, want)
+			}
+			if application.applyRequest.ExpectedDocumentRevision != "revision-a" || application.applyRequest.ExpectedTargetRevision == nil || *application.applyRequest.ExpectedTargetRevision != "target-a" {
+				t.Fatalf("revisions=%+v", application.applyRequest)
+			}
+			if got := stringValue(t, result.StructuredContent, "tr"); got != "target-b" {
+				t.Fatalf("target revision=%q", got)
+			}
+		})
+	}
+}
+
+func TestDocumentFileCaptionRejectsInvalidInputAndWrongBlock(t *testing.T) {
+	for _, test := range []struct {
+		name, extra string
+		node        core.Node
+	}{
+		{ToolDocumentFileCaptionUpdate, "", core.Node{ID: fileBlockTestBlockID, Kind: "file"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":null`, core.Node{ID: fileBlockTestBlockID, Kind: "file"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":[]`, core.Node{ID: fileBlockTestBlockID, Kind: "file"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":"test"`, core.Node{ID: fileBlockTestBlockID, Kind: "paragraph"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":"test"`, core.Node{ID: "different", Kind: "file"}},
+		{ToolDocumentFileAdd, `,"file_id":"` + fileBlockTestFileID + `","caption":null`, core.Node{}},
+	} {
+		t.Run(test.name+test.extra+string(test.node.Kind), func(t *testing.T) {
+			application := fileBlockDocumentApplication(test.node)
+			tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+			args := fileBlockMutationArguments(t, test.extra)
+			if test.name == ToolDocumentFileAdd {
+				delete(args, "block_id")
+			}
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.name, args)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) {
+				t.Fatalf("error=%v,want execution error", err)
+			}
+			if len(application.applyRequest.Operations) != 0 {
+				t.Fatalf("invalid caption reached mutation: %+v", application.applyRequest)
+			}
+		})
+	}
+}
+
+func TestDocumentFileCaptionPreservesApplicationConflictAndDenial(t *testing.T) {
+	application := fileBlockDocumentApplication(core.Node{ID: fileBlockTestBlockID, Kind: "file"})
+	application.applyError = &core.ConflictError{Conflict: core.Conflict{Code: core.ConflictTargetRevision, CurrentDocumentRevision: "revision-a", CurrentTargetRevision: revisionPointer("target-current"), AffectedHandles: []string{"field:" + fileBlockTestBlockID + "/caption"}}}
+	tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, fileBlockMutationArguments(t, `,"caption":"new"`))
+	if err != nil || result.IsError {
+		t.Fatalf("caption conflict=%+v,%v", result, err)
+	}
+	assertDocumentSync(t, result, "target_revision_changed", "revision-a", revisionPointer("target-current"), []string{"field:" + fileBlockTestBlockID + "/caption"}, false, map[string]any{"p": "post", "d": fileBlockTestDocumentID, "l": "ko", "m": "outline"})
+	application.applyError = connect.NewError(connect.CodePermissionDenied, errors.New("caption edit denied"))
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, fileBlockMutationArguments(t, `,"caption":"new"`))
+	var execution *mcpserver.ToolExecutionError
+	if !errors.As(err, &execution) || !strings.Contains(execution.Message, "caption edit denied") {
+		t.Fatalf("denial=%v", err)
 	}
 }
 
@@ -159,13 +272,10 @@ func TestDocumentFileReplaceReturnsStructuredDocumentRevisionConflict(t *testing
 	}}
 	tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileReplace, fileBlockMutationArguments(t, `,"file_id":"`+fileBlockReplacementID+`"`))
-	if err != nil || !result.IsError {
+	if err != nil || result.IsError {
 		t.Fatalf("revision conflict = %+v, %v", result, err)
 	}
-	conflict := result.StructuredContent["x"].([]any)
-	if conflict[0] != string(core.ConflictDocumentRevision) || conflict[1] != "revision-current" {
-		t.Fatalf("structured conflict = %+v", result.StructuredContent)
-	}
+	assertDocumentSync(t, result, "document_revision_changed", "revision-current", nil, []string{"field:" + fileBlockTestBlockID + "/attachment"}, false, map[string]any{"p": "post", "d": fileBlockTestDocumentID, "l": "ko", "m": "outline"})
 	if application.applyRequest.ExpectedDocumentRevision != "revision-a" {
 		t.Fatalf("replace lost expected revision: %+v", application.applyRequest)
 	}
@@ -209,7 +319,8 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	manager.policy.AudienceSegments = []*managev1.AudienceSegmentSummary{{Id: fileBlockSegmentID, Name: "Members"}}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"]
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"],
+		"observed_policy":{"audience":"public","audience_segment_ids":[]}
 	}`))
 	if err != nil || result.IsError {
 		t.Fatalf("policy update = %+v, %v", result, err)
@@ -218,7 +329,9 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	if request.ExpectedFileId != fileBlockTestFileID || request.BlockId == nil || *request.BlockId != fileBlockTestBlockID ||
 		request.ReferencePath == nil || *request.ReferencePath != "file" ||
 		request.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED ||
-		!reflect.DeepEqual(request.AudienceSegmentIds, []string{fileBlockSegmentID}) {
+		!reflect.DeepEqual(request.AudienceSegmentIds, []string{fileBlockSegmentID}) ||
+		request.ObservedPolicy == nil || request.ObservedPolicy.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC ||
+		len(request.ObservedPolicy.AudienceSegmentIds) != 0 {
 		t.Fatalf("policy update request = %+v", request)
 	}
 	if result.StructuredContent["audience"] != "restricted" {
@@ -260,13 +373,75 @@ func TestDocumentFileDownloadPolicyReturnsRestrictedEmptyFailClosedState(t *test
 	}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted"
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted",
+		"observed_policy":{"audience":"restricted","audience_segment_ids":[]}
 	}`))
 	if err != nil || result.IsError {
 		t.Fatalf("restricted-empty policy update = %+v, %v", result, err)
 	}
 	if manager.updateRequest == nil || manager.updateRequest.Msg.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED || len(manager.updateRequest.Msg.AudienceSegmentIds) != 0 {
 		t.Fatalf("restricted-empty update request = %+v", manager.updateRequest)
+	}
+}
+
+func TestDocumentFileDownloadPolicyPreservesExactObservedBaseline(t *testing.T) {
+	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC)}
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
+	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
+		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
+		"observed_policy":{"audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &managev1.FileDownloadPolicyObservedState{
+		Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
+		AudienceSegmentIds: []string{fileBlockSegmentID},
+	}
+	if !reflect.DeepEqual(manager.updateRequest.Msg.ObservedPolicy, want) || manager.getRequest != nil {
+		t.Fatalf("observed baseline was replaced or reread: request=%+v get=%+v", manager.updateRequest.Msg, manager.getRequest)
+	}
+}
+
+func TestDocumentFileDownloadPolicyRejectsMissingOrInvalidObservedBaseline(t *testing.T) {
+	for _, baseline := range []string{
+		``,
+		`,"observed_policy":null`,
+		`,"observed_policy":{"audience":"disabled"}`,
+		`,"observed_policy":{"audience":"disabled","audience_segment_ids":null}`,
+		`,"observed_policy":{"audience":"unknown","audience_segment_ids":[]}`,
+		`,"observed_policy":{"audience":"public","audience_segment_ids":["` + fileBlockSegmentID + `"]}`,
+		`,"observed_policy":{"audience":"restricted","audience_segment_ids":["` + fileBlockSegmentID + `","` + fileBlockSegmentID + `"]}`,
+		`,"observed_policy":{"audience":"restricted","audience_segment_ids":["not-a-uuid"]}`,
+	} {
+		t.Run(baseline, func(t *testing.T) {
+			manager := &recordingFileBlockManagement{}
+			tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
+				"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
+				"expected_file_id":"`+fileBlockTestFileID+`","audience":"disabled"`+baseline+`
+			}`))
+			var executionErr *mcpserver.ToolExecutionError
+			if !errors.As(err, &executionErr) || manager.updateRequest != nil {
+				t.Fatalf("invalid baseline reached service: err=%v request=%+v", err, manager.updateRequest)
+			}
+		})
+	}
+}
+
+func TestDocumentFileDownloadPolicySatisfiesRealServiceInputContract(t *testing.T) {
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.FileService{})
+	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
+		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
+		"observed_policy":{"audience":"disabled","audience_segment_ids":[]}
+	}`))
+	var executionErr *mcpserver.ToolExecutionError
+	// The actual service validates the policy input before checking its actor.
+	// Reaching authentication proves this request passed the required baseline contract.
+	if !errors.As(err, &executionErr) || !strings.Contains(executionErr.Message, "unauthenticated") {
+		t.Fatalf("real service did not reach actor validation: %v", err)
 	}
 }
 

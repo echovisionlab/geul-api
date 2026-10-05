@@ -115,6 +115,29 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 	require.NoError(t, testutil.CompletePGMQ(ctx, pg.SQLDB, queue, messages[0].TransportID))
 }
 
+func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.T) {
+	queue := eventpkg.QueueAiMetadataGenerate
+	pg := resetMQIntegrationQueues(t, queue)
+	ctx := t.Context()
+	messageID := uuid.NewString()
+	publisher, err := NewPublisher(pg.SQLDB)
+	require.NoError(t, err)
+	require.NoError(t, publisher.EnqueueProtobuf(
+		ctx,
+		queue,
+		messageID,
+		&managev1.MetadataGenerationQueueEvent{JobId: uuid.NewString()},
+	))
+
+	var pending bool
+	err = pg.SQLDB.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pgmq."q_ai.metadata.generate" WHERE message->>'message_id' = $1)`,
+		messageID,
+	).Scan(&pending)
+	require.NoError(t, err)
+	require.True(t, pending)
+}
+
 func TestSharedPGMQReadPreservesContractInvalidTransportIDIntegration(t *testing.T) {
 	queue := eventpkg.QueueAiMetadataGenerate
 	pg := resetMQIntegrationQueues(t, queue)

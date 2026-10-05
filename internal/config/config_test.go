@@ -11,6 +11,7 @@ import (
 
 func TestLoadConfigWithDefaults(t *testing.T) {
 	setRequiredConfigEnv(t)
+	require.NoError(t, os.Unsetenv("CLOUDFLARE_CACHE_PURGE_ENABLED"))
 	t.Setenv("INSTANCE_ID", "")
 
 	cfg, err := Load()
@@ -26,6 +27,7 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 	assert.Equal(t, []string{"https://preview.studio.example.com", "https://studio.example.com"}, cfg.CORSOrigins)
 	assert.Equal(t, "zone-id", cfg.CloudflareZoneID)
 	assert.Equal(t, "cloudflare-token", cfg.CloudflareAPIToken)
+	assert.True(t, cfg.CloudflareCachePurgeEnabled)
 	assert.Equal(t, "https://cdn.example.com", cfg.CDNURL)
 	assert.Equal(t, "https://media.example.com", cfg.MediaURL)
 	assert.Equal(t, "https://studio.example.com", cfg.SiteOrigin)
@@ -50,6 +52,38 @@ func TestLoadConfigWithDefaults(t *testing.T) {
 	assert.NotEmpty(t, cfg.InstanceID)
 	_, err = uuid.Parse(cfg.InstanceID)
 	require.NoError(t, err)
+}
+
+func TestLoadConfigCloudflarePurgeCredentials(t *testing.T) {
+	for _, enabled := range []string{"true", ""} {
+		for _, key := range []string{"CLOUDFLARE_ZONE_ID", "CLOUDFLARE_API_TOKEN"} {
+			for _, value := range []string{"", "   ", " credential", "credential "} {
+				t.Run(enabled+"/"+key+"/"+value, func(t *testing.T) {
+					setRequiredConfigEnv(t)
+					if enabled == "" {
+						require.NoError(t, os.Unsetenv("CLOUDFLARE_CACHE_PURGE_ENABLED"))
+					} else {
+						t.Setenv("CLOUDFLARE_CACHE_PURGE_ENABLED", enabled)
+					}
+					t.Setenv(key, value)
+					cfg, err := Load()
+					require.ErrorContains(t, err, key)
+					require.Nil(t, cfg)
+				})
+			}
+		}
+	}
+	t.Run("disabled without credentials", func(t *testing.T) {
+		setRequiredConfigEnv(t)
+		t.Setenv("CLOUDFLARE_CACHE_PURGE_ENABLED", "false")
+		require.NoError(t, os.Unsetenv("CLOUDFLARE_ZONE_ID"))
+		require.NoError(t, os.Unsetenv("CLOUDFLARE_API_TOKEN"))
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.False(t, cfg.CloudflareCachePurgeEnabled)
+		require.Empty(t, cfg.CloudflareZoneID)
+		require.Empty(t, cfg.CloudflareAPIToken)
+	})
 }
 
 func TestLoadConfigRespectsExplicitOverrides(t *testing.T) {
@@ -318,6 +352,9 @@ func TestLoadConfigRejectsNonPositiveAuthCodeResendCooldown(t *testing.T) {
 }
 
 func setRequiredConfigEnv(t *testing.T) {
+	t.Setenv("CLOUDFLARE_CACHE_PURGE_ENABLED", "true")
+	t.Setenv("IMGPROXY_KEY", "0123456789abcdef")
+	t.Setenv("IMGPROXY_SALT", "abcdef0123456789")
 	t.Helper()
 
 	values := map[string]string{
@@ -352,5 +389,25 @@ func setRequiredConfigEnv(t *testing.T) {
 	}
 	for key, value := range values {
 		t.Setenv(key, value)
+	}
+}
+
+func TestLoadConfigRejectsConflictingMediaListenersAndInvalidEngineSecrets(t *testing.T) {
+	for _, testCase := range []struct{ key, value string }{
+		{"MEDIA_DELIVERY_PORT", "8000"},
+		{"MEDIA_DELIVERY_PORT", "8001"},
+		{"OG_PORT", "8002"},
+		{"OG_PORT", "8000"},
+		{"OG_PORT", "8001"},
+		{"IMGPROXY_KEY", "invalid"},
+		{"IMGPROXY_SALT", "abc"},
+	} {
+		t.Run(testCase.key+"="+testCase.value, func(t *testing.T) {
+			setRequiredConfigEnv(t)
+			t.Setenv("PORT", "8000")
+			t.Setenv(testCase.key, testCase.value)
+			_, err := Load()
+			require.ErrorContains(t, err, testCase.key)
+		})
 	}
 }

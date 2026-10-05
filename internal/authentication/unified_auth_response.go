@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/httpadmission"
 )
 
 func unifiedAuthInputNode(name string, value unifiedAuthValue, group, inputType string) unifiedAuthObject {
@@ -36,9 +37,7 @@ func canonicalUnifiedAuthResponseHeaders(header http.Header, body []byte) http.H
 	}
 	public.Set("Cache-Control", "no-store")
 	public.Set("Pragma", "no-cache")
-	if retryAfter := strings.TrimSpace(header.Get("Retry-After")); retryAfter != "" {
-		public.Set("Retry-After", retryAfter)
-	}
+	httpadmission.Copy(public, header)
 	if location := canonicalUnifiedAuthLocation(header.Get("Location")); location != "" {
 		public.Set("Location", location)
 	}

@@ -31,7 +31,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	"github.com/echovisionlab/geul-api/internal/handler"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -117,14 +116,10 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		hookPublisher,
 		accountadapter.MemberEmailProjection{},
 	)
-	hooksHandler := handler.NewHooksHandler(
-		loginHooks,
-		registrationHooks,
-		accountSettingsHooks,
-		credentialHooks,
-	)
+	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
+	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
 	hookServer.SetHandlers(
-		hooksHandler,
+		authenticationHooks, accountHooks,
 		protectBackendIntegrationCourier(
 			stack.TokenSigningSecret,
 			rawCourierHandler,

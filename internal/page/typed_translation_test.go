@@ -1,16 +1,18 @@
 package page
 
 import (
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"strings"
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestPageTypedTranslationExtractsAndAppliesTypedLocaleFields(t *testing.T) {
@@ -250,6 +252,63 @@ func TestProviderPageTargetPatchPreservesUnrelatedCurrentImmersiveUnit(t *testin
 	require.Equal(t, requestedTarget, units[0].GetProps().GetTitle())
 	require.Equal(t, unrelatedTarget, units[1].GetProps().GetTitle())
 	require.NotEqual(t, unrelatedSource, units[1].GetProps().GetTitle())
+}
+
+func TestPageProviderResultCannotWritePromotedTargetIntoSource(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`
+		CREATE TABLE page (
+			id TEXT PRIMARY KEY,
+			content_document_id TEXT NOT NULL,
+			source_locale TEXT NOT NULL
+		)
+	`).Error)
+
+	pageID := uuid.NewString()
+	documentID := uuid.New()
+	require.NoError(t, db.Exec(
+		`INSERT INTO page (id, content_document_id, source_locale) VALUES (?, ?, ?)`,
+		pageID, documentID.String(), "ko",
+	).Error)
+
+	// A running en→ko provider request can outlive promoting ko to source. Keep
+	// the stable unit patch populated: the adapter must reject before compiling
+	// it into the now-source-owned locale.
+	unitID := "section:rich:block:paragraph-a:typed:paragraph/content"
+	plan := &translation.ExtractionPlan{Units: []translation.Unit{{
+		UnitID: unitID, SourceLocale: "en", SourceText: "old source text",
+	}}}
+	candidate := &translation.Candidate{
+		ContentDocumentRevision: documentID.String(),
+		PageDocument: &contentv1.LocalizedPageDocument{
+			Locale:        "ko",
+			LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "ko"},
+		},
+	}
+	results := map[string]translation.UnitResult{
+		unitID: {UnitID: unitID, TranslatedText: "late translation"},
+	}
+	require.NoError(t, candidate.SetProviderUnitPatch(plan, results))
+	job := &model.TranslationJob{
+		EntityType: "page", EntityID: pageID, SourceLocale: "en", TargetLocale: "ko",
+	}
+
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return ApplyTranslationCandidateWithDB(
+			t.Context(), tx, &contentblock.Store{}, job, candidate,
+			translation.EntryWrite{}, nil,
+		)
+	})
+	require.ErrorIs(t, err, translation.ErrSourceNoLongerCurrent)
+}
+
+func TestPageProviderSourceTargetFencePreservesStillTargetAndSameLocaleOperations(t *testing.T) {
+	t.Parallel()
+
+	require.ErrorIs(t, validatePageProviderSourceTarget("en", "ko", "ko"), translation.ErrSourceNoLongerCurrent)
+	require.NoError(t, validatePageProviderSourceTarget("en", "fr", "ko"))
+	require.NoError(t, validatePageProviderSourceTarget("ko", "ko", "ko"))
 }
 
 func pageRichTextTranslationSource(blocks ...*contentv1.RichTextBlockLocale) *translation.SourceDocument {

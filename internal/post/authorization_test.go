@@ -28,6 +28,7 @@ func TestPostAllowedActionsKeepArchivedAuthorReadOnlyAndAdminEditable(t *testing
 
 	adminActions := postAllowedActions(postID, status, postAuthority(viewArchived, editArchived))
 	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_REPUBLISH)
+	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_UNPUBLISH)
 	require.NotContains(t, adminActions, managev1.PostAction_POST_ACTION_DELETE)
 	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_EDIT)
 	require.Contains(t, adminActions, managev1.PostAction_POST_ACTION_RESTORE_VERSION)

@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -276,6 +278,66 @@ func TestTranslationProcessDeliveryResumesRunningJobFromPersistedState(t *testin
 	require.ErrorIs(t, db.First(&model.TranslationJob{}, "id = ?", job.ID).Error, gorm.ErrRecordNotFound)
 }
 
+func TestTranslationProviderResolverInfrastructureFailureKeepsJobRetryable(t *testing.T) {
+	for _, status := range []string{translationJobStatusQueued, translationJobStatusRunning} {
+		t.Run(status, func(t *testing.T) {
+			db := newTranslationRetryTestDB(t)
+			job := seedTranslationRetryTestJob(t, db, status, "resolver-temporary", uuid.NewString())
+			cause := errors.New("temporary provider configuration database failure")
+			manager := &TranslationJobManager{
+				db:                db,
+				generatorResolver: failingTranslationGeneratorResolver{err: cause},
+				publisher:         stubTranslationJobPublisher{},
+				now:               func() time.Time { return time.Unix(1_700_000_300, 0).UTC() },
+				metrics:           newTranslationMetrics(),
+			}
+
+			err := manager.ProcessDelivery(context.Background(), job.ID)
+			require.ErrorIs(t, err, cause)
+			_, terminal := mq.TerminalDeliveryErrorClass(err)
+			require.False(t, terminal)
+
+			var stored model.TranslationJob
+			require.NoError(t, db.First(&stored, "id = ?", job.ID).Error)
+			require.Equal(t, status, stored.Status)
+			require.Nil(t, stored.FailureReason)
+		})
+	}
+}
+
+func TestTranslationSQLProviderResolverFailureKeepsQueuedJobRetryable(t *testing.T) {
+	queueDB := newTranslationRetryTestDB(t)
+	job := seedTranslationRetryTestJob(t, queueDB, translationJobStatusQueued, "resolver-sql", uuid.NewString())
+
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	providerDB, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{
+		DisableAutomaticPing: true,
+	})
+	require.NoError(t, err)
+	cause := errors.New("temporary provider configuration query failure")
+	mock.ExpectQuery(`SELECT \* FROM "translation_provider_config" WHERE is_active = \$1 ORDER BY priority ASC, created_at ASC`).
+		WithArgs(true).
+		WillReturnError(cause)
+
+	manager := &TranslationJobManager{
+		db:                queueDB,
+		generatorResolver: newDBTranslationGeneratorResolver(providerDB),
+		publisher:         stubTranslationJobPublisher{},
+		now:               time.Now,
+		metrics:           newTranslationMetrics(),
+	}
+	err = manager.ProcessDelivery(context.Background(), job.ID)
+	require.ErrorIs(t, err, cause)
+	_, terminal := mq.TerminalDeliveryErrorClass(err)
+	require.False(t, terminal)
+	var stored model.TranslationJob
+	require.NoError(t, queueDB.First(&stored, "id = ?", job.ID).Error)
+	require.Equal(t, translationJobStatusQueued, stored.Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPrepareTranslationDeliveryUsesPersistedRequestArtifact(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
@@ -308,6 +370,20 @@ func TestPrepareTranslationDeliveryUsesPersistedRequestArtifact(t *testing.T) {
 }
 
 type unavailableTranslationGeneratorResolver struct{}
+
+type failingTranslationGeneratorResolver struct{ err error }
+
+func (r failingTranslationGeneratorResolver) Resolve(context.Context) (translation.Generator, error) {
+	return nil, r.err
+}
+
+func (r failingTranslationGeneratorResolver) ResolveAll(context.Context) ([]translation.Generator, error) {
+	return nil, r.err
+}
+
+func (r failingTranslationGeneratorResolver) HasAvailableProvider(context.Context) (bool, error) {
+	return false, r.err
+}
 
 func (unavailableTranslationGeneratorResolver) Resolve(context.Context) (translation.Generator, error) {
 	return nil, errTranslationProviderUnavailable

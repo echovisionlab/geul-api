@@ -257,6 +257,215 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 		requireNoRow(t, db, "tag", created.Msg.Id)
 	})
 
+	t.Run("genre", func(t *testing.T) {
+		db := testutil.NewIntegrationDB(t)
+		svc := NewGenreService(db, spiceDB)
+		description := "Soulful guitar music"
+		suffix := referenceShortSuffix()
+		name := "Integration Jazz " + suffix
+		slug := "integration-jazz-" + suffix
+
+		created, err := svc.CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{
+			Name:        "  " + name + "  ",
+			Slug:        &slug,
+			Description: &description,
+		}))
+		require.NoError(t, err)
+		require.NotEmpty(t, created.Msg.Id)
+		require.Equal(t, name, created.Msg.Name)
+		require.Equal(t, slug, created.Msg.Slug)
+		require.Equal(t, description, created.Msg.GetDescription())
+		requireResourceManageAccess(t, spiceDB, policyv1.Genre.Manage, created.Msg.Id, referenceAdminID, true)
+
+		listed, err := svc.ListGenres(ctx, connect.NewRequest(&managev1.ListGenresRequest{
+			Filters: referenceSearchFilters(name),
+			Sorts:   referenceNameAscSort(),
+			Pagination: &commonv1.PaginationRequest{
+				Limit: 10,
+			},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, int32(1), listed.Msg.GetPagination().GetTotal())
+		require.Len(t, listed.Msg.Genres, 1)
+		require.Equal(t, created.Msg.Id, listed.Msg.Genres[0].Id)
+
+		removeReleaseMapping := seedReferenceReleaseMapping(t, db, "release_genre", "genre_id", created.Msg.Id)
+
+		adminListed, err := svc.ListGenresAdmin(ctx, connect.NewRequest(&managev1.ListGenresAdminRequest{
+			Filters: referenceSearchFilters(name),
+			Sorts:   referenceNameAscSort(),
+			Pagination: &commonv1.PaginationRequest{
+				Limit: 10,
+			},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, int32(1), adminListed.Msg.GetPagination().GetTotal())
+		require.Len(t, adminListed.Msg.Genres, 1)
+		require.Equal(t, created.Msg.Id, adminListed.Msg.Genres[0].Genre.Id)
+		require.Equal(t, int32(1), adminListed.Msg.Genres[0].ReleaseCount)
+
+		removeReleaseMapping()
+
+		updatedName := "Integration Fusion"
+		updatedSlug := "integration-fusion-" + suffix
+		updatedDescription := "Updated genre description"
+		updated, err := svc.UpdateGenre(ctx, connect.NewRequest(&managev1.UpdateGenreRequest{
+			Id:          created.Msg.Id,
+			Name:        &updatedName,
+			Slug:        &updatedSlug,
+			Description: &updatedDescription,
+		}))
+		require.NoError(t, err)
+		require.Equal(t, updatedName, updated.Msg.Name)
+		require.Equal(t, updatedSlug, updated.Msg.Slug)
+		require.Equal(t, updatedDescription, updated.Msg.GetDescription())
+
+		deleted, err := svc.DeleteGenre(ctx, connect.NewRequest(&managev1.DeleteGenreRequest{Id: created.Msg.Id}))
+		require.NoError(t, err)
+		require.True(t, deleted.Msg.Success)
+		requireResourceManageAccess(t, spiceDB, policyv1.Genre.Manage, created.Msg.Id, referenceAdminID, false)
+		requireNoRow(t, db, "genre", created.Msg.Id)
+	})
+
+	t.Run("style", func(t *testing.T) {
+		db := testutil.NewIntegrationDB(t)
+		svc := NewStyleService(db, spiceDB)
+		description := "Percussive and layered"
+		suffix := referenceShortSuffix()
+		name := "Integration Beat " + suffix
+		slug := "integration-beat-" + suffix
+
+		created, err := svc.CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{
+			Name:        name,
+			Slug:        &slug,
+			Description: &description,
+		}))
+		require.NoError(t, err)
+		require.NotEmpty(t, created.Msg.Id)
+		require.Equal(t, slug, created.Msg.Slug)
+		require.Equal(t, description, created.Msg.GetDescription())
+		requireResourceManageAccess(t, spiceDB, policyv1.Style.Manage, created.Msg.Id, referenceAdminID, true)
+
+		listed, err := svc.ListStyles(ctx, connect.NewRequest(&managev1.ListStylesRequest{
+			Filters: referenceSearchFilters(name),
+			Sorts:   referenceNameAscSort(),
+			Pagination: &commonv1.PaginationRequest{
+				Limit: 10,
+			},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, int32(1), listed.Msg.GetPagination().GetTotal())
+		require.Len(t, listed.Msg.Styles, 1)
+		require.Equal(t, created.Msg.Id, listed.Msg.Styles[0].Id)
+
+		removeReleaseMapping := seedReferenceReleaseMapping(t, db, "release_style", "style_id", created.Msg.Id)
+
+		adminListed, err := svc.ListStylesAdmin(ctx, connect.NewRequest(&managev1.ListStylesAdminRequest{
+			Filters: referenceSearchFilters(name),
+			Sorts:   referenceNameAscSort(),
+			Pagination: &commonv1.PaginationRequest{
+				Limit: 10,
+			},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, int32(1), adminListed.Msg.GetPagination().GetTotal())
+		require.Len(t, adminListed.Msg.Styles, 1)
+		require.Equal(t, created.Msg.Id, adminListed.Msg.Styles[0].Style.Id)
+		require.Equal(t, int32(1), adminListed.Msg.Styles[0].ReleaseCount)
+
+		removeReleaseMapping()
+
+		updatedName := "Integration Broken Beat"
+		updatedSlug := "integration-broken-beat-" + suffix
+		updatedDescription := "Updated style description"
+		updated, err := svc.UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{
+			Id:          created.Msg.Id,
+			Name:        &updatedName,
+			Slug:        &updatedSlug,
+			Description: &updatedDescription,
+		}))
+		require.NoError(t, err)
+		require.Equal(t, updatedName, updated.Msg.Name)
+		require.Equal(t, updatedSlug, updated.Msg.Slug)
+		require.Equal(t, updatedDescription, updated.Msg.GetDescription())
+
+		deleted, err := svc.DeleteStyle(ctx, connect.NewRequest(&managev1.DeleteStyleRequest{Id: created.Msg.Id}))
+		require.NoError(t, err)
+		require.True(t, deleted.Msg.Success)
+		requireResourceManageAccess(t, spiceDB, policyv1.Style.Manage, created.Msg.Id, referenceAdminID, false)
+		requireNoRow(t, db, "style", created.Msg.Id)
+	})
+
+	t.Run("format", func(t *testing.T) {
+		db := testutil.NewIntegrationDB(t)
+		svc := NewFormatService(db, spiceDB)
+		suffix := referenceShortSuffix()
+		name := "Integration Vinyl " + suffix
+		slug := "integration-vinyl-" + suffix
+
+		created, err := svc.CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{
+			Name: name,
+			Slug: &slug,
+		}))
+		require.NoError(t, err)
+		require.NotEmpty(t, created.Msg.Id)
+		require.Equal(t, slug, created.Msg.Slug)
+		requireResourceManageAccess(t, spiceDB, policyv1.Format.Manage, created.Msg.Id, referenceAdminID, true)
+
+		_, duplicateErr := svc.CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{
+			Name: "Integration Vinyl Duplicate",
+			Slug: &slug,
+		}))
+		require.Error(t, duplicateErr)
+		require.Contains(t, duplicateErr.Error(), "already exists")
+
+		listed, err := svc.ListFormats(ctx, connect.NewRequest(&managev1.ListFormatsRequest{
+			Filters: referenceSearchFilters(name),
+			Sorts:   referenceNameAscSort(),
+			Pagination: &commonv1.PaginationRequest{
+				Limit: 10,
+			},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, int32(1), listed.Msg.GetPagination().GetTotal())
+		require.Len(t, listed.Msg.Formats, 1)
+		require.Equal(t, created.Msg.Id, listed.Msg.Formats[0].Id)
+
+		removeReleaseMapping := seedReferenceReleaseMapping(t, db, "release_format", "format_id", created.Msg.Id)
+
+		adminListed, err := svc.ListFormatsAdmin(ctx, connect.NewRequest(&managev1.ListFormatsAdminRequest{
+			Filters: referenceSearchFilters(name),
+			Sorts:   referenceNameAscSort(),
+			Pagination: &commonv1.PaginationRequest{
+				Limit: 10,
+			},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, int32(1), adminListed.Msg.GetPagination().GetTotal())
+		require.Len(t, adminListed.Msg.Formats, 1)
+		require.Equal(t, created.Msg.Id, adminListed.Msg.Formats[0].Format.Id)
+		require.Equal(t, int32(1), adminListed.Msg.Formats[0].ReleaseCount)
+
+		removeReleaseMapping()
+
+		updatedName := "Integration Cassette"
+		updatedSlug := "integration-cassette-" + suffix
+		updated, err := svc.UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{
+			Id:   created.Msg.Id,
+			Name: &updatedName,
+			Slug: &updatedSlug,
+		}))
+		require.NoError(t, err)
+		require.Equal(t, updatedName, updated.Msg.Name)
+		require.Equal(t, updatedSlug, updated.Msg.Slug)
+
+		deleted, err := svc.DeleteFormat(ctx, connect.NewRequest(&managev1.DeleteFormatRequest{Id: created.Msg.Id}))
+		require.NoError(t, err)
+		require.True(t, deleted.Msg.Success)
+		requireResourceManageAccess(t, spiceDB, policyv1.Format.Manage, created.Msg.Id, referenceAdminID, false)
+		requireNoRow(t, db, "format", created.Msg.Id)
+	})
+
 	t.Run("client", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
 		svc := NewClientService(db, referenceCatalogTestAssets{}, spiceDB)

@@ -3,7 +3,7 @@ package transcode
 import (
 	"testing"
 
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 

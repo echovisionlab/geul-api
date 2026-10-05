@@ -117,6 +117,42 @@ func TestPostTranslationCandidateValidationKeepsSparseInterchangeScoped(t *testi
 	), "an explicit empty target is present, not missing")
 }
 
+func TestPostProviderTargetRoleRejectsPromotedTargetAndPreservesOtherRoles(t *testing.T) {
+	tests := []struct {
+		name                string
+		jobSourceLocale     string
+		jobTargetLocale     string
+		currentSourceLocale string
+		wantStale           bool
+	}{
+		{
+			name:            "target promoted to source",
+			jobSourceLocale: "en", jobTargetLocale: "ko", currentSourceLocale: "ko",
+			wantStale: true,
+		},
+		{
+			name:            "target remains a target after source switch",
+			jobSourceLocale: "en", jobTargetLocale: "fr", currentSourceLocale: "ko",
+		},
+		{
+			name:            "source role still matches",
+			jobSourceLocale: "ko", jobTargetLocale: "ko", currentSourceLocale: "ko",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePostProviderSourceTarget(
+				test.jobSourceLocale, test.jobTargetLocale, test.currentSourceLocale,
+			)
+			if test.wantStale {
+				require.ErrorIs(t, err, translation.ErrSourceNoLongerCurrent)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func newPostTranslationAdapterDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})

@@ -49,6 +49,9 @@ func (s *SiteSettingService) SetSetting(
 		if err := s.applySettingValue(settings, req.Msg.Key, value); err != nil {
 			return errs.InvalidArgument("value", err.Error())
 		}
+		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
+			return err
+		}
 		changedKeys := s.changedSiteSettingKeys(&before, settings, []string{req.Msg.Key})
 		if len(changedKeys) == 0 {
 			return nil
@@ -69,9 +72,6 @@ func (s *SiteSettingService) SetSetting(
 			if err := s.assets.ValidateAttachment(ctx, tx, req.Msg.Key, *fileID); err != nil {
 				return err
 			}
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
 		}
 		settings.UpdatedAt = time.Now()
 		if err := tx.Save(settings).Error; err != nil {

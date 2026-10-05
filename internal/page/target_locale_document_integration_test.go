@@ -55,6 +55,13 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	}
 	koToken := createTarget("ko", now)
 	jaToken := createTarget("ja", now.Add(time.Second))
+	var originalLocaleRow struct {
+		IncarnationID string    `gorm:"column:incarnation_id"`
+		UpdatedAt     time.Time `gorm:"column:updated_at"`
+	}
+	require.NoError(t, db.Raw(`SELECT incarnation_id::text, updated_at FROM page_translation
+		WHERE entity_id = ?::uuid AND locale = 'ko'`, created.Msg.Id).Scan(&originalLocaleRow).Error)
+	require.True(t, originalLocaleRow.UpdatedAt.Equal(now), "initial row must use the exact truncated creation timestamp")
 	sessionID := insertPageIntegrationSession(t, db, identityID)
 	internal := NewInternalPageService(
 		db, noopAsyncPublisher{}, spiceDB, newPageRuntimeForTest(db, "https://cdn.example.com"),
@@ -104,6 +111,59 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	var storedRevision string
 	require.NoError(t, db.Raw("SELECT revision::text FROM content_document WHERE id = ?", documentID).Scan(&storedRevision).Error)
 	require.Equal(t, sharedRevision.String(), storedRevision)
+
+	recreatedKoToken := createTarget("ko", now)
+	require.NotEqual(t, koToken, recreatedKoToken, "recreated locale row must have a distinct CAS token")
+	var recreatedLocaleRow struct {
+		IncarnationID string    `gorm:"column:incarnation_id"`
+		UpdatedAt     time.Time `gorm:"column:updated_at"`
+	}
+	require.NoError(t, db.Raw(`SELECT incarnation_id::text, updated_at FROM page_translation
+		WHERE entity_id = ?::uuid AND locale = 'ko'`, created.Msg.Id).Scan(&recreatedLocaleRow).Error)
+	require.NotEqual(t, originalLocaleRow.IncarnationID, recreatedLocaleRow.IncarnationID)
+	require.True(t, recreatedLocaleRow.UpdatedAt.Equal(now), "recreated row must use the same truncated creation timestamp")
+	require.Equal(t, originalLocaleRow.UpdatedAt, recreatedLocaleRow.UpdatedAt,
+		"same creation timestamp isolates the locale incarnation from timestamp CAS")
+
+	staleTitle := "must not write through a deleted locale token"
+	_, err = internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
+		PageId: created.Msg.Id, Locale: "ko", Title: &staleTitle,
+		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: &koToken,
+		ContributorMemberIds: []string{integrationMemberID(identityID)},
+	}))
+	require.Error(t, err)
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	var connectErr *connect.Error
+	require.ErrorAs(t, err, &connectErr)
+	require.Len(t, connectErr.Details(), 1)
+	detail, detailErr := connectErr.Details()[0].Value()
+	require.NoError(t, detailErr)
+	conflict, ok := detail.(*intrav1.CollaborationConflictDetail)
+	require.True(t, ok, "stale target token must have a CollaborationConflictDetail")
+	require.Equal(t,
+		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+		conflict.GetReason(),
+	)
+
+	recreatedTitle := "recreated locale fresh write"
+	freshUpdate, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
+		PageId: created.Msg.Id, Locale: "ko", Title: &recreatedTitle,
+		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: &recreatedKoToken,
+		ContributorMemberIds: []string{integrationMemberID(identityID)},
+	}))
+	require.NoError(t, err)
+	require.True(t, freshUpdate.Msg.Changed)
+	require.NotEqual(t, recreatedKoToken, freshUpdate.Msg.GetTargetRevision())
+	require.Equal(t, sharedRevision.String(), freshUpdate.Msg.DocumentRevision)
+	unchangedTarget, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
+		PageId: created.Msg.Id, Locale: "ko", Title: &recreatedTitle,
+		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: freshUpdate.Msg.TargetRevision,
+		ContributorMemberIds: []string{integrationMemberID(identityID)},
+	}))
+	require.NoError(t, err)
+	require.False(t, unchangedTarget.Msg.Changed)
+	require.Empty(t, unchangedTarget.Msg.ChangedLocales)
+	require.Equal(t, freshUpdate.Msg.GetTargetRevision(), unchangedTarget.Msg.GetTargetRevision())
 
 	sourceTitle := "Page source changed"
 	sourceUpdate, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{

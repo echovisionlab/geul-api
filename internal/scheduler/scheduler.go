@@ -27,6 +27,7 @@ const (
 	JobUpdateGeoIP               Job = "maintenance.geoip"
 	JobProcessScheduledCampaigns Job = "email.campaign_due"
 	JobProcessScheduledPosts     Job = "post.scheduled_due"
+	JobRecoverMetadataAI         Job = "ai.metadata_recover"
 )
 
 // JobPusher runs a coalescible scheduler wake-up against authoritative state.
@@ -105,6 +106,7 @@ func (s *Scheduler) start(ctx context.Context) {
 	s.addJob("0 5 * * *", JobProcessUserDeletions)        // Daily 5 AM
 	s.addJob("*/1 * * * *", JobProcessScheduledCampaigns) // Every minute
 	s.addJob("*/1 * * * *", JobProcessScheduledPosts)     // Every minute
+	s.addJob("*/1 * * * *", JobRecoverMetadataAI)         // Every minute
 
 	// Policy jobs
 	s.addJob("*/15 * * * *", JobActivateTerms)   // Every 15 minutes

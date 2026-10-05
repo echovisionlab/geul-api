@@ -13,9 +13,10 @@ const targetRevisionPrefix = "tr1_"
 // TargetRevisionFacts are existing owning-domain facts used to derive an
 // opaque target write CAS. They are not translation freshness or history.
 type TargetRevisionFacts struct {
-	LocaleExists     bool
-	DocumentRevision string
-	LocaleUpdatedAt  *time.Time
+	LocaleExists      bool
+	DocumentRevision  string
+	LocaleIncarnation string
+	LocaleUpdatedAt   *time.Time
 }
 
 // TargetRevisionConflict reports a failed missing-row or exact opaque token
@@ -37,7 +38,7 @@ func (e *TargetRevisionConflict) Error() string {
 // targets additionally bind the current Content Document revision.
 func DeriveTargetRevision(facts TargetRevisionFacts) (string, error) {
 	if !facts.LocaleExists {
-		if facts.DocumentRevision != "" || facts.LocaleUpdatedAt != nil {
+		if facts.DocumentRevision != "" || facts.LocaleIncarnation != "" || facts.LocaleUpdatedAt != nil {
 			return "", fmt.Errorf("absent translation target cannot carry revision facts")
 		}
 		return "", nil
@@ -48,6 +49,12 @@ func DeriveTargetRevision(facts TargetRevisionFacts) (string, error) {
 
 	hash := sha256.New()
 	writeRevisionPart(hash.Write, facts.DocumentRevision)
+	// Empty preserves the original non-Page target token format. Page supplies
+	// its owning-row incarnation so a deleted and recreated locale cannot
+	// inherit a token from the previous row lifetime.
+	if facts.LocaleIncarnation != "" {
+		writeRevisionPart(hash.Write, facts.LocaleIncarnation)
+	}
 	var timestamp [8]byte
 	binary.BigEndian.PutUint64(timestamp[:], uint64(facts.LocaleUpdatedAt.UTC().UnixNano()))
 	_, _ = hash.Write(timestamp[:])

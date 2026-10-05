@@ -13,8 +13,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {

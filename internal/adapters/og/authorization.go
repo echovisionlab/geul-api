@@ -109,6 +109,12 @@ func entityCan(entityType, entityID string, requireEdit bool) (policyv1.Can, err
 		pair = canPair{view: policyv1.Page.View, edit: policyv1.Page.Edit}
 	case "work":
 		pair = canPair{view: policyv1.Work.View, edit: policyv1.Work.Edit}
+	case "artist":
+		pair = canPair{view: policyv1.Artist.View, edit: policyv1.Artist.Edit}
+	case "release":
+		pair = canPair{view: policyv1.Release.View, edit: policyv1.Release.Edit}
+	case "label":
+		pair = canPair{view: policyv1.Label.View, edit: policyv1.Label.Edit}
 	case "series":
 		pair = canPair{view: policyv1.PostSeries.View, edit: policyv1.PostSeries.Edit}
 	case "form":

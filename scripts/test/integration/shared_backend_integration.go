@@ -15,15 +15,16 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func startSuiteBackend(ctx context.Context, leasePath, cdnImage string) (*suiteBackend, error) {
-	if err := requireLocalDockerImages(ctx, requiredSuiteBackendImages(cdnImage)); err != nil {
+func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, error) {
+	backendImages := suiteBackendImages()
+	if err := requireLocalDockerImages(ctx, backendImages); err != nil {
 		return nil, err
 	}
-	kratosBefore, err := dockerContainerIDsForImage(ctx, suiteBackendImages[0])
+	kratosBefore, err := dockerContainerIDsForImage(ctx, backendImages[0])
 	if err != nil {
 		return nil, err
 	}
-	spiceBefore, err := dockerContainerIDsForImage(ctx, suiteBackendImages[1])
+	spiceBefore, err := dockerContainerIDsForImage(ctx, backendImages[1])
 	if err != nil {
 		return nil, err
 	}
@@ -48,11 +49,11 @@ func startSuiteBackend(ctx context.Context, leasePath, cdnImage string) (*suiteB
 		defer cancel()
 		return nil, fmt.Errorf("%w; cleanup: %v", err, errors.Join(stack.Close(), hookProxy.Close(closeCtx)))
 	}
-	kratosAfter, err := dockerContainerIDsForImage(ctx, suiteBackendImages[0])
+	kratosAfter, err := dockerContainerIDsForImage(ctx, backendImages[0])
 	if err != nil {
 		return fail(err)
 	}
-	spiceAfter, err := dockerContainerIDsForImage(ctx, suiteBackendImages[1])
+	spiceAfter, err := dockerContainerIDsForImage(ctx, backendImages[1])
 	if err != nil {
 		return fail(err)
 	}
@@ -60,7 +61,6 @@ func startSuiteBackend(ctx context.Context, leasePath, cdnImage string) (*suiteB
 		return fail(fmt.Errorf("orchestrator backend must start exactly one Kratos and one SpiceDB container"))
 	}
 	lease := stack.Lease()
-	lease.CDNImage = cdnImage
 	lease.HookControlURL = hookProxy.ControlURL()
 	lease.HookControlToken = hookProxy.ControlToken()
 	return &suiteBackend{

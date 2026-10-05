@@ -16,6 +16,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
+	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -269,6 +271,37 @@ func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Cli
 		stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
 		&recordingFileTranscoderPublisher{}, stack.SpiceDBClient,
 	)
+}
+
+type directTrackAttachment struct {
+	authority *releasepkg.TrackAuthority
+}
+
+func directTrackAttachmentOption(db *gorm.DB) FileServiceOption {
+	return WithTrackAttachment(&directTrackAttachment{
+		authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db)),
+	})
+}
+
+func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
+	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+}
+
+func (a *directTrackAttachment) AttachOriginalWithDB(
+	ctx context.Context,
+	tx *gorm.DB,
+	input TrackOriginalAudioInput,
+) (TrackOriginalAudioAttachment, error) {
+	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasepkg.TrackOriginalAudioInput{
+		TrackID:               input.TrackID,
+		VerifiedFileID:        input.VerifiedFileID,
+		ExpectedCurrentFileID: input.ExpectedCurrentFileID,
+	})
+	return TrackOriginalAudioAttachment{
+		AlreadyApplied: attachment.AlreadyApplied,
+		CurrentFileID:  attachment.CurrentFileID,
+		ReleaseID:      attachment.ReleaseID,
+	}, err
 }
 
 type flakyAttachedConfirmPublisher struct {

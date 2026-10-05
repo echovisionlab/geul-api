@@ -81,6 +81,42 @@ func TestWorkTypedTranslationRejectsMismatchedSourceLocale(t *testing.T) {
 	require.EqualError(t, err, "typed Work translation source locale does not match the job")
 }
 
+func TestWorkProviderTargetRoleRejectsPromotedTargetAndPreservesOtherRoles(t *testing.T) {
+	tests := []struct {
+		name                string
+		jobSourceLocale     string
+		jobTargetLocale     string
+		currentSourceLocale string
+		wantStale           bool
+	}{
+		{
+			name:            "target promoted to source",
+			jobSourceLocale: "en", jobTargetLocale: "ko", currentSourceLocale: "ko",
+			wantStale: true,
+		},
+		{
+			name:            "target remains a target after source switch",
+			jobSourceLocale: "en", jobTargetLocale: "fr", currentSourceLocale: "ko",
+		},
+		{
+			name:            "source role still matches",
+			jobSourceLocale: "ko", jobTargetLocale: "ko", currentSourceLocale: "ko",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateWorkProviderSourceTarget(
+				test.jobSourceLocale, test.jobTargetLocale, test.currentSourceLocale,
+			)
+			if test.wantStale {
+				require.ErrorIs(t, err, translation.ErrSourceNoLongerCurrent)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestWorkTypedTranslationAllowsEmptyCurrentTitleWhenBodyIsTranslatable(t *testing.T) {
 	source := &translation.SourceDocument{
 		ContentBlockDocument: &contentv1.LocalizedRichTextDocument{

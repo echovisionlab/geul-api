@@ -23,6 +23,7 @@ type Post struct {
 	BlockMedia            []*contentv1.ContentBlockMediaItem `gorm:"-"`
 	Title                 string                             `gorm:"-"`
 	Slug                  *string                            `gorm:"column:slug"`
+	ConfigurationRevision string                             `gorm:"column:configuration_revision;type:uuid;not null;default:gen_random_uuid()"`
 	Summary               *string                            `gorm:"-"`
 	DocumentLayout        DocumentLayout                     `gorm:"column:document_layout;type:jsonb;not null"`
 	Status                PostStatus                         `gorm:"column:status"`

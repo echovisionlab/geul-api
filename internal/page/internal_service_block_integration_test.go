@@ -148,6 +148,26 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	require.Equal(t, *targetRevision, targetRoom.Msg.GetTargetRevision())
 	require.Equal(t, "Source paragraph", pageParagraphText(t, targetRoom.Msg.Document, richSectionID, paragraphID))
 	require.Empty(t, targetRoom.Msg.PresentLocaleValues, "source fallback must not become target presence")
+	targetWrite, err := internalService.ApplyPageBlockBatch(
+		withPageAuditedCollabRequestContext(t, ctx),
+		connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+			PageId: created.Msg.Id, Locale: "ko", ExpectedTargetRevision: targetRoom.Msg.TargetRevision,
+			Batch: &contentv1.PageSectionMutationBatch{
+				BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+				ExpectedRevision:        applied.Msg.DocumentRevision,
+				ContributorMemberIds:    []string{memberID},
+				LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{
+					Locale: "ko",
+					Mutations: []*contentv1.PageSectionLocaleMutation{
+						pageRichTextLocaleUpsert(richSectionID, paragraphID, "Translated paragraph"),
+					},
+				}},
+			},
+		}),
+	)
+	require.NoError(t, err)
+	require.True(t, targetWrite.Msg.Changed)
+	require.Equal(t, applied.Msg.DocumentRevision, targetWrite.Msg.DocumentRevision)
 	requirePageContentRows(
 		t,
 		db,
@@ -157,6 +177,83 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 		richSectionID,
 		paragraphID,
 	)
+
+	// A kind change also clears incompatible target overlays. Exercise it at
+	// the internal Page boundary, including a fresh target-room reload.
+	kindBlockID := integrationTestUUID()
+	kindSeedBase := pageRichTextBaseUpsert(richSectionID, &contentv1.RichTextBlock{
+		Id: kindBlockID, Value: &contentv1.RichTextBlock_Paragraph{Paragraph: &contentv1.ParagraphBlock{Props: &contentv1.ParagraphProps{}}},
+	})
+	kindSeedBase.GetMutateRichTextBlock().GetMutation().GetUpsert().GetNode().Placement.Index = 1
+	kindSeed, err := internalService.ApplyPageBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+		PageId: created.Msg.Id, Locale: "en",
+		Batch: &contentv1.PageSectionMutationBatch{
+			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+			ExpectedRevision:        applied.Msg.DocumentRevision, ContributorMemberIds: []string{memberID},
+			BaseMutations: []*contentv1.PageSectionMutation{kindSeedBase},
+			LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{Locale: "en", Mutations: []*contentv1.PageSectionLocaleMutation{
+				pageRichTextLocaleUpsert(richSectionID, kindBlockID, "Kind source"),
+			}}},
+		},
+	}))
+	require.NoError(t, err)
+	kindTarget, err := internalService.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
+		PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: "ko",
+	}))
+	require.NoError(t, err)
+	_, err = internalService.ApplyPageBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+		PageId: created.Msg.Id, Locale: "ko", ExpectedTargetRevision: kindTarget.Msg.TargetRevision,
+		Batch: &contentv1.PageSectionMutationBatch{
+			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+			ExpectedRevision:        kindSeed.Msg.DocumentRevision, ContributorMemberIds: []string{memberID},
+			LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{Locale: "ko", Mutations: []*contentv1.PageSectionLocaleMutation{
+				pageRichTextLocaleUpsert(richSectionID, kindBlockID, "Old translated paragraph"),
+			}}},
+		},
+	}))
+	require.NoError(t, err)
+	headingLocale := pageRichTextLocaleUpsert(richSectionID, kindBlockID, "Kind source")
+	headingLocaleBlock := headingLocale.GetMutateRichTextBlock().GetMutation().GetUpsert().GetBlock()
+	headingLocaleBlock.Value = &contentv1.RichTextBlockLocale_Heading{Heading: &contentv1.HeadingBlockLocale{
+		Props: &contentv1.HeadingLocaleProps{}, Content: headingLocaleBlock.GetParagraph().GetContent(),
+	}}
+	headingBase := pageRichTextBaseUpsert(richSectionID, &contentv1.RichTextBlock{
+		Id: kindBlockID, Value: &contentv1.RichTextBlock_Heading{Heading: &contentv1.HeadingBlock{Props: &contentv1.HeadingProps{}}},
+	})
+	headingBase.GetMutateRichTextBlock().GetMutation().GetUpsert().GetNode().Placement.Index = 1
+	kindChanged, err := internalService.ApplyPageBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+		PageId: created.Msg.Id, Locale: "en",
+		Batch: &contentv1.PageSectionMutationBatch{
+			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+			ExpectedRevision:        kindSeed.Msg.DocumentRevision, ContributorMemberIds: []string{memberID},
+			BaseMutations:        []*contentv1.PageSectionMutation{headingBase},
+			LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{Locale: "en", Mutations: []*contentv1.PageSectionLocaleMutation{headingLocale}}},
+		},
+	}))
+	require.NoError(t, err, "source kind change must allow incompatible target overlays to be cleared")
+	require.True(t, kindChanged.Msg.Changed)
+	require.ElementsMatch(t, []string{"en", "ko"}, kindChanged.Msg.ChangedLocales)
+	for _, locale := range []string{"en", "ko"} {
+		reloaded, reloadErr := internalService.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
+			PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: locale,
+		}))
+		require.NoError(t, reloadErr)
+		require.Equal(t, kindChanged.Msg.DocumentRevision, reloaded.Msg.DocumentRevision)
+		var heading *contentv1.HeadingBlockLocale
+		for _, section := range reloaded.Msg.Document.GetLocaleOverlay().GetSections() {
+			for _, block := range section.GetRichText().GetBlocks().GetBlocks() {
+				if block.GetBlockId() == kindBlockID {
+					heading = block.GetHeading()
+				}
+			}
+		}
+		require.NotNil(t, heading)
+		require.Equal(t, "Kind source", heading.GetContent()[0].GetText().GetText())
+	}
+	var incompatibleOverlays int64
+	require.NoError(t, db.Table("content_block_locale").Where("block_id = ? AND locale = 'ko'", kindBlockID).Count(&incompatibleOverlays).Error)
+	require.Zero(t, incompatibleOverlays)
+	applied = kindChanged
 
 	moved, err := internalService.ApplyPageBlockBatch(
 		ctx,
@@ -245,6 +342,37 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 		}),
 	)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	deleted, err := internalService.ApplyPageBlockBatch(
+		withPageAuditedCollabRequestContext(t, ctx),
+		connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
+			PageId: created.Msg.Id, Locale: "en",
+			Batch: &contentv1.PageSectionMutationBatch{
+				BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+				ExpectedRevision:        moved.Msg.DocumentRevision,
+				ContributorMemberIds:    []string{memberID},
+				BaseMutations: []*contentv1.PageSectionMutation{{
+					Operation: &contentv1.PageSectionMutation_Delete{Delete: &contentv1.DeletePageSection{SectionId: columnsID}},
+				}},
+			},
+		}),
+	)
+	require.NoError(t, err, "source structure deletion must allow cascading target overlay removal")
+	require.True(t, deleted.Msg.Changed)
+	require.NotEqual(t, moved.Msg.DocumentRevision, deleted.Msg.DocumentRevision)
+	require.ElementsMatch(t, []string{"en", "ko"}, deleted.Msg.ChangedLocales)
+	for _, locale := range []string{"en", "ko"} {
+		reloaded, reloadErr := internalService.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
+			PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: locale,
+		}))
+		require.NoError(t, reloadErr)
+		require.Equal(t, deleted.Msg.DocumentRevision, reloaded.Msg.DocumentRevision)
+		require.Empty(t, reloaded.Msg.Document.Base.Nodes)
+		require.Empty(t, reloaded.Msg.PresentLocaleValues)
+	}
+	var remainingOverlays int64
+	require.NoError(t, db.Table("content_block_locale").Where("block_id IN ?", []string{columnsID, richSectionID, paragraphID}).Count(&remainingOverlays).Error)
+	require.Zero(t, remainingOverlays)
 }
 
 func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
@@ -296,6 +424,14 @@ func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, metadata.Msg.Changed)
 	require.NotEqual(t, loaded.Msg.DocumentRevision, metadata.Msg.DocumentRevision)
+	unchangedMetadata, err := internalService.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
+		PageId: created.Msg.Id, Locale: "en", Title: &nextTitle,
+		ExpectedRevision: metadata.Msg.DocumentRevision, ContributorMemberIds: []string{memberID},
+	}))
+	require.NoError(t, err)
+	require.False(t, unchangedMetadata.Msg.Changed)
+	require.Empty(t, unchangedMetadata.Msg.ChangedLocales)
+	require.Equal(t, metadata.Msg.DocumentRevision, unchangedMetadata.Msg.DocumentRevision)
 
 	layout, err := internalService.UpdatePageDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageDocumentMetadataRequest{
 		PageId:           created.Msg.Id,

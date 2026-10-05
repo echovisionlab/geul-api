@@ -12,11 +12,11 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 )
 
 var remoteImportFileNamespace = uuid.MustParse("1b9e8e7d-3051-52c6-a782-3cb87f5b82cc")
@@ -40,7 +40,8 @@ func resolveRemoteImportOperationIdentity(
 	_, dedicatedPublicAsset := dedicatedPublicAssetKind(opts.uploadType, slotID)
 	if !isEditorFileIngestUploadType(opts.uploadType) &&
 		!requiresDurableFileIngestAttachment(projection) &&
-		!dedicatedPublicAsset {
+		!dedicatedPublicAsset &&
+		!(opts.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && strings.TrimSpace(opts.correlationID) != "") {
 		return remoteImportOperationIdentity{
 			fileID:    uuid.NewString(),
 			attemptID: uuid.NewString(),
@@ -56,6 +57,7 @@ func resolveRemoteImportOperationIdentity(
 
 	target := struct {
 		Version               int    `json:"version"`
+		ActorMemberID         string `json:"actor_member_id,omitempty"`
 		CorrelationID         string `json:"correlation_id"`
 		UploadType            string `json:"upload_type"`
 		EntityType            string `json:"entity_type"`
@@ -64,6 +66,7 @@ func resolveRemoteImportOperationIdentity(
 		ExpectedCurrentFileID string `json:"expected_current_file_id"`
 	}{
 		Version:               1,
+		ActorMemberID:         opts.actorMemberID,
 		CorrelationID:         correlationID,
 		UploadType:            opts.uploadType.String(),
 		EntityType:            opts.transcodeEntityType.String(),

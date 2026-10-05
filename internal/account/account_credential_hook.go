@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -77,37 +78,50 @@ func NewAccountCredentialHookLifecycle(
 func (s *AccountCredentialHookLifecycle) Validate(
 	ctx context.Context,
 	input AccountCredentialHookInput,
-) error {
+) (err error) {
+	defer func() {
+		if err != nil {
+			logCredentialHookFailure(ctx, "validate", input, err)
+		}
+	}()
 	if err := validateAccountCredentialHookInput(input, true, false); err != nil {
 		return err
 	}
-	if _, _, err := accountCredentialMutationFromSnapshots(input); err != nil {
+	mutation, changed, err := accountCredentialMutationFromSnapshots(input)
+	if err != nil {
 		return err
 	}
 	if !auth.NewCredentialInventory(input.Credentials).HasRecoverableAuthenticationMethod() {
 		return ErrAccountCredentialUnrecoverable
 	}
-	if input.Kind != AccountCredentialOIDC {
+	if input.Kind != AccountCredentialOIDC || !changed || mutation.event != email.EventSocialLoginRemoved {
 		return nil
 	}
-	identity, err := s.identity.GetIdentity(ctx, input.IdentityID)
+	identity, err := loadIdentityAuthenticationCredentials(ctx, s.identity, input.IdentityID)
 	if err != nil {
 		return err
 	}
 	if identity == nil || identity.ID != input.IdentityID {
 		return fmt.Errorf("identity %s was not returned", input.IdentityID)
 	}
-	proposedIdentity := *identity
-	proposedIdentity.Credentials = input.Credentials
-	providerCandidates := ResolveAccountEmailProviderCandidates(ctx, input.Credentials)
+	// The webhook carries inventory, never provider tokens or claims. Load
+	// provider proof through the existing confidential identity port and remove
+	// only the provider identified by the validated transition.
+	proposedIdentity := identityWithoutOIDCProvider(identity, mutation.provider, mutation.subject)
+	providerCandidates := ResolveAccountEmailProviderCandidates(ctx, proposedIdentity.Credentials)
 	return NewAccountEmailService(s.db, s.identity, s.memberEmails).
-		EnsureMemberPrimaryEmailUsable(ctx, input.IdentityID, &proposedIdentity, providerCandidates)
+		EnsureMemberPrimaryEmailUsable(ctx, input.IdentityID, proposedIdentity, providerCandidates)
 }
 
 func (s *AccountCredentialHookLifecycle) Complete(
 	ctx context.Context,
 	input AccountCredentialHookInput,
-) error {
+) (err error) {
+	defer func() {
+		if err != nil {
+			logCredentialHookFailure(ctx, "complete", input, err)
+		}
+	}()
 	if err := validateAccountCredentialHookInput(input, true, true); err != nil {
 		return err
 	}
@@ -357,4 +371,31 @@ func lockActiveCredentialMutationMember(
 	identityID string,
 ) error {
 	return authorizationtarget.LockActivePairForCredentialMutation(ctx, tx, memberID, identityID)
+}
+
+// Keep diagnostics useful after telemetry redaction without logging identities,
+// credential contents, or arbitrary upstream error messages.
+func logCredentialHookFailure(ctx context.Context, stage string, input AccountCredentialHookInput, err error) {
+	code := "credential_hook_failed"
+	level := slog.LevelError
+	switch {
+	case errors.Is(err, ErrAccountCredentialSnapshotMissing):
+		code = "credential_snapshot_missing"
+	case errors.Is(err, ErrAccountCredentialCommittedMismatch):
+		code = "credential_committed_mismatch"
+	case errors.Is(err, ErrAccountCredentialMutationShape):
+		code = "credential_mutation_invalid"
+	case errors.Is(err, ErrAccountCredentialUnrecoverable):
+		code, level = "recoverable_auth_method", slog.LevelWarn
+	case errors.Is(err, ErrMemberPrimaryEmailUnavailable):
+		code, level = "canonical_email_provider_required", slog.LevelWarn
+	}
+	slog.LogAttrs(ctx, level, "Settings credential hook failed",
+		slog.String("error_code", code),
+		slog.Any("error", err),
+		slog.String("stage", stage),
+		slog.String("credential_type", string(input.Kind)),
+		slog.Bool("proposed_snapshot_present", input.CredentialSnapshotPresent && input.Credentials != nil),
+		slog.Bool("previous_snapshot_present", input.PreviousSnapshotPresent && input.PreviousCredentials != nil),
+	)
 }

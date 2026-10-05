@@ -20,8 +20,8 @@ const ToolDocumentList = "document_list"
 var documentDiscoveryTools = []mcpserver.Tool{{
 	Name:  ToolDocumentList,
 	Title: "List accessible documents",
-	Description: "List Post, Work, Page, or Program Event documents the authenticated Geul member may open. " +
-		"Use this before document_open when the document UUID is unknown. " +
+	Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. " +
+		"Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. " +
 		"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
 	InputSchema:     json.RawMessage(documentListInputJSONSchema),
 	OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
@@ -48,6 +48,14 @@ type ProgramEventDocumentDiscovery interface {
 	ListProgramEventsAdmin(context.Context, *connect.Request[managev1.ListProgramEventsAdminRequest]) (*connect.Response[managev1.ListProgramEventsAdminResponse], error)
 }
 
+type ReleaseDocumentDiscovery interface {
+	ListReleasesAdmin(context.Context, *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error)
+}
+
+type ArtistDocumentDiscovery interface {
+	ListArtistsAdmin(context.Context, *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error)
+}
+
 // DocumentDiscoveryTools owns only document selection metadata. DCDP reads
 // and mutations remain in AIDocumentTools.
 type DocumentDiscoveryTools struct {
@@ -55,6 +63,8 @@ type DocumentDiscoveryTools struct {
 	works         WorkDocumentDiscovery
 	pages         PageDocumentDiscovery
 	programEvents ProgramEventDocumentDiscovery
+	releases      ReleaseDocumentDiscovery
+	artists       ArtistDocumentDiscovery
 }
 
 func NewDocumentDiscoveryTools(
@@ -62,6 +72,8 @@ func NewDocumentDiscoveryTools(
 	works WorkDocumentDiscovery,
 	pages PageDocumentDiscovery,
 	programEvents ProgramEventDocumentDiscovery,
+	releases ReleaseDocumentDiscovery,
+	artists ArtistDocumentDiscovery,
 ) (*DocumentDiscoveryTools, error) {
 	if interfaceValueIsNil(posts) {
 		return nil, errors.New("MCP Post document discovery is required")
@@ -75,7 +87,13 @@ func NewDocumentDiscoveryTools(
 	if interfaceValueIsNil(programEvents) {
 		return nil, errors.New("MCP Program Event document discovery is required")
 	}
-	return &DocumentDiscoveryTools{posts: posts, works: works, pages: pages, programEvents: programEvents}, nil
+	if interfaceValueIsNil(releases) {
+		return nil, errors.New("MCP Release document discovery is required")
+	}
+	if interfaceValueIsNil(artists) {
+		return nil, errors.New("MCP Artist document discovery is required")
+	}
+	return &DocumentDiscoveryTools{posts: posts, works: works, pages: pages, programEvents: programEvents, releases: releases, artists: artists}, nil
 }
 
 func (*DocumentDiscoveryTools) ToolNames() []string {
@@ -95,6 +113,9 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	if name != ToolDocumentList {
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return executionError(err)
+	}
 	var input struct {
 		Profile string `json:"p"`
 		Query   string `json:"q,omitempty"`
@@ -104,8 +125,17 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" {
-		return executionError(fmt.Errorf("p must be post, work, page, or program_event"))
+	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
+		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
+	}
+	_, limitSupplied := arguments["limit"]
+	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
+		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
+	}
+	// The owning management APIs use int32 offsets. Validate before converting
+	// so a large offset cannot wrap around and select a different page.
+	if input.Offset < 0 || input.Offset > 1<<31-1 {
+		return executionError(errors.New("offset must be between 0 and 2147483647"))
 	}
 	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
 	if err != nil {
@@ -146,7 +176,9 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		documents := make([]map[string]any, len(listed.Items))
 		for index, item := range listed.Items {
-			documents[index] = discoveryDocument("post", item.ID, item.Title, item.Slug, item.SourceLocale, item.Status, item.UpdatedAt)
+			document := discoveryDocument("post", item.ID, item.Title, item.Slug, item.SourceLocale, item.Status, item.UpdatedAt)
+			document["configuration_revision"] = item.ConfigurationRevision
+			documents[index] = document
 		}
 		return documents, listed.Total, listed.Limit, nil
 	case "work":
@@ -213,8 +245,52 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 			))
 		}
 		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+	case "release":
+		request := connect.NewRequest(&managev1.ListReleasesAdminRequest{
+			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
+			Filters:    discoverySearchFilters(query),
+			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		})
+		listed, err := tools.releases.ListReleasesAdmin(ctx, request)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		documents := make([]map[string]any, 0, len(listed.Msg.Releases))
+		for _, item := range listed.Msg.Releases {
+			if item == nil || item.Release == nil || item.Release.UpdatedAt == nil {
+				continue
+			}
+			release := item.Release
+			documents = append(documents, discoveryDocument(
+				"release", release.Id, release.Title, release.Slug, release.SourceLocale,
+				release.Status, release.UpdatedAt.AsTime(),
+			))
+		}
+		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+	case "artist":
+		request := connect.NewRequest(&managev1.ListArtistsAdminRequest{
+			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
+			Filters:    discoverySearchFilters(query),
+			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		})
+		listed, err := tools.artists.ListArtistsAdmin(ctx, request)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		documents := make([]map[string]any, 0, len(listed.Msg.Artists))
+		for _, item := range listed.Msg.Artists {
+			if item == nil || item.Artist == nil || item.Artist.UpdatedAt == nil {
+				continue
+			}
+			artist := item.Artist
+			documents = append(documents, discoveryDocument(
+				"artist", artist.Id, artist.Name, artist.Slug, artist.SourceLocale,
+				artist.Status, artist.UpdatedAt.AsTime(),
+			))
+		}
+		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
 	default:
-		return nil, 0, 0, fmt.Errorf("p must be post, work, page, or program_event")
+		return nil, 0, 0, fmt.Errorf("p must be post, work, page, program_event, release, or artist")
 	}
 }
 
@@ -231,6 +307,8 @@ func discoveryDocument(profile, id, title string, slug *string, sourceLocale, st
 	status = strings.TrimPrefix(status, "WORK_STATUS_")
 	status = strings.TrimPrefix(status, "PAGE_STATUS_")
 	status = strings.TrimPrefix(status, "PROGRAM_EVENT_STATUS_")
+	status = strings.TrimPrefix(status, "RELEASE_STATUS_")
+	status = strings.TrimPrefix(status, "ARTIST_STATUS_")
 	document := map[string]any{
 		"p": profile, "d": id, "title": title,
 		"source_locale": sourceLocale, "status": strings.ToLower(status),

@@ -21,13 +21,13 @@ import (
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	mediaauth "github.com/echovisionlab/geul-mediaauth"
 	"github.com/stretchr/testify/require"
 )
 
@@ -445,7 +445,7 @@ func newFileDeleteWorkerUnitDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
-			CREATE TABLE file (
+			CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY, file_name TEXT NOT NULL, mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL, extension TEXT NOT NULL, sha256 BLOB NOT NULL,
 			duration_seconds INTEGER, ingest_slot_id TEXT, ingest_attempt_id TEXT,
