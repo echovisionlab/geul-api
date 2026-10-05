@@ -218,8 +218,8 @@ const focusedMutationOutputJSONSchema = `{
   "additionalProperties":false,
   "required":["dr","c"],
   "properties":{
-    "dr":{"type":"string","minLength":1,"maxLength":256,"description":"New document revision."},
-    "tr":{"type":"string","minLength":1,"maxLength":256,"description":"New target revision when a non-source locale changed."},
+    "dr":{"type":"string","minLength":1,"maxLength":256,"description":"Current document revision after the operation; unchanged for target-only changes and semantic no-ops."},
+    "tr":{"type":"string","minLength":1,"maxLength":256,"description":"Current target revision after the operation for an existing non-source locale; unchanged for semantic no-ops."},
     "block_id":{"type":"string","format":"uuid","description":"Canonical UUID assigned to the newly created Paragraph Block."},
     "c":{"type":"array","items":{"type":"array","prefixItems":[
       {"type":"integer","minimum":0},

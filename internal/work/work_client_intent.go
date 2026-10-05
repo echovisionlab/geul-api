@@ -1,6 +1,9 @@
 package work
 
-import "reflect"
+import (
+	"reflect"
+	"slices"
+)
 
 func mergeWorkClientIntent(current, observed, desired []string) []string {
 	observedSet := make(map[string]struct{}, len(observed))
@@ -23,7 +26,9 @@ func mergeWorkClientIntent(current, observed, desired []string) []string {
 		merged = append(merged, clientID)
 		mergedSet[clientID] = struct{}{}
 	}
-	for _, clientID := range desired {
+	orderChanged := workClientOrderChanged(observed, desired)
+	additionPosition := 0
+	for desiredIndex, clientID := range desired {
 		_, wasObserved := observedSet[clientID]
 		if wasObserved {
 			continue
@@ -31,10 +36,28 @@ func mergeWorkClientIntent(current, observed, desired []string) []string {
 		if _, alreadyPresent := mergedSet[clientID]; alreadyPresent {
 			continue
 		}
-		merged = append(merged, clientID)
+		position := len(merged)
+		if !orderChanged {
+			// Place local additions before the next surviving baseline member,
+			// without undoing a peer's reorder of the existing members.
+			for _, nextID := range desired[desiredIndex+1:] {
+				if _, wasObserved := observedSet[nextID]; !wasObserved {
+					continue
+				}
+				if index := slices.Index(merged, nextID); index >= 0 {
+					position = index
+					break
+				}
+			}
+			// A peer may have reversed the anchors; local additions still keep
+			// their requested order relative to one another.
+			position = max(position, additionPosition)
+		}
+		merged = slices.Insert(merged, position, clientID)
+		additionPosition = position + 1
 		mergedSet[clientID] = struct{}{}
 	}
-	if !workClientOrderChanged(observed, desired) {
+	if !orderChanged {
 		return merged
 	}
 

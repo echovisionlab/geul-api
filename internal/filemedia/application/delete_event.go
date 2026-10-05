@@ -7,7 +7,6 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -33,25 +32,6 @@ func ValidateDeleteEvent(event *managev1.FileDeleteEvent) error {
 	}
 	if len(event.GetAssets()) != 0 {
 		return errors.New("full deletion must not include public assets")
-	}
-	seenAssets := make(map[string]struct{}, len(event.GetAssets()))
-	for _, target := range event.GetAssets() {
-		if target == nil {
-			return errors.New("asset target is required")
-		}
-		assetID := strings.TrimSpace(target.GetAssetId())
-		if _, err := uuid.Parse(assetID); err != nil {
-			return errors.New("asset id must be a UUID")
-		}
-		if _, duplicate := seenAssets[assetID]; duplicate {
-			return errors.New("duplicate asset target")
-		}
-		seenAssets[assetID] = struct{}{}
-		expectedKey, err := mediaauth.AssetObjectKey(assetID, target.GetExtension())
-		if err != nil || expectedKey != target.GetObjectKey() || strings.TrimSpace(target.GetMimeType()) == "" ||
-			target.GetDisposition() != commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE || target.DownloadFilename != nil {
-			return errors.New("non-canonical asset target")
-		}
 	}
 	seenGenerations := make(map[string]struct{}, len(event.GetGenerations()))
 	for _, target := range event.GetGenerations() {

@@ -25,6 +25,7 @@ type exactProgramEventDocumentAPI struct {
 	loadCalls     int
 	executeCalls  int
 	compilerCalls int
+	persistCalls  int
 }
 
 func (a *exactProgramEventDocumentAPI) LoadAIDocumentState(
@@ -54,6 +55,7 @@ func (a *exactProgramEventDocumentAPI) ExecuteAIDocumentCommand(
 	if _, err := compiler(a.state); err != nil {
 		return programeventdomain.AIDocumentResult{}, err
 	}
+	a.persistCalls++
 	return a.result, nil
 }
 
@@ -272,4 +274,29 @@ func programEventTestDocument(locale string, exists bool) *contentv1.LocalizedRi
 		document.LocaleOverlay.Blocks = nil
 	}
 	return document
+}
+
+func TestProgramEventBatchRangeErrorPreservesTransportRejection(t *testing.T) {
+	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_PROGRAM_EVENT)
+	require.NoError(t, err)
+	api := &exactProgramEventDocumentAPI{state: programeventdomain.AIDocumentState{
+		EventID: programEventTestID, RequestedLocale: "en", SourceLocale: "en", LocaleExists: true,
+		DocumentRevision: programEventRevision, ContentDocumentID: uuid.New(), ViewerMemberID: uuid.NewString(),
+		LocalizedDocument: programEventTestDocument("en", true),
+	}}
+	port := &programEventPort{service: api, codec: codec}
+	identity := core.DocumentIdentity{Domain: core.DomainProgramEvent, Reference: programEventTestID}
+	document, err := port.Load(t.Context(), identity, "en")
+	require.NoError(t, err)
+	request := core.ApplyRequest{
+		Protocol: core.ProtocolVersion, Profile: core.DomainProgramEvent, Document: identity.Reference,
+		Locale: "en", ExpectedDocumentRevision: document.DocumentRevision,
+		Operations: []core.Operation{core.SetFieldOperation(programEventBlockID, "previewWidth", core.Number("5"))},
+	}
+	_, generic := core.ValidateLoadedApply(document, request)
+	require.True(t, generic.Valid(), "%+v", generic)
+	application, err := core.NewService(port)
+	require.NoError(t, err)
+	assertBatchRangeErrorBoundaries(t, application, request)
+	require.Zero(t, api.persistCalls, "rejected batch reached persistence")
 }

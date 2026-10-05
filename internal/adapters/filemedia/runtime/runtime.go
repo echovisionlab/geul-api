@@ -84,7 +84,7 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 		return errors.New("file storage runtime is required")
 	}
 	original := event.GetOriginal()
-	derivativeCount := len(event.GetAssets()) + len(event.GetGenerations())
+	derivativeCount := len(event.GetGenerations())
 	slog.Info("Deleting file objects from storage",
 		"fileId", event.GetFileId(),
 		"bucket", r.bucket,
@@ -100,23 +100,10 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 		}
 	}
 
-	for _, asset := range event.GetAssets() {
-		if asset.GetObjectKey() == "" {
-			continue
-		}
-		if _, err := r.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(r.bucket),
-			Key:    aws.String(asset.GetObjectKey()),
-		}); err != nil {
-			return errors.New("failed to delete asset storage object")
-		}
-	}
-
 	for _, generation := range event.GetGenerations() {
 		if err := r.deleteS3Prefix(ctx, generation.GetObjectPrefix()); err != nil {
-			return errors.New("failed to delete media generation storage objects")
+			return fmt.Errorf("failed to delete media generation storage objects: %w", err)
 		}
-
 	}
 
 	slog.Info("File objects deleted successfully", "fileId", event.GetFileId(), "derivativesDeleted", derivativeCount)
@@ -143,11 +130,16 @@ func (r *Runtime) deleteS3Prefix(ctx context.Context, prefix string) error {
 		for _, object := range page.Contents {
 			objects = append(objects, s3types.ObjectIdentifier{Key: object.Key})
 		}
-		if _, err := r.s3Client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		result, err := r.s3Client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(r.bucket),
 			Delete: &s3types.Delete{Objects: objects, Quiet: aws.Bool(true)},
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("failed to batch delete objects: %w", err)
+		}
+		if len(result.Errors) != 0 {
+			failed := result.Errors[0]
+			return fmt.Errorf("failed to batch delete %d objects: %s (%s)", len(result.Errors), aws.ToString(failed.Key), aws.ToString(failed.Code))
 		}
 	}
 	return nil

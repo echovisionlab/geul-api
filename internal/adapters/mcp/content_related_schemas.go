@@ -80,6 +80,20 @@ const contentActionOutputJSONSchema = `{
   }
 }`
 
+const workCreditGroupUpdateOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["resource_type","resource_id","name"],
+  "properties":{"resource_type":{"const":"work_credit_group"},"resource_id":` + documentReferenceJSONSchema + `,"name":{"type":"string"}}
+}`
+
+const workCreditUpdateOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["resource_type","resource_id"],
+  "properties":{
+    "resource_type":{"const":"work_credit"},"resource_id":` + documentReferenceJSONSchema + `,
+    "group_id":{"type":"string"},"name":{"type":"string"},"credit_role":{"type":"string"},
+    "member_id":` + documentReferenceJSONSchema + `,"artist_id":` + documentReferenceJSONSchema + `
+  }
+}`
+
 const postParticipantsOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id","participants"],
   "properties":{"document_id":` + documentReferenceJSONSchema + `,"participants":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["member_id","nickname","role","has_effective_authority","deleted","created_at"],"properties":{"member_id":` + documentReferenceJSONSchema + `,"nickname":{"type":"string"},"role":{"enum":["author","collaborator"]},"has_effective_authority":{"type":"boolean"},"deleted":{"type":"boolean"},"created_at":{"type":"string","format":"date-time"}}}}}

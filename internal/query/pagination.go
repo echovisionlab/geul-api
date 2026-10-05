@@ -75,11 +75,11 @@ func (p Pagination) BuildResponse(total int64) *commonv1.PaginationResponse {
 		Total:   int32(total),
 		Limit:   p.Limit,
 		Offset:  p.Offset,
-		HasMore: p.Offset+p.Limit < int32(total),
+		HasMore: p.HasMore(total),
 	}
 }
 
 // HasMore returns true if there are more items after the current page.
 func (p Pagination) HasMore(total int64) bool {
-	return p.Offset+p.Limit < int32(total)
+	return int64(p.Offset)+int64(p.Limit) < total
 }

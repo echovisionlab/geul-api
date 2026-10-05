@@ -251,12 +251,18 @@ type fileListArguments struct {
 }
 
 func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if err := rejectNullArguments(arguments, "page_size"); err != nil {
+		return executionError(err)
+	}
 	var input fileListArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	if input.PageSize == 0 {
+	if _, supplied := arguments["page_size"]; !supplied {
 		input.PageSize = 20
+	}
+	if input.PageSize < 1 || input.PageSize > 100 {
+		return executionError(errors.New("page_size must be between 1 and 100, or omitted for the default"))
 	}
 	response, err := tools.files.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		FolderId: input.FolderID, Query: input.Query, MimeTypePrefix: input.MIMETypePrefix,

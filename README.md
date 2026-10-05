@@ -86,6 +86,14 @@ export PARTICLE_MESH_SCRIPT_PATH="$PWD/media/asset-optimizer/scripts/optimize-pa
 Keep the termination grace period above `OG_SHUTDOWN_TIMEOUT_MS` (120000 by
 default) plus API cleanup time; Compose allows 140 seconds.
 
+## MCP management outputs
+
+`work_credit_group_update` and `work_credit_update` return the current resource
+values after a successful update. Their output schemas omit `changed`: the owning
+API does not report whether persistence changed, so an equal-value update must
+not be counted as a write. Clients should use the output schemas returned by
+`tools/list`; the MCP server implementation version is `14`.
+
 ## Integration tests
 
 Build the matching Identity Kratos image before running integration tests:

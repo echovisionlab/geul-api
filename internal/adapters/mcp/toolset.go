@@ -133,6 +133,17 @@ func toolAnnotations(readOnly, destructive, openWorld bool) map[string]any {
 	}
 }
 
+func cloneAnnotations(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
 func cloneSecuritySchemes(values []mcpserver.ToolSecurityScheme) []mcpserver.ToolSecurityScheme {
 	if values == nil {
 		return nil

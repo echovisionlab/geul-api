@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"strings"
 
-	"connectrpc.com/connect"
-
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	programeventdomain "github.com/echovisionlab/geul-api/internal/programevent"
@@ -309,23 +307,25 @@ func validateProgramEventOperations(document core.Document, operations []core.Op
 }
 
 func programEventDomainIssue(err error, operations []core.Operation) *core.OperationIssue {
-	index := -1
-	code := core.IssueInvalidOperation
-	switch {
-	case errors.Is(err, contentblock.ErrFileReference):
-		code = core.IssueInvalidFileReference
-		for candidate, operation := range operations {
-			if operation.Kind == core.OperationAttachFile || operation.Kind == core.OperationDetachFile {
-				index = candidate
-				break
-			}
-		}
-	case errors.Is(err, contentblock.ErrInvalidMutation):
-	case connect.CodeOf(err) == connect.CodeInvalidArgument || connect.CodeOf(err) == connect.CodeFailedPrecondition:
-	default:
+	if !errors.Is(err, contentblock.ErrFileReference) {
 		return nil
 	}
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
+	index := -1
+	for candidate, operation := range operations {
+		if operation.Kind != core.OperationAttachFile && operation.Kind != core.OperationDetachFile {
+			continue
+		}
+		// A batch-level File error identifies an operation only when exactly
+		// one File mutation is present. Preserve the original error otherwise.
+		if index >= 0 {
+			return nil
+		}
+		index = candidate
+	}
+	if index < 0 {
+		return nil
+	}
+	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 
 func programEventOperationHandles(operation core.Operation) []string {

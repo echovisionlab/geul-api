@@ -379,13 +379,14 @@ func pageProjectMessage(message protoreflect.Message, skip map[string]bool) (cor
 	}
 	fields := make([]core.ObjectField, 0)
 	files := make([]core.FileBinding, 0)
+	var projectErr error
 	message.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
 		if skip[field.JSONName()] {
 			return true
 		}
 		projected, nestedFiles, err := pageProjectField(field, value)
 		if err != nil {
-			files = append(files, core.FileBinding{Field: core.FieldID("!error"), File: core.FileReference(err.Error())})
+			projectErr = err
 			return false
 		}
 		if projected != nil {
@@ -397,10 +398,8 @@ func pageProjectMessage(message protoreflect.Message, skip map[string]bool) (cor
 		}
 		return true
 	})
-	for _, file := range files {
-		if file.Field == "!error" {
-			return core.Value{}, nil, errors.New(string(file.File))
-		}
+	if projectErr != nil {
+		return core.Value{}, nil, projectErr
 	}
 	return core.Object(fields...), files, nil
 }

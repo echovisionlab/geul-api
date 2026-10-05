@@ -569,49 +569,15 @@ func (r ApplyRequest) validateEnvelope() error {
 }
 
 func validateCanonicalOperations(operations []Operation) error {
-	stableTarget := func(target FieldTarget) error {
-		if err := validateStableID("block ID", string(target.Block), 160); err != nil {
-			return err
-		}
-		if target.relationItem() {
-			if target.Relation == "" || target.Item == "" {
-				return errors.New("relation-item field target requires both relation and item IDs")
-			}
-			if err := validateStableID("relation ID", string(target.Relation), 120); err != nil {
-				return err
-			}
-			if err := validateStableID("relation item ID", string(target.Item), 160); err != nil {
-				return err
-			}
-		}
-		if err := validateStableID("field ID", string(target.Field), 120); err != nil {
-			return err
-		}
-		for _, segment := range target.Path {
-			if err := segment.validate(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	stableRelation := func(block BlockID, relation RelationID, item RelationItemID) error {
-		if err := validateStableID("block ID", string(block), 160); err != nil {
-			return err
-		}
-		if err := validateStableID("relation ID", string(relation), 120); err != nil {
-			return err
-		}
-		return validateStableID("relation item ID", string(item), 160)
-	}
 	for index, operation := range operations {
 		var err error
 		switch operation.Kind {
 		case OperationSetField:
-			if err = stableTarget(operation.SetField.Target); err == nil {
+			if err = validateCanonicalFieldTarget(operation.SetField.Target); err == nil {
 				err = operation.SetField.Value.validate()
 			}
 		case OperationUnsetField:
-			err = stableTarget(operation.UnsetField.Target)
+			err = validateCanonicalFieldTarget(operation.UnsetField.Target)
 		case OperationInsertBlock:
 			if err = validateStableID("block ID", string(operation.InsertBlock.Block), 160); err == nil {
 				err = validateStableID("block kind", string(operation.InsertBlock.Kind), 80)
@@ -636,7 +602,7 @@ func validateCanonicalOperations(operations []Operation) error {
 				err = validateStableID("block kind", string(operation.ReplaceBlockKind.Kind), 80)
 			}
 		case OperationInsertRelationItem:
-			err = stableRelation(operation.InsertRelationItem.Block, operation.InsertRelationItem.Relation, operation.InsertRelationItem.Item)
+			err = validateRelationOperationIDs(operation.InsertRelationItem.Block, operation.InsertRelationItem.Relation, operation.InsertRelationItem.Item)
 			if err == nil {
 				err = validateStableID("relation item kind", string(operation.InsertRelationItem.Kind), 80)
 			}
@@ -644,9 +610,9 @@ func validateCanonicalOperations(operations []Operation) error {
 				err = validateStableID("after relation item ID", string(operation.InsertRelationItem.After), 160)
 			}
 		case OperationDeleteRelationItem:
-			err = stableRelation(operation.DeleteRelationItem.Block, operation.DeleteRelationItem.Relation, operation.DeleteRelationItem.Item)
+			err = validateRelationOperationIDs(operation.DeleteRelationItem.Block, operation.DeleteRelationItem.Relation, operation.DeleteRelationItem.Item)
 		case OperationMoveRelationItem:
-			err = stableRelation(operation.MoveRelationItem.Block, operation.MoveRelationItem.Relation, operation.MoveRelationItem.Item)
+			err = validateRelationOperationIDs(operation.MoveRelationItem.Block, operation.MoveRelationItem.Relation, operation.MoveRelationItem.Item)
 			if err == nil {
 				err = validateStableID("target block ID", string(operation.MoveRelationItem.TargetBlock), 160)
 			}
@@ -657,11 +623,11 @@ func validateCanonicalOperations(operations []Operation) error {
 				err = validateStableID("after relation item ID", string(operation.MoveRelationItem.After), 160)
 			}
 		case OperationAttachFile:
-			if err = stableTarget(operation.AttachFile.Target); err == nil {
+			if err = validateCanonicalFieldTarget(operation.AttachFile.Target); err == nil {
 				err = validateFileReference(operation.AttachFile.File)
 			}
 		case OperationDetachFile:
-			err = stableTarget(operation.DetachFile.Target)
+			err = validateCanonicalFieldTarget(operation.DetachFile.Target)
 		case OperationCreateTranslation, OperationDeleteTranslation:
 			// Locale is carried once by the batch envelope.
 		default:

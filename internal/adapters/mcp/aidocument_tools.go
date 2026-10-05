@@ -1,12 +1,10 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
@@ -469,31 +467,6 @@ func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.App
 	return structuredResult(encoded, false)
 }
 
-func decodeArguments(arguments mcpserver.ToolArguments, target any) error {
-	encoded, err := json.Marshal(arguments)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(encoded))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("multiple argument values are not allowed")
-	}
-	return nil
-}
-
-func rejectNullArguments(arguments mcpserver.ToolArguments, names ...string) error {
-	for _, name := range names {
-		if bytes.Equal(bytes.TrimSpace(arguments[name]), []byte("null")) {
-			return fmt.Errorf("%s cannot be null", name)
-		}
-	}
-	return nil
-}
-
 func decodeMutation(arguments mcpserver.ToolArguments) (core.ApplyRequest, error) {
 	encoded, err := json.Marshal(arguments)
 	if err != nil {
@@ -512,33 +485,6 @@ func decodeMutation(arguments mcpserver.ToolArguments) (core.ApplyRequest, error
 func validateMCPDocumentReference(reference core.DocumentReference) error {
 	_, err := uuidutil.ParseCanonical(string(reference), "d")
 	return err
-}
-
-func structuredResult(encoded []byte, isError bool) (mcpserver.ToolResult, error) {
-	var structured map[string]any
-	if err := json.Unmarshal(encoded, &structured); err != nil {
-		return mcpserver.ToolResult{}, err
-	}
-	return mcpserver.ToolResult{
-		Content:           []mcpserver.ContentBlock{mcpserver.TextContent(string(encoded))},
-		StructuredContent: structured,
-		IsError:           isError,
-	}, nil
-}
-
-func executionError(err error) (mcpserver.ToolResult, error) {
-	return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: err.Error()}
-}
-
-func cloneAnnotations(values map[string]any) map[string]any {
-	if values == nil {
-		return nil
-	}
-	result := make(map[string]any, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
 }
 
 var (

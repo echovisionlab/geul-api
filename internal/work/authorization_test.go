@@ -116,6 +116,58 @@ func TestListWorksAdminPagesKeepTiesUniqueAndRequestedDirection(t *testing.T) {
 	}
 }
 
+func TestGetWorkClientsDistinguishesEmptyResultFromQueryFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	for _, statement := range []string{
+		`CREATE TABLE client (id TEXT PRIMARY KEY, name TEXT, website TEXT, logo_light_file_id TEXT, logo_dark_file_id TEXT)`,
+		`CREATE TABLE work_client (work_id TEXT, client_id TEXT, sort_order INTEGER)`,
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	const workID = "22222222-2222-4222-8222-222222222222"
+	const clientID = "11111111-1111-4111-8111-111111111111"
+	service := &WorkService{db: db}
+	clients, err := service.getWorkClients(t.Context(), workID)
+	if err != nil || len(clients) != 0 {
+		t.Fatalf("empty client read = %+v, err=%v", clients, err)
+	}
+	if err := db.Exec(`INSERT INTO client (id, name) VALUES (?, ?)`, clientID, "Existing client").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO work_client (work_id, client_id, sort_order) VALUES (?, ?, 0)`, workID, clientID).Error; err != nil {
+		t.Fatal(err)
+	}
+	clients, err = service.getWorkClients(t.Context(), workID)
+	if err != nil || len(clients) != 1 || clients[0].Id != clientID {
+		t.Fatalf("populated client read = %+v, err=%v", clients, err)
+	}
+	queryFailure := errors.New("client query unavailable")
+	failures := 0
+	// Inject failure only into the real client JOIN, after verifying its success.
+	if err := db.Callback().Row().Before("gorm:row").Register("test:fail_work_client_read", func(query *gorm.DB) {
+		if query.Statement.TableExpr != nil && query.Statement.TableExpr.SQL == "work_client wc" {
+			failures++
+			query.AddError(queryFailure)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clients, err = service.getWorkClients(t.Context(), workID)
+	if failures != 1 || clients != nil || connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, queryFailure) {
+		t.Fatalf("failed client read = %+v, err=%v, injected failures=%d", clients, err, failures)
+	}
+}
+
 type workAuthorizationRecordingChecker struct {
 	calls    int
 	decision policyv1.AuthorizationDecision

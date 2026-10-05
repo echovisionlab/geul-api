@@ -76,6 +76,43 @@ func TestFileListReturnsCanonicalFileAndFolderIDs(t *testing.T) {
 	}
 }
 
+func TestFileListEnforcesPageSizeBeforeCallingApplication(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		payload  string
+		pageSize int32
+		invalid  bool
+	}{
+		{name: "omitted", payload: `{}`, pageSize: 20},
+		{name: "minimum", payload: `{"page_size":1}`, pageSize: 1},
+		{name: "maximum", payload: `{"page_size":100}`, pageSize: 100},
+		{name: "zero", payload: `{"page_size":0}`, invalid: true},
+		{name: "negative", payload: `{"page_size":-1}`, invalid: true},
+		{name: "above maximum", payload: `{"page_size":101}`, invalid: true},
+		{name: "native directory maximum", payload: `{"page_size":10000}`, invalid: true},
+		{name: "null", payload: `{"page_size":null}`, invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := &recordingFileReferences{}
+			tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileList, toolArguments(t, test.payload))
+			if test.invalid {
+				var executionErr *mcpserver.ToolExecutionError
+				if !errors.As(err, &executionErr) || files.request != nil {
+					t.Fatalf("invalid page_size reached application: err=%v request=%+v", err, files.request)
+				}
+				return
+			}
+			if err != nil || files.request == nil || files.request.Msg.PageSize != test.pageSize {
+				t.Fatalf("page_size request=%+v, err=%v, want=%d", files.request, err, test.pageSize)
+			}
+		})
+	}
+}
+
 func newRecordingReferenceDiscoveryTools(t *testing.T) *ReferenceDiscoveryTools {
 	t.Helper()
 	tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, &recordingFileReferences{})
