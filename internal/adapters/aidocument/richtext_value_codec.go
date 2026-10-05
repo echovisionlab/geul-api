@@ -4,15 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
-	"unicode"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protoreflect.EnumNumber, enum protoreflect.EnumDescriptor) (string, error) {
+func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protoreflect.EnumNumber, field protoreflect.FieldDescriptor) (string, error) {
+	enum := field.Enum()
 	if enum == nil {
 		return "", errors.New("stored enum descriptor is missing")
 	}
@@ -23,8 +22,7 @@ func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protorefle
 	name := string(stored.Name())
 	for _, candidate := range descriptor.Values {
 		text := fmt.Sprint(candidate)
-		normalized := normalizedEnumToken(text)
-		if strings.HasSuffix(name, "_"+normalized) {
+		if pageGeneratedEnumName(field, text) == name {
 			return text, nil
 		}
 	}
@@ -32,35 +30,11 @@ func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protorefle
 }
 
 func setEnum(field protoreflect.FieldDescriptor, canonical string) (protoreflect.EnumNumber, error) {
-	want := normalizedEnumToken(canonical)
-	values := field.Enum().Values()
-	for index := 0; index < values.Len(); index++ {
-		value := values.Get(index)
-		if strings.HasSuffix(string(value.Name()), "_"+want) {
-			return value.Number(), nil
-		}
+	name := pageGeneratedEnumName(field, canonical)
+	if value := field.Enum().Values().ByName(protoreflect.Name(name)); value != nil {
+		return value.Number(), nil
 	}
 	return 0, fmt.Errorf("enum value %q is not supported", canonical)
-}
-
-func normalizedEnumToken(value string) string {
-	var normalized strings.Builder
-	var previous rune
-	for index, current := range value {
-		if current == '-' || current == ':' || current == '.' || unicode.IsSpace(current) {
-			if normalized.Len() > 0 && previous != '_' {
-				normalized.WriteByte('_')
-			}
-			previous = '_'
-			continue
-		}
-		if unicode.IsUpper(current) && index > 0 && previous != '_' && (unicode.IsLower(previous) || unicode.IsDigit(previous)) {
-			normalized.WriteByte('_')
-		}
-		normalized.WriteRune(unicode.ToUpper(current))
-		previous = current
-	}
-	return normalized.String()
 }
 
 func numberText(value protoreflect.Value, kind protoreflect.Kind) string {
@@ -88,7 +62,7 @@ func projectScalarValue(
 	case "integer", "number":
 		return core.Number(numberText(value, field.Kind())), nil
 	case "enum", "enum_int":
-		canonical, err := canonicalEnum(descriptor, value.Enum(), field.Enum())
+		canonical, err := canonicalEnum(descriptor, value.Enum(), field)
 		if err != nil {
 			return core.Value{}, err
 		}
@@ -111,21 +85,8 @@ func scalarProtoValue(
 		return protoreflect.ValueOfString(value.Text), nil
 	case "boolean":
 		return protoreflect.ValueOfBool(value.Boolean), nil
-	case "integer":
-		number, err := strconv.ParseInt(value.Text, 10, 64)
-		if err != nil {
-			return protoreflect.Value{}, err
-		}
-		if field.Kind() == protoreflect.Int32Kind {
-			return protoreflect.ValueOfInt32(int32(number)), nil
-		}
-		return protoreflect.ValueOfInt64(number), nil
-	case "number":
-		number, err := strconv.ParseFloat(value.Text, 64)
-		if err != nil {
-			return protoreflect.Value{}, err
-		}
-		return protoreflect.ValueOfFloat64(number), nil
+	case "integer", "number":
+		return pageScalarValue(field, value)
 	case "enum", "enum_int":
 		enum, err := setEnum(field, value.Text)
 		if err != nil {
@@ -577,7 +538,7 @@ func canonicalFieldText(message protoreflect.Message, field protoreflect.FieldDe
 		return ""
 	}
 	if descriptor.Type == "enum" || descriptor.Type == "enum_int" {
-		value, _ := canonicalEnum(descriptor, message.Get(field).Enum(), field.Enum())
+		value, _ := canonicalEnum(descriptor, message.Get(field).Enum(), field)
 		return value
 	}
 	return message.Get(field).String()

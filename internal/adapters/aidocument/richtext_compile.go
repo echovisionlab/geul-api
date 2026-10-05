@@ -107,6 +107,7 @@ func (c *RichTextCodec) applyOperation(document *contentv1.LocalizedRichTextDocu
 		document.Base.Nodes = append(document.Base.Nodes, node)
 		document.LocaleOverlay.Blocks = append(document.LocaleOverlay.Blocks, locale)
 		placeProtoNodeAfter(document.Base.Nodes, string(op.Block), string(op.After))
+		delete(deleted, string(op.Block))
 		return nil
 	case core.OperationDeleteBlock:
 		blockID := string(operation.DeleteBlock.Block)

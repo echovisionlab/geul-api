@@ -35,6 +35,78 @@ func TestRichTextCodecCompilesGeneratedInline(t *testing.T) {
 	}
 }
 
+func TestRichTextCodecDeleteAndReinsertPersistsFinalOrderedState(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		deleteLast string
+	}{
+		{"reinsert", ""},
+		{"delete unrelated block after reinsert", "other"},
+		{"delete revived subtree again", "revived"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST)
+			require.NoError(t, err)
+			revived, other, child := uuid.New(), uuid.New(), uuid.New()
+			document := localizedParagraphDocument(revived, "Before")
+			node, locale, err := codec.newBlock("paragraph", other.String())
+			require.NoError(t, err)
+			node.Placement = &contentv1.ContentBlockPlacement{Index: 1}
+			document.Base.Nodes = append(document.Base.Nodes, node)
+			document.LocaleOverlay.Blocks = append(document.LocaleOverlay.Blocks, locale)
+			db, store, created := newCodecStoreForTest(t, "post")
+			seed, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+			require.NoError(t, err)
+			require.Empty(t, issues)
+			seeded := persistCodecBatchForTest(t, db, store, seed)
+			document, err = contentblock.SnapshotToLocalizedRichTextDocument(seeded, "en")
+			require.NoError(t, err)
+			operations := []core.Operation{
+				core.DeleteBlockOperation(core.BlockID(revived.String())),
+				core.InsertBlockOperation(core.BlockID(revived.String()), "callout", "", ""),
+				core.InsertBlockOperation(core.BlockID(child.String()), "paragraph", core.BlockID(revived.String()), ""),
+				core.SetFieldOperation(core.BlockID(child.String()), "content", core.RichText(core.InlineText("After"))),
+			}
+			if test.deleteLast == "other" {
+				operations = append(operations, core.DeleteBlockOperation(core.BlockID(other.String())))
+			} else if test.deleteLast == "revived" {
+				operations = append(operations, core.DeleteBlockOperation(core.BlockID(revived.String())))
+			}
+			nodes, err := codec.Project(document)
+			require.NoError(t, err)
+			identity := core.DocumentIdentity{Domain: core.DomainPost, Reference: core.DocumentReference(uuid.NewString())}
+			loaded := core.Document{Identity: identity, SourceLocale: "en", Locale: "en", LocaleExists: true, DocumentRevision: core.Revision(seeded.Document.Revision.String()), Catalog: codec.Catalog(), Nodes: nodes}
+			command, validation := core.ValidateLoadedApply(loaded, core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: identity.Domain, Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: loaded.DocumentRevision, Operations: operations})
+			require.True(t, validation.Valid(), "%+v", validation)
+			batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, loaded.DocumentRevision, uuid.New(), command.Operations)
+			require.NoError(t, err)
+			require.Empty(t, issues)
+			after := persistCodecBatchForTest(t, db, store, batch)
+			stored, err := contentblock.SnapshotToLocalizedRichTextDocument(after, "en")
+			require.NoError(t, err)
+			nodes, err = codec.Project(stored)
+			require.NoError(t, err)
+			byID := make(map[core.BlockID]core.Node, len(nodes))
+			for _, node := range nodes {
+				byID[node.ID] = node
+			}
+			if test.deleteLast == "revived" {
+				require.Len(t, nodes, 1)
+				require.Contains(t, byID, core.BlockID(other.String()))
+				return
+			}
+			wantCount := 3
+			if test.deleteLast == "other" {
+				wantCount = 2
+			}
+			require.Len(t, nodes, wantCount)
+			require.Equal(t, core.BlockKind("callout"), byID[core.BlockID(revived.String())].Kind)
+			require.Equal(t, core.BlockID(revived.String()), byID[core.BlockID(child.String())].Parent)
+			require.Equal(t, core.RichText(core.InlineText("After")), pageTestNodeField(t, byID[core.BlockID(child.String())].Localized, "content"))
+		})
+	}
+}
+
 func TestRichTextCodecReindexesDeletedAndMovedSiblingGroups(t *testing.T) {
 	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST)
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -94,6 +95,60 @@ func TestContentRelatedToolsRouteVersionsAndSlugCheck(t *testing.T) {
 	}
 }
 
+func TestDocumentVersionsListEnforcesPaginationBeforeCallingApplication(t *testing.T) {
+	for _, documentType := range []string{"post", "work", "page"} {
+		for _, test := range []struct {
+			name    string
+			fields  string
+			limit   int32
+			offset  int32
+			invalid bool
+		}{
+			{name: "omitted", limit: 20},
+			{name: "minimum", fields: `,"limit":1,"offset":0`, limit: 1},
+			{name: "maximum", fields: `,"limit":100,"offset":2147483647`, limit: 100, offset: 2147483647},
+			{name: "zero", fields: `,"limit":0`, invalid: true},
+			{name: "negative", fields: `,"limit":-1`, invalid: true},
+			{name: "above maximum", fields: `,"limit":101`, invalid: true},
+			{name: "null limit", fields: `,"limit":null`, invalid: true},
+			{name: "negative offset", fields: `,"offset":-1`, invalid: true},
+			{name: "null offset", fields: `,"offset":null`, invalid: true},
+			{name: "offset exceeds native integer", fields: `,"offset":2147483648`, invalid: true},
+		} {
+			t.Run(documentType+"/"+test.name, func(t *testing.T) {
+				posts, works, pages := &recordingPostRelated{}, &recordingWorkRelated{}, &recordingPageRelated{}
+				tools, err := NewContentRelatedTools(posts, works, pages)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentVersionsList, toolArguments(t, `{"document_type":"`+documentType+`","document_id":"`+managementPostID+`"`+test.fields+`}`))
+				if test.invalid {
+					var executionErr *mcpserver.ToolExecutionError
+					if !errors.As(err, &executionErr) || posts.versions != nil || works.versions != nil || pages.versions != nil {
+						t.Fatalf("invalid pagination reached application: err=%v post=%+v work=%+v page=%+v", err, posts.versions, works.versions, pages.versions)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var pagination *commonv1.PaginationRequest
+				switch documentType {
+				case "post":
+					pagination = posts.versions.Msg.Pagination
+				case "work":
+					pagination = works.versions.Msg.Pagination
+				case "page":
+					pagination = pages.versions.Msg.Pagination
+				}
+				if pagination.Limit != test.limit || pagination.Offset != test.offset {
+					t.Fatalf("pagination=%+v, want limit=%d offset=%d", pagination, test.limit, test.offset)
+				}
+			})
+		}
+	}
+}
+
 type recordingPostRelated struct {
 	managev1connect.UnimplementedPostServiceHandler
 	collaborator *connect.Request[managev1.AddPostCollaboratorRequest]
@@ -121,8 +176,14 @@ func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, request *co
 
 type recordingWorkRelated struct {
 	managev1connect.UnimplementedWorkServiceHandler
+	versions *connect.Request[managev1.ListWorkVersionsRequest]
 	featured *connect.Request[managev1.SetWorkFeaturedImageRequest]
 	credit   *connect.Request[managev1.AddWorkCreditRequest]
+}
+
+func (r *recordingWorkRelated) ListWorkVersions(_ context.Context, request *connect.Request[managev1.ListWorkVersionsRequest]) (*connect.Response[managev1.ListWorkVersionsResponse], error) {
+	r.versions = request
+	return connect.NewResponse(&managev1.ListWorkVersionsResponse{}), nil
 }
 
 func (r *recordingWorkRelated) SetWorkFeaturedImage(_ context.Context, request *connect.Request[managev1.SetWorkFeaturedImageRequest]) (*connect.Response[managev1.SetWorkFeaturedImageResponse], error) {
@@ -137,4 +198,10 @@ func (r *recordingWorkRelated) AddWorkCredit(_ context.Context, request *connect
 
 type recordingPageRelated struct {
 	managev1connect.UnimplementedPageServiceHandler
+	versions *connect.Request[managev1.ListPageVersionsRequest]
+}
+
+func (r *recordingPageRelated) ListPageVersions(_ context.Context, request *connect.Request[managev1.ListPageVersionsRequest]) (*connect.Response[managev1.ListPageVersionsResponse], error) {
+	r.versions = request
+	return connect.NewResponse(&managev1.ListPageVersionsResponse{}), nil
 }

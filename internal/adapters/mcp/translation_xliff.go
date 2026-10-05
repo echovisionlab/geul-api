@@ -38,6 +38,9 @@ var translationInterchangeModeNames = func() map[managev1.TranslationInterchange
 }()
 
 func translationXLIFFExportRequest(arguments mcpserver.ToolArguments) (*managev1.ExportEntityTranslationXLIFFRequest, error) {
+	if err := rejectNullArguments(arguments, "u"); err != nil {
+		return nil, err
+	}
 	var input translationXLIFFExportArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return nil, err
@@ -63,6 +66,9 @@ func translationXLIFFExportRequest(arguments mcpserver.ToolArguments) (*managev1
 }
 
 func translationXLIFFImportRequest(arguments mcpserver.ToolArguments) (*managev1.ImportEntityTranslationXLIFFRequest, error) {
+	if err := rejectNullArguments(arguments, "er"); err != nil {
+		return nil, err
+	}
 	var input translationXLIFFImportArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return nil, err

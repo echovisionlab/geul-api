@@ -104,7 +104,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "12", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "13", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",

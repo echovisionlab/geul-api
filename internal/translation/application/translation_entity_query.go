@@ -45,6 +45,9 @@ func (s *TranslationService) listEntityTranslations(
 		}
 		entries = append(entries, entry)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, errs.Internal(err)
+	}
 	return entries, nil
 }
 
@@ -76,6 +79,9 @@ func (s *TranslationService) getEntityTranslation(
 	}
 	defer rows.Close()
 	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, errs.Internal(err)
+		}
 		return nil, errs.NotFound("translation_entry", entityID+":"+locale)
 	}
 	entry, err := s.scanTranslationEntryRow(ctx, rows, entityType, entityID)

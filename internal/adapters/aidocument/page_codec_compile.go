@@ -293,7 +293,11 @@ func (c *PageCodec) applyPageOperation(document *contentv1.LocalizedPageDocument
 	case core.OperationDetachFile:
 		return c.setPageFile(document, operation.DetachFile.Target, "")
 	case core.OperationInsertBlock:
-		return c.insertPageSection(document, operation.InsertBlock)
+		if err := c.insertPageSection(document, operation.InsertBlock); err != nil {
+			return err
+		}
+		delete(deleted, string(operation.InsertBlock.Block))
+		return nil
 	case core.OperationDeleteBlock:
 		return deletePageSection(document, string(operation.DeleteBlock.Block), deleted)
 	case core.OperationMoveBlock:

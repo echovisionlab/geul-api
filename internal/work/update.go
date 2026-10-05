@@ -49,6 +49,10 @@ func (s *WorkService) UpdateWork(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
+	clients, err := s.getWorkClients(ctx, work.ID)
+	if err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(&managev1.UpdateWorkResponse{
 		Id:         work.ID,
 		Changed:    changed,
@@ -56,7 +60,7 @@ func (s *WorkService) UpdateWork(
 		Type:       managev1.WorkType(managev1.WorkType_value[work.Type]),
 		Metadata:   metadata,
 		Featured:   work.Featured,
-		Clients:    s.getWorkClients(ctx, work.ID),
+		Clients:    clients,
 		Year:       work.Year,
 		Month:      work.Month,
 		UntilYear:  work.UntilYear,

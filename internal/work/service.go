@@ -271,7 +271,10 @@ func (s *WorkService) GetWork(
 		return nil, err
 	}
 	protoWork := s.toProtoWork(&work, imageAsset, ogAsset)
-	protoWork.Clients = s.getWorkClients(ctx, work.ID)
+	protoWork.Clients, err = s.getWorkClients(ctx, work.ID)
+	if err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(protoWork), nil
 }
 

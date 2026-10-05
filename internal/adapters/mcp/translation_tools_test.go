@@ -265,6 +265,65 @@ func TestTranslationToolsRejectInlineXLIFFAndInvalidLifecycleArguments(t *testin
 	}
 }
 
+func TestTranslationToolsRejectOptionalNullBeforeApplicationCall(t *testing.T) {
+	for _, field := range []string{"p", "d", "tl", "sl", "s", "n", "o", "k", "z"} {
+		t.Run("job list "+field, func(t *testing.T) {
+			application := &recordingTranslationApplication{}
+			tools := mustTranslationTools(t, application)
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList,
+				toolArguments(t, `{"`+field+`":null}`))
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.listJobsRequest != nil {
+				t.Fatalf("null %s: error=%v, application request=%+v", field, err, application.listJobsRequest)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name      string
+		tool      string
+		arguments string
+	}{
+		{"replace export selection", ToolTranslationXLIFFExport, `{"p":"post","d":"post-a","l":"en","m":"replace","u":null}`},
+		{"import revision", ToolTranslationXLIFFImport, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"` + testTranslationArtifactID + `","er":null}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			application := &recordingTranslationApplication{}
+			tools := mustTranslationTools(t, application)
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.tool, toolArguments(t, test.arguments))
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.exportRequest != nil || application.importRequest != nil {
+				t.Fatalf("null XLIFF argument: error=%v, export=%+v, import=%+v", err, application.exportRequest, application.importRequest)
+			}
+		})
+	}
+}
+
+func TestTranslationOptionalArgumentsPreserveOmissionAndEmptyValues(t *testing.T) {
+	for _, arguments := range []string{`{}`, `{"s":[]}`, `{"k":""}`, `{"n":0,"o":0,"s":[],"k":""}`} {
+		application := &recordingTranslationApplication{listJobsResponse: &managev1.ListTranslationJobsResponse{
+			Pagination: &commonv1.PaginationResponse{Limit: 20},
+		}}
+		tools := mustTranslationTools(t, application)
+		if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationJobsList, toolArguments(t, arguments)); err != nil {
+			t.Fatalf("default Job list %s: %v", arguments, err)
+		}
+		request := application.listJobsRequest
+		if request == nil || len(request.Filters) != 0 || len(request.Sorts) != 0 || request.Pagination.GetLimit() != 0 || request.Pagination.GetOffset() != 0 {
+			t.Fatalf("default Job list %s changed: %+v", arguments, request)
+		}
+	}
+	for _, selection := range []string{"", `,"u":[]`} {
+		request, err := translationXLIFFExportRequest(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"`+selection+`}`))
+		if err != nil || len(request.GetUnitHandles()) != 0 {
+			t.Fatalf("replace export selection %q: request=%+v, error=%v", selection, request, err)
+		}
+	}
+	request, err := translationXLIFFImportRequest(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`"}`))
+	if err != nil || request.ExpectedTargetRevision != nil {
+		t.Fatalf("omitted import revision: request=%+v, error=%v", request, err)
+	}
+}
+
 func TestTranslationToolsRejectInlineArtifactReferencesAndInvalidApplicationOutput(t *testing.T) {
 	application := &recordingTranslationApplication{exportResponse: &managev1.ExportEntityTranslationXLIFFResponse{
 		Artifact: &commonv1.ExpiringMediaRef{

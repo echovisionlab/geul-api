@@ -84,3 +84,69 @@ are unchanged.
 The MCP adapter suite, its race tests, `go vet`, formatting checks, and the full
 `go test ./...` suite passed. Allocation reductions plus these wire/error checks
 provide the verified evidence; end-to-end request latency was not measured.
+
+## Tools/call transport encoding, 2026-10-05
+
+The HTTP handler previously marshaled a successful tool result to check that it
+could be encoded, then marshaled it again inside the JSON-RPC response. It now
+encodes the complete envelope once before writing headers. Tool encoding failure
+still returns HTTP 200 with JSON-RPC code `-32603`; other RPC encoding failures
+retain their HTTP 500 fallback. A network write failure does not trigger a second
+response.
+
+`BenchmarkToolsCallResponse` measures one sequential `tools/call` through the
+actual HTTP handler: request parsing, catalog validation, dispatch, envelope
+encoding, and writes to a reusable in-memory response writer. The domain returns
+a fixed document result. Fixture and request construction and response checks
+are outside the measured loop. This does not measure database, network, or
+end-to-end production latency.
+
+The unchanged baseline handler from commit
+`5da72a095881be2023726ffb0d48e560818f71e4` and the changed handler used the
+identical benchmark source and package tests, selected with Go overlays. Measured
+on 2026-10-05 with Go 1.26.8, darwin/arm64, Apple M2 Pro, `GOWORK=off`, and
+`-cpu=1`. Competing agent builds and tests stopped before measurement. Four
+rounds ran in baseline/changed/changed/baseline order, each with `-count=5`
+and `-benchtime=500ms`, giving ten samples per fixture and revision. All samples
+are included in these medians.
+
+| Fixture | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Small: 1 block, 1,241 response bytes | 15,123.5 | 12,549.5 | 10,897 | 9,057 | 126 | 107 |
+| Large: 1,024 blocks, 1,095,683 response bytes | 3,253,976.5 | 1,672,008.5 | 2,662,315.5 | 1,334,747 | 14,450.5 | 7,269 |
+
+The small fixture uses 16.9% fewer bytes and 15.1% fewer allocations; its measured
+median handler time falls 17.0%. The large fixture uses 49.9% fewer bytes and
+49.7% fewer allocations; its measured median handler time falls 48.6%. Half-unit
+medians are the average of the middle two observations, including allocation
+pool variation. Small-fixture timings range from 14,592 to 15,547 ns before and
+12,045 to 17,112 ns after. The changed run has one timing outlier; it was retained
+and no selective remeasurement was performed. Large-fixture ranges are
+3,191,755–3,395,323 ns before and 1,623,463–1,779,663 ns after.
+
+Every round checks exact response bytes, HTTP status, and headers against the
+same expected envelope. The small response SHA-256 is
+`fc8011d60eb25d5f6104f119ac9e9b80d863b51da24205e7f4e7adbe4718487c`;
+the large response SHA-256 is
+`7ae3d6d831b401941b93b2b5960060922616710f90d644c4f5f274b229b624cd`.
+Regression tests also check one result encoding, exact unencodable-tool errors,
+the non-tool HTTP fallback, and network write behavior.
+
+For reproduction, export only the baseline `internal/mcp/handler.go` with
+`git show 5da72a0:internal/mcp/handler.go` into a task-owned directory and use
+an overlay whose `Replace` map substitutes its absolute path for the checkout's
+handler path. Keep `internal/mcp/handler_benchmark_test.go` identical for both
+runs. Repeat this command in baseline/changed/changed/baseline order, omitting
+`-overlay` for the changed runs:
+
+```sh
+GOWORK=off go test -overlay=/absolute/path/to/baseline-overlay.json \
+  ./internal/mcp -run='^$' -bench='^BenchmarkToolsCallResponse$' \
+  -benchmem -cpu=1 -count=5 -benchtime=500ms
+```
+
+The original logs, preserved source files, overlay maps, toolchain/source hashes,
+and all observations are intentionally retained as local review evidence under
+`/Volumes/dev/dsub/.artifacts/mcp-quality-fixes-2026-10-05/transport/`, including
+`benchmark-results.json`. The benchmark and conditions above allow reproduction
+without that local directory. Remove any task-owned scratch exports after use.

@@ -112,7 +112,7 @@ func (s *WorkService) getWorkCreditsWithError(ctx context.Context, workID string
 	return protoCredits, nil
 }
 
-func (s *WorkService) getWorkClients(ctx context.Context, workID string) []*managev1.WorkClient {
+func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*managev1.WorkClient, error) {
 	type clientRow struct {
 		ID          string
 		Name        string
@@ -130,8 +130,11 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) []*mana
 		Order("wc.sort_order ASC").
 		Scan(&rows).Error
 
-	if err != nil || len(rows) == 0 {
-		return nil
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
 	}
 
 	clients := make([]*managev1.WorkClient, 0, len(rows))
@@ -162,7 +165,7 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) []*mana
 		clients = append(clients, client)
 	}
 
-	return clients
+	return clients, nil
 }
 
 func (s *WorkService) loadReadyWorkOgAssets(

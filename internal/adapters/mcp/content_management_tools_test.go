@@ -370,6 +370,19 @@ func TestWorkSettingsRejectsMissingBaselineAndPreservesReadAuthorityErrors(t *te
 	}
 }
 
+func TestWorkSettingsGetDoesNotReturnBaselineWhenOwningReadFails(t *testing.T) {
+	readErr := connect.NewError(connect.CodeInternal, errors.New("client query failed"))
+	works := &recordingWorkManagement{getErr: readErr}
+	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsGet, toolArguments(t, `{"document_id":"`+managementWorkID+`"}`))
+	if !errors.Is(err, readErr) || result.StructuredContent != nil {
+		t.Fatalf("failed owning read returned a settings baseline: result=%+v err=%v", result, err)
+	}
+}
+
 func TestWorkSettingsSchemaConditionallyRequiresObservedValues(t *testing.T) {
 	var schema struct {
 		AllOf []map[string]any `json:"allOf"`

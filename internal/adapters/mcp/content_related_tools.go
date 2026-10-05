@@ -408,12 +408,21 @@ type documentVersionsArguments struct {
 }
 
 func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return executionError(err)
+	}
 	var input documentVersionsArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	if input.Limit == 0 {
+	if _, supplied := arguments["limit"]; !supplied {
 		input.Limit = 20
+	}
+	if input.Limit < 1 || input.Limit > 100 {
+		return executionError(errors.New("limit must be between 1 and 100, or omitted for the default"))
+	}
+	if input.Offset < 0 {
+		return executionError(errors.New("offset must be nonnegative"))
 	}
 	pagination := &commonv1.PaginationRequest{Limit: input.Limit, Offset: input.Offset}
 	versions := make([]map[string]any, 0)

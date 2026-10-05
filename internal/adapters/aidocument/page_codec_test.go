@@ -623,6 +623,73 @@ func pageRichTextDocumentForTest(t *testing.T, count int) (*PageCodec, *contentv
 	return codec, &contentv1.LocalizedPageDocument{BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Locale: "en", Base: &contentv1.PageSectionGraph{Nodes: []*contentv1.PageSectionNode{section}}, LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "en", Sections: []*contentv1.PageSectionLocale{localized}}}, sectionID, ids
 }
 
+func TestPageCodecDeleteAndReinsertSectionPersistsFinalOrderedState(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		deleteLast string
+	}{
+		{"reinsert section and child handles", ""},
+		{"delete unrelated section after reinsert", "other"},
+		{"delete revived section again", "revived"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			codec, document, sectionID, ids := pageRichTextDocumentForTest(t, 1)
+			_, other, otherID, _ := pageRichTextDocumentForTest(t, 0)
+			other.Base.Nodes[0].Placement.Index = 1
+			document.Base.Nodes = append(document.Base.Nodes, other.Base.Nodes[0])
+			document.LocaleOverlay.Sections = append(document.LocaleOverlay.Sections, other.LocaleOverlay.Sections[0])
+			db, store, created := newCodecStoreForTest(t, "page")
+			seed, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+			require.NoError(t, err)
+			require.Empty(t, issues)
+			seeded := persistCodecBatchForTest(t, db, store, seed)
+			document, err = contentblock.SnapshotToLocalizedPageDocument(seeded, "en")
+			require.NoError(t, err)
+			operations := []core.Operation{
+				core.DeleteBlockOperation(core.BlockID(sectionID)),
+				core.InsertBlockOperation(core.BlockID(sectionID), "rich-text", "", ""),
+				core.InsertBlockOperation(core.BlockID(ids[0]), "paragraph", core.BlockID(sectionID), ""),
+				core.SetFieldOperation(core.BlockID(ids[0]), "content", core.RichText(core.InlineText("After"))),
+			}
+			if test.deleteLast == "other" {
+				operations = append(operations, core.DeleteBlockOperation(core.BlockID(otherID)))
+			} else if test.deleteLast == "revived" {
+				operations = append(operations, core.DeleteBlockOperation(core.BlockID(sectionID)))
+			}
+			nodes, err := codec.Project(document)
+			require.NoError(t, err)
+			identity := core.DocumentIdentity{Domain: core.DomainPage, Reference: core.DocumentReference(uuid.NewString())}
+			loaded := core.Document{Identity: identity, SourceLocale: "en", Locale: "en", LocaleExists: true, DocumentRevision: core.Revision(seeded.Document.Revision.String()), Catalog: codec.Catalog(), Nodes: nodes}
+			command, validation := core.ValidateLoadedApply(loaded, core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: identity.Domain, Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: loaded.DocumentRevision, Operations: operations})
+			require.True(t, validation.Valid(), "%+v", validation)
+			batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, loaded.DocumentRevision, uuid.New(), command.Operations)
+			require.NoError(t, err)
+			require.Empty(t, issues)
+			after := persistCodecBatchForTest(t, db, store, batch)
+			stored, err := contentblock.SnapshotToLocalizedPageDocument(after, "en")
+			require.NoError(t, err)
+			nodes, err = codec.Project(stored)
+			require.NoError(t, err)
+			byID := make(map[core.BlockID]core.Node, len(nodes))
+			for _, node := range nodes {
+				byID[node.ID] = node
+			}
+			if test.deleteLast == "revived" {
+				require.Len(t, nodes, 1)
+				require.Contains(t, byID, core.BlockID(otherID))
+				return
+			}
+			wantCount := 3
+			if test.deleteLast == "other" {
+				wantCount = 2
+			}
+			require.Len(t, nodes, wantCount)
+			require.Equal(t, core.BlockID(sectionID), byID[core.BlockID(ids[0])].Parent)
+			require.Equal(t, core.RichText(core.InlineText("After")), pageTestNodeField(t, byID[core.BlockID(ids[0])].Localized, "content"))
+		})
+	}
+}
+
 func TestPageCodecRichTextRootMovesAndDeletesPersistDenseOrder(t *testing.T) {
 	codec, document, sectionID, ids := pageRichTextDocumentForTest(t, 3)
 	seed, issues, err := codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), nil)
