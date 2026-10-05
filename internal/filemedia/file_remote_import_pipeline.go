@@ -275,10 +275,6 @@ func (s *FileService) openRemoteImportSource(
 	emitter *fileIngestEventEmitter,
 	fail func(error) error,
 ) (*remoteImportSource, error) {
-	parsedURL, err := url.Parse(request.opts.sourceURL)
-	if err != nil {
-		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
-	}
 	resolver := s.remoteImportResolver
 	if resolver == nil {
 		resolver = net.DefaultResolver
@@ -287,11 +283,31 @@ func (s *FileService) openRemoteImportSource(
 	if dial == nil {
 		dial = new(net.Dialer).DialContext
 	}
+	client := newRemoteImportHTTPClient(ctx, resolver, dial, s.remoteImportBaseTransport)
+	return s.openRemoteImportSourceWithClient(ctx, request, emitter, fail, client)
+}
+
+func (s *FileService) openRemoteImportSourceWithClient(
+	ctx context.Context,
+	request preparedRemoteImport,
+	emitter *fileIngestEventEmitter,
+	fail func(error) error,
+	client *remoteImportHTTPClient,
+) (*remoteImportSource, error) {
+	parsedURL, err := url.Parse(request.opts.sourceURL)
+	if err != nil {
+		client.CloseIdleConnections()
+		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
+	}
+	resolver := s.remoteImportResolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
 	target, err := validateRemoteImportURL(ctx, resolver, parsedURL)
 	if err != nil {
+		client.CloseIdleConnections()
 		return nil, fail(errs.InvalidArgument("url", err.Error()))
 	}
-	client := newRemoteImportHTTPClient(ctx, resolver, dial, s.remoteImportBaseTransport)
 	requestContext := context.WithValue(ctx, remoteImportTargetContextKey{}, target)
 	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodGet, request.opts.sourceURL, nil)
 	if err != nil {
