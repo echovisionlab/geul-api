@@ -18,7 +18,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "10"
+const mcpServerImplementationVersion = "11"
 
 const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist when a document UUID is unknown. " +
 	"Pass the returned d unchanged to document_open and document_read; never use a slug or URL as d. " +
