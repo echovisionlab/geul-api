@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.1](https://github.com/echovisionlab/geul-api/compare/v1.4.0...v1.4.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* align media tools and CI with Node 24.21.0 ([f893e63](https://github.com/echovisionlab/geul-api/commit/f893e630eff9b57c0d47b5670f00af83cf787ee8))
+* **deps:** patch asset optimizer image and glob dependencies ([1f68a66](https://github.com/echovisionlab/geul-api/commit/1f68a66d2d644915d3d3d69f1d1d4ea0040af7cf))
+* **deps:** patch asset optimizer image and glob dependencies ([90bfa4a](https://github.com/echovisionlab/geul-api/commit/90bfa4a76fed96220270bf831d766b9af4fd619f))
+* **deps:** refresh API and media runtime dependencies ([#87](https://github.com/echovisionlab/geul-api/issues/87)) ([ed82a58](https://github.com/echovisionlab/geul-api/commit/ed82a580c17b54e3d422ae535c27682bc245b817))
+
 ## [1.4.0](https://github.com/echovisionlab/geul-api/compare/v1.3.4...v1.4.0) (2026-10-05)
 
 
