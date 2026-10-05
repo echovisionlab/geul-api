@@ -1,10 +1,12 @@
 package filemedia
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -48,12 +50,18 @@ type browserSourceTestBody struct {
 	ctx    context.Context
 	closed bool
 	wait   bool
+	reader io.Reader
+	delay  time.Duration
 }
 
 func (b *browserSourceTestBody) Read(p []byte) (int, error) {
 	if b.wait {
 		<-b.ctx.Done()
 		return 0, b.ctx.Err()
+	}
+	if b.reader != nil {
+		time.Sleep(b.delay)
+		return b.reader.Read(p)
 	}
 	p[0] = 'x'
 	return 1, nil
@@ -113,31 +121,34 @@ func TestBrowserUploadSourceIdleLimitAppliesBeforeSniff(t *testing.T) {
 }
 
 func TestBrowserUploadSourceActiveReadsHaveNoTotalLimit(t *testing.T) {
-	sourceBytes := uploadSourcePNG(remoteImportSniffBytes + 3)
-	service, _ := uploadSourceTestService(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.(http.Flusher).Flush()
-		// Total duration exceeds the injected 150ms idle budget; each read moves.
-		for offset := 0; offset < len(sourceBytes); {
-			end := min(offset+16*1024, len(sourceBytes))
-			_, _ = w.Write(sourceBytes[offset:end])
-			w.(http.Flusher).Flush()
-			offset = end
-			timer := time.NewTimer(60 * time.Millisecond)
-			<-timer.C
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		sourceBytes := []byte("active source reads")
+		underlying := &browserSourceTestBody{
+			ctx: ctx, reader: bytes.NewReader(sourceBytes), delay: 60 * time.Millisecond,
 		}
-	}), int64(len(sourceBytes)+1))
-	ctx, cancel := context.WithCancel(uploadSourceTestRequest(t).Context())
-	defer cancel()
-	request, err := service.prepareRemoteImport(ctx, mustBrowserUploadSourceOptions(t))
-	require.NoError(t, err)
-	client := service.newBrowserUploadSourceClient(ctx, cancel, 150*time.Millisecond)
-	source, err := service.openRemoteImportSourceWithClient(ctx, request, nil, remoteImportFailureReporter(nil), client)
-	require.NoError(t, err)
-	defer source.close()
-	remainder, err := io.ReadAll(source.body)
-	require.NoError(t, err)
-	require.Equal(t, sourceBytes, append(source.prefix, remainder...))
-	require.NoError(t, ctx.Err())
+		body := &browserUploadSourceBody{ReadCloser: underlying, cancel: cancel, idleTimeout: 150 * time.Millisecond}
+		start := time.Now()
+		var received []byte
+		buffer := make([]byte, 4)
+		for {
+			n, err := body.Read(buffer)
+			received = append(received, buffer[:n]...)
+			require.NoError(t, ctx.Err())
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+		}
+		require.Equal(t, sourceBytes, received)
+		// Each read takes 60ms, while the complete stream exceeds the 150ms idle budget.
+		require.Greater(t, time.Since(start), body.idleTimeout)
+		final := &browserUploadSourceCloseBody{ReadCloser: body, cancel: cancel}
+		require.NoError(t, final.Close())
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		require.True(t, underlying.closed)
+	})
 }
 
 func mustBrowserUploadSourceOptions(t *testing.T) remoteFileImportOptions {
