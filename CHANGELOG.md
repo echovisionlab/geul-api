@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/echovisionlab/geul-api/compare/v1.3.0...v1.3.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* preserve MCP mutation intent and align tool contracts ([#70](https://github.com/echovisionlab/geul-api/issues/70)) ([9f7f54a](https://github.com/echovisionlab/geul-api/commit/9f7f54aa076e6b6d2767d53565cf236cce6fd871))
+
 ## [1.3.0](https://github.com/echovisionlab/geul-api/compare/v1.2.1...v1.3.0) (2026-10-05)
 
 
