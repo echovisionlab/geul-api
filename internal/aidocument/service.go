@@ -207,44 +207,98 @@ func (e *CursorError) Error() string {
 	return fmt.Sprintf("%s: current document revision is %q", e.Code, e.CurrentDocumentRevision)
 }
 
+// DescribeResult exposes the authorized document's metadata and typed catalog,
+// without projecting document values or native owning-domain payloads.
+type DescribeResult struct {
+	Metadata OpenMetadata
+	Catalog  Catalog
+}
+
 func (s *Service) Open(ctx context.Context, request OpenRequest) (OpenMetadata, error) {
-	if err := request.Document.validate(); err != nil {
-		return OpenMetadata{}, err
-	}
-	if err := validateLocale(request.Locale); err != nil {
-		return OpenMetadata{}, err
-	}
-	document, err := s.port.Load(ctx, request.Document, request.Locale)
+	document, err := s.loadDocument(ctx, request)
 	if err != nil {
 		return OpenMetadata{}, err
 	}
+	return documentOpenMetadata(document), nil
+}
+
+func (s *Service) Describe(ctx context.Context, request OpenRequest) (DescribeResult, error) {
+	document, err := s.loadDocument(ctx, request)
+	if err != nil {
+		return DescribeResult{}, err
+	}
+	// Domain ports reuse their catalogs across requests. Discovery owns its
+	// returned slices and schemas so callers cannot mutate those port catalogs.
+	return DescribeResult{Metadata: documentOpenMetadata(document), Catalog: cloneDiscoveryCatalog(document.Catalog)}, nil
+}
+
+func (s *Service) loadDocument(ctx context.Context, request OpenRequest) (Document, error) {
+	if err := request.Document.validate(); err != nil {
+		return Document{}, err
+	}
+	if err := validateLocale(request.Locale); err != nil {
+		return Document{}, err
+	}
+	document, err := s.port.Load(ctx, request.Document, request.Locale)
+	if err != nil {
+		return Document{}, err
+	}
 	if err := document.validate(); err != nil {
-		return OpenMetadata{}, fmt.Errorf("load AI document: %w", err)
+		return Document{}, fmt.Errorf("load AI document: %w", err)
 	}
 	if document.Identity != request.Document || document.Locale != request.Locale {
-		return OpenMetadata{}, errors.New("domain port returned a different document identity or locale")
+		return Document{}, errors.New("domain port returned a different document identity or locale")
 	}
+	return document, nil
+}
+
+func documentOpenMetadata(document Document) OpenMetadata {
 	return OpenMetadata{
 		Protocol: ProtocolVersion, Profile: document.Identity.Domain, Catalog: document.Catalog.Fingerprint,
 		Document: document.Identity.Reference, DocumentRevision: document.DocumentRevision,
 		TargetRevision: cloneRevision(document.TargetRevision), SourceLocale: document.SourceLocale,
 		Locale: document.Locale, LocaleRole: document.Role(), LocaleExists: document.LocaleExists,
-	}, nil
+	}
+}
+
+func cloneDiscoveryCatalog(catalog Catalog) Catalog {
+	catalog.BlockKinds = append([]BlockKind(nil), catalog.BlockKinds...)
+	catalog.Fields = append([]FieldRule(nil), catalog.Fields...)
+	for index := range catalog.Fields {
+		catalog.Fields[index].Schema = cloneDiscoverySchema(catalog.Fields[index].Schema)
+	}
+	catalog.Relations = append([]RelationRule(nil), catalog.Relations...)
+	for index := range catalog.Relations {
+		catalog.Relations[index].ItemKinds = append([]RelationItemKind(nil), catalog.Relations[index].ItemKinds...)
+	}
+	catalog.RelationFields = append([]RelationFieldRule(nil), catalog.RelationFields...)
+	for index := range catalog.RelationFields {
+		catalog.RelationFields[index].Schema = cloneDiscoverySchema(catalog.RelationFields[index].Schema)
+	}
+	return catalog
+}
+
+func cloneDiscoverySchema(schema *FieldSchema) *FieldSchema {
+	if schema == nil {
+		return nil
+	}
+	cloned := *schema
+	cloned.Item = cloneDiscoverySchema(schema.Item)
+	cloned.Identity.Handles = append([]RelationItemID(nil), schema.Identity.Handles...)
+	cloned.Fields = append([]NestedFieldRule(nil), schema.Fields...)
+	for index := range cloned.Fields {
+		cloned.Fields[index].Schema = *cloneDiscoverySchema(&schema.Fields[index].Schema)
+	}
+	return &cloned
 }
 
 func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, error) {
 	if err := validateReadRequest(request); err != nil {
 		return Projection{}, err
 	}
-	document, err := s.port.Load(ctx, request.Document, request.Locale)
+	document, err := s.loadDocument(ctx, OpenRequest{Document: request.Document, Locale: request.Locale})
 	if err != nil {
 		return Projection{}, err
-	}
-	if err := document.validate(); err != nil {
-		return Projection{}, fmt.Errorf("load AI document: %w", err)
-	}
-	if document.Identity != request.Document || document.Locale != request.Locale {
-		return Projection{}, errors.New("domain port returned a different document identity or locale")
 	}
 
 	nodes, err := selectNodes(document, request)

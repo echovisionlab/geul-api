@@ -36,6 +36,7 @@ func TestFileBlockToolDescriptorsAreFocusedAndAnnotated(t *testing.T) {
 		{ToolDocumentFileAdd, toolAnnotations(false, false, false)},
 		{ToolDocumentFileReplace, toolAnnotations(false, true, false)},
 		{ToolDocumentFileRemove, toolAnnotations(false, true, false)},
+		{ToolDocumentFileCaptionUpdate, toolAnnotations(false, true, false)},
 		{ToolDocumentFileDownloadPolicyGet, toolAnnotations(true, false, false)},
 		{ToolDocumentFileDownloadPolicyUpdate, toolAnnotations(false, true, true)},
 		{ToolFileUsageList, toolAnnotations(true, false, false)},
@@ -57,11 +58,11 @@ func TestFileBlockToolDescriptorsAreFocusedAndAnnotated(t *testing.T) {
 			}
 		}
 	}
-	getSchema := string(listed[3].InputSchema)
+	getSchema := string(listed[4].InputSchema)
 	if strings.Contains(getSchema, "reference_path") || strings.Contains(getSchema, "file_id") {
 		t.Fatalf("policy get schema lets callers assert relation authority: %s", getSchema)
 	}
-	updateSchema := string(listed[4].InputSchema)
+	updateSchema := string(listed[5].InputSchema)
 	if strings.Contains(updateSchema, "reference_path") || !strings.Contains(updateSchema, "expected_file_id") {
 		t.Fatalf("policy update schema does not expose only the File CAS: %s", updateSchema)
 	}
@@ -93,6 +94,117 @@ func TestDocumentFileAddReusesExistingFileWithDocumentCAS(t *testing.T) {
 	}
 	if application.applyRequest.ExpectedDocumentRevision != "revision-a" || application.applyRequest.Document != fileBlockTestDocumentID {
 		t.Fatalf("apply CAS identity = %+v", application.applyRequest)
+	}
+}
+
+func TestDocumentFileAddIncludesOptionalCaptionInAtomicBatch(t *testing.T) {
+	for _, caption := range []string{"image caption", ""} {
+		t.Run(caption, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+			encodedCaption, err := json.Marshal(caption)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileAdd, toolArguments(t, `{
+				"document_type":"page","document_id":"`+fileBlockTestDocumentID+`","locale":"en",
+				"expected_document_revision":"revision-a","parent_block_id":"page-rich-text-section",
+				"file_id":"`+fileBlockTestFileID+`","caption":`+string(encodedCaption)+`
+			}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			created := core.BlockID(stringValue(t, result.StructuredContent, "block_id"))
+			want := []core.Operation{
+				core.InsertBlockOperation(created, "file", "page-rich-text-section", ""),
+				core.AttachFileOperation(created, "attachment", fileBlockTestFileID),
+				core.SetFieldOperation(created, "caption", core.Text(caption)),
+			}
+			if !reflect.DeepEqual(application.applyRequest.Operations, want) {
+				t.Fatalf("operations = %+v, want %+v", application.applyRequest.Operations, want)
+			}
+		})
+	}
+}
+
+func TestDocumentFileCaptionUpdateUsesLocaleFieldAndExactRevisions(t *testing.T) {
+	for _, caption := range []string{"translated caption", ""} {
+		t.Run(caption, func(t *testing.T) {
+			application := fileBlockDocumentApplication(core.Node{ID: fileBlockTestBlockID, Kind: "file"})
+			application.applyResult = core.ApplyResult{DocumentRevision: "revision-a", TargetRevision: revisionPointer("target-b"), Changes: []core.Change{{Operation: 0, Kind: core.OperationSetField}}}
+			tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+			encoded, _ := json.Marshal(caption)
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, toolArguments(t, `{
+				"document_type":"page","document_id":"`+fileBlockTestDocumentID+`","locale":"ko",
+				"expected_document_revision":"revision-a","expected_target_revision":"target-a",
+				"block_id":"`+fileBlockTestBlockID+`","caption":`+string(encoded)+`
+			}`))
+			if err != nil || result.IsError {
+				t.Fatalf("caption update=%+v,%v", result, err)
+			}
+			wantRead := core.ReadRequest{Document: core.DocumentIdentity{Domain: core.DomainPage, Reference: fileBlockTestDocumentID}, Locale: "ko", Mode: core.ReadBlocks, Blocks: []core.BlockID{fileBlockTestBlockID}, Limit: 1}
+			if !reflect.DeepEqual(application.readRequest, wantRead) {
+				t.Fatalf("read=%+v,want %+v", application.readRequest, wantRead)
+			}
+			want := []core.Operation{core.SetFieldOperation(fileBlockTestBlockID, "caption", core.Text(caption))}
+			if !reflect.DeepEqual(application.applyRequest.Operations, want) {
+				t.Fatalf("operations=%+v,want %+v", application.applyRequest.Operations, want)
+			}
+			if application.applyRequest.ExpectedDocumentRevision != "revision-a" || application.applyRequest.ExpectedTargetRevision == nil || *application.applyRequest.ExpectedTargetRevision != "target-a" {
+				t.Fatalf("revisions=%+v", application.applyRequest)
+			}
+			if got := stringValue(t, result.StructuredContent, "tr"); got != "target-b" {
+				t.Fatalf("target revision=%q", got)
+			}
+		})
+	}
+}
+
+func TestDocumentFileCaptionRejectsInvalidInputAndWrongBlock(t *testing.T) {
+	for _, test := range []struct {
+		name, extra string
+		node        core.Node
+	}{
+		{ToolDocumentFileCaptionUpdate, "", core.Node{ID: fileBlockTestBlockID, Kind: "file"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":null`, core.Node{ID: fileBlockTestBlockID, Kind: "file"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":[]`, core.Node{ID: fileBlockTestBlockID, Kind: "file"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":"test"`, core.Node{ID: fileBlockTestBlockID, Kind: "paragraph"}},
+		{ToolDocumentFileCaptionUpdate, `,"caption":"test"`, core.Node{ID: "different", Kind: "file"}},
+		{ToolDocumentFileAdd, `,"file_id":"` + fileBlockTestFileID + `","caption":null`, core.Node{}},
+	} {
+		t.Run(test.name+test.extra+string(test.node.Kind), func(t *testing.T) {
+			application := fileBlockDocumentApplication(test.node)
+			tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+			args := fileBlockMutationArguments(t, test.extra)
+			if test.name == ToolDocumentFileAdd {
+				delete(args, "block_id")
+			}
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.name, args)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) {
+				t.Fatalf("error=%v,want execution error", err)
+			}
+			if len(application.applyRequest.Operations) != 0 {
+				t.Fatalf("invalid caption reached mutation: %+v", application.applyRequest)
+			}
+		})
+	}
+}
+
+func TestDocumentFileCaptionPreservesApplicationConflictAndDenial(t *testing.T) {
+	application := fileBlockDocumentApplication(core.Node{ID: fileBlockTestBlockID, Kind: "file"})
+	application.applyError = &core.ConflictError{Conflict: core.Conflict{Code: core.ConflictTargetRevision, CurrentDocumentRevision: "revision-a", CurrentTargetRevision: revisionPointer("target-current"), AffectedHandles: []string{"field:" + fileBlockTestBlockID + "/caption"}}}
+	tools := mustFileBlockTools(t, application, &recordingFileBlockManagement{})
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, fileBlockMutationArguments(t, `,"caption":"new"`))
+	if err != nil || result.IsError {
+		t.Fatalf("caption conflict=%+v,%v", result, err)
+	}
+	assertDocumentSync(t, result, "target_revision_changed", "revision-a", revisionPointer("target-current"), []string{"field:" + fileBlockTestBlockID + "/caption"}, false, map[string]any{"p": "post", "d": fileBlockTestDocumentID, "l": "ko", "m": "outline"})
+	application.applyError = connect.NewError(connect.CodePermissionDenied, errors.New("caption edit denied"))
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileCaptionUpdate, fileBlockMutationArguments(t, `,"caption":"new"`))
+	var execution *mcpserver.ToolExecutionError
+	if !errors.As(err, &execution) || !strings.Contains(execution.Message, "caption edit denied") {
+		t.Fatalf("denial=%v", err)
 	}
 }
 

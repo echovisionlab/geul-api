@@ -12,14 +12,17 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 const (
-	pageMetadataBlockID   core.BlockID   = "document"
-	pageMetadataBlockKind core.BlockKind = "page"
-	pageTitleField        core.FieldID   = "title"
-	pageSummaryField      core.FieldID   = "summary"
+	pageMetadataBlockID     core.BlockID   = "document"
+	pageMetadataBlockKind   core.BlockKind = "page"
+	pageTitleField          core.FieldID   = "title"
+	pageSummaryField        core.FieldID   = "summary"
+	pageDocumentLayoutField core.FieldID   = "documentLayout"
 )
 
 type pagePort struct {
@@ -48,15 +51,24 @@ func NewPageRegistration(internal *pagedomain.InternalPageService) (DomainRegist
 	if err != nil {
 		return DomainRegistration{}, fmt.Errorf("create Page section codec: %w", err)
 	}
+	return DomainRegistration{Domain: core.DomainPage, Port: &pagePort{application: application, codec: codec, catalog: pageCatalog(codec)}}, nil
+}
+
+func pageCatalog(codec *PageCodec) core.Catalog {
 	catalog := codec.Catalog()
 	catalog.BlockKinds = append(catalog.BlockKinds, pageMetadataBlockKind)
+	text := core.FieldSchema{Kind: core.ValueKindText, Ownership: core.FieldOwnershipShared}
+	layout := core.FieldSchema{Kind: core.ValueKindObject, Ownership: core.FieldOwnershipShared, Fields: []core.NestedFieldRule{
+		{Field: "contentHeight", Schema: text}, {Field: "pageChrome", Schema: text}, {Field: "footer", Schema: text},
+	}}
 	catalog.Fields = append(catalog.Fields,
 		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
 		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageSummaryField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
+		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageDocumentLayoutField, ValueKind: core.ValueKindObject, Ownership: core.FieldOwnershipShared, Schema: &layout},
 	)
-	fingerprint := sha256.Sum256([]byte(catalog.Fingerprint + ":page-title-summary:dcdp/1"))
+	fingerprint := sha256.Sum256([]byte(catalog.Fingerprint + ":page-title-summary-document-layout:dcdp/1"))
 	catalog.Fingerprint = hex.EncodeToString(fingerprint[:])
-	return DomainRegistration{Domain: core.DomainPage, Port: &pagePort{application: application, codec: codec, catalog: catalog}}, nil
+	return catalog
 }
 
 func (p *pagePort) Load(ctx context.Context, identity core.DocumentIdentity, locale core.Locale) (core.Document, error) {
@@ -181,6 +193,15 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 		return core.Document{}, fmt.Errorf("project Page AI document: %w", err)
 	}
 	metadata := core.Node{ID: pageMetadataBlockID, Kind: pageMetadataBlockKind}
+	if err := state.Page.DocumentLayout.Validate(); err != nil {
+		return core.Document{}, fmt.Errorf("project Page document layout: %w", err)
+	}
+	layout := state.Page.DocumentLayout.Proto()
+	metadata.Shared = []core.FieldValue{{ID: pageDocumentLayoutField, Value: core.Object(
+		core.ObjectValue("contentHeight", core.Text(layout.ContentHeight.String())),
+		core.ObjectValue("pageChrome", core.Text(layout.PageChrome.String())),
+		core.ObjectValue("footer", core.Text(layout.Footer.String())),
+	)}}
 	if state.Title != nil {
 		metadata.Localized = append(metadata.Localized, core.FieldValue{ID: pageTitleField, Value: core.Text(*state.Title)})
 	}
@@ -231,6 +252,12 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 	contentOperations := make([]core.Operation, 0, len(operations))
 	contentIndexes := make([]int, 0, len(operations))
 	for index, operation := range operations {
+		if handled, issue := compilePageDocumentLayoutOperation(&mutation.Metadata, state.Page.DocumentLayout, loaded.Role(), operation, index); handled {
+			if issue != nil {
+				return pagedomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
+			}
+			continue
+		}
 		if handled, issue := compilePageMetadataOperation(&mutation.Metadata, operation, index); handled {
 			if issue != nil {
 				return pagedomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
@@ -255,6 +282,69 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 		mutation.Metadata.EnsureLocale = true
 	}
 	return mutation, nil, nil
+}
+
+func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatch, current model.DocumentLayout, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {
+	var target core.FieldTarget
+	var value core.Value
+	switch operation.Kind {
+	case core.OperationSetField:
+		target, value = operation.SetField.Target, operation.SetField.Value
+	case core.OperationUnsetField:
+		target = operation.UnsetField.Target
+	default:
+		return false, nil
+	}
+	if target.Block != pageMetadataBlockID || target.Field != pageDocumentLayoutField {
+		return false, nil
+	}
+	issue := func(code core.IssueCode, message string) (bool, *core.OperationIssue) {
+		return true, &core.OperationIssue{Operation: index, Code: code, Handle: "document:documentLayout", Message: message}
+	}
+	if role != core.LocaleRoleSource {
+		return issue(core.IssueSourceAuthorityRequired, "only the source locale may change Page document layout")
+	}
+	if operation.Kind == core.OperationUnsetField {
+		return issue(core.IssueInvalidOperation, "Page document layout and its fields are required")
+	}
+	next := &commonv1.DocumentLayout{}
+	var fields []core.ObjectField
+	if len(target.Path) == 0 {
+		if value.Kind != core.ValueKindObject {
+			return issue(core.IssueValueKindMismatch, "Page document layout must be an object")
+		}
+		fields = value.Object
+	} else {
+		if len(target.Path) != 1 || target.Path[0].Field == "" {
+			return issue(core.IssueUnknownField, "Page document layout expects one field path")
+		}
+		if patch.SetDocumentLayout {
+			current = patch.DocumentLayout
+		}
+		next = current.Proto()
+		fields = []core.ObjectField{core.ObjectValue(target.Path[0].Field, value)}
+	}
+	for _, field := range fields {
+		if field.Value.Kind != core.ValueKindText {
+			return issue(core.IssueValueKindMismatch, "Page document layout fields use native enum text")
+		}
+		switch field.ID {
+		case "contentHeight":
+			next.ContentHeight = commonv1.DocumentContentHeight(commonv1.DocumentContentHeight_value[field.Value.Text])
+		case "pageChrome":
+			next.PageChrome = commonv1.DocumentRegionPlacement(commonv1.DocumentRegionPlacement_value[field.Value.Text])
+		case "footer":
+			next.Footer = commonv1.DocumentRegionPlacement(commonv1.DocumentRegionPlacement_value[field.Value.Text])
+		default:
+			return issue(core.IssueUnknownField, "unsupported Page document layout field")
+		}
+	}
+	layout, err := model.DocumentLayoutFromProto(next)
+	if err != nil {
+		return issue(core.IssueInvalidOperation, err.Error())
+	}
+	patch.SetDocumentLayout, patch.DocumentLayout = true, layout
+	return true, nil
 }
 
 func pageCoreTargetRevision(revision *string) *core.Revision {

@@ -168,6 +168,10 @@ func cloneToolMeta(value map[string]any) map[string]any {
 				continue
 			}
 		}
+		if names, ok := item.([]string); ok {
+			result[key] = append([]string(nil), names...)
+			continue
+		}
 		result[key] = item
 	}
 	return result
@@ -179,6 +183,14 @@ func toolDefinitionNames(tools []mcpserver.Tool) []string {
 		names[index] = tool.Name
 	}
 	return names
+}
+
+func oauthTool(name, title, description, inputSchema, outputSchema string, readOnly, destructive bool) mcpserver.Tool {
+	return mcpserver.Tool{
+		Name: name, Title: title, Description: description,
+		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(outputSchema),
+		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(readOnly, destructive, false), Meta: oauthSecurityMeta(),
+	}
 }
 
 func (set *ToolSet) CallTool(

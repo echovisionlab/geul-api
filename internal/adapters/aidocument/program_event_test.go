@@ -26,6 +26,7 @@ type exactProgramEventDocumentAPI struct {
 	executeCalls  int
 	compilerCalls int
 	persistCalls  int
+	command       programeventdomain.AIDocumentCommand
 }
 
 func (a *exactProgramEventDocumentAPI) LoadAIDocumentState(
@@ -52,9 +53,11 @@ func (a *exactProgramEventDocumentAPI) ExecuteAIDocumentCommand(
 		return programeventdomain.AIDocumentResult{}, errors.New("unexpected Program Event identity or locale")
 	}
 	a.compilerCalls++
-	if _, err := compiler(a.state); err != nil {
+	command, err := compiler(a.state)
+	if err != nil {
 		return programeventdomain.AIDocumentResult{}, err
 	}
+	a.command = command
 	a.persistCalls++
 	return a.result, nil
 }
@@ -299,4 +302,123 @@ func TestProgramEventBatchRangeErrorPreservesTransportRejection(t *testing.T) {
 	require.NoError(t, err)
 	assertBatchRangeErrorBoundaries(t, application, request)
 	require.Zero(t, api.persistCalls, "rejected batch reached persistence")
+}
+
+func TestProgramEventMetadataProjectionUsesExactLocaleAndSourceTitle(t *testing.T) {
+	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_PROGRAM_EVENT)
+	require.NoError(t, err)
+	port := &programEventPort{codec: codec}
+	for _, test := range []struct {
+		name    string
+		exists  bool
+		summary *string
+	}{
+		{name: "absent locale"}, {name: "unset summary", exists: true}, {name: "explicit empty", exists: true, summary: stringPointer("")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var targetRevision *string
+			if test.exists {
+				targetRevision = stringPointer("target-revision")
+			}
+			document, err := port.project(core.DocumentIdentity{Domain: core.DomainProgramEvent, Reference: programEventTestID}, "ko", programeventdomain.AIDocumentState{
+				EventID: programEventTestID, SourceLocale: "en", RequestedLocale: "ko", DocumentRevision: programEventRevision,
+				TargetRevision: targetRevision, LocaleExists: test.exists, Title: "Source title", Summary: test.summary, LocalizedDocument: programEventTestDocument("ko", test.exists),
+			})
+			require.NoError(t, err)
+			require.Equal(t, core.BlockID("document"), document.Nodes[0].ID)
+			require.Equal(t, "Source title", document.Nodes[0].Shared[0].Value.Text)
+			if test.summary == nil {
+				require.Empty(t, document.Nodes[0].Localized)
+			} else {
+				require.Equal(t, "", document.Nodes[0].Localized[0].Value.Text)
+			}
+			title, ok := findCatalogField(document.Catalog, programEventMetadataBlockKind, programEventTitleField)
+			require.True(t, ok)
+			require.Equal(t, core.FieldOwnershipSource, title.Ownership)
+			require.NotEqual(t, codec.Catalog().Fingerprint, document.Catalog.Fingerprint)
+			_, err = core.EncodeOpenMetadata(core.OpenMetadata{Protocol: core.ProtocolVersion, Profile: document.Identity.Domain, Document: document.Identity.Reference, DocumentRevision: document.DocumentRevision, TargetRevision: document.TargetRevision, SourceLocale: document.SourceLocale, Locale: document.Locale, LocaleRole: document.Role(), LocaleExists: document.LocaleExists, Catalog: document.Catalog.Fingerprint})
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestProgramEventMetadataExactMutationCompilesWithBodyAndPreservesIndexes(t *testing.T) {
+	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_PROGRAM_EVENT)
+	require.NoError(t, err)
+	api := &exactProgramEventDocumentAPI{state: programeventdomain.AIDocumentState{
+		EventID: programEventTestID, ContentDocumentID: uuid.New(), DocumentRevision: programEventRevision,
+		SourceLocale: "en", RequestedLocale: "en", LocaleExists: true, ViewerMemberID: uuid.NewString(),
+		Title: "Before", Summary: stringPointer("before summary"), LocalizedDocument: programEventTestDocument("en", true),
+	}}
+	service, err := core.NewService(&programEventPort{codec: codec, service: api})
+	require.NoError(t, err)
+	request := core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainProgramEvent, Document: programEventTestID, Locale: "en", ExpectedDocumentRevision: programEventRevision,
+		Operations: []core.Operation{core.SetFieldOperation("document", "title", core.Text("  New title  ")), core.UnsetFieldOperation("document", "summary"), core.SetFieldOperation(programEventBlockID, "content", core.RichText(core.InlineText("new body")))},
+	}
+	validation, err := service.Validate(t.Context(), request)
+	require.NoError(t, err)
+	require.True(t, validation.Valid(), "%+v", validation)
+	require.True(t, api.command.Metadata.SetTitle)
+	require.Equal(t, "New title", *api.command.Metadata.Title)
+	require.True(t, api.command.Metadata.SetSummary)
+	require.Nil(t, api.command.Metadata.Summary)
+	require.Len(t, api.command.Batch.Upserts, 1)
+	require.Zero(t, api.loadCalls)
+	validOperations := request.Operations
+	for _, operation := range []core.Operation{core.SetFieldOperation("document", "title", core.Text(" ")), core.UnsetFieldOperation("document", "title")} {
+		before := api.persistCalls
+		request.Operations = []core.Operation{operation}
+		validation, err := service.Validate(t.Context(), request)
+		require.NoError(t, err)
+		require.False(t, validation.Valid())
+		require.Equal(t, before, api.persistCalls)
+	}
+	request.Operations = validOperations
+	request.Operations[2] = core.SetFieldOperation(programEventBlockID, "previewWidth", core.Number("5"))
+	_, err = service.Validate(t.Context(), request)
+	require.Error(t, err, "generated range errors remain transport rejection after metadata removal")
+}
+
+func TestProgramEventMetadataTargetSummaryAndProtectedTitle(t *testing.T) {
+	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_PROGRAM_EVENT)
+	require.NoError(t, err)
+	targetRevision := "target-revision"
+	api := &exactProgramEventDocumentAPI{state: programeventdomain.AIDocumentState{
+		EventID: programEventTestID, ContentDocumentID: uuid.New(), DocumentRevision: programEventRevision, TargetRevision: &targetRevision,
+		SourceLocale: "en", RequestedLocale: "ko", LocaleExists: true, ViewerMemberID: uuid.NewString(), Title: "Source title", Summary: stringPointer("번역 요약"), LocalizedDocument: programEventTestDocument("ko", true),
+	}}
+	service, err := core.NewService(&programEventPort{codec: codec, service: api})
+	require.NoError(t, err)
+	request := core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainProgramEvent, Document: programEventTestID, Locale: "ko", ExpectedDocumentRevision: programEventRevision, ExpectedTargetRevision: (*core.Revision)(&targetRevision), Operations: []core.Operation{core.SetFieldOperation("document", "summary", core.Text(""))}}
+	validation, err := service.Validate(t.Context(), request)
+	require.NoError(t, err)
+	require.True(t, validation.Valid(), "%+v", validation)
+	require.True(t, api.command.Metadata.SetSummary)
+	require.Equal(t, "", *api.command.Metadata.Summary)
+	require.False(t, api.command.Metadata.SetTitle)
+	require.Empty(t, api.command.Batch.Upserts)
+	require.Empty(t, api.command.Batch.LocaleGroups, "metadata-only mutation must not rewrite body overlays")
+	for _, operation := range []core.Operation{core.SetFieldOperation("document", "title", core.Text("Target title")), core.DeleteBlockOperation("document"), core.UnsetFieldOperation("document", "summary")} {
+		before := api.persistCalls
+		request.Operations = []core.Operation{operation}
+		validation, err := service.Validate(t.Context(), request)
+		require.NoError(t, err)
+		require.False(t, validation.Valid())
+		require.Equal(t, before, api.persistCalls)
+	}
+	request.Operations = []core.Operation{core.SetFieldOperation("document", "summary", core.Text("new"))}
+	request.ExpectedDocumentRevision = core.Revision(uuid.NewString())
+	before := api.persistCalls
+	validation, err = service.Validate(t.Context(), request)
+	require.NoError(t, err)
+	require.NotNil(t, validation.Conflict)
+	require.Equal(t, before, api.persistCalls)
+	request.ExpectedDocumentRevision = programEventRevision
+	staleTarget := core.Revision("stale-target")
+	request.ExpectedTargetRevision = &staleTarget
+	validation, err = service.Validate(t.Context(), request)
+	require.NoError(t, err)
+	require.NotNil(t, validation.Conflict)
+	require.Equal(t, core.ConflictTargetRevision, validation.Conflict.Code)
+	require.Equal(t, before, api.persistCalls)
 }

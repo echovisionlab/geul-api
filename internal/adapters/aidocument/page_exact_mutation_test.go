@@ -61,15 +61,10 @@ func (a *exactPageDocumentAPI) ExecuteAIDocumentMutation(
 func TestPageExactMutationPathDoesNotEnterPublicLoad(t *testing.T) {
 	codec, err := NewPageCodec()
 	require.NoError(t, err)
-	catalog := codec.Catalog()
-	catalog.BlockKinds = append(catalog.BlockKinds, pageMetadataBlockKind)
-	catalog.Fields = append(catalog.Fields,
-		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageSummaryField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-	)
+	catalog := pageCatalog(codec)
 	pageID, contributor, nextRevision := uuid.New(), uuid.New(), uuid.New()
 	state := pageStateForCodecTest(uuid.NewString())
-	state.Page = model.Page{ID: pageID.String()}
+	state.Page.ID = pageID.String()
 	state.ViewerMemberID = contributor.String()
 	api := &exactPageDocumentAPI{
 		state:  state,
@@ -109,6 +104,64 @@ func TestPageExactMutationPathDoesNotEnterPublicLoad(t *testing.T) {
 	require.Equal(t, 2, api.executeCalls)
 	require.Equal(t, 2, api.compilerCalls)
 	require.Zero(t, api.loadCalls)
+}
+
+func TestPageExactDocumentLayoutProjectionAndAtomicCompilation(t *testing.T) {
+	port, api, identity := newExactPagePortForLocale(t, "en", true)
+	projected, err := port.project(identity, "en", api.state)
+	require.NoError(t, err)
+	layout, found := fieldValue(projected.Nodes[0].Shared, pageDocumentLayoutField)
+	require.True(t, found)
+	height, found := coreObjectValue(layout, "contentHeight")
+	require.True(t, found)
+	require.Equal(t, "DOCUMENT_CONTENT_HEIGHT_CONTENT", height.Text)
+	api.result = pagedomain.AIDocumentMutationResult{DocumentRevision: uuid.NewString(), Changed: true}
+	service, err := core.NewService(port)
+	require.NoError(t, err)
+	section := core.BlockID(api.state.Document.Base.Nodes[0].Section.Id)
+	request := pageExactApplyRequest(identity, api.state, nil,
+		core.SetFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, core.Object(
+			core.ObjectValue("contentHeight", core.Text("DOCUMENT_CONTENT_HEIGHT_VIEWPORT")),
+			core.ObjectValue("pageChrome", core.Text("DOCUMENT_REGION_PLACEMENT_PINNED")),
+			core.ObjectValue("footer", core.Text("DOCUMENT_REGION_PLACEMENT_FLOW")),
+		)),
+		core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")}, core.Text("DOCUMENT_REGION_PLACEMENT_PINNED")),
+		core.SetNestedFieldOperation(section, pageSectionDataField, []core.FieldPathSegment{core.ObjectPath("props"), core.ObjectPath("uri")}, core.Text("https://example.com/changed")),
+	)
+	_, err = service.Apply(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, api.mutations, 1)
+	mutation := api.mutations[0]
+	require.True(t, mutation.Metadata.SetDocumentLayout)
+	require.Equal(t, model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned}, mutation.Metadata.DocumentLayout)
+	require.Len(t, mutation.Batch.Upserts, 1)
+	require.Contains(t, string(mutation.Batch.Upserts[0].SharedData), "https://example.com/changed")
+	require.Equal(t, model.DefaultDocumentLayout(), api.state.Page.DocumentLayout)
+}
+
+func TestPageExactDocumentLayoutRejectsTargetInvalidAndUnset(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		locale    string
+		operation core.Operation
+	}{
+		{"target locale", "ko", core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")}, core.Text("DOCUMENT_REGION_PLACEMENT_PINNED"))},
+		{"unset layout", "en", core.UnsetFieldOperation(pageMetadataBlockID, pageDocumentLayoutField)},
+		{"unset leaf", "en", core.UnsetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")})},
+		{"invalid enum", "en", core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")}, core.Text("pinned"))},
+		{"incomplete replacement", "en", core.SetFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, core.Object(core.ObjectValue("footer", core.Text("DOCUMENT_REGION_PLACEMENT_PINNED"))))},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			port, api, identity := newExactPagePortForLocale(t, test.locale, true)
+			service, err := core.NewService(port)
+			require.NoError(t, err)
+			_, err = service.Apply(t.Context(), pageExactApplyRequest(identity, api.state, api.state.TargetRevision, test.operation))
+			var invalid *core.ValidationError
+			require.ErrorAs(t, err, &invalid)
+			require.NotEmpty(t, invalid.Result.Issues)
+			require.Empty(t, api.mutations)
+		})
+	}
 }
 
 func TestPageExactMutationAuthorizesBeforeExposingValidationResult(t *testing.T) {
@@ -280,7 +333,7 @@ func newExactPagePortForLocale(
 	require.NoError(t, err)
 	state := pageStateForCodecTest(uuid.NewString())
 	pageID, contributor := uuid.New(), uuid.New()
-	state.Page = model.Page{ID: pageID.String()}
+	state.Page.ID = pageID.String()
 	state.ViewerMemberID = contributor.String()
 	state.Locale = locale
 	state.LocaleExists = exists
@@ -297,12 +350,7 @@ func newExactPagePortForLocale(
 			state.Title = &title
 		}
 	}
-	catalog := codec.Catalog()
-	catalog.BlockKinds = append(catalog.BlockKinds, pageMetadataBlockKind)
-	catalog.Fields = append(catalog.Fields,
-		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageSummaryField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-	)
+	catalog := pageCatalog(codec)
 	api := &exactPageDocumentAPI{state: state}
 	identity := core.DocumentIdentity{Domain: core.DomainPage, Reference: core.DocumentReference(pageID.String())}
 	return &pagePort{application: api, codec: codec, catalog: catalog}, api, identity

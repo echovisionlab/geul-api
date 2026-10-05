@@ -197,15 +197,16 @@ func (s *ReleaseService) toProtoRelease(
 	artworkAsset *commonv1.AssetRef,
 ) *managev1.Release {
 	release := &managev1.Release{
-		Id:        r.ID,
-		Title:     r.Title,
-		Type:      stringToReleaseType(r.Type),
-		Document:  r.ContentDocument,
-		Status:    r.Status,
-		CreatedAt: timestamppb.New(r.CreatedAt),
-		UpdatedAt: timestamppb.New(r.UpdatedAt),
-		OgAsset:   artworkAsset,
-		Revision:  r.ContentRevision,
+		Id:           r.ID,
+		Title:        r.Title,
+		Type:         stringToReleaseType(r.Type),
+		Document:     r.ContentDocument,
+		SourceLocale: r.SourceLocale,
+		Status:       r.Status,
+		CreatedAt:    timestamppb.New(r.CreatedAt),
+		UpdatedAt:    timestamppb.New(r.UpdatedAt),
+		OgAsset:      artworkAsset,
+		Revision:     r.ContentRevision,
 	}
 
 	if r.Slug != nil {

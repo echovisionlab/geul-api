@@ -1,11 +1,14 @@
 package filemedia
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -46,6 +49,94 @@ func TestMediaDeliveryFromRemoteImportPreservesPurposeSpecificRefs(t *testing.T)
 
 	if delivery.GetInline() != inline || delivery.GetDownload() != download {
 		t.Fatalf("purpose-specific refs were not preserved: %#v", delivery)
+	}
+}
+
+func TestRemoteImportGeneralCorrelationIsDurableAndMemberScoped(t *testing.T) {
+	opts := remoteFileImportOptions{uploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE}
+	legacy, err := resolveRemoteImportOperationIdentity(opts, "", "", fileIngestProjectionIdentity{})
+	if err != nil || legacy.durable {
+		t.Fatalf("legacy general identity = %+v / %v", legacy, err)
+	}
+	opts.correlationID, opts.actorMemberID = uuid.NewString(), uuid.NewString()
+	first, err := resolveRemoteImportOperationIdentity(opts, "", "", fileIngestProjectionIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.sourceURL = "https://example.com/refreshed-signed-url"
+	retry, err := resolveRemoteImportOperationIdentity(opts, "", "", fileIngestProjectionIdentity{})
+	if err != nil || !first.durable || first != retry {
+		t.Fatalf("retry identity = %+v / %+v / %v", first, retry, err)
+	}
+	opts.actorMemberID = uuid.NewString()
+	other, err := resolveRemoteImportOperationIdentity(opts, "", "", fileIngestProjectionIdentity{})
+	if err != nil || other.fileID == first.fileID {
+		t.Fatalf("member scope was lost: %+v / %v", other, err)
+	}
+	opts.correlationID = "invalid"
+	if _, err := resolveRemoteImportOperationIdentity(opts, "", "", fileIngestProjectionIdentity{}); err == nil {
+		t.Fatal("invalid general correlation accepted")
+	}
+}
+
+func TestRemoteFileImportRejectsEntityKindsAndUnauthenticatedCaller(t *testing.T) {
+	service := &FileService{}
+	for _, kind := range []managev1.UploadType{managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK, managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE} {
+		response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: kind, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
+		if response != nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("entity import kind accepted: %v / %v", kind, err)
+		}
+	}
+	response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
+	if response != nil || connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("unauthenticated import = %+v / %v", response, err)
+	}
+}
+
+func TestRemoteImportDownloadCauseDoesNotExposeSignedURL(t *testing.T) {
+	cause := errors.New("connection refused")
+	wrapped := fmt.Errorf("outer: %w", &url.Error{Op: "Get", URL: "https://example.com/download?secret=signature", Err: &url.Error{Op: "redirect", URL: "https://other.example.com/?another=secret", Err: cause}})
+	safe := remoteImportDownloadCause(wrapped)
+	if !errors.Is(safe, cause) || strings.Contains(safe.Error(), "secret") || strings.Contains(safe.Error(), "https:") {
+		t.Fatalf("download error leaks signed URL: %v", safe)
+	}
+}
+
+func TestRemoteImportMalformedRedirectDoesNotExposeSignedLocation(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://cdn.example.com/%zz?sig=secret-signature")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	_, err := server.Client().Get(server.URL + "/download?sig=source-secret")
+	if err == nil || !strings.Contains(err.Error(), "secret-signature") {
+		t.Fatalf("fixture did not reproduce signed redirect error: %v", err)
+	}
+	safe := remoteImportDownloadCause(err)
+	if strings.Contains(safe.Error(), "secret") || strings.Contains(safe.Error(), "https:") || strings.Contains(safe.Error(), "http:") {
+		t.Fatalf("signed Location leaked: %v", safe)
+	}
+	if !errors.Is(safe, err) {
+		t.Fatal("safe failure lost original cause")
+	}
+	parsedServer, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := server.Client().Transport.(*http.Transport)
+	service := &FileService{
+		remoteImportResolver: &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}},
+		remoteImportDialer: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, parsedServer.Host)
+		},
+		remoteImportBaseTransport: transport,
+	}
+	var reported error
+	source, err := service.openRemoteImportSource(t.Context(), preparedRemoteImport{
+		opts: remoteFileImportOptions{sourceURL: "https://attachments.example.com/download?sig=source-secret"},
+	}, nil, func(failure error) error { reported = failure; return failure })
+	if source != nil || err == nil || reported == nil || strings.Contains(reported.Error(), "secret") || strings.Contains(err.Error(), "https:") {
+		t.Fatalf("native source boundary leaked redirect/source URL: %v / %v", err, reported)
 	}
 }
 

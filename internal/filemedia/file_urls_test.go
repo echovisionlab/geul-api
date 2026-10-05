@@ -5,11 +5,63 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
+
+func TestGetFileURLsForIDIncludesReadySourceAsset(t *testing.T) {
+	for _, kind := range []string{"image", "mesh"} {
+		t.Run(kind, func(t *testing.T) {
+			db := newServiceUnitDB(t)
+			require.NoError(t, db.Exec(`CREATE TABLE file_derivative (file_id TEXT, type TEXT, asset_id TEXT, media_generation_id TEXT)`).Error)
+			fileID, assetID := uuid.NewString(), uuid.NewString()
+			extension, mimeType := "webp", "image/webp"
+			if kind == "mesh" {
+				extension, mimeType = "glb", "model/gltf-binary"
+			}
+			require.NoError(t, db.Create(&model.File{ID: fileID, FileName: "original", Extension: extension, MimeType: mimeType, FileSize: 128}).Error)
+			size := int64(64)
+			require.NoError(t, db.Create(&model.PublicAsset{
+				ID: assetID, SourceFileID: &fileID, Kind: kind, ObjectKey: "asset/" + assetID + "/" + kind + "." + extension,
+				Extension: extension, MimeType: mimeType, FileSize: &size, SHA256: make([]byte, 32),
+				Disposition: "inline", Status: model.PublicAssetStatusReady, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			}).Error)
+			svc := &FileService{db: db, cdnDomain: "cdn.example.com", mediaDomain: "media.example.com", mediaSecret: "test-secret"}
+			single, err := svc.getFileUrlsForID(t.Context(), fileID)
+			require.NoError(t, err)
+			bulk, err := svc.loadFileURLResponses(t.Context(), []string{fileID})
+			require.NoError(t, err)
+			require.Equal(t, assetID, single.GetDelivery().GetAsset().GetAssetId())
+			require.True(t, proto.Equal(single.GetDelivery().GetAsset(), bulk[fileID].GetDelivery().GetAsset()))
+			require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/"+kind+"."+extension, single.GetDelivery().GetAsset().GetUrl())
+			require.True(t, strings.HasSuffix(single.GetDelivery().GetInline().GetUrl(), "/"+fileID+"."+extension))
+			require.Equal(t, commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, single.GetDelivery().GetProcessingStatus())
+		})
+	}
+}
+
+func TestGetFileURLsForIDPreservesNotFoundForMissingOrDeletingFile(t *testing.T) {
+	db := newServiceUnitDB(t)
+	svc := &FileService{db: db}
+	for _, deleting := range []bool{false, true} {
+		fileID := uuid.NewString()
+		if deleting {
+			now := time.Now()
+			require.NoError(t, db.Create(&model.File{ID: fileID, DeleteRequestedAt: &now}).Error)
+		}
+		response, err := svc.getFileUrlsForID(t.Context(), fileID)
+		require.Nil(t, response)
+		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+		require.EqualError(t, err, errs.NotFound("file", fileID).Error())
+	}
+}
 
 func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 	t.Parallel()

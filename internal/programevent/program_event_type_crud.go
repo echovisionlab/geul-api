@@ -139,7 +139,7 @@ func (s *ProgramEventTypeService) ListProgramEventTypesAdmin(
 			Total:   int32(total),
 			Limit:   limit,
 			Offset:  offset,
-			HasMore: offset+int32(len(rows)) < int32(total),
+			HasMore: int64(offset)+int64(len(rows)) < total,
 		},
 	}), nil
 }

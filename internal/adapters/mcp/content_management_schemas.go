@@ -5,6 +5,47 @@ const contentIDInputJSONSchema = `{
   "properties":{"document_id":` + documentReferenceJSONSchema + `}
 }`
 
+const managementDocumentLayoutJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["content_height","page_chrome","footer"],
+  "properties":{
+    "content_height":{"enum":["DOCUMENT_CONTENT_HEIGHT_CONTENT","DOCUMENT_CONTENT_HEIGHT_VIEWPORT"]},
+    "page_chrome":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]},
+    "footer":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]}
+  }
+}`
+
+const postSettingsOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,
+  "required":["document_type","document_id","title","source_locale","status","document_revision","configuration_revision","comments_enabled","document_layout","category_ids","tag_ids","allowed_actions"],
+  "properties":{
+    "document_type":{"const":"post"},"document_id":` + uuidJSONSchema + `,
+    "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
+    "source_locale":{"type":"string"},"status":{"enum":["draft","scheduled","published","archived"]},
+    "document_revision":{"type":"string","description":"Exact source content revision returned by the owning Post service."},
+    "configuration_revision":{"type":"string","format":"uuid","description":"Copy unchanged to expected_configuration_revision for Post settings edits."},
+    "comments_enabled":{"type":"boolean"},"map_place_id":` + uuidJSONSchema + `,
+    "document_layout":` + managementDocumentLayoutJSONSchema + `,
+    "category_ids":{"type":"array","items":` + uuidJSONSchema + `},"tag_ids":{"type":"array","items":` + uuidJSONSchema + `},
+    "series_id":` + uuidJSONSchema + `,"series_order":{"type":"integer"},"featured_image_file_id":` + uuidJSONSchema + `,
+    "allowed_actions":{"type":"array","items":{"enum":["edit","publish_now","schedule","cancel_schedule","unpublish","archive","republish","delete","add_author","remove_author","manage_collaborators","view_versions","restore_version","manage_share_links","moderate_comments"]}},
+    "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"},
+    "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
+  }
+}`
+
+const pageSettingsOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,
+  "required":["document_type","document_id","title","source_locale","status","document_revision","show_title","document_layout"],
+  "properties":{
+    "document_type":{"const":"page"},"document_id":` + uuidJSONSchema + `,
+    "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
+    "source_locale":{"type":"string"},"status":{"enum":["draft","published"]},"document_revision":{"type":"string"},
+    "show_title":{"type":"boolean"},"document_layout":` + managementDocumentLayoutJSONSchema + `,
+    "featured_image_file_id":` + uuidJSONSchema + `,
+    "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
+  }
+}`
+
 const postCreateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["title","source_locale"],
   "properties":{
@@ -12,9 +53,9 @@ const postCreateInputJSONSchema = `{
     "source_locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
     "slug":{"type":"string"},"summary":{"type":"string"},
     "comments_enabled":{"type":"boolean","default":true},
-    "category_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
-    "tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
-    "map_place_id":` + documentReferenceJSONSchema + `
+    "category_ids":{"description":"IDs from reference_search with reference_type=category.","type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `},
+    "tag_ids":{"description":"IDs from reference_search with reference_type=tag.","type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `},
+    "map_place_id":{"description":"Map Place UUID from map_place_list or reference_search with reference_type=map_place.","allOf":[` + uuidJSONSchema + `]}
   }
 }`
 
@@ -22,10 +63,11 @@ const postSettingsUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id","expected_configuration_revision"],
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,
-    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from document_list or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
+    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from post_settings_get, document_list, or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "comments_enabled":{"type":"boolean"},
-    "map_place_id":{"type":"string","description":"Canonical Map Place UUID, or an empty string to remove the relation."}
+    "map_place_id":{"type":"string","description":"Map Place UUID from map_place_list or reference_search with reference_type=map_place, or an empty string to remove the relation."},
+    "document_layout":` + managementDocumentLayoutJSONSchema + `
   }
 }`
 
@@ -34,12 +76,13 @@ const postConfigurationMutationOutputJSONSchema = `{
   "required":["document_type","document_id","changed","configuration_revision"],
   "properties":{
     "document_type":{"const":"post"},
-    "document_id":` + documentReferenceJSONSchema + `,
+    "document_id":` + uuidJSONSchema + `,
     "changed":{"type":"boolean"},"deleted":{"type":"boolean"},
     "title":{"type":"string"},"slug":{"type":"string"},
     "source_locale":{"type":"string"},"status":{"type":"string"},
     "document_revision":{"type":"string","description":"Content document revision. Separate from the Post settings revision."},
     "configuration_revision":{"type":"string","format":"uuid","description":"Persisted Post settings revision to supply as expected_configuration_revision on the next settings update."},
+    "comments_enabled":{"type":"boolean"},"map_place_id":` + uuidJSONSchema + `,"document_layout":` + managementDocumentLayoutJSONSchema + `,
     "updated_at":{"type":"string","format":"date-time"},
     "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"}
   }
@@ -83,11 +126,11 @@ const workSettingsUpdateInputJSONSchema = `{
     "metadata":{"type":"object"},
     "observed_metadata":{"type":"object","description":"Copy metadata returned by work_settings_get before editing. Preserve unchanged fields to keep concurrent peer edits."},
     "featured":{"type":"boolean"},
-    "client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
-    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `,"description":"Copy client_ids returned by work_settings_get before editing, including an empty array when no clients were present."},
+    "client_ids":{"description":"Client IDs from reference_search with reference_type=client.","type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `},
+    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"Copy client_ids returned by work_settings_get before editing, including an empty array when no clients were present."},
     "year":{"type":"integer","minimum":1,"maximum":9999},
     "month":{"type":"integer","minimum":1,"maximum":12},
-    "map_place_id":{"type":"string","description":"Canonical Map Place UUID, or an empty string to remove the relation."},
+    "map_place_id":{"type":"string","description":"Map Place UUID from map_place_list or reference_search with reference_type=map_place, or an empty string to remove the relation."},
     "until_year":{"type":"integer","minimum":1,"maximum":9999},
     "until_month":{"type":"integer","minimum":1,"maximum":12},
     "is_present":{"type":"boolean","description":"Setting true clears the stored until date. Setting false for a currently present Work requires until_year and until_month in the same call."}
@@ -102,12 +145,12 @@ const workSettingsOutputJSONSchema = `{
   "type":"object","additionalProperties":false,
   "required":["document_type","document_id","metadata","client_ids","type","featured","year","month","is_present","document_revision"],
   "properties":{
-    "document_type":{"const":"work"},"document_id":` + documentReferenceJSONSchema + `,
-    "metadata":{"type":"object"},"client_ids":{"type":"array","items":` + documentReferenceJSONSchema + `},
+    "document_type":{"const":"work"},"document_id":` + uuidJSONSchema + `,
+    "metadata":{"type":"object"},"client_ids":{"type":"array","items":` + uuidJSONSchema + `},
     "slug":{"type":"string"},"type":{"enum":["music_project","portfolio","article","contribution"]},
     "featured":{"type":"boolean"},"year":{"type":"integer"},"month":{"type":"integer"},
     "until_year":{"type":"integer"},"until_month":{"type":"integer"},"is_present":{"type":"boolean"},
-    "map_place_id":` + documentReferenceJSONSchema + `,
+    "map_place_id":` + uuidJSONSchema + `,
     "document_revision":{"type":"string","description":"Content document revision; Work settings edits use observed metadata/client values instead of this revision."}
   }
 }`
@@ -135,8 +178,8 @@ const contentMutationOutputJSONSchema = `{
   "required":["document_type","document_id","changed"],
   "properties":{
     "document_type":{"enum":["post","work","page"]},
-    "document_id":` + documentReferenceJSONSchema + `,
-    "changed":{"type":"boolean"},"deleted":{"type":"boolean"},
+    "document_id":` + uuidJSONSchema + `,
+    "changed":{"type":"boolean"},"deleted":{"type":"boolean"},"show_title":{"type":"boolean"},
     "title":{"type":"string"},"slug":{"type":"string"},
     "source_locale":{"type":"string"},"status":{"type":"string"},
     "document_revision":{"type":"string"},"updated_at":{"type":"string","format":"date-time"},

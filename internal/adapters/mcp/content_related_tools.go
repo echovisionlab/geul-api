@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,31 +34,23 @@ const (
 )
 
 var contentRelatedTools = []mcpserver.Tool{
-	relatedTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false),
-	relatedTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false),
-	relatedTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true),
-	relatedTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
-	relatedTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false),
-	relatedTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	relatedTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false),
-}
-
-func relatedTool(name, title, description, inputSchema, outputSchema string, readOnly, destructive bool) mcpserver.Tool {
-	return mcpserver.Tool{
-		Name: name, Title: title, Description: description,
-		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(outputSchema),
-		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(readOnly, destructive, false), Meta: oauthSecurityMeta(),
-	}
+	oauthTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false),
+	oauthTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	oauthTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	oauthTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false),
+	oauthTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	oauthTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true),
+	oauthTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
+	oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false),
+	oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	oauthTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false),
 }
 
 type PostRelatedApplication interface {

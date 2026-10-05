@@ -263,3 +263,30 @@ func (publisher *programEventAIDocumentTestPublisher) NotifyProtobuf(_ context.C
 func (*programEventAIDocumentTestPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
 	return nil
 }
+
+func TestProgramEventMetadataCompiledTitleRemainsSourceOwned(t *testing.T) {
+	contributor, documentID, revision := uuid.New(), uuid.New(), uuid.New()
+	state := AIDocumentState{EventID: uuid.NewString(), ContentDocumentID: documentID, DocumentRevision: revision.String(), RequestedLocale: "ko", SourceLocale: "en", LocaleExists: true, ViewerMemberID: contributor.String()}
+	title, summary := "invalid target title", ""
+	command := AIDocumentCommand{EventID: state.EventID, RequestedLocale: state.RequestedLocale, ObservedSourceLocale: state.SourceLocale, ObservedLocaleExists: true, ExpectedRevision: revision, ContributorMemberID: contributor, Metadata: AIDocumentMetadataPatch{SetTitle: true, Title: &title}}
+	require.Error(t, validateCompiledProgramEventAIDocumentCommand(state, command))
+	command.Metadata = AIDocumentMetadataPatch{SetSummary: true, Summary: &summary}
+	require.NoError(t, validateCompiledProgramEventAIDocumentCommand(state, command))
+}
+
+func TestProgramEventMetadataContentSignalIncludesMetadataAndCombinedBody(t *testing.T) {
+	command := AIDocumentCommand{EventID: uuid.NewString(), RequestedLocale: "en", ObservedSourceLocale: "en", ContributorMemberID: uuid.New(), Metadata: AIDocumentMetadataPatch{SetTitle: true, SetSummary: true}, Batch: &contentblock.Batch{}}
+	result := AIDocumentResult{DocumentRevision: uuid.NewString(), Changed: true}
+	signal := buildProgramEventAIDocumentContentUpdatedEvent(command, result)
+	require.NotNil(t, signal)
+	fields := signal.GetChangedFields()
+	require.Len(t, fields, 2)
+	require.Equal(t, "title", fields[0].GetPath())
+	require.Equal(t, "summary", fields[1].GetPath())
+	command.Batch.Upserts = []contentblock.BaseBlock{{}}
+	signal = buildProgramEventAIDocumentContentUpdatedEvent(command, result)
+	require.Len(t, signal.GetChangedFields(), 3)
+	require.Equal(t, "document.content", signal.GetChangedFields()[2].GetPath())
+	result.Changed = false
+	require.Nil(t, buildProgramEventAIDocumentContentUpdatedEvent(command, result))
+}

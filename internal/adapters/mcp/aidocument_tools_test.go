@@ -981,3 +981,43 @@ func stringValue(t *testing.T, values map[string]any, key string) string {
 	}
 	return value
 }
+
+func TestDocumentMetadataUpdateSupportsProgramEventExactRevisions(t *testing.T) {
+	application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-a", Changed: true, TargetRevision: revisionPointer("target-b"), Changes: []core.Change{{Operation: 0, Kind: core.OperationSetField, AffectedHandles: []string{"document:summary"}}}}}
+	result, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, toolArguments(t, `{"document_type":"program_event","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a","expected_target_revision":"target-a","summary":"번역 요약"}`))
+	if err != nil || result.IsError {
+		t.Fatalf("Program Event metadata update = %+v, %v", result, err)
+	}
+	request := application.applyRequest
+	if request.Profile != core.DomainProgramEvent || request.Locale != "ko" || request.ExpectedTargetRevision == nil || *request.ExpectedTargetRevision != "target-a" {
+		t.Fatalf("metadata identity/CAS = %+v", request)
+	}
+	if len(request.Operations) != 1 || request.Operations[0].SetField.Target.Block != "document" || request.Operations[0].SetField.Target.Field != "summary" {
+		t.Fatalf("metadata operations = %+v", request.Operations)
+	}
+	var schema struct {
+		Properties struct {
+			DocumentType struct {
+				Enum []string `json:"enum"`
+			} `json:"document_type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(documentMetadataUpdateInputJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, domain := range schema.Properties.DocumentType.Enum {
+		if domain == "program_event" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Program Event excluded from advertised metadata input schema")
+	}
+	application.applyCalls = 0
+	result, err = mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, toolArguments(t, `{"document_type":"program_event","document_id":"44444444-4444-4444-8444-444444444444","locale":"en","expected_document_revision":"revision-a","title":"Event title","tag_ids":[]}`))
+	var execution *mcpserver.ToolExecutionError
+	if !errors.As(err, &execution) || application.applyCalls != 0 {
+		t.Fatalf("Program Event accepted Post-only metadata: %+v %v calls=%d", result, err, application.applyCalls)
+	}
+}

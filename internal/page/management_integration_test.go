@@ -164,7 +164,10 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 	firstPublish, err := pageSvc.PublishPage(ctx, connect.NewRequest(&managev1.PublishPageRequest{Id: other.Msg.Id}))
 	require.NoError(t, err)
 	require.NotNil(t, firstPublish.Msg.PublishedAt)
-	firstPublishedAt := firstPublish.Msg.PublishedAt.AsTime()
+	var firstPublishedPage model.Page
+	require.NoError(t, db.Select("published_at").First(&firstPublishedPage, "id = ?", other.Msg.Id).Error)
+	require.NotNil(t, firstPublishedPage.PublishedAt)
+	firstPublishedAt := firstPublishedPage.PublishedAt.UTC()
 	_, err = pageSvc.UnpublishPage(ctx, connect.NewRequest(&managev1.UnpublishPageRequest{Id: other.Msg.Id}))
 	require.NoError(t, err)
 	publishStatements := &pagePublishStatementRecorder{Interface: db.Config.Logger}
@@ -181,7 +184,12 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 	)
 	republished, err := countedPageSvc.PublishPage(ctx, connect.NewRequest(&managev1.PublishPageRequest{Id: other.Msg.Id}))
 	require.NoError(t, err)
-	require.Equal(t, firstPublishedAt, republished.Msg.PublishedAt.AsTime())
+	require.NotNil(t, republished.Msg.PublishedAt)
+	require.Equal(t, firstPublishedAt, republished.Msg.PublishedAt.AsTime().UTC())
+	var republishedPage model.Page
+	require.NoError(t, db.Select("published_at").First(&republishedPage, "id = ?", other.Msg.Id).Error)
+	require.NotNil(t, republishedPage.PublishedAt)
+	require.Equal(t, firstPublishedAt, republishedPage.PublishedAt.UTC())
 	publishSQL := publishStatements.snapshot()
 	t.Logf("Page publish SQL statements: %d", len(publishSQL))
 	require.LessOrEqual(t, len(publishSQL), 8, "Page publish must stay on the indexed readiness path")

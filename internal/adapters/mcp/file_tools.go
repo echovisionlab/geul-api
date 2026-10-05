@@ -17,6 +17,7 @@ import (
 const (
 	ToolFileTransfer = "file_transfer"
 	ToolFileRead     = "file_read"
+	ToolFileUpload   = "file_upload"
 )
 
 var fileTools = []mcpserver.Tool{
@@ -25,7 +26,9 @@ var fileTools = []mcpserver.Tool{
 		Description: "Begin, inspect, or complete one File ingest through the existing File authority. " +
 			"Multipart bytes use the existing authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives; " +
 			"complete must pass the client_media_bundle_id returned by status after browser preparation. " +
-			"For a public HTTPS source, remote_https uses the existing server import and processing flow.",
+			"For a public HTTPS source, remote_https uses the existing server import and processing flow; all kinds except general require a stable correlation_id reused on retry. " +
+			"track_audio requires track_id and attaches through native Track authority/CAS. Omit expected_current_file_id only when the Track has no original audio; otherwise copy its current File UUID. " +
+			"Pass the returned session handle unchanged, including its Track/CAS fields.",
 		InputSchema: fileTransferInputSchema(), OutputSchema: fileTransferOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, true),
@@ -39,6 +42,19 @@ var fileTools = []mcpserver.Tool{
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
 	},
+	{
+		Name: ToolFileUpload, Title: "Upload a chat attachment",
+		Description: "Import one uploaded chat attachment as a standalone DSUB File. Pass the connector-resolved file descriptor and a stable correlation_id reused on retry. File bytes are streamed, verified, and processed by existing File authority. MIME is sniffed from bytes; no document or Track association is created. Use file_transfer for Track audio.",
+		InputSchema: json.RawMessage(fileUploadInputJSONSchema), OutputSchema: fileReadOutputSchema(),
+		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, true),
+		Meta: fileUploadMeta(),
+	},
+}
+
+func fileUploadMeta() map[string]any {
+	meta := oauthSecurityMeta()
+	meta["openai/fileParams"] = []string{"file"}
+	return meta
 }
 
 // FileTools exposes the File-owned MCP facade without reimplementing ingest,
@@ -73,20 +89,48 @@ func (tools *FileTools) CallTool(
 		return tools.transfer(ctx, arguments)
 	case ToolFileRead:
 		return tools.read(ctx, arguments)
+	case ToolFileUpload:
+		return tools.upload(ctx, arguments)
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
 }
 
+func (tools *FileTools) upload(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	var input struct {
+		File          filemedia.MCPFileUploadInput `json:"file"`
+		Kind          filemedia.MCPFileKind        `json:"kind"`
+		CorrelationID string                       `json:"correlation_id"`
+	}
+	if err := decodeArguments(arguments, &input); err != nil {
+		return executionError(err)
+	}
+	if err := rejectNullArguments(arguments, "file", "kind", "correlation_id"); err != nil {
+		return executionError(err)
+	}
+	file, err := tools.files.Upload(ctx, input.File, input.Kind, input.CorrelationID)
+	if err != nil {
+		return fileToolCallError(err)
+	}
+	encoded, err := json.Marshal(compactVerifiedFile(file))
+	if err != nil {
+		return mcpserver.ToolResult{}, err
+	}
+	return structuredResult(encoded, false)
+}
+
 type fileBeginArguments struct {
-	Action       string                     `json:"a"`
-	Kind         filemedia.MCPFileKind      `json:"k"`
-	Transport    filemedia.MCPFileTransport `json:"t"`
-	FileName     string                     `json:"n,omitempty"`
-	MIMEType     string                     `json:"m,omitempty"`
-	FileSize     int64                      `json:"s,omitempty"`
-	LastModified *int64                     `json:"lm,omitempty"`
-	RemoteURL    string                     `json:"u,omitempty"`
+	Action                string                     `json:"a"`
+	Kind                  filemedia.MCPFileKind      `json:"k"`
+	Transport             filemedia.MCPFileTransport `json:"t"`
+	FileName              string                     `json:"n,omitempty"`
+	MIMEType              string                     `json:"m,omitempty"`
+	FileSize              int64                      `json:"s,omitempty"`
+	LastModified          *int64                     `json:"lm,omitempty"`
+	RemoteURL             string                     `json:"u,omitempty"`
+	TrackID               string                     `json:"track_id,omitempty"`
+	ExpectedCurrentFileID *string                    `json:"expected_current_file_id,omitempty"`
+	CorrelationID         string                     `json:"correlation_id,omitempty"`
 }
 
 type fileSessionArguments struct {
@@ -116,10 +160,14 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 		if err := decodeArguments(arguments, &input); err != nil {
 			return executionError(err)
 		}
+		if err := rejectNullArguments(arguments, "track_id", "expected_current_file_id", "correlation_id"); err != nil {
+			return executionError(err)
+		}
 		result, err = tools.files.Begin(ctx, filemedia.MCPFileBeginInput{
 			Kind: input.Kind, Transport: input.Transport,
 			FileName: input.FileName, MIMEType: input.MIMEType, FileSize: input.FileSize,
 			FileLastModified: input.LastModified, RemoteURL: input.RemoteURL,
+			TrackID: input.TrackID, ExpectedCurrentFileID: input.ExpectedCurrentFileID, CorrelationID: input.CorrelationID,
 		})
 	case "status":
 		var input fileSessionArguments
@@ -188,15 +236,27 @@ func fileTransferAction(arguments mcpserver.ToolArguments) (string, error) {
 }
 
 func fileSessionHandle(values []string) (filemedia.MCPFileSessionHandle, error) {
-	if len(values) != 4 {
-		return filemedia.MCPFileSessionHandle{}, errors.New("file session handle must contain transport, kind, File ID, and upload ID")
+	if len(values) != 4 && len(values) != 6 {
+		return filemedia.MCPFileSessionHandle{}, errors.New("file session handle must contain four values, or six for Track audio")
 	}
-	return filemedia.MCPFileSessionHandle{
+	handle := filemedia.MCPFileSessionHandle{
 		Transport: filemedia.MCPFileTransport(values[0]),
 		Kind:      filemedia.MCPFileKind(values[1]),
 		FileID:    values[2],
 		UploadID:  values[3],
-	}, nil
+	}
+	if handle.Kind == filemedia.MCPFileKindTrackAudio {
+		if len(values) != 6 {
+			return filemedia.MCPFileSessionHandle{}, errors.New("Track audio session handle must preserve Track ID and current audio CAS")
+		}
+		handle.TrackID = values[4]
+		if values[5] != "" {
+			handle.ExpectedCurrentFileID = &values[5]
+		}
+	} else if len(values) != 4 {
+		return filemedia.MCPFileSessionHandle{}, errors.New("independent File session handle must contain four values")
+	}
+	return handle, nil
 }
 
 type compactFileTransferResult struct {
@@ -206,7 +266,7 @@ type compactFileTransferResult struct {
 }
 
 type compactFileSession struct {
-	Handle              [4]string                      `json:"h"`
+	Handle              []string                       `json:"h"`
 	State               filemedia.MCPFileTransferState `json:"s"`
 	FileName            string                         `json:"n,omitempty"`
 	MIMEType            string                         `json:"m,omitempty"`
@@ -256,7 +316,7 @@ func encodeFileTransferResult(result filemedia.MCPFileTransferResult) ([]byte, e
 
 func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFileSession {
 	result := &compactFileSession{
-		Handle: [4]string{
+		Handle: []string{
 			string(session.Handle.Transport), string(session.Handle.Kind),
 			session.Handle.FileID, session.Handle.UploadID,
 		},
@@ -264,6 +324,13 @@ func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFi
 		FileSize: session.FileSize, TotalParts: session.TotalParts, ChunkSize: session.ChunkSize,
 		UploadedParts:       append([]int32(nil), session.UploadedPartNumbers...),
 		ClientMediaBundleID: session.Handle.ClientMediaBundleID,
+	}
+	if session.Handle.Kind == filemedia.MCPFileKindTrackAudio {
+		expectedFileID := ""
+		if session.Handle.ExpectedCurrentFileID != nil {
+			expectedFileID = *session.Handle.ExpectedCurrentFileID
+		}
+		result.Handle = append(result.Handle, session.Handle.TrackID, expectedFileID)
 	}
 	if result.UploadedParts == nil {
 		result.UploadedParts = []int32{}
