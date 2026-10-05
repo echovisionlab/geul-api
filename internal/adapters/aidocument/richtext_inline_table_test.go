@@ -242,3 +242,63 @@ func TestRichTextCodecNestedTableSharedCellLeafAndFailedBatch(t *testing.T) {
 	require.Equal(t, 1, issues[0].Operation)
 	require.True(t, proto.Equal(before, document))
 }
+
+func TestRichTextCodecSparseTableCellsPersistThroughTargetAndSourceEdits(t *testing.T) {
+	codec, source, block, row, first := localizedTableDocumentForTest(t)
+	source.Locale, source.LocaleOverlay.Locale = "en", "en"
+	second := source.Base.Nodes[0].Block.GetTable().Content.Rows[0].Cells[1].Id
+	db, store, created := newCodecStoreForTest(t, "post")
+	seed, issues, err := codec.Compile(created.Document.ID, source, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+	require.NoError(t, err)
+	require.Empty(t, issues)
+	snapshot := persistCodecBatchForTest(t, db, store, seed)
+	cellPath := func(cell string) []core.FieldPathSegment {
+		return []core.FieldPathSegment{core.ObjectPath("rows"), core.ListPath(core.RelationItemID(row)), core.ObjectPath("cells"), core.ListPath(core.RelationItemID(cell)), core.ObjectPath("content")}
+	}
+	// The first target cell is explicitly empty; the second remains absent.
+	target, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "ko")
+	require.NoError(t, err)
+	emptyFirst := core.SetNestedFieldOperation(core.BlockID(block), richTextTableLocaleField, cellPath(first), core.RichText())
+	validateRichTextOperationForTest(t, codec, target, emptyFirst)
+	batch, issues, err := codec.Compile(created.Document.ID, target, core.LocaleRoleNonSource, core.Revision(snapshot.Document.Revision.String()), uuid.New(), []core.Operation{emptyFirst})
+	require.NoError(t, err)
+	require.Empty(t, issues)
+	snapshot = persistCodecTargetBatchForTest(t, db, store, batch)
+	assertText := func(want string) {
+		t.Helper()
+		localized, err := contentblock.MaterializeSnapshotRichTextLocale(snapshot, "ko")
+		require.NoError(t, err)
+		rendered, err := contentblock.MaterializeLocalizedRichTextDocument(t.Context(), localized, nil)
+		require.NoError(t, err)
+		require.Equal(t, want, rendered.Text)
+	}
+	assertText("\tsecond target")
+	for _, test := range []struct {
+		operation core.Operation
+		want      string
+	}{
+		{core.SetNestedFieldOperation(core.BlockID(block), richTextTableLocaleField, cellPath(second), core.RichText(core.InlineText("new source"))), "\tnew source"},
+		{core.UnsetNestedFieldOperation(core.BlockID(block), richTextTableLocaleField, cellPath(second)), ""},
+	} {
+		source, err = contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "en")
+		require.NoError(t, err)
+		validateRichTextOperationForTest(t, codec, source, test.operation)
+		batch, issues, err = codec.Compile(created.Document.ID, source, core.LocaleRoleSource, core.Revision(snapshot.Document.Revision.String()), uuid.New(), []core.Operation{test.operation})
+		require.NoError(t, err)
+		require.Empty(t, issues)
+		snapshot = persistCodecBatchForTest(t, db, store, batch)
+		assertText(test.want)
+	}
+	// A later edit of the previously absent cell must retain the empty sibling.
+	target, err = contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "ko")
+	require.NoError(t, err)
+	setSecond := core.SetNestedFieldOperation(core.BlockID(block), richTextTableLocaleField, cellPath(second), core.RichText(core.InlineText("translated")))
+	batch, issues, err = codec.Compile(created.Document.ID, target, core.LocaleRoleNonSource, core.Revision(snapshot.Document.Revision.String()), uuid.New(), []core.Operation{setSecond})
+	require.NoError(t, err)
+	require.Empty(t, issues)
+	snapshot = persistCodecTargetBatchForTest(t, db, store, batch)
+	assertText("\ttranslated")
+	stored, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "ko")
+	require.NoError(t, err)
+	require.Len(t, stored.LocaleOverlay.Blocks[0].GetTable().Content.Rows[0].Cells, 2)
+}

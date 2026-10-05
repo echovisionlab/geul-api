@@ -148,6 +148,103 @@ func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	}
 }
 
+func TestDocumentMetadataUpdateRejectsNullInsteadOfApplyingOtherFields(t *testing.T) {
+	for _, field := range []string{"title", "summary", "clear_summary", "category_ids", "tag_ids"} {
+		t.Run(field, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			arguments := toolArguments(t, `{
+				"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444",
+				"locale":"ko","expected_document_revision":"revision-a","title":"Changed","tag_ids":[]
+			}`)
+			arguments[field] = json.RawMessage("null")
+			result, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, arguments)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.applyCalls != 0 || result.Content != nil {
+				t.Fatalf("null %s partially applied metadata: calls=%d result=%+v error=%v", field, application.applyCalls, result, err)
+			}
+		})
+	}
+}
+
+func TestParagraphCreateRejectsNullPlacementHandles(t *testing.T) {
+	for _, field := range []string{"parent_block_id", "after_block_id"} {
+		t.Run(field, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			arguments := toolArguments(t, `{
+				"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444",
+				"locale":"ko","expected_document_revision":"revision-a","text":"New paragraph"
+			}`)
+			arguments[field] = json.RawMessage("null")
+			_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolParagraphCreate, arguments)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.applyCalls != 0 {
+				t.Fatalf("null %s became root/first placement: calls=%d error=%v", field, application.applyCalls, err)
+			}
+		})
+	}
+}
+
+func TestMutationToolsDeclareStructuredValidationRejections(t *testing.T) {
+	operation := core.SetFieldOperation("paragraph-a", "content", core.Text("wrong kind"))
+	for _, name := range []string{ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply} {
+		t.Run(name, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyError: &core.ValidationError{Result: core.ValidationResult{
+				Normalized: []core.Operation{operation},
+				Issues:     []core.OperationIssue{{Operation: 0, Code: core.IssueValueKindMismatch, Handle: "field:paragraph-a/content", Message: "wrong value kind"}},
+			}}}
+			arguments := toolArguments(t, `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"}`)
+			switch name {
+			case ToolParagraphCreate:
+				arguments["text"] = json.RawMessage(`"paragraph"`)
+			case ToolParagraphUpdate:
+				arguments["text"] = json.RawMessage(`"paragraph"`)
+				arguments["block_id"] = json.RawMessage(`"paragraph-a"`)
+			case ToolBlockDelete:
+				arguments["block_id"] = json.RawMessage(`"paragraph-a"`)
+			case ToolMetadataUpdate:
+				arguments["title"] = json.RawMessage(`"Changed"`)
+			case ToolDocumentApply:
+				arguments = toolArguments(t, `{"v":"dcdp/1","p":"post","d":"44444444-4444-4444-8444-444444444444","l":"ko","edr":"revision-a","o":[["fs",["paragraph-a","","","content"],["t","wrong kind"]]]}`)
+			}
+			tools := mustAIDocumentTools(t, application)
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, arguments)
+			if err != nil || !result.IsError || result.StructuredContent["i"] == nil || result.StructuredContent["o"] == nil {
+				t.Fatalf("missing structured rejection: %+v %v", result, err)
+			}
+			listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range listed {
+				if tool.Name != name {
+					continue
+				}
+				var schema struct {
+					OneOf []struct {
+						OneOf []struct {
+							Properties map[string]json.RawMessage `json:"properties"`
+						} `json:"oneOf"`
+					} `json:"oneOf"`
+				}
+				if err := json.Unmarshal(tool.OutputSchema, &schema); err != nil {
+					t.Fatal(err)
+				}
+				declared := false
+				for _, branch := range schema.OneOf {
+					for _, resultBranch := range branch.OneOf {
+						if resultBranch.Properties["i"] != nil && resultBranch.Properties["o"] != nil {
+							declared = true
+						}
+					}
+				}
+				if !declared {
+					t.Fatalf("actual i/o validation rejection excluded by %s output schema: %s", name, tool.OutputSchema)
+				}
+			}
+		})
+	}
+}
+
 func assertMCPToolOAuthSecurity(t *testing.T, tool mcpserver.Tool) {
 	t.Helper()
 	if len(tool.SecuritySchemes) != 1 || tool.SecuritySchemes[0].Type != "oauth2" ||

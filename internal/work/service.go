@@ -334,6 +334,7 @@ func (s *WorkService) ListWorksAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("work.id ASC")
 
 	if err := query.Limit(int(pg.Limit)).Offset(int(pg.Offset)).Find(&works).Error; err != nil {
 		return nil, errs.Internal(err)

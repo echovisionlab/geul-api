@@ -224,6 +224,7 @@ func (s *PageService) ListPagesAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("page.id ASC")
 
 	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&pages).Error; err != nil {
 		return nil, errs.Internal(err)

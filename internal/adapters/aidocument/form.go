@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	formintrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -220,12 +221,36 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 		mutation.DeleteTranslation = true
 		return mutation, nil, nil
 	}
+	kinds := make(map[core.BlockID]core.BlockKind, len(document.Nodes))
+	for _, node := range document.Nodes {
+		kinds[node.ID] = node.Kind
+	}
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil {
 			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: "Form locale copy uses explicit empty instead of unset"}}, nil
 		}
 		if formOperationMutatesRoot(operation) {
 			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: "block:document", Message: "Form document root cannot be structurally changed"}}, nil
+		}
+		switch operation.Kind {
+		case core.OperationInsertBlock:
+			kinds[operation.InsertBlock.Block] = operation.InsertBlock.Kind
+		case core.OperationReplaceBlockKind:
+			kinds[operation.ReplaceBlockKind.Block] = operation.ReplaceBlockKind.Kind
+		case core.OperationSetField:
+			if operation.SetField.Target.Field != formRawField {
+				continue
+			}
+			node := core.Node{
+				ID: operation.SetField.Target.Block, Kind: kinds[operation.SetField.Target.Block],
+				Shared: []core.FieldValue{{ID: formRawField, Value: operation.SetField.Value}},
+			}
+			if _, err := formObjectFromNode(node); err != nil {
+				return formdomain.AIDocumentMutation{}, []core.OperationIssue{{
+					Operation: index, Code: core.IssueInvalidOperation,
+					Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: err.Error(),
+				}}, nil
+			}
 		}
 	}
 	next, err := core.DocumentAfterOperations(document, operations)
@@ -238,9 +263,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 	}
 	schema, err := formDocumentSchema(next)
 	if err != nil {
-		return formdomain.AIDocumentMutation{}, []core.OperationIssue{{
-			Operation: -1, Code: core.IssueInvalidOperation, Message: err.Error(),
-		}}, nil
+		return formdomain.AIDocumentMutation{}, nil, errs.InvalidArgument("operations", err.Error())
 	}
 	currentTitle, currentTitlePresent, err := formDocumentTitle(document)
 	if err != nil {

@@ -325,3 +325,40 @@ func pageExactApplyRequest(
 	}
 	return request
 }
+
+func TestPageMixedMetadataAndContentRejectionKeepsOriginalOperationIndex(t *testing.T) {
+	port, api, identity := newExactPagePortForLocale(t, "en", true)
+	_, document, _, _ := pageRichTextDocumentForTest(t, 0)
+	_, table, block, row, _ := localizedTableDocumentForTest(t)
+	table.LocaleOverlay.Locale = "en"
+	document.Base.Nodes[0].Section.GetRichText().Blocks = table.Base
+	document.LocaleOverlay.Sections[0].GetRichText().Blocks = table.LocaleOverlay
+	api.state.Document = document
+	service, err := core.NewService(port)
+	require.NoError(t, err)
+	path := []core.FieldPathSegment{core.ObjectPath("rows"), core.ListPath(core.RelationItemID(row)), core.ObjectPath("cells"), core.ListPath(core.RelationItemID(uuid.NewString())), core.ObjectPath("header")}
+	request := pageExactApplyRequest(identity, api.state, nil,
+		core.SetFieldOperation(pageMetadataBlockID, pageTitleField, core.Text("Changed")),
+		core.SetNestedFieldOperation(core.BlockID(block), richTextTableField, path, core.Boolean(true)),
+	)
+	loaded, err := port.project(identity, request.Locale, api.state)
+	require.NoError(t, err)
+	command, generic := core.ValidateLoadedApply(loaded, request)
+	require.True(t, generic.Valid(), "%+v", generic)
+	_, issues, err := port.compile(api.state, uuid.MustParse(api.state.ViewerMemberID), loaded, command.Operations)
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	require.Equal(t, 1, issues[0].Operation)
+	validation, err := service.Validate(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, validation.Issues, 1)
+	require.Equal(t, 1, validation.Issues[0].Operation)
+	require.Equal(t, core.IssueInvalidOperation, validation.Issues[0].Code)
+	require.Contains(t, validation.Issues[0].Message, "does not exist")
+	_, err = service.Apply(t.Context(), request)
+	var invalid *core.ValidationError
+	require.ErrorAs(t, err, &invalid)
+	require.Len(t, invalid.Result.Issues, 1)
+	require.Equal(t, 1, invalid.Result.Issues[0].Operation)
+	require.Empty(t, api.mutations, "rejected mixed batch reached persistence")
+}

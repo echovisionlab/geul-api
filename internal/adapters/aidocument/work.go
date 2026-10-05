@@ -267,6 +267,7 @@ func (p *workPort) compile(
 		return mutation, nil, nil
 	}
 	contentOperations := make([]core.Operation, 0, len(operations))
+	contentIndexes := make([]int, 0, len(operations))
 	issues := make([]core.OperationIssue, 0)
 	for index, operation := range operations {
 		if loaded.Role() == core.LocaleRoleNonSource && operation.Kind == core.OperationUnsetField {
@@ -284,6 +285,7 @@ func (p *workPort) compile(
 			continue
 		}
 		contentOperations = append(contentOperations, operation)
+		contentIndexes = append(contentIndexes, index)
 	}
 	if len(issues) != 0 {
 		return workdomain.AIDocumentMutation{}, issues, nil
@@ -292,6 +294,11 @@ func (p *workPort) compile(
 		state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision,
 		contributor, contentOperations,
 	)
+	for index := range codecIssues {
+		if codecIssues[index].Operation >= 0 && codecIssues[index].Operation < len(contentIndexes) {
+			codecIssues[index].Operation = contentIndexes[codecIssues[index].Operation]
+		}
+	}
 	if err != nil || len(codecIssues) != 0 {
 		return workdomain.AIDocumentMutation{}, codecIssues, err
 	}

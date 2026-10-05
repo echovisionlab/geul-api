@@ -12,7 +12,7 @@ const documentListInputJSONSchema = `{
     "p":{"enum":["post","work","page","program_event","release","artist"],"description":"The discoverable DCDP document domain."},
     "q":{"type":"string","maxLength":200,"description":"Optional case-insensitive source-title substring, or Artist source-name or real-name substring."},
     "limit":{"type":"integer","minimum":1,"maximum":50,"default":20},
-    "offset":{"type":"integer","minimum":0,"default":0}
+    "offset":{"type":"integer","minimum":0,"maximum":2147483647,"default":0}
   }
 }`
 

@@ -9,6 +9,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -109,7 +110,7 @@ func (c *PageCodec) Compile(
 	affected := c.pageAffectedLocaleValues(working, operations)
 	batch, err := contentblock.BatchFromPageProtoWithAffectedLocaleValues(documentID, mutation, working.GetLocale(), affected)
 	if err != nil {
-		return contentblock.Batch{}, []core.OperationIssue{{Operation: -1, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil
+		return contentblock.Batch{}, nil, errs.InvalidArgument("operations", err.Error())
 	}
 	return batch, nil, nil
 }
@@ -119,18 +120,19 @@ func (c *PageCodec) pageAffectedLocaleValues(document *contentv1.LocalizedPageDo
 	for _, operation := range operations {
 		if operation.SetField != nil {
 			target := operation.SetField.Target
-			if target.Field == pageSectionLocaleField || c.pageRichTextFieldIsLocale(document, target) {
+			_, _, sectionExists := findPageNode(document, string(target.Block))
+			if (sectionExists && target.Field == pageSectionLocaleField) || c.pageRichTextFieldIsLocale(document, target) {
 				targets = append(targets, fieldTargetToProto(target))
 			}
 		}
 		if operation.InsertBlock == nil || c.baseCases[operation.InsertBlock.Kind] != nil || operation.InsertBlock.Kind == pageColumnBlockKind {
 			continue
 		}
-		for _, rule := range c.rich.Catalog().Fields {
-			if rule.BlockKind == operation.InsertBlock.Kind && rule.Field == "content" && rule.Ownership == core.FieldOwnershipLocale {
-				targets = append(targets, fieldTargetToProto(core.FieldTarget{Block: operation.InsertBlock.Block, Field: "content"}))
-				break
-			}
+		// Later operations can delete or replace the inserted block. Restore
+		// explicit empty content only when the final block still exposes it.
+		target := core.FieldTarget{Block: operation.InsertBlock.Block, Field: "content"}
+		if c.pageRichTextFieldIsLocale(document, target) {
+			targets = append(targets, fieldTargetToProto(target))
 		}
 	}
 	sort.Slice(targets, func(left, right int) bool {

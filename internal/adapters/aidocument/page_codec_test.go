@@ -5,6 +5,7 @@ import (
 	"sort"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -688,6 +689,41 @@ func TestPageCodecOuterSectionDeletionReindexesRemainingSlots(t *testing.T) {
 	}
 }
 
+func TestPageCodecInsertedThenDeletedRichTextDoesNotRestoreRemovedLocaleValue(t *testing.T) {
+	codec, document, sectionID, ids := pageRichTextDocumentForTest(t, 1)
+	db, store, created := newCodecStoreForTest(t, "page")
+	seed, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+	require.NoError(t, err)
+	require.Empty(t, issues)
+	before := persistCodecBatchForTest(t, db, store, seed)
+	document, err = contentblock.SnapshotToLocalizedPageDocument(before, "en")
+	require.NoError(t, err)
+	inserted := core.BlockID(uuid.NewString())
+	for _, operations := range [][]core.Operation{
+		{
+			core.InsertBlockOperation(inserted, "paragraph", core.BlockID(sectionID), core.BlockID(ids[0])),
+			core.SetFieldOperation(inserted, "content", core.RichText(core.InlineText("temporary"))),
+			core.DeleteBlockOperation(inserted),
+		},
+		{
+			core.InsertBlockOperation(inserted, "external-video", "", core.BlockID(sectionID)),
+			core.SetNestedFieldOperation(inserted, pageSectionLocaleField, []core.FieldPathSegment{core.ObjectPath("props"), core.ObjectPath("caption")}, core.Text("temporary")),
+			core.DeleteBlockOperation(inserted),
+		},
+	} {
+		batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(before.Document.Revision.String()), uuid.New(), operations)
+		require.NoError(t, err)
+		require.Empty(t, issues)
+		after := persistCodecBatchForTest(t, db, store, batch)
+		require.Equal(t, before.Document.Revision, after.Document.Revision, "the temporary block is an aggregate no-op")
+		loaded, err := contentblock.SnapshotToLocalizedPageDocument(after, "en")
+		require.NoError(t, err)
+		require.Len(t, loaded.Base.Nodes, 1)
+		require.Len(t, loaded.Base.Nodes[0].Section.GetRichText().Blocks.Nodes, 1)
+		require.Equal(t, ids[0], loaded.Base.Nodes[0].Section.GetRichText().Blocks.Nodes[0].Block.Id)
+	}
+}
+
 func pageSnapshotFromBatch(batch contentblock.Batch) contentblock.Snapshot {
 	snapshot := contentblock.Snapshot{Document: contentblock.Document{ID: batch.DocumentID, Profile: "page", Revision: batch.ExpectedRevision}, SourceLocale: "en", Blocks: batch.Upserts}
 	for _, group := range batch.LocaleGroups {
@@ -740,19 +776,25 @@ func TestPageCodecMovesRichTextSubtreeAcrossSectionsWithoutDeletingOrLosingLocal
 		{"front", "", false}, {"after last", destinationChildren[0], false}, {"move then delete source", destinationChildren[0], true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			db, store, created := newCodecStoreForTest(t, "page")
+			persistedSeed := seed
+			persistedSeed.DocumentID, persistedSeed.ExpectedRevision = created.Document.ID, created.Document.Revision
+			storedSeed := persistCodecBatchForTest(t, db, store, persistedSeed)
+			persistedTarget := targetBatch
+			persistedTarget.DocumentID, persistedTarget.ExpectedRevision = created.Document.ID, storedSeed.Document.Revision
+			storedSeed = persistCodecTargetBatchForTest(t, db, store, persistedTarget)
 			operations := []core.Operation{core.MoveBlockOperation(core.BlockID(root), core.BlockID(destinationID), core.BlockID(test.after))}
 			if test.removeSource {
 				operations = append(operations, core.DeleteBlockOperation(core.BlockID(sourceID)))
 			}
 			before := proto.Clone(document)
-			batch, issues, err := codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), operations)
+			batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(storedSeed.Document.Revision.String()), uuid.New(), operations)
 			require.NoError(t, err)
 			require.Empty(t, issues)
 			require.True(t, proto.Equal(before, document))
 			require.NotContains(t, batch.Deletes, uuid.MustParse(root))
 			require.NotContains(t, batch.Deletes, uuid.MustParse(childID))
-			snapshot := pageSnapshotFromBatch(batch)
-			snapshot.LocaleOverlays = append(snapshot.LocaleOverlays, contentblock.LocaleOverlay{Locale: "ko", Blocks: targetBatch.LocaleGroups[0].Upserts})
+			snapshot := persistCodecBatchForTest(t, db, store, batch)
 			loaded, err := contentblock.SnapshotToLocalizedPageDocument(snapshot, "en")
 			require.NoError(t, err)
 			_, movedSection, ok := findPageNode(loaded, destinationID)
@@ -805,8 +847,8 @@ func TestPageCodecMovesRichTextSubtreeAcrossSectionsWithoutDeletingOrLosingLocal
 	failed := []core.Operation{core.MoveBlockOperation(core.BlockID(root), core.BlockID(destinationID), core.BlockID(destinationChildren[0])), core.SetFieldOperation(core.BlockID(childID), "content", core.RichText(core.TextColor("invalid", core.InlineText("fail"))))}
 	before := proto.Clone(document)
 	_, issues, err = codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), failed)
-	require.NoError(t, err)
-	require.NotEmpty(t, issues)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Empty(t, issues)
 	require.True(t, proto.Equal(before, document))
 }
 
@@ -835,22 +877,23 @@ func TestPageCodecNestedTableTargetSetPreservesUntouchedSourceFallback(t *testin
 	_, table, block, row, cell := localizedTableDocumentForTest(t)
 	source.Base.Nodes[0].Section.GetRichText().Blocks = table.Base
 	source.LocaleOverlay.Sections[0].GetRichText().Blocks.Blocks = table.LocaleOverlay.Blocks
-	seed, issues, err := codec.Compile(uuid.New(), source, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), nil)
+	db, store, created := newCodecStoreForTest(t, "page")
+	seed, issues, err := codec.Compile(created.Document.ID, source, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
 	require.NoError(t, err)
 	require.Empty(t, issues)
-	snapshot := pageSnapshotFromBatch(seed)
+	snapshot := persistCodecBatchForTest(t, db, store, seed)
 	target, err := contentblock.SnapshotToLocalizedPageDocument(snapshot, "ko")
 	require.NoError(t, err)
 	before := proto.Clone(target)
 	path := []core.FieldPathSegment{core.ObjectPath("rows"), core.ListPath(core.RelationItemID(row)), core.ObjectPath("cells"), core.ListPath(core.RelationItemID(cell)), core.ObjectPath("content")}
-	batch, issues, err := codec.Compile(seed.DocumentID, target, core.LocaleRoleNonSource, core.Revision(seed.ExpectedRevision.String()), uuid.New(), []core.Operation{
+	batch, issues, err := codec.Compile(seed.DocumentID, target, core.LocaleRoleNonSource, core.Revision(snapshot.Document.Revision.String()), uuid.New(), []core.Operation{
 		core.SetNestedFieldOperation(core.BlockID(block), richTextTableLocaleField, path, core.RichText(core.InlineText("changed"))),
 	})
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	require.True(t, proto.Equal(before, target))
 	require.Empty(t, batch.Upserts)
-	snapshot.LocaleOverlays = append(snapshot.LocaleOverlays, contentblock.LocaleOverlay{Locale: "ko", Blocks: batch.LocaleGroups[0].Upserts})
+	snapshot = persistCodecTargetBatchForTest(t, db, store, batch)
 	stored, err := contentblock.SnapshotToLocalizedPageDocument(snapshot, "ko")
 	require.NoError(t, err)
 	locale, found := findPageLocaleSection(stored, sectionID)

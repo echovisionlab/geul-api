@@ -1,15 +1,20 @@
 package aidocumentadapter
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
+	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestRichTextCodecCompilesGeneratedInline(t *testing.T) {
@@ -50,6 +55,7 @@ func TestRichTextCodecReindexesDeletedAndMovedSiblingGroups(t *testing.T) {
 	for left, right := 0, len(document.Base.Nodes)-1; left < right; left, right = left+1, right-1 {
 		document.Base.Nodes[left], document.Base.Nodes[right] = document.Base.Nodes[right], document.Base.Nodes[left]
 	}
+	inserted := core.BlockID(uuid.NewString())
 	for _, test := range []struct {
 		name       string
 		operations []core.Operation
@@ -61,14 +67,20 @@ func TestRichTextCodecReindexesDeletedAndMovedSiblingGroups(t *testing.T) {
 		{"move first into callout", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[0]), core.BlockID(ids[3]), "")}, ids[1:], []string{ids[0]}},
 		{"move into and back out", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[0]), core.BlockID(ids[3]), ""), core.MoveBlockOperation(core.BlockID(ids[1]), core.BlockID(ids[3]), core.BlockID(ids[0])), core.MoveBlockOperation(core.BlockID(ids[0]), "", core.BlockID(ids[2]))}, []string{ids[2], ids[0], ids[3]}, []string{ids[1]}},
 		{"delete moved subtree", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[0]), core.BlockID(ids[3]), ""), core.MoveBlockOperation(core.BlockID(ids[3]), "", core.BlockID(ids[1])), core.DeleteBlockOperation(core.BlockID(ids[3]))}, []string{ids[1], ids[2]}, nil},
+		{"move insert delete", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[3]), "", ""), core.InsertBlockOperation(inserted, "paragraph", "", core.BlockID(ids[0])), core.DeleteBlockOperation(core.BlockID(ids[1]))}, []string{ids[3], ids[0], string(inserted), ids[2]}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			db, store, created := newCodecStoreForTest(t, "post")
+			seed, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+			require.NoError(t, err)
+			require.Empty(t, issues)
+			storedSeed := persistCodecBatchForTest(t, db, store, seed)
 			before := proto.Clone(document)
-			batch, issues, err := codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), test.operations)
+			batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(storedSeed.Document.Revision.String()), uuid.New(), test.operations)
 			require.NoError(t, err)
 			require.Empty(t, issues)
 			require.True(t, proto.Equal(before, document))
-			snapshot := contentblock.Snapshot{Document: contentblock.Document{ID: batch.DocumentID, Profile: "post", Revision: batch.ExpectedRevision}, SourceLocale: "en", Blocks: batch.Upserts, LocaleOverlays: []contentblock.LocaleOverlay{{Locale: "en", Blocks: batch.LocaleGroups[0].Upserts}}}
+			snapshot := persistCodecBatchForTest(t, db, store, batch)
 			loaded, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "en")
 			require.NoError(t, err)
 			roots, children := make([]string, len(test.roots)), make([]string, len(test.children))
@@ -234,12 +246,73 @@ func TestRichTextCodecCompilesFileAttachAndRejectsRequiredDetach(t *testing.T) {
 		uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(),
 		[]core.Operation{core.DetachFileOperation(target.Block, target.Field)},
 	)
-	if err != nil {
-		t.Fatal(err)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Empty(t, issues, "batch-level generated validation must not invent an operation index")
+}
+
+type codecStoreFileReuse struct{}
+
+func (codecStoreFileReuse) AuthorizeFileReuse(context.Context, *gorm.DB, contentblock.Document, contentblock.FullBlock, contentblock.FileReference, contentblock.File) error {
+	return nil
+}
+
+// Use the production generated contract and Store on a fresh SQLite database.
+// These tests cover aggregate validation and persistence, not PostgreSQL locks.
+func newCodecStoreForTest(t *testing.T, profile string) (*gorm.DB, *contentblock.Store, contentblock.Snapshot) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	for _, statement := range []string{
+		`CREATE TABLE content_document (id TEXT PRIMARY KEY, profile TEXT, revision TEXT, created_at DATETIME, updated_at DATETIME)`,
+		`CREATE TABLE content_block (id TEXT PRIMARY KEY, document_id TEXT, parent_block_id TEXT, container_slot TEXT, position INTEGER, kind TEXT, shared_data BLOB, created_at DATETIME, updated_at DATETIME)`,
+		`CREATE TABLE content_block_locale (block_id TEXT, locale TEXT, localized_data BLOB, PRIMARY KEY(block_id, locale))`,
+		`CREATE TABLE content_block_attachment (block_id TEXT, reference_path TEXT, selector_kind TEXT, file_id TEXT, missing_kind TEXT, download_audience TEXT, PRIMARY KEY(block_id, reference_path))`,
+	} {
+		require.NoError(t, db.Exec(statement).Error)
 	}
-	if len(issues) != 1 {
-		t.Fatalf("required detach issues = %+v", issues)
-	}
+	store, err := contentblock.NewGeneratedStore(codecStoreFileReuse{})
+	require.NoError(t, err)
+	var created contentblock.Snapshot
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		var createErr error
+		created, createErr = store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: profile, SourceLocale: "en"})
+		return createErr
+	}))
+	return db, store, created
+}
+
+func persistCodecBatchForTest(t *testing.T, db *gorm.DB, store *contentblock.Store, batch contentblock.Batch) contentblock.Snapshot {
+	t.Helper()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		_, err := store.ApplyBatch(t.Context(), tx, batch, func(context.Context, *gorm.DB, uuid.UUID) (contentblock.DomainContext, error) {
+			return contentblock.DomainContext{SourceLocale: "en"}, nil
+		})
+		return err
+	}))
+	snapshot, err := store.LoadSnapshot(t.Context(), db, batch.DocumentID, "en")
+	require.NoError(t, err)
+	return snapshot
+}
+
+func persistCodecTargetBatchForTest(t *testing.T, db *gorm.DB, store *contentblock.Store, batch contentblock.Batch) contentblock.Snapshot {
+	t.Helper()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		_, err := store.ApplyTargetLocaleBatchWithMetadata(t.Context(), tx, batch, "ko",
+			func(context.Context, *gorm.DB, uuid.UUID) (contentblock.DomainContext, error) {
+				return contentblock.DomainContext{SourceLocale: "en"}, nil
+			},
+			func(_ context.Context, _ *gorm.DB, changed bool) (contentblock.MetadataEffect, error) {
+				return contentblock.MetadataEffect{Changed: changed, ChangedLocales: []string{"ko"}}, nil
+			})
+		return err
+	}))
+	snapshot, err := store.LoadSnapshot(t.Context(), db, batch.DocumentID, "en")
+	require.NoError(t, err)
+	require.Equal(t, batch.ExpectedRevision, snapshot.Document.Revision)
+	return snapshot
 }
 
 func TestRichTextCodecRoundTripsStableNestedArrayFilePath(t *testing.T) {

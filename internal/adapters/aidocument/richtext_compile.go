@@ -7,6 +7,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -74,7 +75,7 @@ func (c *RichTextCodec) Compile(
 	}
 	batch, err := contentblock.BatchFromRichTextProto(documentID, mutation)
 	if err != nil {
-		return contentblock.Batch{}, []core.OperationIssue{{Operation: -1, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil
+		return contentblock.Batch{}, nil, errs.InvalidArgument("operations", err.Error())
 	}
 	return batch, nil, nil
 }

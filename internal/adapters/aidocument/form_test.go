@@ -7,9 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
+
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	formintrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
 
@@ -341,24 +344,57 @@ func TestFormSourcePayloadIdentityMustMatchStableHandle(t *testing.T) {
 		{"form:validator:validator-a", formValidatorKind, "form:field:field-a", `{"id":"validator-a","predicate":"required"}`},
 	} {
 		t.Run(string(test.kind), func(t *testing.T) {
-			state := formdomain.AIDocumentState{FormID: uuid.NewString(), DocumentRevision: uuid.NewString(), SourceLocale: "en", Locale: "en", LocaleExists: true, SourceSchema: []byte(schema)}
-			port := &formPort{catalog: formCatalog()}
+			state := formdomain.AIDocumentState{FormID: uuid.NewString(), DocumentRevision: uuid.NewString(), SourceLocale: "en", Locale: "en", LocaleExists: true, SourceSchema: []byte(schema), ViewerMemberID: uuid.NewString()}
+			api := &exactFormDocumentAPI{state: state}
+			port := &formPort{service: api, catalog: formCatalog()}
+			service, err := core.NewService(port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport, err := NewService(service)
+			if err != nil {
+				t.Fatal(err)
+			}
 			document, err := port.document(core.DocumentIdentity{Domain: core.DomainForm, Reference: core.DocumentReference(state.FormID)}, "en", state)
 			if err != nil {
 				t.Fatal(err)
 			}
 			mismatched := strings.Replace(test.payload, `"id":"`, `"id":"renamed-`, 1)
 			for _, operations := range [][]core.Operation{
-				{core.SetFieldOperation(test.handle, formRawField, core.Text(mismatched))},
+				{core.SetFieldOperation(formRootID, formRootTitleField, core.Text("Changed")), core.SetFieldOperation(test.handle, formRawField, core.Text(mismatched))},
 				{core.InsertBlockOperation(core.BlockID(string(test.handle)+"-new"), test.kind, test.parent, test.handle), core.SetFieldOperation(core.BlockID(string(test.handle)+"-new"), formRawField, core.Text(test.payload))},
 			} {
-				_, validation := core.ValidateLoadedApply(document, core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainForm, Document: document.Identity.Reference, Locale: "en", ExpectedDocumentRevision: document.DocumentRevision, Operations: operations})
+				request := core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainForm, Document: document.Identity.Reference, Locale: "en", ExpectedDocumentRevision: document.DocumentRevision, Operations: operations}
+				_, validation := core.ValidateLoadedApply(document, request)
 				if !validation.Valid() {
 					t.Fatalf("generic validation: %+v", validation)
 				}
 				_, issues, err := port.compile(state, document, uuid.NewString(), operations)
-				if err != nil || len(issues) != 1 || !strings.Contains(issues[0].Message, "does not match the block handle") {
+				if err != nil || len(issues) != 1 || issues[0].Operation != 1 || issues[0].Code != core.IssueInvalidOperation || !strings.Contains(issues[0].Message, "does not match the block handle") {
 					t.Fatalf("identity mismatch = issues:%+v error:%v", issues, err)
+				}
+				validation, err = service.Validate(t.Context(), request)
+				if err != nil || len(validation.Issues) != 1 || validation.Issues[0].Operation != 1 || validation.Issues[0].Code != core.IssueInvalidOperation {
+					t.Fatalf("Validate identity mismatch = %+v, %v", validation, err)
+				}
+				if _, err := validationToProto(validation); err != nil {
+					t.Fatalf("Validate rejection cannot be encoded: %v", err)
+				}
+				_, err = service.Apply(t.Context(), request)
+				var invalid *core.ValidationError
+				if !errors.As(err, &invalid) || len(invalid.Result.Issues) != 1 || invalid.Result.Issues[0].Operation != 1 {
+					t.Fatalf("Apply identity mismatch = %v", err)
+				}
+				response, err := transport.ApplyAIDocumentOperations(t.Context(), connect.NewRequest(&managev1.ApplyAIDocumentOperationsRequest{Mutation: formProtoMutationForTest(request)}))
+				if err != nil {
+					t.Fatalf("Connect rejection cannot be encoded: %v", err)
+				}
+				wireIssues := response.Msg.GetRejected().GetIssues()
+				if len(wireIssues) != 1 || wireIssues[0].OperationIndex != 1 || wireIssues[0].Code != managev1.AIDocumentIssueCode_AI_DOCUMENT_ISSUE_CODE_INVALID_OPERATION {
+					t.Fatalf("Connect rejection = %+v", response.Msg)
+				}
+				if api.mutation.SetSchema || api.mutation.SetTitle {
+					t.Fatal("invalid source identity reached domain mutation execution")
 				}
 			}
 			node := core.Node{ID: test.handle, Kind: test.kind, Shared: []core.FieldValue{{ID: formRawField, Value: core.Text(test.payload)}}}
@@ -390,6 +426,64 @@ func TestFormSourcePayloadIdentityMustMatchStableHandle(t *testing.T) {
 			}
 			if err := formdomain.ValidateAIDocumentAuthoringSchemas(mutation.Schema, nil); err != nil {
 				t.Fatalf("inserted schema invalid: %v", err)
+			}
+		})
+	}
+}
+
+func formProtoMutationForTest(request core.ApplyRequest) *managev1.AIDocumentMutation {
+	return &managev1.AIDocumentMutation{
+		ProtocolVersion: request.Protocol,
+		Document: &managev1.AIDocumentReference{
+			Domain: managev1.AIDocumentDomain_AI_DOCUMENT_DOMAIN_FORM, Reference: string(request.Document),
+		},
+		Locale:                   &managev1.AIDocumentLocale{Code: string(request.Locale)},
+		ExpectedDocumentRevision: string(request.ExpectedDocumentRevision),
+		Operations:               operationsToProto(request.Operations),
+	}
+}
+
+func TestFormFinalSchemaRejectionReturnsInvalidArgument(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		operation  core.Operation
+		wantReason string
+	}{
+		{"insert without source payload", core.InsertBlockOperation("form:step:step-new", formStepKind, formRootID, "form:step:step-a"), "source payload is required"},
+		{"field outside step", core.MoveBlockOperation("form:field:field-a", formRootID, "form:step:step-a"), "must belong to a step"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := formdomain.AIDocumentState{
+				FormID: uuid.NewString(), DocumentRevision: uuid.NewString(), SourceLocale: "en", Locale: "en",
+				LocaleExists: true, SourceSchema: []byte(formAuthoringSchemaForTest), ViewerMemberID: uuid.NewString(),
+			}
+			api := &exactFormDocumentAPI{state: state}
+			service, err := core.NewService(&formPort{service: api, catalog: formCatalog()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport, err := NewService(service)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := core.ApplyRequest{
+				Protocol: core.ProtocolVersion, Profile: core.DomainForm, Document: core.DocumentReference(state.FormID),
+				Locale: "en", ExpectedDocumentRevision: core.Revision(state.DocumentRevision), Operations: []core.Operation{test.operation},
+			}
+			validation, err := service.Validate(t.Context(), request)
+			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), test.wantReason) || len(validation.Issues) != 0 {
+				t.Fatalf("Validate final schema rejection = %+v, %v", validation, err)
+			}
+			_, err = service.Apply(t.Context(), request)
+			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), test.wantReason) {
+				t.Fatalf("Apply final schema rejection = %v", err)
+			}
+			_, err = transport.ApplyAIDocumentOperations(t.Context(), connect.NewRequest(&managev1.ApplyAIDocumentOperationsRequest{Mutation: formProtoMutationForTest(request)}))
+			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), test.wantReason) {
+				t.Fatalf("Connect final schema rejection = %v", err)
+			}
+			if api.mutation.SetSchema {
+				t.Fatal("invalid final schema reached domain mutation execution")
 			}
 		})
 	}
