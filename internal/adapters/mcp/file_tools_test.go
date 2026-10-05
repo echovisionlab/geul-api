@@ -245,7 +245,7 @@ func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 	}
 
 	remote, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t,
-		`{"a":"begin","k":"video","t":"remote_https","u":"https://example.com/video.mp4"}`))
+		`{"a":"begin","k":"video","t":"remote_https","u":"https://example.com/video.mp4","correlation_id":"`+uuid.NewString()+`"}`))
 	if err != nil {
 		t.Fatalf("file_transfer(remote begin) error = %v", err)
 	}
@@ -260,6 +260,82 @@ func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 	if runtime.deliveryRequest.GetFileId() != fileID || read.StructuredContent["i"] != fileID ||
 		strings.Contains(read.Content[0]["text"].(string), "sha256-must-not-leak") {
 		t.Fatalf("file_read result/request = %+v / %+v", read, runtime.deliveryRequest)
+	}
+}
+
+func TestFileToolsTrackAudioHandleRoundTripPreservesTargetAndCAS(t *testing.T) {
+	for _, current := range []string{"", uuid.NewString()} {
+		t.Run(current, func(t *testing.T) {
+			fileID, trackID, bundleID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			runtime := &recordingMCPFileRuntime{
+				initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
+				findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: fileStringPointer(fileID), UploadId: fileStringPointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, ClientMediaBundleId: &bundleID},
+				completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: fileTestDelivery(fileID)},
+			}
+			tools := mustFileTools(t, runtime)
+			arguments := `{"a":"begin","k":"track_audio","t":"browser_upload_page","track_id":"` + trackID + `","n":"track.wav","m":"audio/wav","s":1024`
+			if current != "" {
+				arguments += `,"expected_current_file_id":"` + current + `"`
+			}
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, arguments+`}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			handle := result.StructuredContent["x"].(map[string]any)["h"]
+			want := []any{"browser_upload_page", "track_audio", fileID, "track-upload", trackID, current}
+			if !reflect.DeepEqual(handle, want) || runtime.initiateRequest.GetEntityId() != trackID || runtime.initiateRequest.GetExpectedCurrentFileId() != current {
+				t.Fatalf("begin target/CAS = %+v, %+v", handle, runtime.initiateRequest)
+			}
+			encodedHandle, _ := json.Marshal(handle)
+			status, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"status","h":`+string(encodedHandle)+`}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			statusSession := status.StructuredContent["x"].(map[string]any)
+			if !reflect.DeepEqual(statusSession["h"], want) || runtime.findRequest.GetEntityId() != trackID || runtime.findRequest.GetExpectedCurrentFileId() != current || (runtime.findRequest.ExpectedCurrentFileId == nil) != (current == "") {
+				t.Fatalf("status lost target/CAS = %+v, %+v", statusSession, runtime.findRequest)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, `{"a":"complete","h":`+string(encodedHandle)+`,"client_media_bundle_id":"`+bundleID+`"}`))
+			if err != nil || runtime.completeRequest.GetFileId() != fileID || runtime.completeRequest.GetClientMediaBundleId() != bundleID {
+				t.Fatalf("completion bypassed native session: %+v, %v", runtime.completeRequest, err)
+			}
+		})
+	}
+}
+
+func TestFileToolsRemoteTrackAudioForwardsStableRetryIdentity(t *testing.T) {
+	fileID, trackID, current, correlationID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	runtime := &recordingMCPFileRuntime{downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: fileTestDelivery(fileID)}}
+	tools := mustFileTools(t, runtime)
+	arguments := fileToolArguments(t, `{"a":"begin","k":"track_audio","t":"remote_https","track_id":"`+trackID+`","expected_current_file_id":"`+current+`","correlation_id":"`+correlationID+`","u":"https://example.com/track.wav"}`)
+	for attempt := 0; attempt < 2; attempt++ {
+		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, arguments)
+		if err != nil || result.IsError || runtime.downloadRequest.GetEntityId() != trackID || runtime.downloadRequest.GetExpectedCurrentFileId() != current || runtime.downloadRequest.GetCorrelationId() != correlationID || runtime.downloadRequest.GetEntityType() != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
+			t.Fatalf("remote retry target/identity = %+v, %+v, %v", runtime.downloadRequest, result, err)
+		}
+	}
+}
+
+func TestFileToolsRejectInvalidTrackAudioTargetsBeforeNativeCall(t *testing.T) {
+	fileID, trackID := uuid.NewString(), uuid.NewString()
+	for _, arguments := range []string{
+		`{"a":"begin","k":"track_audio","t":"presigned_multipart","n":"track.wav","m":"audio/wav","s":1024}`,
+		`{"a":"begin","k":"audio","t":"presigned_multipart","track_id":"` + trackID + `","n":"track.wav","m":"audio/wav","s":1024}`,
+		`{"a":"begin","k":"track_audio","t":"presigned_multipart","track_id":"` + trackID + `","expected_current_file_id":"","n":"track.wav","m":"audio/wav","s":1024}`,
+		`{"a":"begin","k":"track_audio","t":"presigned_multipart","track_id":"` + trackID + `","expected_current_file_id":null,"n":"track.wav","m":"audio/wav","s":1024}`,
+		`{"a":"begin","k":"track_audio","t":"remote_https","track_id":"` + trackID + `","u":"https://example.com/track.wav"}`,
+		`{"a":"begin","k":"audio","t":"remote_https","correlation_id":"bad","u":"https://example.com/track.wav"}`,
+		`{"a":"status","h":["presigned_multipart","track_audio","` + fileID + `","upload"]}`,
+		`{"a":"status","h":["presigned_multipart","audio","` + fileID + `","upload","` + trackID + `",""]}`,
+		`{"a":"status","h":["presigned_multipart","track_audio","` + fileID + `","upload","` + trackID + `","bad"]}`,
+	} {
+		runtime := &recordingMCPFileRuntime{}
+		tools := mustFileTools(t, runtime)
+		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, arguments))
+		var executionErr *mcpserver.ToolExecutionError
+		if !errors.As(err, &executionErr) || runtime.initiateRequest != nil || runtime.findRequest != nil || runtime.downloadRequest != nil {
+			t.Fatalf("invalid target reached owner: %s / %+v / %v", arguments, result, err)
+		}
 	}
 }
 

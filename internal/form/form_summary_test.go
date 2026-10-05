@@ -10,12 +10,14 @@ import (
 
 func TestToProtoFormSummaryUsesSourceTitleOverride(t *testing.T) {
 	form := &model.Form{
-		ID:        "form-1",
-		Status:    model.FormStatus("FORM_STATUS_DRAFT"),
-		CreatedAt: time.Unix(1_700_000_000, 0).UTC(),
+		ID:           "form-1",
+		Status:       model.FormStatus("FORM_STATUS_DRAFT"),
+		CreatedAt:    time.Unix(1_700_000_000, 0).UTC(),
+		SourceLocale: "ko",
 	}
 
 	summary := toProtoFormSummaryWithSubmissionCount(form, "문의 폼", 3)
 	assert.Equal(t, "문의 폼", summary.Title)
+	assert.Equal(t, "ko", summary.SourceLocale)
 	assert.Equal(t, int32(3), summary.SubmissionCount)
 }

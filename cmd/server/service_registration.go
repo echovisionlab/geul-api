@@ -422,8 +422,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	artistService, internalArtistService := music.registerArtist()
 	labelService := music.registerLabel()
-	releaseService, internalReleaseService := music.registerRelease()
-	music.registerTaxonomy()
+	releaseService, internalReleaseService, trackService := music.registerRelease()
+	genreService, styleService, formatService := music.registerTaxonomy()
 
 	aiService := ai.NewService(metadataAIJobs)
 	aiPath, aiHandler := managev1connect.NewAIServiceHandler(aiService, handlerOpts...)
@@ -814,14 +814,24 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		programEventService,
 		releaseService,
 		artistService,
-		contentReferenceApplications{
-			categories: categoryService,
-			tags:       tagService,
-			clients:    clientService,
-			mapPlaces:  mapPlaceService,
-			members:    memberService,
-			artists:    artistService,
-			files:      fileService,
+		contentMCPApplications{
+			categories:  categoryService,
+			tags:        tagService,
+			clients:     clientService,
+			mapPlaces:   mapPlaceService,
+			members:     memberService,
+			artists:     artistService,
+			files:       fileService,
+			eventTypes:  programEventTypeService,
+			eventSeries: programEventSeriesService,
+			labels:      labelService,
+			genres:      genreService,
+			styles:      styleService,
+			formats:     formatService,
+			forms:       formService,
+			postSeries:  seriesService,
+			tracks:      trackService,
+			mapThemes:   mapThemeService,
 		},
 		translationService,
 		fileService,

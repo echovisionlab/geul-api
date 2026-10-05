@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -70,7 +70,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -104,7 +104,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "14", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "15", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -131,7 +131,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -157,7 +157,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -207,7 +207,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		files,
 		aiDocumentMCPConfig{
@@ -229,6 +229,23 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), `"name":"document_list"`)
 	require.Contains(t, response.Body.String(), `"name":"reference_search"`)
+	for _, tool := range []string{
+		"post_settings_get", "page_settings_get", "document_catalog",
+		"program_event_create", "program_event_settings_get", "program_event_settings_update",
+		"program_event_publish", "program_event_archive", "program_event_delete",
+		"program_event_type_list", "program_event_series_list", "label_list",
+		"member_admin_list", "member_admin_get",
+		"release_create", "release_settings_get", "release_settings_update", "release_publish", "release_unpublish", "release_delete",
+		"release_artwork_set", "release_artwork_remove", "release_slug_check",
+		"release_relations_get", "release_artists_set", "release_labels_set", "release_categories_set", "release_genres_set", "release_styles_set", "release_formats_set", "release_credits_set",
+		"track_list", "track_create", "track_settings_update", "track_delete", "track_credits_set", "track_reorder",
+		"map_place_get", "map_place_get_many", "map_place_list", "map_place_create", "map_place_settings_update", "map_place_delete",
+		"map_theme_list", "map_theme_resolve", "map_theme_get", "map_theme_create", "map_theme_copy", "map_theme_delete", "map_theme_set_default", "map_theme_settings_update",
+		"genre_list", "style_list", "format_list", "form_list", "post_series_list", "member_tag_list",
+		"program_event_media_list", "program_event_media_add", "program_event_media_remove", "program_event_media_reorder",
+	} {
+		require.Contains(t, response.Body.String(), `"name":"`+tool+`"`)
+	}
 	require.Contains(t, response.Body.String(), `"name":"file_list"`)
 	require.Contains(t, response.Body.String(), `"name":"document_featured_image_set"`)
 	require.Contains(t, response.Body.String(), `"name":"work_credit_add"`)
@@ -351,15 +368,69 @@ type compositionFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
 }
 
-func compositionReferenceApplications() contentReferenceApplications {
-	return contentReferenceApplications{
-		categories: &compositionCategoryReferences{},
-		tags:       &compositionTagReferences{},
-		clients:    &compositionClientReferences{},
-		mapPlaces:  &compositionMapPlaceReferences{},
-		members:    &compositionMemberReferences{},
-		artists:    &compositionArtistReferences{},
-		files:      &compositionFileReferences{},
+type compositionProgramEventTypeReferences struct {
+	managev1connect.UnimplementedProgramEventTypeServiceHandler
+}
+
+type compositionProgramEventSeriesReferences struct {
+	managev1connect.UnimplementedProgramEventSeriesServiceHandler
+}
+
+type compositionLabelReferences struct {
+	managev1connect.UnimplementedLabelServiceHandler
+}
+
+type compositionGenreReferences struct {
+	managev1connect.UnimplementedGenreServiceHandler
+}
+
+type compositionStyleReferences struct {
+	managev1connect.UnimplementedStyleServiceHandler
+}
+
+type compositionFormatReferences struct {
+	managev1connect.UnimplementedFormatServiceHandler
+}
+
+type compositionFormReferences struct {
+	managev1connect.UnimplementedFormServiceHandler
+}
+
+type compositionPostSeriesReferences struct {
+	managev1connect.UnimplementedSeriesServiceHandler
+}
+
+type compositionTrackReferences struct {
+	managev1connect.UnimplementedTrackServiceHandler
+}
+
+type compositionMapThemeReferences struct {
+	managev1connect.UnimplementedMapThemeServiceHandler
+}
+
+func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, string, int64, *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error) {
+	return nil, false, nil
+}
+
+func compositionContentApplications() contentMCPApplications {
+	return contentMCPApplications{
+		categories:  &compositionCategoryReferences{},
+		tags:        &compositionTagReferences{},
+		clients:     &compositionClientReferences{},
+		mapPlaces:   &compositionMapPlaceReferences{},
+		members:     &compositionMemberReferences{},
+		artists:     &compositionArtistReferences{},
+		files:       &compositionFileReferences{},
+		eventTypes:  &compositionProgramEventTypeReferences{},
+		eventSeries: &compositionProgramEventSeriesReferences{},
+		labels:      &compositionLabelReferences{},
+		genres:      &compositionGenreReferences{},
+		styles:      &compositionStyleReferences{},
+		formats:     &compositionFormatReferences{},
+		forms:       &compositionFormReferences{},
+		postSeries:  &compositionPostSeriesReferences{},
+		tracks:      &compositionTrackReferences{},
+		mapThemes:   &compositionMapThemeReferences{},
 	}
 }
 
@@ -577,7 +648,7 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &compositionProgramEventApplication{},
-		releases, artists, compositionReferenceApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
+		releases, artists, compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
 			authHeaderName:            compositionAuthHeaderName,

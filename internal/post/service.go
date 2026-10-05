@@ -697,7 +697,7 @@ func (s *PostService) PublishPost(
 	return connect.NewResponse(response), nil
 }
 
-// UnpublishPost unpublishes a post back to draft
+// UnpublishPost returns a published or archived post to draft.
 func (s *PostService) UnpublishPost(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishPostRequest],
@@ -715,8 +715,9 @@ func (s *PostService) UnpublishPost(
 		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
 			return err
 		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
-			return errs.FailedPrecondition("only published posts can be unpublished")
+		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) &&
+			post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+			return errs.FailedPrecondition("only published or archived posts can be unpublished")
 		}
 		now := time.Now()
 		previousStatus := post.Status

@@ -11,6 +11,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
@@ -261,15 +262,7 @@ func TestPageNestedRichTextUnsetDoesNotCreateMissingTarget(t *testing.T) {
 func TestPagePortProjectionSatisfiesCompactDocumentCatalog(t *testing.T) {
 	codec, err := NewPageCodec()
 	require.NoError(t, err)
-	port := &pagePort{codec: codec, catalog: func() core.Catalog {
-		catalog := codec.Catalog()
-		catalog.BlockKinds = append(catalog.BlockKinds, pageMetadataBlockKind)
-		catalog.Fields = append(catalog.Fields,
-			core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-			core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageSummaryField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-		)
-		return catalog
-	}()}
+	port := &pagePort{codec: codec, catalog: pageCatalog(codec)}
 	identity := core.DocumentIdentity{Domain: core.DomainPage, Reference: core.DocumentReference(uuid.NewString())}
 	sectionID := uuid.NewString()
 	document, err := port.project(identity, "en", pageStateForCodecTest(sectionID))
@@ -283,15 +276,7 @@ func TestPagePortProjectionSatisfiesCompactDocumentCatalog(t *testing.T) {
 func TestPagePortProjectionOmitsEmptyGeneratedObjectWrappers(t *testing.T) {
 	codec, err := NewPageCodec()
 	require.NoError(t, err)
-	port := &pagePort{codec: codec, catalog: func() core.Catalog {
-		catalog := codec.Catalog()
-		catalog.BlockKinds = append(catalog.BlockKinds, pageMetadataBlockKind)
-		catalog.Fields = append(catalog.Fields,
-			core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-			core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageSummaryField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
-		)
-		return catalog
-	}()}
+	port := &pagePort{codec: codec, catalog: pageCatalog(codec)}
 	immersiveUnitID := uuid.NewString()
 	tests := []struct {
 		name    string
@@ -337,6 +322,7 @@ func TestPagePortProjectionOmitsEmptyGeneratedObjectWrappers(t *testing.T) {
 			revision := uuid.New()
 			title := "Page"
 			state := pagedomain.AIDocumentState{
+				Page:     model.Page{DocumentLayout: model.DefaultDocumentLayout()},
 				Revision: revision.String(), SourceLocale: "en", Locale: "en", LocaleExists: true, Title: &title,
 				Snapshot: contentblock.Snapshot{Document: contentblock.Document{ID: uuid.New(), Revision: revision}},
 				Document: &contentv1.LocalizedPageDocument{
@@ -362,6 +348,7 @@ func pageStateForCodecTest(sectionID string) pagedomain.AIDocumentState {
 	title := "Page"
 	revision := uuid.New()
 	return pagedomain.AIDocumentState{
+		Page:     model.Page{DocumentLayout: model.DefaultDocumentLayout()},
 		Revision: revision.String(), SourceLocale: "en", Locale: "en", LocaleExists: true, Title: &title,
 		Snapshot: contentblock.Snapshot{Document: contentblock.Document{ID: uuid.New(), Revision: revision}},
 		Document: &contentv1.LocalizedPageDocument{

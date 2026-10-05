@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -149,6 +150,9 @@ func (s *MapPlaceService) ListMapPlacesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMapPlacesAdminRequest],
 ) (*connect.Response[managev1.ListMapPlacesAdminResponse], error) {
+	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
+		return nil, err
+	}
 	limit := 20
 	offset := 0
 	if req.Msg.Pagination != nil {

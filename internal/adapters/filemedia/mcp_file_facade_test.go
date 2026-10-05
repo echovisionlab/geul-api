@@ -151,7 +151,8 @@ func TestMCPFileBeginRemoteHTTPSDelegatesToVerifiedImport(t *testing.T) {
 	facade, _ := NewMCPFileFacade(runtime)
 	result, err := facade.Begin(context.Background(), MCPFileBeginInput{
 		Kind: MCPFileKindImage, Transport: MCPFileTransportRemoteHTTPS,
-		RemoteURL: "https://example.com/image.png?size=large",
+		RemoteURL:     "https://example.com/image.png?size=large",
+		CorrelationID: uuid.NewString(),
 	})
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
@@ -345,6 +346,93 @@ func TestMCPFileCompleteKeepsBundleOptionalAndPreservesMediaPrerequisite(t *test
 	handle.Kind = MCPFileKindAudio
 	if _, err := facade.Complete(t.Context(), handle); !errors.Is(err, prerequisiteError) {
 		t.Fatalf("media prerequisite error changed or bypassed: %v", err)
+	}
+}
+
+func TestMCPFileTrackAudioPreservesNativeTargetCASAndCompletion(t *testing.T) {
+	for _, transport := range []MCPFileTransport{MCPFileTransportBrowserUploadPage, MCPFileTransportPresignedMultipart} {
+		for _, current := range []string{"", uuid.NewString()} {
+			t.Run(string(transport)+"/"+current, func(t *testing.T) {
+				fileID, trackID, bundleID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+				var expected *string
+				if current != "" {
+					expected = &current
+				}
+				runtime := &fakeMCPFileRuntime{
+					initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
+					findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: pointer(fileID), UploadId: pointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, ClientMediaBundleId: &bundleID},
+					completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: minimalDelivery(fileID)},
+				}
+				facade, _ := NewMCPFileFacade(runtime)
+				begun, err := facade.Begin(t.Context(), MCPFileBeginInput{Kind: MCPFileKindTrackAudio, Transport: transport, TrackID: trackID, ExpectedCurrentFileID: expected, FileName: "track.wav", MIMEType: "audio/wav", FileSize: 1024})
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := runtime.initiateRequest
+				if request.GetUploadType() != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO || request.GetEntityId() != trackID || request.GetEntityType() != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK || !reflect.DeepEqual(request.ExpectedCurrentFileId, expected) {
+					t.Fatalf("Track initiation target/CAS = %+v", request)
+				}
+				status, err := facade.Status(t.Context(), begun.Session.Handle)
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidate := runtime.findRequest
+				if candidate.GetUploadType() != request.UploadType || candidate.GetEntityId() != trackID || candidate.GetEntityType() != request.GetEntityType() || !reflect.DeepEqual(candidate.ExpectedCurrentFileId, expected) || candidate.GetFileId() != fileID || candidate.GetUploadId() != "track-upload" {
+					t.Fatalf("Track candidate target/CAS = %+v", candidate)
+				}
+				if status.Session.Handle.TrackID != trackID || !reflect.DeepEqual(status.Session.Handle.ExpectedCurrentFileID, expected) || status.Session.Handle.ClientMediaBundleID != bundleID {
+					t.Fatalf("status lost target/CAS/bundle: %+v", status.Session.Handle)
+				}
+				if _, err := facade.Complete(t.Context(), status.Session.Handle); err != nil || runtime.completeRequest.GetClientMediaBundleId() != bundleID {
+					t.Fatalf("native completion = %+v, %v", runtime.completeRequest, err)
+				}
+				denied := connect.NewError(connect.CodePermissionDenied, errors.New("Track upload denied"))
+				runtime.initiateError = denied
+				if _, err := facade.Begin(t.Context(), MCPFileBeginInput{Kind: MCPFileKindTrackAudio, Transport: transport, TrackID: trackID, FileName: "track.wav", MIMEType: "audio/wav", FileSize: 1024}); !errors.Is(err, denied) {
+					t.Fatalf("native authority error changed: %v", err)
+				}
+				stale := connect.NewError(connect.CodeFailedPrecondition, errors.New("Track original audio changed before attachment"))
+				runtime.completeError = stale
+				if _, err := facade.Complete(t.Context(), status.Session.Handle); !errors.Is(err, stale) {
+					t.Fatalf("native attachment CAS error changed: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestMCPFileRemoteImportRequiresAndPreservesDurableCorrelation(t *testing.T) {
+	for _, kind := range []MCPFileKind{MCPFileKindGeneral, MCPFileKindImage, MCPFileKindVideo, MCPFileKindAudio, MCPFileKindAttachment, MCPFileKindMesh, MCPFileKindTrackAudio} {
+		t.Run(string(kind), func(t *testing.T) {
+			fileID := uuid.NewString()
+			runtime := &fakeMCPFileRuntime{downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: minimalDelivery(fileID)}}
+			facade, _ := NewMCPFileFacade(runtime)
+			input := MCPFileBeginInput{Kind: kind, Transport: MCPFileTransportRemoteHTTPS, RemoteURL: "https://example.com/audio.wav"}
+			if kind == MCPFileKindTrackAudio {
+				input.TrackID, input.ExpectedCurrentFileID = uuid.NewString(), pointer(uuid.NewString())
+			}
+			_, err := facade.Begin(t.Context(), input)
+			if kind == MCPFileKindGeneral {
+				if err != nil || runtime.downloadRequest.CorrelationId != nil {
+					t.Fatalf("general import changed: %+v, %v", runtime.downloadRequest, err)
+				}
+			} else if !errors.Is(err, ErrInvalidMCPFileInput) || runtime.downloadRequest != nil {
+				t.Fatalf("missing durable correlation called native owner: %+v, %v", runtime.downloadRequest, err)
+			}
+			input.CorrelationID = uuid.NewString()
+			for attempt := 0; attempt < 2; attempt++ {
+				if _, err := facade.Begin(t.Context(), input); err != nil {
+					t.Fatal(err)
+				}
+				request := runtime.downloadRequest
+				if request.GetCorrelationId() != input.CorrelationID || request.GetEntityId() != input.TrackID || !reflect.DeepEqual(request.ExpectedCurrentFileId, input.ExpectedCurrentFileID) {
+					t.Fatalf("retry changed import identity: %+v", request)
+				}
+				if kind == MCPFileKindTrackAudio && (request.UploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO || request.GetEntityType() != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK) {
+					t.Fatalf("remote Track target = %+v", request)
+				}
+			}
+		})
 	}
 }
 

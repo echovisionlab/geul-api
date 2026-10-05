@@ -5,6 +5,47 @@ const contentIDInputJSONSchema = `{
   "properties":{"document_id":` + documentReferenceJSONSchema + `}
 }`
 
+const managementDocumentLayoutJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["content_height","page_chrome","footer"],
+  "properties":{
+    "content_height":{"enum":["DOCUMENT_CONTENT_HEIGHT_CONTENT","DOCUMENT_CONTENT_HEIGHT_VIEWPORT"]},
+    "page_chrome":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]},
+    "footer":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]}
+  }
+}`
+
+const postSettingsOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,
+  "required":["document_type","document_id","title","source_locale","status","document_revision","configuration_revision","comments_enabled","document_layout","category_ids","tag_ids","allowed_actions"],
+  "properties":{
+    "document_type":{"const":"post"},"document_id":` + documentReferenceJSONSchema + `,
+    "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
+    "source_locale":{"type":"string"},"status":{"enum":["draft","scheduled","published","archived"]},
+    "document_revision":{"type":"string","description":"Exact source content revision returned by the owning Post service."},
+    "configuration_revision":{"type":"string","format":"uuid","description":"Copy unchanged to expected_configuration_revision for Post settings edits."},
+    "comments_enabled":{"type":"boolean"},"map_place_id":` + documentReferenceJSONSchema + `,
+    "document_layout":` + managementDocumentLayoutJSONSchema + `,
+    "category_ids":{"type":"array","items":` + documentReferenceJSONSchema + `},"tag_ids":{"type":"array","items":` + documentReferenceJSONSchema + `},
+    "series_id":` + documentReferenceJSONSchema + `,"series_order":{"type":"integer"},"featured_image_file_id":` + documentReferenceJSONSchema + `,
+    "allowed_actions":{"type":"array","items":{"enum":["edit","publish_now","schedule","cancel_schedule","unpublish","archive","republish","delete","add_author","remove_author","manage_collaborators","view_versions","restore_version","manage_share_links","moderate_comments"]}},
+    "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"},
+    "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
+  }
+}`
+
+const pageSettingsOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,
+  "required":["document_type","document_id","title","source_locale","status","document_revision","show_title","document_layout"],
+  "properties":{
+    "document_type":{"const":"page"},"document_id":` + documentReferenceJSONSchema + `,
+    "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
+    "source_locale":{"type":"string"},"status":{"enum":["draft","published"]},"document_revision":{"type":"string"},
+    "show_title":{"type":"boolean"},"document_layout":` + managementDocumentLayoutJSONSchema + `,
+    "featured_image_file_id":` + documentReferenceJSONSchema + `,
+    "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
+  }
+}`
+
 const postCreateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["title","source_locale"],
   "properties":{
@@ -22,10 +63,11 @@ const postSettingsUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id","expected_configuration_revision"],
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,
-    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from document_list or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
+    "expected_configuration_revision":{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","description":"Exact current Post settings revision from post_settings_get, document_list, or post_create. This is separate from document_revision; preserve it exactly and reload after a stale-write error."},
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "comments_enabled":{"type":"boolean"},
-    "map_place_id":{"type":"string","description":"Canonical Map Place UUID, or an empty string to remove the relation."}
+    "map_place_id":{"type":"string","description":"Canonical Map Place UUID, or an empty string to remove the relation."},
+    "document_layout":` + managementDocumentLayoutJSONSchema + `
   }
 }`
 
@@ -40,6 +82,7 @@ const postConfigurationMutationOutputJSONSchema = `{
     "source_locale":{"type":"string"},"status":{"type":"string"},
     "document_revision":{"type":"string","description":"Content document revision. Separate from the Post settings revision."},
     "configuration_revision":{"type":"string","format":"uuid","description":"Persisted Post settings revision to supply as expected_configuration_revision on the next settings update."},
+    "comments_enabled":{"type":"boolean"},"map_place_id":` + documentReferenceJSONSchema + `,"document_layout":` + managementDocumentLayoutJSONSchema + `,
     "updated_at":{"type":"string","format":"date-time"},
     "scheduled_at":{"type":"string","format":"date-time"},"scheduled_time_zone":{"type":"string"}
   }
@@ -136,7 +179,7 @@ const contentMutationOutputJSONSchema = `{
   "properties":{
     "document_type":{"enum":["post","work","page"]},
     "document_id":` + documentReferenceJSONSchema + `,
-    "changed":{"type":"boolean"},"deleted":{"type":"boolean"},
+    "changed":{"type":"boolean"},"deleted":{"type":"boolean"},"show_title":{"type":"boolean"},
     "title":{"type":"string"},"slug":{"type":"string"},
     "source_locale":{"type":"string"},"status":{"type":"string"},
     "document_revision":{"type":"string"},"updated_at":{"type":"string","format":"date-time"},

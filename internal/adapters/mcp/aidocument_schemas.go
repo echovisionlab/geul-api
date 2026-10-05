@@ -46,7 +46,7 @@ const documentMetadataUpdateInputJSONSchema = `{
   "additionalProperties":false,
   "required":["document_type","document_id","locale","expected_document_revision"],
   "properties":{
-    "document_type":{"enum":["post","work","page"]},
+    "document_type":{"enum":["post","work","page","program_event","release"]},
     "document_id":` + documentReferenceJSONSchema + `,
     "locale":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
     "expected_document_revision":{"type":"string","minLength":1,"maxLength":256},
@@ -55,7 +55,8 @@ const documentMetadataUpdateInputJSONSchema = `{
     "summary":{"type":"string"},
     "clear_summary":{"type":"boolean","default":false},
     "category_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
-    "tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `}
+    "tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
+    "document_layout":` + managementDocumentLayoutJSONSchema + `
   }
 }`
 

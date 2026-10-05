@@ -92,7 +92,55 @@ default) plus API cleanup time; Compose allows 140 seconds.
 values after a successful update. Their output schemas omit `changed`: the owning
 API does not report whether persistence changed, so an equal-value update must
 not be counted as a write. Clients should use the output schemas returned by
-`tools/list`; the MCP server implementation version is `14`.
+`tools/list`; the MCP server implementation version is `15`.
+
+Administrator document workflows include settings reads, typed content and
+metadata edits, publication, withdrawal, and existing version and File controls.
+`post_settings_get` returns the settings revision required by
+`post_settings_update`; `page_settings_get` returns the Page layout and display
+settings. Page layout edits use `document_metadata_update` with the current
+source-document revision. `post_unpublish` moves a published Post, or an archived
+Post managed by an administrator, directly to draft without republishing it.
+
+Program Event management reuses its owning create, settings, publish, archive,
+and delete APIs. Event types, series, and Labels have reference lists; existing
+document tools edit the event body, source title, and locale summary. Event
+archive retains the archived lifecycle rather than moving to draft.
+The media tools read, upsert, remove, and reorder its native role-specific media
+collection. Upserting an existing event/role/File edits its alt and caption;
+omitting either value clears it. An unchanged reorder is a no-op.
+
+Release tools cover settings, draft/publication, artwork, slug checks, and the
+seven native relation setters. Read `release_relations_get` first and pass the
+exact observed arrays back to the relevant setter. Setters return native
+`success`; a fresh relation read is a separate operation. Track tools cover
+creation, settings, credits, deletion, and complete release ordering. Track
+publication follows its Release. `genre_list`, `style_list`, and `format_list`
+resolve music references.
+
+`file_transfer` accepts `k=track_audio` and `track_id` to use the existing Track
+audio attachment authority. Copy the current `audio_original_file_id` from
+`track_list` into `expected_current_file_id`; omit it only when no audio exists.
+Keep the returned scoped handle through status and completion. Direct audio
+completion still requires browser-prepared media and its
+`client_media_bundle_id`. Remote media imports require a UUID `correlation_id`
+that remains unchanged across retries.
+
+Map Place tools cover administrator listing, single/batch reads, creation,
+settings, and deletion. Map Theme tools cover discovery, resolution, creation,
+copying, deletion, default selection, and full snapshot editing with its actual
+revision. Snapshot edits use the current request actor's fresh permission,
+revision check, and audit transaction. Neither Map domain has a publication
+lifecycle. `form_list` and `post_series_list` resolve Page block dependencies.
+
+`member_admin_list` and `member_admin_get` reuse the administrator Member APIs,
+including live authorization and personal-data access auditing. Their compact
+account projection excludes provider identifiers and authentication credentials.
+It includes the avatar asset ID; `member_tag_list` resolves its tag IDs without
+returning individual Member data.
+`document_catalog` reads an authorized document's supported kinds, typed fields,
+relations, and File ownership; domain defaults and constraints remain with the
+owning compiler.
 
 ## Integration tests
 

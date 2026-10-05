@@ -29,12 +29,19 @@ jobs:
             packages: ./internal/programevent ./internal/release ./internal/translation/application
           - suite: Work, ContentBlock, FilePolicy and Public Asset Cleanup
             packages: ./internal/work/integration ./internal/contentblock ./internal/filemedia ./internal/worker
+          - suite: Administrator Content, Member and Map workflows
+            packages: ./internal/post ./internal/page ./internal/member ./internal/maptheme ./internal/referencecatalog
     env:
       POSTGRES_IMAGE: registry.dsub.io/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a
       MINIO_IMAGE: geul-test-minio:local
-      FILEMEDIA_RUN: ^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$
+      FILEMEDIA_RUN: ^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration|TestRuntimeTrackAudioUploadAPIFlows|TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectIntegration|TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand|TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects)$
       EMAILAUTHORING_RUN: ^(TestEmailTemplateAIDocumentImplicitTargetWriteIntegration|TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackValidateIntegration|TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegration)$
       WORKER_RUN: ^(TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycle|TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration)$
+      POST_RUN: ^(TestArchivedPostUnpublishPreservesAdminAuthorityAndAuditAtomicityIntegration|TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration|TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration)$
+      PAGE_RUN: ^TestPageAIDocumentLayoutExactMutationIntegration$
+      MEMBER_RUN: ^TestMemberMCPAdminRead(Authorization|AuditFailure)Integration$
+      MAPTHEME_RUN: ^TestMapThemeAdminSnapshotUpdate(RevisionNoopAndAudit|DenialAndAuditRollback)Integration$
+      REFERENCECATALOG_RUN: ^TestListMapPlacesAdminChecksCurrentGlobalPermissionIntegration$
       PACKAGE_LIST: ${{ matrix.packages }}
     defaults:
       run:
@@ -70,6 +77,21 @@ jobs:
 
       - name: Download Go modules
         run: GOWORK=off go mod download
+
+      - name: Set up media Node runtime
+        if: contains(matrix.packages, './internal/filemedia')
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Build required media runtime assets
+        if: contains(matrix.packages, './internal/filemedia')
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.22.0
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          make media-build
 
       - name: Validate Harbor credentials
         env:
@@ -119,6 +141,16 @@ jobs:
               package_args+=(--run "$EMAILAUTHORING_RUN")
             elif [[ "$package_path" == "./internal/worker" ]]; then
               package_args+=(--run "$WORKER_RUN")
+            elif [[ "$package_path" == "./internal/post" ]]; then
+              package_args+=(--run "$POST_RUN")
+            elif [[ "$package_path" == "./internal/page" ]]; then
+              package_args+=(--run "$PAGE_RUN")
+            elif [[ "$package_path" == "./internal/member" ]]; then
+              package_args+=(--run "$MEMBER_RUN")
+            elif [[ "$package_path" == "./internal/maptheme" ]]; then
+              package_args+=(--run "$MAPTHEME_RUN")
+            elif [[ "$package_path" == "./internal/referencecatalog" ]]; then
+              package_args+=(--run "$REFERENCECATALOG_RUN")
             fi
             GOWORK=off go run -tags=integration ./scripts/test/integration \
               --schema-root ../geul-schema \

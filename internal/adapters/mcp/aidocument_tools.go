@@ -71,7 +71,8 @@ var documentTools = []mcpserver.Tool{
 	},
 	{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
-		Description: "Update locale-owned title or summary for a Post, Work, or Page, and source-owned category_ids or tag_ids for a Post. " +
+		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release has no summary field. " +
+			"For Program Event, clear_summary removes the source summary; use an empty summary string for an existing target locale's explicit empty value. " +
 			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
@@ -218,11 +219,12 @@ type blockDeleteArguments struct {
 
 type metadataUpdateArguments struct {
 	focusedMutationArguments
-	Title        *string   `json:"title,omitempty"`
-	Summary      *string   `json:"summary,omitempty"`
-	ClearSummary bool      `json:"clear_summary,omitempty"`
-	CategoryIDs  *[]string `json:"category_ids,omitempty"`
-	TagIDs       *[]string `json:"tag_ids,omitempty"`
+	Title          *string                  `json:"title,omitempty"`
+	Summary        *string                  `json:"summary,omitempty"`
+	ClearSummary   bool                     `json:"clear_summary,omitempty"`
+	CategoryIDs    *[]string                `json:"category_ids,omitempty"`
+	TagIDs         *[]string                `json:"tag_ids,omitempty"`
+	DocumentLayout *documentLayoutArguments `json:"document_layout,omitempty"`
 }
 
 func (tools *AIDocumentTools) open(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -339,14 +341,20 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcps
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	if err := rejectNullArguments(arguments, "title", "summary", "clear_summary", "category_ids", "tag_ids"); err != nil {
+	if err := rejectNullArguments(arguments, "title", "summary", "clear_summary", "category_ids", "tag_ids", "document_layout"); err != nil {
 		return executionError(err)
 	}
 	if input.Summary != nil && input.ClearSummary {
 		return executionError(errors.New("summary and clear_summary cannot be used together"))
 	}
+	if input.Profile == core.DomainRelease && (input.Summary != nil || input.ClearSummary) {
+		return executionError(errors.New("Release documents have no summary field"))
+	}
 	if input.Profile != core.DomainPost && (input.CategoryIDs != nil || input.TagIDs != nil) {
 		return executionError(errors.New("category_ids and tag_ids are supported only for Post documents"))
+	}
+	if input.DocumentLayout != nil && input.Profile != core.DomainPage {
+		return executionError(errors.New("document_layout here is supported only for Page documents; use post_settings_update for Post layout"))
 	}
 	operations := make([]core.Operation, 0, 4)
 	if input.Title != nil {
@@ -370,6 +378,16 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcps
 			return executionError(fmt.Errorf("tag_ids: %w", err))
 		}
 		operations = append(operations, core.SetFieldOperation("document", "tagIds", value))
+	}
+	if input.DocumentLayout != nil {
+		if _, err := input.DocumentLayout.proto(); err != nil {
+			return executionError(err)
+		}
+		operations = append(operations, core.SetFieldOperation("document", "documentLayout", core.Object(
+			core.ObjectValue("contentHeight", core.Text(input.DocumentLayout.ContentHeight)),
+			core.ObjectValue("pageChrome", core.Text(input.DocumentLayout.PageChrome)),
+			core.ObjectValue("footer", core.Text(input.DocumentLayout.Footer)),
+		)))
 	}
 	if len(operations) == 0 {
 		return executionError(errors.New("at least one metadata field is required"))
