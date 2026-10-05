@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/echovisionlab/geul-api/compare/v1.2.1...v1.3.0) (2026-10-05)
+
+
+### Features
+
+* stream upload sources for browser processing ([#69](https://github.com/echovisionlab/geul-api/issues/69)) ([793a59c](https://github.com/echovisionlab/geul-api/commit/793a59c0063e6efc8009912869d6d9357b822208))
+
 ## [1.2.1](https://github.com/echovisionlab/geul-api/compare/v1.2.0...v1.2.1) (2026-10-04)
 
 
