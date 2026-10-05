@@ -156,7 +156,9 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 }
 
 func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
-	stack := testutil.SetupSharedRuntimeStack(t)
+	stack := testutil.SetupRuntimeStack(t)
+	stack.BackendReadTimeoutSec = 1
+	stack.StartBackend(t)
 
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	staleManager := stack.CreateUser(t, policyv1.Role.Author().ID())
