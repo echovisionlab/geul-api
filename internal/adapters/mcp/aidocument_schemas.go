@@ -26,7 +26,7 @@ const documentListOutputJSONSchema = `{
       "required":["p","d","title","source_locale","status","updated_at"],
       "properties":{
         "p":{"enum":["post","work","page","program_event","release","artist"]},
-        "d":` + documentReferenceJSONSchema + `,
+        "d":` + uuidJSONSchema + `,
         "title":{"type":"string"},
         "slug":{"type":"string"},
         "source_locale":{"type":"string","minLength":1,"maxLength":35},
@@ -54,8 +54,8 @@ const documentMetadataUpdateInputJSONSchema = `{
     "title":{"type":"string"},
     "summary":{"type":"string"},
     "clear_summary":{"type":"boolean","default":false},
-    "category_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
-    "tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
+    "category_ids":{"type":"array","maxItems":256,"uniqueItems":true,"description":"IDs from reference_search with reference_type=category.","items":` + uuidJSONSchema + `},
+    "tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"description":"IDs from reference_search with reference_type=tag.","items":` + uuidJSONSchema + `},
     "document_layout":` + managementDocumentLayoutJSONSchema + `
   }
 }`
@@ -79,7 +79,7 @@ const openOutputJSONSchema = `{
     "v":{"const":"dcdp/1"},
     "p":` + domainJSONSchema + `,
     "c":{"type":"string","minLength":1,"maxLength":256},
-    "d":` + documentReferenceJSONSchema + `,
+    "d":` + uuidJSONSchema + `,
     "dr":{"type":"string","minLength":1,"maxLength":256},
     "tr":{"type":"string","minLength":1,"maxLength":256},
     "s":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
@@ -238,7 +238,7 @@ const projectionOutputJSONSchema = `{
     "v":{"const":"dcdp/1"},
     "p":` + domainJSONSchema + `,
     "c":{"type":"string"},
-    "d":` + documentReferenceJSONSchema + `,
+    "d":` + uuidJSONSchema + `,
     "dr":{"type":"string"},
     "tr":{"type":"string"},
     "s":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
@@ -316,7 +316,7 @@ const documentSyncOutputJSONSchema = `{
           "type":"object","additionalProperties":false,"required":["p","d","l","m"],
           "properties":{
             "p":` + domainJSONSchema + `,
-            "d":` + documentReferenceJSONSchema + `,
+            "d":` + uuidJSONSchema + `,
             "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
             "m":{"enum":["outline","blocks","fields"]},
             "b":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":160}},

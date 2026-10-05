@@ -43,9 +43,9 @@ const (
 )
 
 var contentManagementTools = []mcpserver.Tool{
-	contentToolWithOutput(ToolPostCreate, "Create Post", "Create a new draft Post with an empty typed document in the requested source locale.", postCreateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false),
+	oauthTool(ToolPostCreate, "Create Post", "Create a new draft Post with an empty typed document in the requested source locale.", postCreateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false, false),
 	oauthTool(ToolPostSettingsGet, "Get Post settings", "Read current source metadata, settings, publication state, and allowed actions through the authorized Post service. Copy configuration_revision unchanged to post_settings_update. Read the body with document_read.", contentIDInputJSONSchema, postSettingsOutputJSONSchema, true, false),
-	contentToolWithOutput(ToolPostSettingsUpdate, "Update Post settings", "Update Post slug, comment setting, Map Place relation, or document layout using the exact configuration_revision returned by post_settings_get, document_list, or post_create. Reload after a stale-revision error before applying pending edits. Use document_metadata_update for title, summary, categories, or tags.", postSettingsUpdateInputJSONSchema, postConfigurationMutationOutputJSONSchema, true),
+	oauthTool(ToolPostSettingsUpdate, "Update Post settings", "Update Post slug, comment setting, Map Place relation, or document layout using the exact configuration_revision returned by post_settings_get, document_list, or post_create. Reload after a stale-revision error before applying pending edits. Use document_metadata_update for title, summary, categories, or tags.", postSettingsUpdateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false, true),
 	contentTool(ToolPostPublish, "Publish Post", "Publish a draft or scheduled Post immediately using the existing Post lifecycle rules.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostUnpublish, "Unpublish Post", "Move a published Post, or an archived Post as a site Admin, directly back to draft.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostArchive, "Archive Post", "Archive a published Post. Site Admins may use post_unpublish to move an archived Post directly to draft.", contentIDInputJSONSchema, true),
@@ -68,15 +68,7 @@ var contentManagementTools = []mcpserver.Tool{
 }
 
 func contentTool(name, title, description, inputSchema string, destructive bool) mcpserver.Tool {
-	return contentToolWithOutput(name, title, description, inputSchema, contentMutationOutputJSONSchema, destructive)
-}
-
-func contentToolWithOutput(name, title, description, inputSchema, outputSchema string, destructive bool) mcpserver.Tool {
-	return mcpserver.Tool{
-		Name: name, Title: title, Description: description,
-		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(outputSchema),
-		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, destructive, false), Meta: oauthSecurityMeta(),
-	}
+	return oauthTool(name, title, description, inputSchema, contentMutationOutputJSONSchema, false, destructive)
 }
 
 type PostManagementApplication interface {

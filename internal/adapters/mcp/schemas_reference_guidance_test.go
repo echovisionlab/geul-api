@@ -25,7 +25,7 @@ func TestSchemasReferenceGuidanceKeepsDocumentDiscoveryOnDocumentSelectors(t *te
 						if strings.Contains(description, "document_list") {
 							require.Equal(t, "input", name, "%s advertises input discovery in output", path)
 							switch path {
-							case "$.properties.document_id", "$.properties.exclude_document_id", "$.properties.release_id":
+							case "$.properties.d", "$.properties.document_id", "$.properties.exclude_document_id", "$.properties.release_id":
 								documentSelectors++
 							case "$.properties.expected_configuration_revision":
 								// document_list legitimately includes the observed Post settings revision.
@@ -61,6 +61,7 @@ func TestSchemasReferenceGuidanceNamesOwningDiscoveryAndPreservesUUIDShape(t *te
 		{&MemberAdminTools{}, ToolMemberAdminGet, "member_id", "member_admin_list"},
 		{&ProgramEventManagementTools{}, ToolProgramEventCreate, "type_id", "program_event_type_list"},
 		{&MapThemeManagementTools{}, ToolMapThemeGet, "theme_id", "map_theme_list"},
+		{&ReferenceDiscoveryTools{}, ToolFileList, "folder_id", "item_type=folder"},
 	} {
 		t.Run(test.tool+"/"+test.field, func(t *testing.T) {
 			tools, err := test.provider.ListTools(t.Context(), mcpserver.Principal{})
@@ -82,11 +83,38 @@ func TestSchemasReferenceGuidanceNamesOwningDiscoveryAndPreservesUUIDShape(t *te
 	}
 }
 
+func TestSchemasReferenceGuidanceMetadataRelationsUseReferenceSearch(t *testing.T) {
+	tools, err := (&AIDocumentTools{}).ListTools(t.Context(), mcpserver.Principal{})
+	require.NoError(t, err)
+	var uuid map[string]any
+	require.NoError(t, json.Unmarshal([]byte(uuidJSONSchema), &uuid))
+	found := false
+	for _, tool := range tools {
+		if tool.Name != ToolMetadataUpdate {
+			continue
+		}
+		found = true
+		var schema map[string]any
+		require.NoError(t, json.Unmarshal(tool.InputSchema, &schema))
+		properties := schema["properties"].(map[string]any)
+		for field, kind := range map[string]string{"category_ids": "category", "tag_ids": "tag"} {
+			relation := properties[field].(map[string]any)
+			require.Contains(t, relation["description"], "reference_search with reference_type="+kind)
+			require.Equal(t, "array", relation["type"])
+			require.Equal(t, float64(256), relation["maxItems"])
+			require.Equal(t, true, relation["uniqueItems"])
+			require.Equal(t, uuid, relation["items"])
+		}
+	}
+	require.True(t, found)
+}
+
 func referenceGuidanceProviders() []ToolProvider {
 	return []ToolProvider{
 		&ProgramEventMediaTools{}, &ContentManagementTools{}, &ReleaseManagementTools{},
 		&MemberTagTools{}, &ReleaseRelationTools{}, &ProgramEventManagementTools{},
 		&MapPlaceManagementTools{}, &MemberAdminTools{}, &ContentRelatedTools{}, &MapThemeManagementTools{},
+		&ReferenceDiscoveryTools{}, &AIDocumentTools{}, &DocumentDiscoveryTools{},
 	}
 }
 

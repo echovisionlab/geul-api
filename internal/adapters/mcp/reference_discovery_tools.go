@@ -28,19 +28,19 @@ const referenceSearchOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["reference_type","items","count","has_more"],
   "properties":{
     "reference_type":{"enum":["category","tag","client","map_place","member","artist"]},"count":{"type":"integer"},"has_more":{"type":["boolean","null"],"description":"True when more matches exist; false when the result is complete. Null means the quick-search service cap was reached and completeness is unknown; refine the query."},
-    "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + documentReferenceJSONSchema + `,"name":{"type":"string"},"slug":{"type":"string"},"address":{"type":"string"},"status":{"type":"string"},"deleted":{"type":"boolean"}}}}
+    "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + uuidJSONSchema + `,"name":{"type":"string"},"slug":{"type":"string"},"address":{"type":"string"},"status":{"type":"string"},"deleted":{"type":"boolean"}}}}
   }
 }`
 
 const fileListInputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "properties":{"query":{"type":"string"},"folder_id":` + documentReferenceJSONSchema + `,"mime_type_prefix":{"type":"string"},"page_size":{"type":"integer","minimum":1,"maximum":100,"default":20},"page_token":{"type":"string"}}
+  "properties":{"query":{"type":"string"},"folder_id":{"description":"Folder UUID from a file_list item with item_type=folder.","allOf":[` + uuidJSONSchema + `]},"mime_type_prefix":{"type":"string"},"page_size":{"type":"integer","minimum":1,"maximum":100,"default":20},"page_token":{"type":"string"}}
 }`
 
 const fileListOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["items","total"],
   "properties":{
-    "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["item_type","id","name","created_at"],"properties":{"item_type":{"enum":["file","folder"]},"id":` + documentReferenceJSONSchema + `,"name":{"type":"string"},"mime_type":{"type":"string"},"file_size":{"type":"integer"},"folder_id":{"type":"string"},"usage_count":{"type":"integer"},"created_at":{"type":"string","format":"date-time"},"folder_path":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + documentReferenceJSONSchema + `,"name":{"type":"string"}}}}}}},
+    "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["item_type","id","name","created_at"],"properties":{"item_type":{"enum":["file","folder"]},"id":` + uuidJSONSchema + `,"name":{"type":"string"},"mime_type":{"type":"string"},"file_size":{"type":"integer"},"folder_id":{"type":"string"},"usage_count":{"type":"integer"},"created_at":{"type":"string","format":"date-time"},"folder_path":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name"],"properties":{"id":` + uuidJSONSchema + `,"name":{"type":"string"}}}}}}},
     "total":{"type":"integer"},"next_page_token":{"type":"string"}
   }
 }`
