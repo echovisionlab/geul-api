@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
@@ -324,4 +325,113 @@ func TestFormExactTargetMutationPassesTargetFenceAndMapsTargetConflict(t *testin
 
 func formDocumentForTest(state formdomain.AIDocumentState, nodes []core.Node) core.Document {
 	return core.Document{SourceLocale: core.Locale(state.SourceLocale), Locale: core.Locale(state.Locale), LocaleExists: state.LocaleExists, Catalog: formCatalog(), Nodes: nodes}
+}
+
+func TestFormSourcePayloadIdentityMustMatchStableHandle(t *testing.T) {
+	schema := `{"id":"schema","steps":[{"id":"step-a","title":"Contact","fields":[{"id":"field-a","key":"choice","type":"select","label":"Choice","options":[{"id":"option-a","value":"a","label":"A"}],"validation":{"validators":[{"id":"validator-a","predicate":"required","message":"Required"}]}}]}]}`
+	for _, test := range []struct {
+		handle  core.BlockID
+		kind    core.BlockKind
+		parent  core.BlockID
+		payload string
+	}{
+		{"form:step:step-a", formStepKind, formRootID, `{"id":"step-a"}`},
+		{"form:field:field-a", formFieldKind, "form:step:step-a", `{"id":"field-a","key":"choice","type":"select"}`},
+		{"form:option:option-a", formOptionKind, "form:field:field-a", `{"id":"option-a","value":"a"}`},
+		{"form:validator:validator-a", formValidatorKind, "form:field:field-a", `{"id":"validator-a","predicate":"required"}`},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			state := formdomain.AIDocumentState{FormID: uuid.NewString(), DocumentRevision: uuid.NewString(), SourceLocale: "en", Locale: "en", LocaleExists: true, SourceSchema: []byte(schema)}
+			port := &formPort{catalog: formCatalog()}
+			document, err := port.document(core.DocumentIdentity{Domain: core.DomainForm, Reference: core.DocumentReference(state.FormID)}, "en", state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mismatched := strings.Replace(test.payload, `"id":"`, `"id":"renamed-`, 1)
+			for _, operations := range [][]core.Operation{
+				{core.SetFieldOperation(test.handle, formRawField, core.Text(mismatched))},
+				{core.InsertBlockOperation(core.BlockID(string(test.handle)+"-new"), test.kind, test.parent, test.handle), core.SetFieldOperation(core.BlockID(string(test.handle)+"-new"), formRawField, core.Text(test.payload))},
+			} {
+				_, validation := core.ValidateLoadedApply(document, core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainForm, Document: document.Identity.Reference, Locale: "en", ExpectedDocumentRevision: document.DocumentRevision, Operations: operations})
+				if !validation.Valid() {
+					t.Fatalf("generic validation: %+v", validation)
+				}
+				_, issues, err := port.compile(state, document, uuid.NewString(), operations)
+				if err != nil || len(issues) != 1 || !strings.Contains(issues[0].Message, "does not match the block handle") {
+					t.Fatalf("identity mismatch = issues:%+v error:%v", issues, err)
+				}
+			}
+			node := core.Node{ID: test.handle, Kind: test.kind, Shared: []core.FieldValue{{ID: formRawField, Value: core.Text(test.payload)}}}
+			if _, err := formObjectFromNode(node); err != nil {
+				t.Fatalf("matching identity rejected: %v", err)
+			}
+			newHandle := core.BlockID(string(test.handle) + "-new")
+			var inserted map[string]any
+			if err := json.Unmarshal([]byte(test.payload), &inserted); err != nil {
+				t.Fatal(err)
+			}
+			inserted["id"] = formString(inserted, "id") + "-new"
+			if test.kind == formFieldKind {
+				inserted["key"] = "choice-new"
+			}
+			if test.kind == formOptionKind {
+				inserted["value"] = "new"
+			}
+			payload, err := json.Marshal(inserted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutation, issues, err := port.compile(state, document, uuid.NewString(), []core.Operation{
+				core.InsertBlockOperation(newHandle, test.kind, test.parent, test.handle),
+				core.SetFieldOperation(newHandle, formRawField, core.Text(string(payload))),
+			})
+			if err != nil || len(issues) != 0 {
+				t.Fatalf("matching insertion rejected: %+v %v", issues, err)
+			}
+			if err := formdomain.ValidateAIDocumentAuthoringSchemas(mutation.Schema, nil); err != nil {
+				t.Fatalf("inserted schema invalid: %v", err)
+			}
+		})
+	}
+}
+
+func TestFormTargetProjectionRebasesCopyAfterSourceStructureEdit(t *testing.T) {
+	source := []byte(`{"id":"schema","steps":[{"id":"step-a","title":"Contact","fields":[{"id":"field-new","key":"new","type":"text","label":"New"},{"id":"field-a","key":"email","type":"text","label":"Email","description":"Help","placeholder":"Source"}]}]}`)
+	target := []byte(`{"id":"schema","steps":[{"id":"step-a","title":"문의","fields":[{"id":"field-a","key":"email","type":"email","label":"","placeholder":"번역"},{"id":"field-old","key":"old","type":"text","label":"Removed"}]}]}`)
+	state := formdomain.AIDocumentState{FormID: uuid.NewString(), DocumentRevision: uuid.NewString(), SourceLocale: "en", Locale: "ko", LocaleExists: true, SourceSchema: source, LocaleSchema: target}
+	port := &formPort{catalog: formCatalog()}
+	document, err := port.document(core.DocumentIdentity{Domain: core.DomainForm, Reference: core.DocumentReference(state.FormID)}, "ko", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if formNode(document.Nodes, "form:field:field-old") != nil {
+		t.Fatal("removed source field survived in target projection")
+	}
+	newField := formNode(document.Nodes, "form:field:field-new")
+	if newField == nil || len(newField.Localized) != 0 || newField.Order != 0 {
+		t.Fatalf("new source field = %+v", newField)
+	}
+	field := formNode(document.Nodes, "form:field:field-a")
+	label, present := formField(field.Localized, formFieldLabelField)
+	if !present || label.Text != "" {
+		t.Fatalf("explicit empty label = (%+v, %v)", label, present)
+	}
+	placeholder, present := formField(field.Localized, formFieldPlaceholderField)
+	if !present || placeholder.Text != "번역" {
+		t.Fatalf("translated placeholder = (%+v, %v)", placeholder, present)
+	}
+	if _, present := formField(field.Localized, formFieldDescriptionField); present {
+		t.Fatal("missing target description source-fell-back")
+	}
+	mutation, issues, err := port.compile(state, document, uuid.NewString(), []core.Operation{core.SetFieldOperation(field.ID, formFieldLabelField, core.Text("Updated"))})
+	if err != nil || len(issues) != 0 || !mutation.SetSchema {
+		t.Fatalf("target update = %+v %+v %v", mutation, issues, err)
+	}
+	if err := formdomain.ValidateAIDocumentAuthoringSchemas(source, mutation.Schema); err != nil {
+		t.Fatalf("target update violated source ownership: %v", err)
+	}
+	deleted, issues, err := port.compile(state, document, uuid.NewString(), []core.Operation{core.DeleteTranslationOperation()})
+	if err != nil || len(issues) != 0 || !deleted.DeleteTranslation {
+		t.Fatalf("delete stale translation = %+v %+v %v", deleted, issues, err)
+	}
 }

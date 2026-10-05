@@ -3,6 +3,7 @@ package aidocumentadapter
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -79,6 +80,10 @@ func (c *RichTextCodec) Compile(
 }
 
 func (c *RichTextCodec) applyOperation(document *contentv1.LocalizedRichTextDocument, operation core.Operation, deleted map[string]struct{}) error {
+	switch operation.Kind {
+	case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock:
+		sortRichTextNodes(document.Base.Nodes)
+	}
 	switch operation.Kind {
 	case core.OperationSetField:
 		return c.setField(document, operation.SetField.Target, operation.SetField.Value)
@@ -157,6 +162,11 @@ func (c *RichTextCodec) setField(document *contentv1.LocalizedRichTextDocument, 
 		if err != nil {
 			return err
 		}
+		if target.Field == richTextTableLocaleField && len(target.Path) != 0 {
+			if err := ensureTableLocalePath(node.Block.GetTable().GetContent(), locale.GetTable(), target.Path); err != nil {
+				return err
+			}
+		}
 		_, message, err = c.localeBlockMessage(locale.ProtoReflect())
 		if err != nil {
 			return err
@@ -189,7 +199,7 @@ func (c *RichTextCodec) unsetField(document *contentv1.LocalizedRichTextDocument
 			return err
 		}
 	}
-	return clearRichTextField(message, c.blocks[kind], target)
+	return clearRichTextField(message, c.descriptor, c.blocks[kind], target)
 }
 
 func (c *RichTextCodec) setFile(document *contentv1.LocalizedRichTextDocument, target core.FieldTarget, file core.FileReference) error {
@@ -273,7 +283,6 @@ func placeProtoNodeAfter(nodes []*contentv1.RichTextBlockNode, blockID, after st
 	if moved == nil {
 		return
 	}
-	parent := moved.GetPlacement().GetParentBlockId()
 	result := make([]*contentv1.RichTextBlockNode, 0, len(nodes))
 	inserted := false
 	if after == "" {
@@ -291,13 +300,26 @@ func placeProtoNodeAfter(nodes []*contentv1.RichTextBlockNode, blockID, after st
 		result = append(result, moved)
 	}
 	copy(nodes, result)
+	reindexRichTextNodes(nodes)
+}
+
+func reindexRichTextNodes(nodes []*contentv1.RichTextBlockNode) {
 	orders := make(map[string]uint32)
 	for _, node := range nodes {
-		if node.GetPlacement().GetParentBlockId() == parent {
-			node.Placement.Index = orders[parent]
-			orders[parent]++
-		}
+		parent := node.GetPlacement().GetParentBlockId()
+		node.Placement.Index = orders[parent]
+		orders[parent]++
 	}
+}
+
+func sortRichTextNodes(nodes []*contentv1.RichTextBlockNode) {
+	sort.Slice(nodes, func(left, right int) bool {
+		a, b := nodes[left], nodes[right]
+		if a.GetPlacement().GetParentBlockId() != b.GetPlacement().GetParentBlockId() {
+			return a.GetPlacement().GetParentBlockId() < b.GetPlacement().GetParentBlockId()
+		}
+		return a.GetPlacement().GetIndex() < b.GetPlacement().GetIndex()
+	})
 }
 
 func removeBlockAndDescendants(document *contentv1.LocalizedRichTextDocument, root string, deleted map[string]struct{}) {
@@ -319,6 +341,7 @@ func removeBlockAndDescendants(document *contentv1.LocalizedRichTextDocument, ro
 		}
 	}
 	document.Base.Nodes = base
+	reindexRichTextNodes(base)
 	locale := document.LocaleOverlay.Blocks[:0]
 	for _, block := range document.LocaleOverlay.Blocks {
 		if _, remove := deleted[block.GetBlockId()]; !remove {

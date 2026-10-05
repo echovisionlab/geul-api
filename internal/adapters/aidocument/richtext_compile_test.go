@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -25,6 +27,68 @@ func TestRichTextCodecCompilesGeneratedInline(t *testing.T) {
 	}
 	if len(batch.Upserts) != 1 || len(batch.LocaleGroups) != 1 || len(batch.LocaleGroups[0].Upserts) != 1 {
 		t.Fatalf("compiled batch = %+v", batch)
+	}
+}
+
+func TestRichTextCodecReindexesDeletedAndMovedSiblingGroups(t *testing.T) {
+	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST)
+	require.NoError(t, err)
+	ids := []string{uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()}
+	document := localizedParagraphDocument(uuid.MustParse(ids[0]), "first")
+	for index := 1; index < len(ids); index++ {
+		kind := core.BlockKind("paragraph")
+		if index == 3 {
+			kind = "callout"
+		}
+		node, locale, err := codec.newBlock(kind, ids[index])
+		require.NoError(t, err)
+		node.Placement = &contentv1.ContentBlockPlacement{Index: uint32(index)}
+		document.Base.Nodes = append(document.Base.Nodes, node)
+		document.LocaleOverlay.Blocks = append(document.LocaleOverlay.Blocks, locale)
+	}
+	// Exercise placement order independently of the transport array order.
+	for left, right := 0, len(document.Base.Nodes)-1; left < right; left, right = left+1, right-1 {
+		document.Base.Nodes[left], document.Base.Nodes[right] = document.Base.Nodes[right], document.Base.Nodes[left]
+	}
+	for _, test := range []struct {
+		name       string
+		operations []core.Operation
+		roots      []string
+		children   []string
+	}{
+		{"delete first", []core.Operation{core.DeleteBlockOperation(core.BlockID(ids[0]))}, ids[1:], nil},
+		{"delete middle", []core.Operation{core.DeleteBlockOperation(core.BlockID(ids[1]))}, []string{ids[0], ids[2], ids[3]}, nil},
+		{"move first into callout", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[0]), core.BlockID(ids[3]), "")}, ids[1:], []string{ids[0]}},
+		{"move into and back out", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[0]), core.BlockID(ids[3]), ""), core.MoveBlockOperation(core.BlockID(ids[1]), core.BlockID(ids[3]), core.BlockID(ids[0])), core.MoveBlockOperation(core.BlockID(ids[0]), "", core.BlockID(ids[2]))}, []string{ids[2], ids[0], ids[3]}, []string{ids[1]}},
+		{"delete moved subtree", []core.Operation{core.MoveBlockOperation(core.BlockID(ids[0]), core.BlockID(ids[3]), ""), core.MoveBlockOperation(core.BlockID(ids[3]), "", core.BlockID(ids[1])), core.DeleteBlockOperation(core.BlockID(ids[3]))}, []string{ids[1], ids[2]}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := proto.Clone(document)
+			batch, issues, err := codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), test.operations)
+			require.NoError(t, err)
+			require.Empty(t, issues)
+			require.True(t, proto.Equal(before, document))
+			snapshot := contentblock.Snapshot{Document: contentblock.Document{ID: batch.DocumentID, Profile: "post", Revision: batch.ExpectedRevision}, SourceLocale: "en", Blocks: batch.Upserts, LocaleOverlays: []contentblock.LocaleOverlay{{Locale: "en", Blocks: batch.LocaleGroups[0].Upserts}}}
+			loaded, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "en")
+			require.NoError(t, err)
+			roots, children := make([]string, len(test.roots)), make([]string, len(test.children))
+			for _, node := range loaded.Base.Nodes {
+				if node.Placement.GetParentBlockId() == "" {
+					require.Less(t, int(node.Placement.Index), len(roots))
+					roots[node.Placement.Index] = node.Block.Id
+				} else {
+					require.Equal(t, ids[3], node.Placement.GetParentBlockId())
+					require.Less(t, int(node.Placement.Index), len(children))
+					children[node.Placement.Index] = node.Block.Id
+				}
+			}
+			require.Equal(t, test.roots, roots)
+			if len(test.children) == 0 {
+				require.Empty(t, children)
+			} else {
+				require.Equal(t, test.children, children)
+			}
+		})
 	}
 }
 

@@ -435,7 +435,7 @@ func (s *WorkService) CreateWork(
 	) error {
 		return s.createWorkWithDB(
 			ctx, tx, &work, title, req.Msg.Summary, req.Msg.Document,
-			req.Header().Get("Accept-Language"),
+			req.Msg.SourceLocale, req.Header().Get("Accept-Language"),
 			write,
 		)
 	})
@@ -518,6 +518,7 @@ func (s *WorkService) createWorkWithDB(
 	title string,
 	summary *string,
 	document *contentv1.RichTextDocument,
+	requestedLocale string,
 	acceptLanguage string,
 	write authzmutation.WriteRelationships,
 ) error {
@@ -530,7 +531,10 @@ func (s *WorkService) createWorkWithDB(
 		}
 	}
 	now := time.Now().UTC()
-	sourceLocale := resolveInitialSourceLocale(ctx, tx, s.kratosClient, acceptLanguage)
+	sourceLocale, err := resolveCreateSourceLocale(ctx, tx, s.kratosClient, requestedLocale, acceptLanguage)
+	if err != nil {
+		return err
+	}
 	work.SourceLocale = sourceLocale
 	if document != nil {
 		if document.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK {

@@ -104,7 +104,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "9", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "10", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -115,6 +115,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"not routine version changes",
 			"p=release",
 			"p=artist",
+			"Use work_settings_get before updating Work metadata or clients",
+			"observed_policy.audience_segment_ids",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
@@ -145,7 +147,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing.T) {
+func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *testing.T) {
 	port := &compositionDomainPort{}
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(port),
@@ -192,7 +194,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing
 	response = httptest.NewRecorder()
 	composition.mcpHandler.ServeHTTP(response, compositionMCPRequest("Bearer must-not-be-reverified"))
 	require.Equal(t, http.StatusUnauthorized, response.Code)
-	require.Equal(t, 2, port.loadCount(), "main MCP must not dispatch or repeat PAT/Member authentication")
+	require.Equal(t, 2, port.loadCount(), "main MCP must not dispatch or repeat credential/Member authentication")
 }
 
 func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedContext(t *testing.T) {

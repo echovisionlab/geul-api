@@ -309,7 +309,10 @@ func (s *PageService) CreatePage(
 			}
 		}
 		now := time.Now().UTC()
-		sourceLocale := resolveInitialSourceLocale(ctx, tx, nil, req.Header().Get("Accept-Language"))
+		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, nil, req.Msg.SourceLocale, req.Header().Get("Accept-Language"))
+		if err != nil {
+			return err
+		}
 		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile:      pageContentDocumentProfile,
 			SourceLocale: sourceLocale,

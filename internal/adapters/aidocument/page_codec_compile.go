@@ -76,7 +76,8 @@ func (c *PageCodec) Compile(
 				continue
 			}
 			for _, originalNode := range originalSection.GetSection().GetRichText().GetBlocks().GetNodes() {
-				if !pageRichTextBlockExists(currentSection, originalNode.GetBlock().GetId()) {
+				if !pageRichTextBlockExists(currentSection, originalNode.GetBlock().GetId()) &&
+					!pageDocumentRichTextBlockExists(working, originalNode.GetBlock().GetId()) {
 					mutation.BaseMutations = append(mutation.BaseMutations, pageRichTextBaseDelete(originalSection.GetSection().GetId(), originalNode.GetBlock().GetId()))
 				}
 			}
@@ -221,6 +222,15 @@ func pageRichTextBlockExists(section *contentv1.PageSectionNode, blockID string)
 	return false
 }
 
+func pageDocumentRichTextBlockExists(document *contentv1.LocalizedPageDocument, blockID string) bool {
+	for _, section := range document.GetBase().GetNodes() {
+		if pageRichTextBlockExists(section, blockID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *PageCodec) applyPageOperation(document *contentv1.LocalizedPageDocument, role core.LocaleRole, operation core.Operation, deleted map[string]struct{}) error {
 	if role != core.LocaleRoleSource {
 		switch operation.Kind {
@@ -241,6 +251,10 @@ func (c *PageCodec) applyPageOperation(document *contentv1.LocalizedPageDocument
 			}
 		}
 	}
+	switch operation.Kind {
+	case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock:
+		sortPageNodes(document.Base.Nodes)
+	}
 	targetBlock := pageOperationBlock(operation)
 	if operation.Kind == core.OperationInsertBlock && operation.InsertBlock.Kind == pageColumnBlockKind {
 		return insertPageColumn(document, operation.InsertBlock)
@@ -257,6 +271,12 @@ func (c *PageCodec) applyPageOperation(document *contentv1.LocalizedPageDocument
 	if targetBlock != "" {
 		if _, _, ok := findPageNode(document, string(targetBlock)); !ok {
 			if section, rich, ok := c.findRichTextContainer(document, targetBlock, operation); ok {
+				if operation.MoveBlock != nil {
+					destination, destinationLocale, found := c.findRichTextContainer(document, operation.MoveBlock.Parent, operation)
+					if found && destination != section {
+						return c.moveRichTextBetweenSections(document, section, rich, destination, destinationLocale, operation)
+					}
+				}
 				return c.applyRichTextOperation(document, section, rich, operation)
 			}
 		}
@@ -312,9 +332,14 @@ func (c *PageCodec) findRichTextContainer(document *contentv1.LocalizedPageDocum
 			continue
 		}
 		locale, _ := findPageLocaleSection(document, section.GetSection().GetId())
-		if target == core.BlockID(section.GetSection().GetId()) && operation.Kind == core.OperationInsertBlock {
-			if _, outerKind := c.baseCases[operation.InsertBlock.Kind]; !outerKind {
+		if target == core.BlockID(section.GetSection().GetId()) {
+			if operation.Kind == core.OperationMoveBlock {
 				return section, locale, true
+			}
+			if operation.Kind == core.OperationInsertBlock {
+				if _, outerKind := c.baseCases[operation.InsertBlock.Kind]; !outerKind {
+					return section, locale, true
+				}
 			}
 		}
 		for _, node := range section.GetSection().GetRichText().GetBlocks().GetNodes() {
@@ -357,12 +382,74 @@ func (c *PageCodec) applyRichTextOperation(document *contentv1.LocalizedPageDocu
 		copy.Parent = ""
 		inner.InsertBlock = &copy
 	}
+	if inner.MoveBlock != nil && inner.MoveBlock.Parent == core.BlockID(section.GetSection().GetId()) {
+		copy := *inner.MoveBlock
+		copy.Parent = ""
+		inner.MoveBlock = &copy
+	}
 	if err := c.rich.applyOperation(rich, inner, make(map[string]struct{})); err != nil {
 		return err
 	}
 	section.GetSection().GetRichText().Blocks = rich.Base
 	locale.GetRichText().Blocks = rich.LocaleOverlay
 	return nil
+}
+
+func (c *PageCodec) moveRichTextBetweenSections(
+	document *contentv1.LocalizedPageDocument,
+	source *contentv1.PageSectionNode,
+	sourceLocale *contentv1.PageSectionLocale,
+	destination *contentv1.PageSectionNode,
+	destinationLocale *contentv1.PageSectionLocale,
+	operation core.Operation,
+) error {
+	if destinationLocale == nil {
+		var err error
+		destinationLocale, err = c.newPageLocaleSection(destination.GetSection().GetId(), "rich-text")
+		if err != nil {
+			return err
+		}
+		document.LocaleOverlay.Sections = append(document.LocaleOverlay.Sections, destinationLocale)
+	}
+	sourceGraph := source.GetSection().GetRichText().GetBlocks()
+	sortRichTextNodes(sourceGraph.Nodes)
+	destinationRich := destination.GetSection().GetRichText()
+	if destinationRich.Blocks == nil {
+		destinationRich.Blocks = &contentv1.RichTextBlockGraph{}
+	}
+	moving := map[string]bool{string(operation.MoveBlock.Block): true}
+	for changed := true; changed; {
+		changed = false
+		for _, node := range sourceGraph.GetNodes() {
+			if moving[node.GetPlacement().GetParentBlockId()] && !moving[node.GetBlock().GetId()] {
+				moving[node.GetBlock().GetId()] = true
+				changed = true
+			}
+		}
+	}
+	remaining := sourceGraph.Nodes[:0]
+	for _, node := range sourceGraph.Nodes {
+		if moving[node.GetBlock().GetId()] {
+			destinationRich.Blocks.Nodes = append(destinationRich.Blocks.Nodes, node)
+		} else {
+			remaining = append(remaining, node)
+		}
+	}
+	sourceGraph.Nodes = remaining
+	reindexRichTextNodes(remaining)
+	if sourceLocale != nil {
+		overlay := sourceLocale.GetRichText().GetBlocks()
+		remainingLocales := overlay.Blocks[:0]
+		for _, block := range overlay.Blocks {
+			if moving[block.GetBlockId()] {
+				destinationLocale.GetRichText().Blocks.Blocks = append(destinationLocale.GetRichText().Blocks.Blocks, block)
+			} else {
+				remainingLocales = append(remainingLocales, block)
+			}
+		}
+		overlay.Blocks = remainingLocales
+	}
+	return c.applyRichTextOperation(document, destination, destinationLocale, operation)
 }
 
 func (c *PageCodec) setPageField(document *contentv1.LocalizedPageDocument, role core.LocaleRole, target core.FieldTarget, value core.Value) error {
@@ -591,6 +678,7 @@ func deletePageSection(document *contentv1.LocalizedPageDocument, sectionID stri
 		}
 	}
 	document.Base.Nodes = base
+	reindexPageNodes(base)
 	locale := document.LocaleOverlay.Sections[:0]
 	for _, section := range document.LocaleOverlay.Sections {
 		if _, remove := deleted[section.GetSectionId()]; !remove {
@@ -688,8 +776,11 @@ func insertPageColumn(document *contentv1.LocalizedPageDocument, operation *core
 		return errors.New("page column already exists")
 	}
 	_, parent, ok := findPageNode(document, string(operation.Parent))
-	if !ok || parent.GetSection().GetColumns() == nil || parent.GetSection().GetColumns().GetProps() == nil {
+	if !ok || parent.GetSection().GetColumns() == nil {
 		return errors.New("page-column parent must be a Columns section")
+	}
+	if parent.GetSection().GetColumns().Props == nil {
+		parent.GetSection().GetColumns().Props = &contentv1.ColumnsSectionProps{}
 	}
 	columns := parent.GetSection().GetColumns().GetProps().Columns
 	column := &contentv1.ColumnsSectionProps_ColumnsItem{Id: string(operation.Block), Ratio: 1}
@@ -823,10 +914,27 @@ func placePageNodeAfter(nodes []*contentv1.PageSectionNode, sectionID, after str
 		result = append(result, moved)
 	}
 	copy(nodes, result)
+	reindexPageNodes(nodes)
+}
+
+func reindexPageNodes(nodes []*contentv1.PageSectionNode) {
 	orders := make(map[string]uint32)
 	for _, node := range nodes {
 		key := node.GetPlacement().GetParentSectionId() + "\x00" + node.GetPlacement().GetColumnId()
 		node.Placement.Index = orders[key]
 		orders[key]++
 	}
+}
+
+func sortPageNodes(nodes []*contentv1.PageSectionNode) {
+	sort.Slice(nodes, func(left, right int) bool {
+		a, b := nodes[left].GetPlacement(), nodes[right].GetPlacement()
+		if a.GetParentSectionId() != b.GetParentSectionId() {
+			return a.GetParentSectionId() < b.GetParentSectionId()
+		}
+		if a.GetColumnId() != b.GetColumnId() {
+			return a.GetColumnId() < b.GetColumnId()
+		}
+		return a.GetIndex() < b.GetIndex()
+	})
 }

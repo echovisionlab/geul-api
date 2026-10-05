@@ -71,14 +71,22 @@ const documentFileDownloadPolicyGetInputJSONSchema = `{
 
 const documentFileDownloadPolicyUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","block_id","expected_file_id","audience"],
+  "required":["document_type","document_id","block_id","expected_file_id","audience","observed_policy"],
   "properties":{
     "document_type":` + fileBlockDocumentTypeJSONSchema + `,
     "document_id":` + documentReferenceJSONSchema + `,
     "block_id":` + fileBlockUUIDJSONSchema + `,
     "expected_file_id":` + fileBlockUUIDJSONSchema + `,
     "audience":{"enum":["disabled","public","authenticated","restricted"]},
-    "audience_segment_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + fileBlockUUIDJSONSchema + `}
+    "audience_segment_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + fileBlockUUIDJSONSchema + `},
+    "observed_policy":{
+      "type":"object","additionalProperties":false,"required":["audience","audience_segment_ids"],
+      "description":"Exact baseline from the prior policy get: copy audience and every audience_segments ID; do not substitute a fresh or empty baseline.",
+      "properties":{
+        "audience":{"enum":["disabled","public","authenticated","restricted"]},
+        "audience_segment_ids":{"type":"array","maxItems":20,"uniqueItems":true,"items":` + fileBlockUUIDJSONSchema + `}
+      }
+    }
   }
 }`
 

@@ -156,7 +156,7 @@ const mutationInputJSONSchema = `{
       {"type":"array","description":"Typed object value [\"o\",fields].","prefixItems":[{"const":"o"},{"type":"array","items":{"$ref":"#/$defs/objectField"}}],"items":false,"minItems":2,"maxItems":2}
     ]},
     "operation":{"description":"One compact typed mutation. Tuple positions are authoritative and must not be reordered or replaced with an object.","oneOf":[
-      {"type":"array","description":"Set field: [\"fs\",fieldTarget,typedValue]. For paragraph text, the field is normally content and the value is [\"t\",text].","prefixItems":[{"const":"fs"},{"$ref":"#/$defs/fieldTarget"},{"$ref":"#/$defs/value"}],"items":false,"minItems":3,"maxItems":3},
+      {"type":"array","description":"Set field: [\"fs\",fieldTarget,typedValue]. For paragraph text, the field is normally content and the value is [\"i\",[[\"t\",text]]].","prefixItems":[{"const":"fs"},{"$ref":"#/$defs/fieldTarget"},{"$ref":"#/$defs/value"}],"items":false,"minItems":3,"maxItems":3},
       {"type":"array","description":"Unset field: [\"fu\",fieldTarget].","prefixItems":[{"const":"fu"},{"$ref":"#/$defs/fieldTarget"}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","description":"Insert block: [\"bi\",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]. Use empty parent or after when document_read returns no such handle. Set the new block content with fs in the same batch.","prefixItems":[{"const":"bi"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"}],"items":false,"minItems":5,"maxItems":5},
       {"type":"array","description":"Delete block: [\"bd\",blockHandle].","prefixItems":[{"const":"bd"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":2,"maxItems":2},
@@ -257,7 +257,7 @@ const focusedMutationOutputJSONSchema = `{
     "block_id":{"type":"string","format":"uuid","description":"Canonical UUID assigned to the newly created Paragraph Block."},
     "c":{"type":"array","items":{"type":"array","prefixItems":[
       {"type":"integer","minimum":0},
-      {"enum":["fs","bi","bd"]},
+      {"enum":["fs","fu","bi","bd"]},
       {"type":"array","items":{"type":"string"}}
     ],"items":false,"minItems":3,"maxItems":3}}
   }

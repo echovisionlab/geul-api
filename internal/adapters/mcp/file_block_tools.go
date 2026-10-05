@@ -53,13 +53,15 @@ var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileDownloadPolicyGet, Title: "Read a File Block download policy",
 		Description: "Read the download audience owned by one exact File Block attachment. " +
-			"The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership.",
+			"The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership. " +
+			"For an update, copy the returned audience and every audience_segments ID into observed_policy; preserve that exact read baseline.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyGetInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
 	},
 	{
 		Name: ToolDocumentFileDownloadPolicyUpdate, Title: "Update a File Block download policy",
 		Description: "Set disabled, public, authenticated, or restricted download access on one exact File Block attachment. " +
+			"Pass observed_policy from the prior policy read so independent policy changes can be merged. " +
 			"expected_file_id is only a compare-and-set guard against replacing a different current File; it is not relation authority. Public access can expose the original File outside this site.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyUpdateInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, true), Meta: oauthSecurityMeta(),
@@ -150,9 +152,15 @@ type documentFilePolicyArguments struct {
 
 type documentFilePolicyUpdateArguments struct {
 	documentFilePolicyArguments
-	ExpectedFileID     string   `json:"expected_file_id"`
+	ExpectedFileID     string                               `json:"expected_file_id"`
+	Audience           string                               `json:"audience"`
+	AudienceSegmentIDs []string                             `json:"audience_segment_ids,omitempty"`
+	ObservedPolicy     *fileDownloadPolicyObservedArguments `json:"observed_policy"`
+}
+
+type fileDownloadPolicyObservedArguments struct {
 	Audience           string   `json:"audience"`
-	AudienceSegmentIDs []string `json:"audience_segment_ids,omitempty"`
+	AudienceSegmentIDs []string `json:"audience_segment_ids"`
 }
 
 type fileBlockSelectionError struct{ message string }
@@ -319,28 +327,28 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, arguments
 	if err != nil {
 		return executionError(err)
 	}
-	segmentIDs := make([]string, len(input.AudienceSegmentIDs))
-	if len(segmentIDs) > 20 {
-		return executionError(errors.New("audience_segment_ids cannot contain more than 20 values"))
+	segmentIDs, err := fileDownloadPolicySegmentIDs(input.AudienceSegmentIDs, audience, "audience_segment_ids")
+	if err != nil {
+		return executionError(err)
 	}
-	seen := make(map[string]struct{}, len(segmentIDs))
-	for index, raw := range input.AudienceSegmentIDs {
-		segmentIDs[index], err = canonicalFileBlockUUID(raw, fmt.Sprintf("audience_segment_ids[%d]", index))
-		if err != nil {
-			return executionError(err)
-		}
-		if _, duplicate := seen[segmentIDs[index]]; duplicate {
-			return executionError(fmt.Errorf("audience_segment_ids contains duplicate UUID %q", segmentIDs[index]))
-		}
-		seen[segmentIDs[index]] = struct{}{}
+	if input.ObservedPolicy == nil || input.ObservedPolicy.AudienceSegmentIDs == nil {
+		return executionError(errors.New("observed_policy with audience and audience_segment_ids is required"))
 	}
-	if audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED && len(segmentIDs) != 0 {
-		return executionError(errors.New("audience_segment_ids are allowed only for restricted audience"))
+	observedAudience, err := fileDownloadAudience(input.ObservedPolicy.Audience)
+	if err != nil {
+		return executionError(fmt.Errorf("observed_policy.audience: %w", err))
+	}
+	observedSegments, err := fileDownloadPolicySegmentIDs(input.ObservedPolicy.AudienceSegmentIDs, observedAudience, "observed_policy.audience_segment_ids")
+	if err != nil {
+		return executionError(err)
 	}
 	response, err := tools.files.UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 		EntityType: selector.EntityType, EntityId: selector.EntityId,
 		BlockId: selector.BlockId, ReferencePath: selector.ReferencePath,
 		ExpectedFileId: expectedFileID, Audience: audience, AudienceSegmentIds: segmentIDs,
+		ObservedPolicy: &managev1.FileDownloadPolicyObservedState{
+			Audience: observedAudience, AudienceSegmentIds: observedSegments,
+		},
 	}))
 	if err != nil {
 		return fileToolCallError(err)
@@ -349,6 +357,29 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, arguments
 		return mcpserver.ToolResult{}, errors.New("file policy service returned an empty response")
 	}
 	return fileBlockPolicyResult(response.Msg.Policy)
+}
+
+func fileDownloadPolicySegmentIDs(values []string, audience managev1.FileDownloadAudience, field string) ([]string, error) {
+	if len(values) > 20 {
+		return nil, fmt.Errorf("%s cannot contain more than 20 values", field)
+	}
+	if audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED && len(values) != 0 {
+		return nil, fmt.Errorf("%s are allowed only for restricted audience", field)
+	}
+	ids := make([]string, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for index, raw := range values {
+		id, err := canonicalFileBlockUUID(raw, fmt.Sprintf("%s[%d]", field, index))
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return nil, fmt.Errorf("%s contains duplicate UUID %q", field, id)
+		}
+		ids[index] = id
+		seen[id] = struct{}{}
+	}
+	return ids, nil
 }
 
 func fileBlockPolicySelector(input documentFilePolicyArguments) (*managev1.GetFileDownloadPolicyRequest, error) {

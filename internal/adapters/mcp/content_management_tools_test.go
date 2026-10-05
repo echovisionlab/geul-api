@@ -13,6 +13,7 @@ import (
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -25,7 +26,7 @@ func TestContentManagementToolDescriptors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != len(contentManagementTools) || len(listed) != 19 {
+	if len(listed) != len(contentManagementTools) || len(listed) != 20 {
 		t.Fatalf("listed %d content tools", len(listed))
 	}
 	for _, tool := range listed {
@@ -270,7 +271,24 @@ func (r *recordingPostManagement) SchedulePost(_ context.Context, req *connect.R
 
 type recordingWorkManagement struct {
 	managev1connect.UnimplementedWorkServiceHandler
-	create *connect.Request[managev1.CreateWorkRequest]
+	create      *connect.Request[managev1.CreateWorkRequest]
+	get         *connect.Request[managev1.GetWorkRequest]
+	getResponse *managev1.Work
+	getErr      error
+	update      *connect.Request[managev1.UpdateWorkRequest]
+}
+
+func (r *recordingWorkManagement) GetWork(_ context.Context, req *connect.Request[managev1.GetWorkRequest]) (*connect.Response[managev1.Work], error) {
+	r.get = req
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	return connect.NewResponse(r.getResponse), nil
+}
+
+func (r *recordingWorkManagement) UpdateWork(_ context.Context, req *connect.Request[managev1.UpdateWorkRequest]) (*connect.Response[managev1.UpdateWorkResponse], error) {
+	r.update = req
+	return connect.NewResponse(&managev1.UpdateWorkResponse{Id: req.Msg.Id, Changed: true, UpdatedAt: timestamppb.Now()}), nil
 }
 
 func (r *recordingWorkManagement) CreateWork(_ context.Context, req *connect.Request[managev1.CreateWorkRequest]) (*connect.Response[managev1.Work], error) {
@@ -286,4 +304,84 @@ type recordingPageManagement struct {
 func (r *recordingPageManagement) CreatePage(_ context.Context, req *connect.Request[managev1.CreatePageRequest]) (*connect.Response[managev1.Page], error) {
 	r.create = req
 	return connect.NewResponse(&managev1.Page{Id: managementPageID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "page-revision"}), nil
+}
+
+func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
+	metadata, err := structpb.NewStruct(map[string]any{"nested": map[string]any{"keep": "peer-compatible"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	works := &recordingWorkManagement{getResponse: &managev1.Work{
+		Id: managementWorkID, Type: managev1.WorkType_WORK_TYPE_PORTFOLIO,
+		Metadata: metadata, Clients: []*managev1.WorkClient{{Id: managementPostID}},
+		Year: 2026, Month: 10, IsPresent: true, Revision: "content-revision",
+	}}
+	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsGet, toolArguments(t, `{"document_id":"`+managementWorkID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if works.get.Msg.Id != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
+		t.Fatalf("settings read = %#v", read.StructuredContent)
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"document_id": managementWorkID, "metadata": map[string]any{}, "client_ids": []string{},
+		"observed_metadata": read.StructuredContent["metadata"], "observed_client_ids": read.StructuredContent["client_ids"],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsUpdate, toolArguments(t, string(encoded)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := works.update.Msg
+	if request.Metadata == nil || len(request.Metadata.Fields) != 0 || request.Clients == nil || len(request.Clients.ClientIds) != 0 {
+		t.Fatalf("empty desired values lost presence: %#v", request)
+	}
+	if !reflect.DeepEqual(request.ObservedMetadata.AsMap(), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(request.ObservedClients.ClientIds, []string{managementPostID}) {
+		t.Fatalf("observed baseline changed: %#v", request)
+	}
+}
+
+func TestWorkSettingsRejectsMissingBaselineAndPreservesReadAuthorityErrors(t *testing.T) {
+	works := &recordingWorkManagement{getErr: connect.NewError(connect.CodePermissionDenied, errors.New("permission denied"))}
+	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, payload := range []string{
+		`{"document_id":"` + managementWorkID + `","metadata":{}}`,
+		`{"document_id":"` + managementWorkID + `","client_ids":[]}`,
+	} {
+		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsUpdate, toolArguments(t, payload))
+		var executionErr *mcpserver.ToolExecutionError
+		if !errors.As(err, &executionErr) || works.update != nil {
+			t.Fatalf("missing baseline called domain service: %v", err)
+		}
+	}
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsGet, toolArguments(t, `{"document_id":"`+managementWorkID+`"}`))
+	var executionErr *mcpserver.ToolExecutionError
+	if !errors.As(err, &executionErr) || executionErr.Message != "permission denied" {
+		t.Fatalf("read authority error = %v", err)
+	}
+}
+
+func TestWorkSettingsSchemaConditionallyRequiresObservedValues(t *testing.T) {
+	var schema struct {
+		AllOf []map[string]any `json:"allOf"`
+	}
+	if err := json.Unmarshal([]byte(workSettingsUpdateInputJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]any{
+		{"if": map[string]any{"required": []any{"metadata"}}, "then": map[string]any{"required": []any{"observed_metadata"}}},
+		{"if": map[string]any{"required": []any{"client_ids"}}, "then": map[string]any{"required": []any{"observed_client_ids"}}},
+	}
+	if !reflect.DeepEqual(schema.AllOf, want) {
+		t.Fatalf("baseline schema = %#v", schema.AllOf)
+	}
 }

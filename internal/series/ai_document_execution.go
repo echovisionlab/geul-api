@@ -257,6 +257,19 @@ func (s *AIDocumentService) applyAIDocumentCommand(
 			})
 		}
 	}
+	// A later metadata assignment can restore the original value. Do not
+	// persist or report those intermediate assignments as an aggregate change.
+	changes := mutation.changes[:0]
+	for _, change := range mutation.changes {
+		operation := command.Operations[change.Operation]
+		if operation.SetField != nil &&
+			(operation.SetField.Target.Field == postSeriesAIFieldSlug && !mutation.slugChanged ||
+				operation.SetField.Target.Field == postSeriesAIFieldStatus && !mutation.statusChanged) {
+			continue
+		}
+		changes = append(changes, change)
+	}
+	mutation.changes = changes
 	if len(mutation.changes) == 0 {
 		return core.AcceptValidatedApply(command, core.ApplyResult{
 			DocumentRevision: state.documentRevision,

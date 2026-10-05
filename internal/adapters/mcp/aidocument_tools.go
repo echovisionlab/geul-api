@@ -200,13 +200,13 @@ type paragraphCreateArguments struct {
 	focusedMutationArguments
 	Parent core.BlockID `json:"parent_block_id,omitempty"`
 	After  core.BlockID `json:"after_block_id,omitempty"`
-	Text   string       `json:"text"`
+	Text   *string      `json:"text"`
 }
 
 type paragraphUpdateArguments struct {
 	focusedMutationArguments
 	Block core.BlockID `json:"block_id"`
-	Text  string       `json:"text"`
+	Text  *string      `json:"text"`
 }
 
 type blockDeleteArguments struct {
@@ -286,10 +286,13 @@ func (tools *AIDocumentTools) createParagraph(ctx context.Context, arguments mcp
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if input.Text == nil {
+		return executionError(errors.New("text is required and must be a string"))
+	}
 	block := core.BlockID(uuid.NewString())
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
 		core.InsertBlockOperation(block, "paragraph", input.Parent, input.After),
-		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(input.Text))),
+		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
 	if err != nil {
 		return executionError(err)
@@ -302,8 +305,11 @@ func (tools *AIDocumentTools) updateParagraph(ctx context.Context, arguments mcp
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if input.Text == nil {
+		return executionError(errors.New("text is required and must be a string"))
+	}
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
-		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(input.Text))),
+		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
 	if err != nil {
 		return executionError(err)

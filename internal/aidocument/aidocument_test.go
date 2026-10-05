@@ -554,6 +554,35 @@ func TestCompactDecodersResetReusedReceivers(t *testing.T) {
 	}
 }
 
+func TestCompactValueRejectsNullPayloadWithoutRejectingExplicitEmpty(t *testing.T) {
+	for _, wire := range []string{
+		`["t",null]`, `["b",null]`, `["n",null]`, `["i",null]`, `["l",null]`, `["o",null]`,
+		`["i",[["t",null]]]`, `["i",[["a",null,[["t","link"]]]]]`,
+		`["i",[["b",null]]]`, `["i",[["fg",null,[["t","color"]]]]]`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			var value Value
+			if err := json.Unmarshal([]byte(wire), &value); err == nil {
+				t.Fatalf("null payload decoded as %+v", value)
+			}
+		})
+	}
+	for _, wire := range []string{
+		`["t",""]`, `["b",false]`, `["i",[]]`, `["l",[]]`, `["o",[]]`, `["i",[["t",""]]]`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			var value Value
+			if err := json.Unmarshal([]byte(wire), &value); err != nil {
+				t.Fatalf("explicit empty payload rejected: %v", err)
+			}
+			encoded, err := json.Marshal(value)
+			if err != nil || string(encoded) != wire {
+				t.Fatalf("explicit empty changed: %s, %v", encoded, err)
+			}
+		})
+	}
+}
+
 func TestOpenReturnsDeterministicProtocolMetadata(t *testing.T) {
 	port := &fakePort{document: testDocument("en", false)}
 	service, err := NewService(port)
@@ -1057,7 +1086,7 @@ func TestServiceAppliesOnlyValidatedBatchAndPreservesPortErrors(t *testing.T) {
 	}
 }
 
-func TestServiceApplyCompletesDomainValidationErrorWithoutOverwritingOrMutatingIt(t *testing.T) {
+func TestServiceApplyPreservesCompletedDomainValidationError(t *testing.T) {
 	request := applyRequest("en", "rev-7", SetFieldOperation("paragraph-b", "content", Text("translated")))
 	domainError := &ValidationError{Result: ValidationResult{Issues: []OperationIssue{{
 		Operation: 0, Code: IssueInvalidOperation, Message: "domain constraint",

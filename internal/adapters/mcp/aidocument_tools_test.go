@@ -85,6 +85,7 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{
 		DocumentRevision: "revision-b", Changed: true,
+		Changes: []core.Change{{Operation: 1, Kind: core.OperationUnsetField, AffectedHandles: []string{"field:document/summary"}}},
 	}}
 	tools := mustAIDocumentTools(t, application)
 	categoryID := "11111111-1111-4111-8111-111111111111"
@@ -98,6 +99,33 @@ func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	}
 	if result.StructuredContent["dr"] != "revision-b" {
 		t.Fatalf("document_metadata_update result = %#v", result.StructuredContent)
+	}
+	var outputSchema struct {
+		Properties struct {
+			Changes struct {
+				Items struct {
+					PrefixItems []struct {
+						Enum []string `json:"enum"`
+					} `json:"prefixItems"`
+				} `json:"items"`
+			} `json:"c"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(focusedMutationOutputJSONSchema), &outputSchema); err != nil {
+		t.Fatal(err)
+	}
+	change := result.StructuredContent["c"].([]any)[0].([]any)
+	if change[1] != string(core.OperationUnsetField) {
+		t.Fatalf("clear summary change=%v", change)
+	}
+	allowed := false
+	for _, kind := range outputSchema.Properties.Changes.Items.PrefixItems[1].Enum {
+		if kind == change[1] {
+			allowed = true
+		}
+	}
+	if !allowed {
+		t.Fatalf("accepted clear summary kind %q excluded by output schema", change[1])
 	}
 	request := application.applyRequest
 	if request.Profile != core.DomainPost || request.Document != "44444444-4444-4444-8444-444444444444" || request.ExpectedDocumentRevision != "revision-a" {
@@ -262,6 +290,9 @@ func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 		}
 		if kind, ok := variant.PrefixItems[0]["const"].(string); ok {
 			want[kind] = true
+			if kind == "fs" && !strings.Contains(variant.Description, `["i",[["t",text]]]`) {
+				t.Fatalf("paragraph example must use the inline value kind: %s", variant.Description)
+			}
 		}
 		if kinds, ok := variant.PrefixItems[0]["enum"].([]any); ok {
 			for _, value := range kinds {
@@ -408,6 +439,44 @@ func TestFocusedDocumentToolsTranslatePlainParagraphActionsToTypedApply(t *testi
 			t.Fatalf("delete operations = %+v, want %+v", application.applyRequest.Operations, want)
 		}
 	})
+}
+
+func TestFocusedParagraphTextRequiresPresenceAndPreservesExplicitEmpty(t *testing.T) {
+	for _, tool := range []string{ToolParagraphCreate, ToolParagraphUpdate} {
+		for _, test := range []struct {
+			name  string
+			text  string
+			valid bool
+		}{
+			{"missing", "", false},
+			{"null", `,"text":null`, false},
+			{"explicit empty", `,"text":""`, true},
+		} {
+			t.Run(tool+"/"+test.name, func(t *testing.T) {
+				application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+				arguments := `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"`
+				if tool == ToolParagraphUpdate {
+					arguments += `,"block_id":"paragraph-a"`
+				}
+				arguments += test.text + `}`
+				_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, tool, toolArguments(t, arguments))
+				if !test.valid {
+					var execution *mcpserver.ToolExecutionError
+					if !errors.As(err, &execution) || application.applyCalls != 0 {
+						t.Fatalf("invalid required text reached Apply: calls=%d, err=%v", application.applyCalls, err)
+					}
+					return
+				}
+				if err != nil || application.applyCalls != 1 {
+					t.Fatalf("explicit empty text rejected: calls=%d, err=%v", application.applyCalls, err)
+				}
+				operation := application.applyRequest.Operations[len(application.applyRequest.Operations)-1]
+				if !reflect.DeepEqual(operation.SetField.Value, core.RichText(core.InlineText(""))) {
+					t.Fatalf("explicit empty replacement=%+v", operation.SetField.Value)
+				}
+			})
+		}
+	}
 }
 
 func TestAIDocumentToolsOpenAndRead(t *testing.T) {

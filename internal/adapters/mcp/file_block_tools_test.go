@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	fileauthority "github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -206,7 +207,8 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	manager.policy.AudienceSegments = []*managev1.AudienceSegmentSummary{{Id: fileBlockSegmentID, Name: "Members"}}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"]
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"],
+		"observed_policy":{"audience":"public","audience_segment_ids":[]}
 	}`))
 	if err != nil || result.IsError {
 		t.Fatalf("policy update = %+v, %v", result, err)
@@ -215,7 +217,9 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	if request.ExpectedFileId != fileBlockTestFileID || request.BlockId == nil || *request.BlockId != fileBlockTestBlockID ||
 		request.ReferencePath == nil || *request.ReferencePath != "file" ||
 		request.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED ||
-		!reflect.DeepEqual(request.AudienceSegmentIds, []string{fileBlockSegmentID}) {
+		!reflect.DeepEqual(request.AudienceSegmentIds, []string{fileBlockSegmentID}) ||
+		request.ObservedPolicy == nil || request.ObservedPolicy.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC ||
+		len(request.ObservedPolicy.AudienceSegmentIds) != 0 {
 		t.Fatalf("policy update request = %+v", request)
 	}
 	if result.StructuredContent["audience"] != "restricted" {
@@ -257,13 +261,75 @@ func TestDocumentFileDownloadPolicyReturnsRestrictedEmptyFailClosedState(t *test
 	}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
-		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted"
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted",
+		"observed_policy":{"audience":"restricted","audience_segment_ids":[]}
 	}`))
 	if err != nil || result.IsError {
 		t.Fatalf("restricted-empty policy update = %+v, %v", result, err)
 	}
 	if manager.updateRequest == nil || manager.updateRequest.Msg.Audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED || len(manager.updateRequest.Msg.AudienceSegmentIds) != 0 {
 		t.Fatalf("restricted-empty update request = %+v", manager.updateRequest)
+	}
+}
+
+func TestDocumentFileDownloadPolicyPreservesExactObservedBaseline(t *testing.T) {
+	manager := &recordingFileBlockManagement{policy: testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC)}
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
+	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
+		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
+		"observed_policy":{"audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &managev1.FileDownloadPolicyObservedState{
+		Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
+		AudienceSegmentIds: []string{fileBlockSegmentID},
+	}
+	if !reflect.DeepEqual(manager.updateRequest.Msg.ObservedPolicy, want) || manager.getRequest != nil {
+		t.Fatalf("observed baseline was replaced or reread: request=%+v get=%+v", manager.updateRequest.Msg, manager.getRequest)
+	}
+}
+
+func TestDocumentFileDownloadPolicyRejectsMissingOrInvalidObservedBaseline(t *testing.T) {
+	for _, baseline := range []string{
+		``,
+		`,"observed_policy":null`,
+		`,"observed_policy":{"audience":"disabled"}`,
+		`,"observed_policy":{"audience":"disabled","audience_segment_ids":null}`,
+		`,"observed_policy":{"audience":"unknown","audience_segment_ids":[]}`,
+		`,"observed_policy":{"audience":"public","audience_segment_ids":["` + fileBlockSegmentID + `"]}`,
+		`,"observed_policy":{"audience":"restricted","audience_segment_ids":["` + fileBlockSegmentID + `","` + fileBlockSegmentID + `"]}`,
+		`,"observed_policy":{"audience":"restricted","audience_segment_ids":["not-a-uuid"]}`,
+	} {
+		t.Run(baseline, func(t *testing.T) {
+			manager := &recordingFileBlockManagement{}
+			tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
+			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
+				"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
+				"expected_file_id":"`+fileBlockTestFileID+`","audience":"disabled"`+baseline+`
+			}`))
+			var executionErr *mcpserver.ToolExecutionError
+			if !errors.As(err, &executionErr) || manager.updateRequest != nil {
+				t.Fatalf("invalid baseline reached service: err=%v request=%+v", err, manager.updateRequest)
+			}
+		})
+	}
+}
+
+func TestDocumentFileDownloadPolicySatisfiesRealServiceInputContract(t *testing.T) {
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.FileService{})
+	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
+		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
+		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",
+		"observed_policy":{"audience":"disabled","audience_segment_ids":[]}
+	}`))
+	var executionErr *mcpserver.ToolExecutionError
+	// The actual service validates the policy input before checking its actor.
+	// Reaching authentication proves this request passed the required baseline contract.
+	if !errors.As(err, &executionErr) || !strings.Contains(executionErr.Message, "unauthenticated") {
+		t.Fatalf("real service did not reach actor validation: %v", err)
 	}
 }
 

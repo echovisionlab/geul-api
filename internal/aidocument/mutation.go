@@ -3,6 +3,7 @@ package aidocument
 import (
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // DocumentAfterOperations applies an already validated operation batch to an
@@ -348,6 +349,13 @@ func placeBlockAfter(nodes []Node, block, parent, after BlockID) {
 			siblings = append(siblings, &nodes[index])
 		}
 	}
+	// Earlier batch operations update Order without rearranging the node slice.
+	sort.Slice(siblings, func(a, b int) bool {
+		if siblings[a].Order != siblings[b].Order {
+			return siblings[a].Order < siblings[b].Order
+		}
+		return siblings[a].ID < siblings[b].ID
+	})
 	ordered := make([]BlockID, 0, len(siblings)+1)
 	inserted := false
 	if after == "" {
@@ -374,6 +382,16 @@ func placeBlockAfter(nodes []Node, block, parent, after BlockID) {
 }
 
 func renumberBlockOrders(nodes []Node) {
+	// Deletion must retain prior moves before closing gaps in sibling orders.
+	sort.Slice(nodes, func(a, b int) bool {
+		if nodes[a].Parent != nodes[b].Parent {
+			return nodes[a].Parent < nodes[b].Parent
+		}
+		if nodes[a].Order != nodes[b].Order {
+			return nodes[a].Order < nodes[b].Order
+		}
+		return nodes[a].ID < nodes[b].ID
+	})
 	parents := make(map[BlockID]int)
 	for index := range nodes {
 		nodes[index].Order = parents[nodes[index].Parent]
