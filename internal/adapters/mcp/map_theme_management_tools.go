@@ -36,14 +36,14 @@ type MapThemeManagement interface {
 }
 
 var mapThemeManagementTools = []mcpserver.Tool{
-	relatedTool(ToolMapThemeList, "List map themes", "List current map themes and the site default through the existing management reader.", mapThemeListInputJSONSchema, mapThemeListOutputJSONSchema, true, false),
-	relatedTool(ToolMapThemeResolve, "Resolve a map theme", "Resolve the requested theme or current site default, using light or dark scheme. A missing requested theme falls back to the default.", mapThemeResolveInputJSONSchema, mapThemeResolveOutputJSONSchema, true, false),
-	relatedTool(ToolMapThemeGet, "Get map theme settings", "Read a map theme's revision and complete editable snapshot. Requires existing administrator view permission.", mapThemeIDInputJSONSchema, mapThemeOutputJSONSchema, true, false),
-	relatedTool(ToolMapThemeCreate, "Create a map theme", "Create a theme from the complete snapshot shape. Requires existing administrator creation permission.", mapThemeSnapshotInputJSONSchema, mapThemeOutputJSONSchema, false, false),
-	relatedTool(ToolMapThemeDelete, "Delete a map theme", "Delete a theme through its existing administrator policy. Select another site default before deleting the current default.", mapThemeIDInputJSONSchema, mapThemeDeleteOutputJSONSchema, false, true),
-	relatedTool(ToolMapThemeCopy, "Copy a map theme", "Copy an existing theme under a new name through the administrator creation policy.", mapThemeCopyInputJSONSchema, mapThemeOutputJSONSchema, false, false),
-	relatedTool(ToolMapThemeSetDefault, "Set the default map theme", "Select the site's default theme through its existing administrator management policy.", mapThemeIDInputJSONSchema, mapThemeDefaultOutputJSONSchema, false, false),
-	relatedTool(ToolMapThemeSettingsUpdate, "Update map theme settings", "Replace the complete editable snapshot using the revision from map_theme_get. Requires current administrator edit permission; identical normalized values are a no-op. Reload after a revision conflict.", mapThemeUpdateInputJSONSchema, mapThemeUpdateOutputJSONSchema, false, false),
+	oauthTool(ToolMapThemeList, "List map themes", "List current map themes and the site default through the existing management reader.", mapThemeListInputJSONSchema, mapThemeListOutputJSONSchema, true, false),
+	oauthTool(ToolMapThemeResolve, "Resolve a map theme", "Resolve the requested theme or current site default, using light or dark scheme. A missing requested theme falls back to the default.", mapThemeResolveInputJSONSchema, mapThemeResolveOutputJSONSchema, true, false),
+	oauthTool(ToolMapThemeGet, "Get map theme settings", "Read a map theme's revision and complete editable snapshot. Requires existing administrator view permission.", mapThemeIDInputJSONSchema, mapThemeOutputJSONSchema, true, false),
+	oauthTool(ToolMapThemeCreate, "Create a map theme", "Create a theme from the complete snapshot shape. Requires existing administrator creation permission.", mapThemeSnapshotInputJSONSchema, mapThemeOutputJSONSchema, false, false),
+	oauthTool(ToolMapThemeDelete, "Delete a map theme", "Delete a theme through its existing administrator policy. Select another site default before deleting the current default.", mapThemeIDInputJSONSchema, mapThemeDeleteOutputJSONSchema, false, true),
+	oauthTool(ToolMapThemeCopy, "Copy a map theme", "Copy an existing theme under a new name through the administrator creation policy.", mapThemeCopyInputJSONSchema, mapThemeOutputJSONSchema, false, false),
+	oauthTool(ToolMapThemeSetDefault, "Set the default map theme", "Select the site's default theme through its existing administrator management policy.", mapThemeIDInputJSONSchema, mapThemeDefaultOutputJSONSchema, false, false),
+	oauthTool(ToolMapThemeSettingsUpdate, "Update map theme settings", "Replace the complete editable snapshot using the revision from map_theme_get. Requires current administrator edit permission; identical normalized values are a no-op. Reload after a revision conflict.", mapThemeUpdateInputJSONSchema, mapThemeUpdateOutputJSONSchema, false, false),
 }
 
 type MapThemeManagementTools struct{ service MapThemeManagement }

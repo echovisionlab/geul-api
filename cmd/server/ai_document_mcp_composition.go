@@ -26,6 +26,8 @@ const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=
 	"Use program_event_media_list before media edits. Adding the same event/role/file upserts alt/caption; omitted values clear them. Use member_admin_list/get for audited administrator information and member_tag_list for tag names. " +
 	"Use document_catalog to discover typed fields, block kinds, relations, and File ownership. Use document_metadata_update for title/summary, Release localized title, Post categories/tags, or Page source layout. Post settings/layout require configuration_revision. " +
 	"Use work_settings_get before updating Work metadata or clients; pass read values as observed_metadata or observed_client_ids. Use focused featured-image, participant, credit, version, slug, and File tools. " +
+	"Use file_upload for ChatGPT attachments, including independent File library uploads without a document. Retain correlation_id on retry; only the returned DSUB File UUID can be attached. file_list browses folders. Read deletion impacts before file_delete; accepted IDs mean deletion scheduled, and referenced Files are rejected. " +
+	"Use document_file_add/replace/remove for document images and attachments; native File Blocks render image MIME. Use document_file_caption_update for localized captions. Removing a Block preserves File bytes. Page placements need a rich-text parent. " +
 	"Use document_file_download_policy_get before updates; copy audience and segment IDs into observed_policy.audience and observed_policy.audience_segment_ids. expected_file_id guards the exact attachment. " +
 	"For Track audio use file_transfer k=track_audio with track_id and current audio_original_file_id as expected_current_file_id; omit only if absent. Preserve returned handles and browser media bundles. Remote imports retain the same correlation_id on retries. " +
 	"Use focused paragraph/block tools for ordinary text. Use document_apply for advanced typed batches. Use document_validate only for explicit dry runs. " +
@@ -151,6 +153,7 @@ func newAIDocumentMCPComposition(
 	files interface {
 		filemediaadapter.MCPFileRuntime
 		mcpadapter.FileBlockManagement
+		mcpadapter.FileManager
 	},
 	cfg aiDocumentMCPConfig,
 	fallbackPublisher aidocumentadapter.InteractiveMutationSignalPublisher,
@@ -291,11 +294,15 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP File Block tools: %w", err)
 	}
+	fileManagerTools, err := mcpadapter.NewFileManagerTools(files)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP File Manager tools: %w", err)
+	}
 	toolSet, err := mcpadapter.NewToolSet(
 		discoveryTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
 		managementTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
 		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools,
-		relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools,
+		relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
 	)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP tool set: %w", err)

@@ -19,8 +19,8 @@ const (
 )
 
 var memberAdminTools = []mcpserver.Tool{
-	relatedTool(ToolMemberAdminList, "List members as administrator", "Search members by nickname or email, including unonboarded, banned, pending-deletion, and deleted members. Requires current administrator permission and records personal-data access through the owning Member service.", memberAdminListInputJSONSchema, memberAdminListOutputJSONSchema, true, false),
-	relatedTool(ToolMemberAdminGet, "Get member as administrator", "Read a member profile, account status, global role, email verification, and administrative state. Requires current administrator permission and records personal-data access. Authentication credentials and provider identifiers are excluded.", memberAdminGetInputJSONSchema, memberAdminGetOutputJSONSchema, true, false),
+	oauthTool(ToolMemberAdminList, "List members as administrator", "Search members by nickname or email, including unonboarded, banned, pending-deletion, and deleted members. Requires current administrator permission and records personal-data access through the owning Member service.", memberAdminListInputJSONSchema, memberAdminListOutputJSONSchema, true, false),
+	oauthTool(ToolMemberAdminGet, "Get member as administrator", "Read a member profile, account status, global role, email verification, and administrative state. Requires current administrator permission and records personal-data access. Authentication credentials and provider identifiers are excluded.", memberAdminGetInputJSONSchema, memberAdminGetOutputJSONSchema, true, false),
 }
 
 // MemberAdminReader retains the owning service's authorization and access audit.

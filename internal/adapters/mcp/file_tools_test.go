@@ -15,13 +15,15 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type recordingMCPFileRuntime struct {
-	user *auth.UserInfo
+	importInput *filemediadomain.RemoteFileImportInput
+	user        *auth.UserInfo
 
 	initiateRequest *managev1.InitiateMultipartUploadRequest
 	initiateResult  *managev1.InitiateMultipartUploadResponse
@@ -42,6 +44,12 @@ type recordingMCPFileRuntime struct {
 	deliveryRequest *managev1.GetMediaDeliveryRequest
 	deliveryResult  *managev1.GetMediaDeliveryResponse
 	deliveryError   error
+}
+
+func (runtime *recordingMCPFileRuntime) ImportRemoteFile(ctx context.Context, input filemediadomain.RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error) {
+	runtime.capture(ctx)
+	runtime.importInput = &input
+	return runtime.downloadResult, runtime.downloadError
 }
 
 func (runtime *recordingMCPFileRuntime) capture(ctx context.Context) {
@@ -114,15 +122,16 @@ func TestFileToolsExposeCompactReferenceOnlySurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if got, want := tools.ToolNames(), []string{ToolFileTransfer, ToolFileRead}; !reflect.DeepEqual(got, want) {
+	if got, want := tools.ToolNames(), []string{ToolFileTransfer, ToolFileRead, ToolFileUpload}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ToolNames() = %v, want %v", got, want)
 	}
-	if len(listed) != 2 {
+	if len(listed) != 3 {
 		t.Fatalf("ListTools() returned %d tools", len(listed))
 	}
 	wantAnnotations := map[string]map[string]any{
 		ToolFileTransfer: toolAnnotations(false, false, true),
 		ToolFileRead:     toolAnnotations(true, false, false),
+		ToolFileUpload:   toolAnnotations(false, false, true),
 	}
 	for _, tool := range listed {
 		assertMCPToolOAuthSecurity(t, tool)
@@ -461,3 +470,50 @@ func fileTestDelivery(fileID string) *commonv1.MediaDelivery {
 }
 
 func fileStringPointer(value string) *string { return &value }
+
+func TestFileToolsUploadAttachmentDescriptorAndStrictMapping(t *testing.T) {
+	fileID, correlationID := uuid.NewString(), uuid.NewString()
+	runtime := &recordingMCPFileRuntime{downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: fileTestDelivery(fileID)}}
+	tools := mustFileTools(t, runtime)
+	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload := listed[2]
+	if upload.Name != ToolFileUpload || !reflect.DeepEqual(upload.Meta["openai/fileParams"], []string{"file"}) {
+		t.Fatalf("attachment descriptor = %+v", upload)
+	}
+	upload.Meta["openai/fileParams"].([]string)[0] = "changed"
+	again, err := tools.ListTools(t.Context(), mcpserver.Principal{})
+	if err != nil || !reflect.DeepEqual(again[2].Meta["openai/fileParams"], []string{"file"}) {
+		t.Fatal("shared attachment metadata was mutable")
+	}
+	input := `{"file":{"download_url":"https://attachments.example.com/download?signature=private","file_id":"file-opaque-chatgpt-id","file_name":"Original.mp4","mime_type":"image/png"},"kind":"video","correlation_id":"` + correlationID + `"}`
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileUpload, fileToolArguments(t, input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filemediadomain.RemoteFileImportInput{UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, SourceURL: "https://attachments.example.com/download?signature=private", FileName: "Original.mp4", CorrelationID: correlationID}
+	if runtime.importInput == nil || !reflect.DeepEqual(*runtime.importInput, want) || runtime.downloadRequest != nil {
+		t.Fatalf("native input = %+v", runtime.importInput)
+	}
+	if result.StructuredContent["i"] != fileID || result.StructuredContent["m"] != "video/mp4" || strings.Contains(result.Content[0]["text"].(string), "private") || strings.Contains(result.Content[0]["text"].(string), "opaque") {
+		t.Fatalf("verified attachment result = %+v", result)
+	}
+	for _, invalid := range []string{
+		`{"file":null,"kind":"general","correlation_id":"` + correlationID + `"}`,
+		`{"file":{"download_url":"https://example.com/file","file_id":"opaque","bytes":"x"},"kind":"general","correlation_id":"` + correlationID + `"}`,
+		`{"file":{"download_url":"https://example.com/file","file_id":"opaque"},"kind":"track_audio","correlation_id":"` + correlationID + `"}`,
+		`{"file":{"download_url":"http://example.com/file","file_id":"opaque"},"kind":"general","correlation_id":"` + correlationID + `"}`,
+		`{"file":{"download_url":"https://example.com/file"},"kind":"general","correlation_id":"` + correlationID + `"}`,
+		`{"file":{"download_url":"https://example.com/file","file_id":"opaque"},"kind":"general","correlation_id":"not-a-uuid"}`,
+		`{"file":{"download_url":"https://example.com/file","file_id":"opaque"},"kind":"general","correlation_id":"` + correlationID + `","post_id":"` + fileID + `"}`,
+	} {
+		runtime.importInput = nil
+		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileUpload, fileToolArguments(t, invalid))
+		var execution *mcpserver.ToolExecutionError
+		if !errors.As(err, &execution) || runtime.importInput != nil {
+			t.Fatalf("invalid input reached authority: %s / %v", invalid, err)
+		}
+	}
+}

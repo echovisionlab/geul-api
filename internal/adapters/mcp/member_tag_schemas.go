@@ -8,7 +8,7 @@ const memberTagListInputJSONSchema = `{
 const memberTagListOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["items","total","limit","offset","has_more"],
   "properties":{
-    "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name","member_count"],"properties":{"id":` + documentReferenceJSONSchema + `,"name":{"type":"string"},"member_count":{"type":"integer"}}}},
+    "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","name","member_count"],"properties":{"id":` + uuidJSONSchema + `,"name":{"type":"string"},"member_count":{"type":"integer"}}}},
     "total":{"type":"integer"},"limit":{"type":"integer"},"offset":{"type":"integer"},"has_more":{"type":"boolean"},"next_offset":{"type":"integer"}
   }
 }`

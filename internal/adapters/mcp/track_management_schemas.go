@@ -1,22 +1,21 @@
 package mcp
 
-const trackUUIDJSONSchema = `{"type":"string","format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}`
 const trackNullableUUIDJSONSchema = `{"type":["string","null"],"format":"uuid","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}`
 const trackInt32JSONSchema = `{"type":"integer","minimum":-2147483648,"maximum":2147483647}`
 
-const trackListInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["release_id"],"properties":{"release_id":` + trackUUIDJSONSchema + `}}`
-const trackIDInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["track_id"],"properties":{"track_id":` + trackUUIDJSONSchema + `}}`
+const trackListInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["release_id"],"properties":{"release_id":` + uuidJSONSchema + `}}`
+const trackIDInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["track_id"],"properties":{"track_id":` + uuidJSONSchema + `}}`
 
 const trackCreateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["release_id","title"],"properties":{
-    "release_id":` + trackUUIDJSONSchema + `,"title":{"type":"string","minLength":1},
+    "release_id":` + uuidJSONSchema + `,"title":{"type":"string","minLength":1},
     "duration_seconds":` + trackInt32JSONSchema + `,"lyrics":{"type":"string"}
   }
 }`
 
 const trackSettingsUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["track_id"],"properties":{
-    "track_id":` + trackUUIDJSONSchema + `,"track_number":` + trackInt32JSONSchema + `,
+    "track_id":` + uuidJSONSchema + `,"track_number":` + trackInt32JSONSchema + `,
     "title":{"type":"string","description":"Empty string preserves the current title."},
     "duration_seconds":` + trackInt32JSONSchema + `,"processing_status":{"type":"string"},"lyrics":{"type":"string"},
     "clear_duration":{"type":"boolean","description":"When true, removes duration even if duration_seconds is supplied."},
@@ -37,7 +36,7 @@ const trackCreditsSnapshotJSONSchema = `{"type":"object","additionalProperties":
 
 const trackCreditsSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["track_id","credits","observed"],"properties":{
-    "track_id":` + trackUUIDJSONSchema + `,
+    "track_id":` + uuidJSONSchema + `,
     "credits":{"type":"array","description":"Desired native credits. Keep existing IDs and omit IDs for new credits. At least one artist_id, member_id, or credited_name is required by the owning service.","items":` + trackCreditJSONSchema + `},
     "observed":` + trackCreditsSnapshotJSONSchema + `
   }
@@ -45,12 +44,12 @@ const trackCreditsSetInputJSONSchema = `{
 
 const trackReorderInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["track_ids"],"properties":{
-    "track_ids":{"type":"array","minItems":1,"uniqueItems":true,"description":"Every Track ID in exactly one Release, in desired order. The owning service validates complete Release membership.","items":` + trackUUIDJSONSchema + `}
+    "track_ids":{"type":"array","minItems":1,"uniqueItems":true,"description":"Every Track ID in exactly one Release, in desired order. The owning service validates complete Release membership.","items":` + uuidJSONSchema + `}
   }
 }`
 
 const trackSettingsPropertiesJSONSchema = `
-  "track_id":` + trackUUIDJSONSchema + `,"release_id":` + trackUUIDJSONSchema + `,
+  "track_id":` + uuidJSONSchema + `,"release_id":` + uuidJSONSchema + `,
   "track_number":` + trackInt32JSONSchema + `,"title":{"type":"string"},
   "duration_seconds":{"type":["integer","null"],"minimum":-2147483648,"maximum":2147483647},
   "processing_status":{"type":["string","null"]},"lyrics":{"type":["string","null"]},

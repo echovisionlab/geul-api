@@ -194,17 +194,17 @@ const mapThemeSnapshotInputJSONSchema = `{
 
 const mapThemeThemeJSONSchema = `{
  "type":"object","additionalProperties":false,"required":["id","revision","snapshot","created_at","updated_at"],
- "properties":{"id":` + documentReferenceJSONSchema + `,"revision":{"type":"integer","minimum":1},"snapshot":` + mapThemeSnapshotInputJSONSchema + `,"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}}
+ "properties":{"id":` + uuidJSONSchema + `,"revision":{"type":"integer","minimum":1},"snapshot":` + mapThemeSnapshotInputJSONSchema + `,"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}}
 }`
 
 const mapThemeListInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{}}`
-const mapThemeIDInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id"],"properties":{"theme_id":` + documentReferenceJSONSchema + `}}`
-const mapThemeCopyInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","name"],"properties":{"theme_id":` + documentReferenceJSONSchema + `,"name":{"type":"string","minLength":1,"maxLength":255}}}`
-const mapThemeResolveInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{"theme_id":` + documentReferenceJSONSchema + `,"scheme":{"enum":["light","dark"],"default":"light"}}}`
-const mapThemeUpdateInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","expected_revision","snapshot"],"properties":{"theme_id":` + documentReferenceJSONSchema + `,"expected_revision":{"type":"integer","minimum":1},"snapshot":` + mapThemeSnapshotInputJSONSchema + `}}`
+const mapThemeIDInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id"],"properties":{"theme_id":{"description":"Map Theme UUID from map_theme_list or map_theme_create.","allOf":[` + uuidJSONSchema + `]}}}`
+const mapThemeCopyInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","name"],"properties":{"theme_id":{"description":"Map Theme UUID from map_theme_list or map_theme_create.","allOf":[` + uuidJSONSchema + `]},"name":{"type":"string","minLength":1,"maxLength":255}}}`
+const mapThemeResolveInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{"theme_id":{"description":"Map Theme UUID from map_theme_list or map_theme_create.","allOf":[` + uuidJSONSchema + `]},"scheme":{"enum":["light","dark"],"default":"light"}}}`
+const mapThemeUpdateInputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","expected_revision","snapshot"],"properties":{"theme_id":{"description":"Map Theme UUID from map_theme_list or map_theme_create.","allOf":[` + uuidJSONSchema + `]},"expected_revision":{"type":"integer","minimum":1},"snapshot":` + mapThemeSnapshotInputJSONSchema + `}}`
 const mapThemeOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme"],"properties":{"theme":` + mapThemeThemeJSONSchema + `}}`
 const mapThemeUpdateOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme","changed"],"properties":{"theme":` + mapThemeThemeJSONSchema + `,"changed":{"type":"boolean"}}}`
-const mapThemeListOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["themes","default_map_theme_id"],"properties":{"themes":{"type":"array","items":` + mapThemeThemeJSONSchema + `},"default_map_theme_id":` + documentReferenceJSONSchema + `}}`
-const mapThemeResolveOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","scheme","settings","variant"],"properties":{"theme_id":` + documentReferenceJSONSchema + `,"scheme":{"enum":["light","dark"]},"settings":` + mapThemeSettingsJSONSchema + `,"variant":` + mapThemeVariantJSONSchema + `}}`
-const mapThemeDeleteOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","success"],"properties":{"theme_id":` + documentReferenceJSONSchema + `,"success":{"type":"boolean"}}}`
-const mapThemeDefaultOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["default_map_theme_id"],"properties":{"default_map_theme_id":` + documentReferenceJSONSchema + `}}`
+const mapThemeListOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["themes","default_map_theme_id"],"properties":{"themes":{"type":"array","items":` + mapThemeThemeJSONSchema + `},"default_map_theme_id":` + uuidJSONSchema + `}}`
+const mapThemeResolveOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","scheme","settings","variant"],"properties":{"theme_id":` + uuidJSONSchema + `,"scheme":{"enum":["light","dark"]},"settings":` + mapThemeSettingsJSONSchema + `,"variant":` + mapThemeVariantJSONSchema + `}}`
+const mapThemeDeleteOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["theme_id","success"],"properties":{"theme_id":` + uuidJSONSchema + `,"success":{"type":"boolean"}}}`
+const mapThemeDefaultOutputJSONSchema = `{"type":"object","additionalProperties":false,"required":["default_map_theme_id"],"properties":{"default_map_theme_id":` + uuidJSONSchema + `}}`

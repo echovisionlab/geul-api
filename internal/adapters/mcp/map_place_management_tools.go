@@ -21,12 +21,12 @@ const (
 )
 
 var mapPlaceManagementTools = []mcpserver.Tool{
-	relatedTool(ToolMapPlaceGet, "Get map place", "Read a map place's editable settings by canonical UUID. Use its id as map_place_id in content relations.", mapPlaceGetInputJSONSchema, mapPlaceGetOutputJSONSchema, true, false),
-	relatedTool(ToolMapPlaceGetMany, "Get map places", "Read up to 100 map places in the requested order. Missing IDs are omitted by the native service.", mapPlaceGetManyInputJSONSchema, mapPlaceGetManyOutputJSONSchema, true, false),
-	relatedTool(ToolMapPlaceList, "List map places", "List or search map places by name or address with current administrator permission. Continue with next_offset and the same query.", mapPlaceListInputJSONSchema, mapPlaceListOutputJSONSchema, true, false),
-	relatedTool(ToolMapPlaceCreate, "Create map place", "Create a place with name, address, and coordinates. Optional image_file_id binds a ready map image through the owning service. Requires current author permission.", mapPlaceCreateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
-	relatedTool(ToolMapPlaceSettingsUpdate, "Update map place settings", "Update supplied place fields with current edit permission; omitted fields stay unchanged. Coordinates may be zero. address_components replaces the supplied address components object, including an empty object. clear_image removes the image and takes precedence over image_file_id. Empty google_place_id clears the Google Places link.", mapPlaceSettingsUpdateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
-	relatedTool(ToolMapPlaceDelete, "Delete map place", "Delete a map place with current administrator permission. The owning service rejects places referenced by content and releases image bindings.", mapPlaceGetInputJSONSchema, mapPlaceDeleteOutputJSONSchema, false, true),
+	oauthTool(ToolMapPlaceGet, "Get map place", "Read a map place's editable settings by canonical UUID. Use its id as map_place_id in content relations.", mapPlaceGetInputJSONSchema, mapPlaceGetOutputJSONSchema, true, false),
+	oauthTool(ToolMapPlaceGetMany, "Get map places", "Read up to 100 map places in the requested order. Missing IDs are omitted by the native service.", mapPlaceGetManyInputJSONSchema, mapPlaceGetManyOutputJSONSchema, true, false),
+	oauthTool(ToolMapPlaceList, "List map places", "List or search map places by name or address with current administrator permission. Continue with next_offset and the same query.", mapPlaceListInputJSONSchema, mapPlaceListOutputJSONSchema, true, false),
+	oauthTool(ToolMapPlaceCreate, "Create map place", "Create a place with name, address, and coordinates. Optional image_file_id binds a ready map image through the owning service. Requires current author permission.", mapPlaceCreateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
+	oauthTool(ToolMapPlaceSettingsUpdate, "Update map place settings", "Update supplied place fields with current edit permission; omitted fields stay unchanged. Coordinates may be zero. address_components replaces the supplied address components object, including an empty object. clear_image removes the image and takes precedence over image_file_id. Empty google_place_id clears the Google Places link.", mapPlaceSettingsUpdateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
+	oauthTool(ToolMapPlaceDelete, "Delete map place", "Delete a map place with current administrator permission. The owning service rejects places referenced by content and releases image bindings.", mapPlaceGetInputJSONSchema, mapPlaceDeleteOutputJSONSchema, false, true),
 }
 
 // MapPlaceManagementApplication keeps authorization, image bindings, references,

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/google/uuid"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -25,6 +26,7 @@ var (
 // The facade deliberately delegates to these public boundaries instead of
 // creating MCP-specific upload state, storage, verification, or authorization.
 type MCPFileRuntime interface {
+	ImportRemoteFile(context.Context, filemediadomain.RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error)
 	InitiateMultipartUpload(
 		context.Context,
 		*connect.Request[managev1.InitiateMultipartUploadRequest],
@@ -104,6 +106,47 @@ type MCPFileBeginInput struct {
 	TrackID               string
 	ExpectedCurrentFileID *string
 	CorrelationID         string
+}
+
+// MCPFileUploadInput is the connector-resolved attachment descriptor. FileID
+// is opaque ChatGPT metadata, never a DSUB File UUID or an ingest authority.
+type MCPFileUploadInput struct {
+	DownloadURL string `json:"download_url"`
+	FileID      string `json:"file_id"`
+	MIMEType    string `json:"mime_type,omitempty"`
+	FileName    string `json:"file_name,omitempty"`
+}
+
+func (facade *MCPFileFacade) Upload(ctx context.Context, file MCPFileUploadInput, kind MCPFileKind, correlationID string) (MCPVerifiedFileHandle, error) {
+	if strings.TrimSpace(file.FileID) == "" {
+		return MCPVerifiedFileHandle{}, invalidMCPFileInput("file.file_id is required as an opaque ChatGPT attachment identifier")
+	}
+	if kind == MCPFileKindTrackAudio {
+		return MCPVerifiedFileHandle{}, invalidMCPFileInput("standalone attachment upload cannot attach Track audio; use file_transfer")
+	}
+	uploadType, err := mcpUploadType(kind)
+	if err != nil {
+		return MCPVerifiedFileHandle{}, err
+	}
+	correlationID, err = normalizeMCPFileUUID(correlationID, "correlation_id")
+	if err != nil {
+		return MCPVerifiedFileHandle{}, err
+	}
+	remoteURL, err := normalizeRemoteHTTPSURL(file.DownloadURL)
+	if err != nil {
+		return MCPVerifiedFileHandle{}, err
+	}
+	// MIMEType is intentionally not forwarded: FileService sniffs verified bytes.
+	response, err := facade.files.ImportRemoteFile(ctx, filemediadomain.RemoteFileImportInput{
+		UploadType: uploadType, SourceURL: remoteURL, FileName: file.FileName, CorrelationID: correlationID,
+	})
+	if err != nil {
+		return MCPVerifiedFileHandle{}, err
+	}
+	if response == nil || response.GetDelivery() == nil || response.GetFileId() == "" || response.GetDelivery().GetFileId() != response.GetFileId() {
+		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("attachment import did not return matching verified File delivery")
+	}
+	return mcpVerifiedFileFromDelivery(response.GetDelivery())
 }
 
 type MCPFileSessionHandle struct {

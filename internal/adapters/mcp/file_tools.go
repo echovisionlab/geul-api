@@ -17,6 +17,7 @@ import (
 const (
 	ToolFileTransfer = "file_transfer"
 	ToolFileRead     = "file_read"
+	ToolFileUpload   = "file_upload"
 )
 
 var fileTools = []mcpserver.Tool{
@@ -41,6 +42,19 @@ var fileTools = []mcpserver.Tool{
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
 	},
+	{
+		Name: ToolFileUpload, Title: "Upload a chat attachment",
+		Description: "Import one uploaded chat attachment as a standalone DSUB File. Pass the connector-resolved file descriptor and a stable correlation_id reused on retry. File bytes are streamed, verified, and processed by existing File authority. MIME is sniffed from bytes; no document or Track association is created. Use file_transfer for Track audio.",
+		InputSchema: json.RawMessage(fileUploadInputJSONSchema), OutputSchema: fileReadOutputSchema(),
+		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, true),
+		Meta: fileUploadMeta(),
+	},
+}
+
+func fileUploadMeta() map[string]any {
+	meta := oauthSecurityMeta()
+	meta["openai/fileParams"] = []string{"file"}
+	return meta
 }
 
 // FileTools exposes the File-owned MCP facade without reimplementing ingest,
@@ -75,9 +89,34 @@ func (tools *FileTools) CallTool(
 		return tools.transfer(ctx, arguments)
 	case ToolFileRead:
 		return tools.read(ctx, arguments)
+	case ToolFileUpload:
+		return tools.upload(ctx, arguments)
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
+}
+
+func (tools *FileTools) upload(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	var input struct {
+		File          filemedia.MCPFileUploadInput `json:"file"`
+		Kind          filemedia.MCPFileKind        `json:"kind"`
+		CorrelationID string                       `json:"correlation_id"`
+	}
+	if err := decodeArguments(arguments, &input); err != nil {
+		return executionError(err)
+	}
+	if err := rejectNullArguments(arguments, "file", "kind", "correlation_id"); err != nil {
+		return executionError(err)
+	}
+	file, err := tools.files.Upload(ctx, input.File, input.Kind, input.CorrelationID)
+	if err != nil {
+		return fileToolCallError(err)
+	}
+	encoded, err := json.Marshal(compactVerifiedFile(file))
+	if err != nil {
+		return mcpserver.ToolResult{}, err
+	}
+	return structuredResult(encoded, false)
 }
 
 type fileBeginArguments struct {

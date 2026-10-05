@@ -118,6 +118,30 @@ creation, settings, credits, deletion, and complete release ordering. Track
 publication follows its Release. `genre_list`, `style_list`, and `format_list`
 resolve music references.
 
+`file_upload` imports a ChatGPT attachment directly into the File library without
+a Post or Page association. Its top-level `file` field uses OpenAI's
+[`openai/fileParams` contract](https://developers.openai.com/plugins/reference#_meta-fields-on-tool-descriptor):
+`download_url`, opaque ChatGPT `file_id`, and optional `file_name`/`mime_type`.
+The server streams the download through the existing File authority, validates
+the actual bytes, and returns a DSUB File UUID. The ChatGPT file ID is never a
+DSUB File selector. Keep the same UUID `correlation_id` when retrying an upload.
+Use `kind=general` for library storage or a supported media kind for its existing
+processing flow. The signed source URL is not returned to the model.
+
+`file_list` browses and searches files and folders. File Manager tools rename and
+move files, create/rename/move/delete folders, and inspect file deletion impacts.
+`file_delete` returns native accepted and rejected IDs: acceptance schedules
+durable deletion; references prevent deletion. Folder deletion preserves the
+native all-or-nothing reference check.
+
+`document_file_add`, `document_file_replace`, and `document_file_remove` place
+and remove existing files in Post/Page bodies. Image MIME files render as images
+through the native File Block. Add can set its caption atomically;
+`document_file_caption_update` edits or clears the localized caption using the
+exact document revision. Replacement preserves the caption. Removing a Block
+keeps the reusable File in the library. Page placements require a rich-text
+parent Block. Attachment download policy remains a separate explicit action.
+
 `file_transfer` accepts `k=track_audio` and `track_id` to use the existing Track
 audio attachment authority. Copy the current `audio_original_file_id` from
 `track_list` into `expected_current_file_id`; omit it only when no audio exists.
@@ -166,6 +190,15 @@ The harness never pulls images or applies production schema automatically.
 Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact local inputs.
 Media delivery and processing run from this API checkout; imgproxy remains a
 preinstalled native-engine image.
+
+The editor integration workflow runs every test in its selected packages through
+the protected lease runner. It does not maintain individual test-name allowlists.
+The workflow checks out pinned schema, Identity, collaboration, Common, Contracts,
+and Telemetry sources and prepares the native media runtime before testing. Local
+runtime integration also needs those sibling sources, their frozen-lockfile
+Node dependencies, FFmpeg/FFprobe, and `cwebp` for client media fixtures.
+`--package` runs the entire package; `--run` is available for
+focused local investigation.
 
 ## License
 

@@ -7,14 +7,14 @@ const memberAdminListInputJSONSchema = `{
 
 const memberAdminGetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["member_id"],
-  "properties":{"member_id":` + documentReferenceJSONSchema + `}
+  "properties":{"member_id":{"description":"Member UUID from member_admin_list or reference_search with reference_type=member.","allOf":[` + uuidJSONSchema + `]}}
 }`
 
 const memberAdminOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["profile","account","tag_ids","onboarded","newsletter_subscription"],
   "properties":{
     "profile":{"type":"object","additionalProperties":false,"required":["id","nickname","deleted"],"properties":{
-      "id":` + documentReferenceJSONSchema + `,"nickname":{"type":"string"},"deleted":{"type":"boolean"},"avatar_asset_id":` + documentReferenceJSONSchema + `,
+      "id":` + uuidJSONSchema + `,"nickname":{"type":"string"},"deleted":{"type":"boolean"},"avatar_asset_id":` + uuidJSONSchema + `,
       "bio":{"type":"string"},"website":{"type":"string"},"social_links":{"type":"object","additionalProperties":{"type":"string"}},"preferred_locale":{"type":"string"},
       "created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
     }},
@@ -23,7 +23,7 @@ const memberAdminOutputJSONSchema = `{
       "role":{"enum":["unspecified","anon","user","author","admin"]},"status":{"enum":["unspecified","active","banned","pending_deletion","deleted"]},"banned":{"type":"boolean"},
       "ban_details":{"type":"object","additionalProperties":false,"required":["metadata_banned","identity_state","inactive_state"],"properties":{"metadata_banned":{"type":"boolean"},"identity_state":{"type":"string"},"inactive_state":{"type":"boolean"},"reason":{"type":"string"},"expires_at":{"type":"string","format":"date-time"}}}
     }},
-    "tag_ids":{"type":"array","items":` + documentReferenceJSONSchema + `},"onboarded":{"type":"boolean"},
+    "tag_ids":{"type":"array","items":` + uuidJSONSchema + `},"onboarded":{"type":"boolean"},
     "newsletter_subscription":{"type":"object","additionalProperties":false,"required":["subscribed"],"properties":{"subscribed":{"type":"boolean"},"subscribed_at":{"type":"string","format":"date-time"}}}
   }
 }`

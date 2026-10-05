@@ -26,14 +26,14 @@ const releaseRelationSetGuidance = "Supply the unchanged observed snapshot from 
 const releaseRelationOrderGuidance = "Use order_intent to move item_id before next_item_id, otherwise after previous_item_id, otherwise to the end. Array position and sort_order alone do not reorder existing entries."
 
 var releaseRelationTools = []mcpserver.Tool{
-	relatedTool(ToolReleaseRelationsGet, "Get Release relations", "Read the authorized canonical editable relation snapshots. Copy the corresponding array unchanged to observed_artists, observed_labels, observed_category_ids, observed_genre_ids, observed_style_ids, observed_formats, or observed_credits before editing. Stable credit IDs identify existing credits; omit id only when adding a new credit.", releaseRelationsGetInputJSONSchema, releaseRelationsOutputJSONSchema, true, false),
-	relatedTool(ToolReleaseArtistsSet, "Set Release artists", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseArtistsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	relatedTool(ToolReleaseLabelsSet, "Set Release labels", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseLabelsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	relatedTool(ToolReleaseCategoriesSet, "Set Release categories", releaseRelationSetGuidance, releaseCategoriesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	relatedTool(ToolReleaseGenresSet, "Set Release genres", releaseRelationSetGuidance, releaseGenresSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	relatedTool(ToolReleaseStylesSet, "Set Release styles", releaseRelationSetGuidance, releaseStylesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	relatedTool(ToolReleaseFormatsSet, "Set Release formats", releaseRelationSetGuidance, releaseFormatsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	relatedTool(ToolReleaseCreditsSet, "Set Release credits", releaseRelationSetGuidance+releaseRelationOrderGuidance+" Omit id or supply null only for a new credit; retain every existing credit's id and unchanged optional attributes in the desired array.", releaseCreditsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseRelationsGet, "Get Release relations", "Read the authorized canonical editable relation snapshots. Copy the corresponding array unchanged to observed_artists, observed_labels, observed_category_ids, observed_genre_ids, observed_style_ids, observed_formats, or observed_credits before editing. Stable credit IDs identify existing credits; omit id only when adding a new credit.", releaseRelationsGetInputJSONSchema, releaseRelationsOutputJSONSchema, true, false),
+	oauthTool(ToolReleaseArtistsSet, "Set Release artists", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseArtistsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseLabelsSet, "Set Release labels", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseLabelsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseCategoriesSet, "Set Release categories", releaseRelationSetGuidance, releaseCategoriesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseGenresSet, "Set Release genres", releaseRelationSetGuidance, releaseGenresSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseStylesSet, "Set Release styles", releaseRelationSetGuidance, releaseStylesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseFormatsSet, "Set Release formats", releaseRelationSetGuidance, releaseFormatsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
+	oauthTool(ToolReleaseCreditsSet, "Set Release credits", releaseRelationSetGuidance+releaseRelationOrderGuidance+" Omit id or supply null only for a new credit; retain every existing credit's id and unchanged optional attributes in the desired array.", releaseCreditsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
 }
 
 // ReleaseRelationApplication retains the native observed-merge and permission boundaries.

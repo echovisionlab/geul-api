@@ -13,7 +13,7 @@ import (
 const ToolMemberTagList = "member_tag_list"
 
 var memberTagTools = []mcpserver.Tool{
-	relatedTool(ToolMemberTagList, "List Member tags", "List or search administrator-only Member tag IDs, names, and member counts. Use returned IDs to interpret tag_ids from member_admin_get or member_admin_list. Continue with the same query and next_offset. Authorization remains in the owning Member service.", memberTagListInputJSONSchema, memberTagListOutputJSONSchema, true, false),
+	oauthTool(ToolMemberTagList, "List Member tags", "List or search administrator-only Member tag IDs, names, and member counts. Use returned IDs to interpret tag_ids from member_admin_get or member_admin_list. Continue with the same query and next_offset. Authorization remains in the owning Member service.", memberTagListInputJSONSchema, memberTagListOutputJSONSchema, true, false),
 }
 
 type MemberTagReader interface {

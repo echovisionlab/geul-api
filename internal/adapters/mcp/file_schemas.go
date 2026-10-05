@@ -7,6 +7,20 @@ func fileTransferOutputSchema() json.RawMessage { return json.RawMessage(fileTra
 func fileReadInputSchema() json.RawMessage      { return json.RawMessage(fileReadInputJSONSchema) }
 func fileReadOutputSchema() json.RawMessage     { return json.RawMessage(fileReadOutputJSONSchema) }
 
+const fileUploadInputJSONSchema = `{
+ "type":"object","additionalProperties":false,"required":["file","kind","correlation_id"],
+ "properties":{
+  "file":{"type":"object","additionalProperties":false,"required":["download_url","file_id"],"properties":{
+   "download_url":{"type":"string","format":"uri","pattern":"^https://","minLength":1,"maxLength":4096,"description":"Connector-resolved HTTPS download URL. Never echo or persist this signed source URL."},
+   "file_id":{"type":"string","minLength":1,"description":"Opaque ChatGPT attachment ID, not a DSUB File UUID."},
+   "file_name":{"type":"string","maxLength":512,"description":"Original filename hint; safe basename and verified MIME extension are retained."},
+   "mime_type":{"type":"string","maxLength":255,"description":"Untrusted attachment MIME hint; verified bytes determine stored MIME."}
+  }},
+  "kind":{"enum":["general","image","video","audio","attachment","mesh"],"description":"Standalone File ingest kind; Track associations use file_transfer."},
+  "correlation_id":{"type":"string","format":"uuid","description":"Stable UUID for this import, reused on retries by this Member. Use a new UUID for a different attachment."}
+ }
+}`
+
 const fileKindJSONSchema = `{"enum":["general","image","video","audio","attachment","mesh","track_audio"],"description":"File ingest kind. track_audio attaches original audio through existing Track authority and CAS; audio remains an independent editor File."}`
 const fileMultipartTransportJSONSchema = `{"enum":["browser_upload_page","presigned_multipart"],"description":"Byte transport through the existing authenticated browser upload flow; MCP carries metadata only."}`
 const fileSessionHandleJSONSchema = `{

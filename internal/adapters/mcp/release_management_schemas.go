@@ -33,13 +33,13 @@ const releaseSettingsOutputJSONSchema = `{
   "type":"object","additionalProperties":false,
   "required":["document_type","document_id","title","source_locale","type","status","document_revision","updated_at"],
   "properties":{
-    "document_type":{"const":"release"},"document_id":` + documentReferenceJSONSchema + `,"changed":{"type":"boolean"},
+    "document_type":{"const":"release"},"document_id":` + uuidJSONSchema + `,"changed":{"type":"boolean"},
     "title":{"type":"string"},"slug":{"type":"string"},"source_locale":{"type":"string"},"type":` + releaseTypeJSONSchema + `,
     "status":{"enum":["draft","published"]},
     "document_revision":{"type":"string","description":"Content document revision for DCDP editing. It is not a root-settings CAS token."},
     "catalog_number":{"type":"string"},"release_date":{"type":"string","format":"date-time"},
     "spotify_url":{"type":"string"},"apple_music_url":{"type":"string"},"bandcamp_url":{"type":"string"},"youtube_music_url":{"type":"string"},
-    "artwork_asset_id":` + documentReferenceJSONSchema + `,"og_asset_id":` + documentReferenceJSONSchema + `,
+    "artwork_asset_id":` + uuidJSONSchema + `,"og_asset_id":` + uuidJSONSchema + `,
     "published_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
   }
 }`
@@ -47,7 +47,7 @@ const releaseSettingsOutputJSONSchema = `{
 const releaseMutationOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_type","document_id","changed"],
   "properties":{
-    "document_type":{"const":"release"},"document_id":` + documentReferenceJSONSchema + `,
+    "document_type":{"const":"release"},"document_id":` + uuidJSONSchema + `,
     "changed":{"type":"boolean"},"deleted":{"type":"boolean"},"status":{"enum":["draft","published"]},
     "release_date":{"type":"string","format":"date-time"},"published_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
   }
@@ -55,15 +55,15 @@ const releaseMutationOutputJSONSchema = `{
 
 const releaseArtworkSetInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id","file_id"],
-  "properties":{"document_id":` + documentReferenceJSONSchema + `,"file_id":` + documentReferenceJSONSchema + `}
+  "properties":{"document_id":` + documentReferenceJSONSchema + `,"file_id":{"description":"File UUID from file_list, file_upload, or file_transfer.","allOf":[` + uuidJSONSchema + `]}}
 }`
 
 const releaseArtworkOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_type","document_id","success"],
   "properties":{
-    "document_type":{"const":"release"},"document_id":` + documentReferenceJSONSchema + `,"file_id":` + documentReferenceJSONSchema + `,
+    "document_type":{"const":"release"},"document_id":` + uuidJSONSchema + `,"file_id":` + uuidJSONSchema + `,
     "success":{"type":"boolean","description":"Native operation completed; this does not distinguish a mutation from a no-op."},
-    "artwork_asset_id":` + documentReferenceJSONSchema + `,"og_generation_run_id":{"type":"string"}
+    "artwork_asset_id":` + uuidJSONSchema + `,"og_generation_run_id":{"type":"string"}
   }
 }`
 

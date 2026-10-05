@@ -34,14 +34,6 @@ jobs:
     env:
       POSTGRES_IMAGE: registry.dsub.io/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a
       MINIO_IMAGE: geul-test-minio:local
-      FILEMEDIA_RUN: ^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration|TestRuntimeTrackAudioUploadAPIFlows|TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectIntegration|TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand|TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects)$
-      EMAILAUTHORING_RUN: ^(TestEmailTemplateAIDocumentImplicitTargetWriteIntegration|TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackValidateIntegration|TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegration)$
-      WORKER_RUN: ^(TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycle|TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration)$
-      POST_RUN: ^(TestArchivedPostUnpublishPreservesAdminAuthorityAndAuditAtomicityIntegration|TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration|TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration)$
-      PAGE_RUN: ^TestPageAIDocumentLayoutExactMutationIntegration$
-      MEMBER_RUN: ^TestMemberMCPAdminRead(Authorization|AuditFailure)Integration$
-      MAPTHEME_RUN: ^TestMapThemeAdminSnapshotUpdate(RevisionNoopAndAudit|DenialAndAuditRollback)Integration$
-      REFERENCECATALOG_RUN: ^TestListMapPlacesAdminChecksCurrentGlobalPermissionIntegration$
       PACKAGE_LIST: ${{ matrix.packages }}
     defaults:
       run:
@@ -69,6 +61,38 @@ jobs:
           path: geul-identity
           persist-credentials: false
 
+      - name: Checkout collaboration runtime source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-editor-collab
+          ref: 5ba1febbf55ef02a0410964b62d0cc5b43394e2b
+          path: geul-editor-collab
+          persist-credentials: false
+
+      - name: Checkout shared editor source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-common
+          ref: c3171e45e9a7d7e00a5081a2ba3b7c4e6d29e96f
+          path: geul-common
+          persist-credentials: false
+
+      - name: Checkout canonical event contracts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-event-contracts
+          ref: 8df71e624dac72da6b4764c42210238a1e221a61
+          path: geul-event-contracts
+          persist-credentials: false
+
+      - name: Checkout shared telemetry source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-telemetry
+          ref: 24338bfee734e8caef155a853462e3045173d212
+          path: geul-telemetry
+          persist-credentials: false
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -78,20 +102,22 @@ jobs:
       - name: Download Go modules
         run: GOWORK=off go mod download
 
-      - name: Set up media Node runtime
-        if: contains(matrix.packages, './internal/filemedia')
+      - name: Set up native Node runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.19.0
 
-      - name: Build required media runtime assets
-        if: contains(matrix.packages, './internal/filemedia')
+      - name: Prepare native runtime dependencies and media assets
         run: |
           set -euo pipefail
           npm install --global pnpm@11.22.0
           sudo apt-get update
-          sudo apt-get install --yes ffmpeg
+          sudo apt-get install --yes ffmpeg webp
           make media-build
+          pnpm --dir ../geul-editor-collab install --frozen-lockfile
+          pnpm --dir ../geul-common install --frozen-lockfile
+          pnpm --dir ../geul-event-contracts install --frozen-lockfile
+          pnpm --dir ../geul-telemetry install --frozen-lockfile
 
       - name: Validate Harbor credentials
         env:
@@ -129,32 +155,14 @@ jobs:
       - name: Build the matching Kratos settings runtime
         run: docker build --file ../geul-identity/Dockerfile.kratos --tag geul-identity-kratos:local ../geul-identity
 
-      - name: Run selected packages through the protected lease runner
+      - name: Run full integration packages through the protected lease runner
         run: |
           set -euo pipefail
           read -r -a packages <<< "$PACKAGE_LIST"
           for package_path in "${packages[@]}"; do
-            package_args=(--package "$package_path")
-            if [[ "$package_path" == "./internal/filemedia" ]]; then
-              package_args+=(--run "$FILEMEDIA_RUN")
-            elif [[ "$package_path" == "./internal/emailauthoring" ]]; then
-              package_args+=(--run "$EMAILAUTHORING_RUN")
-            elif [[ "$package_path" == "./internal/worker" ]]; then
-              package_args+=(--run "$WORKER_RUN")
-            elif [[ "$package_path" == "./internal/post" ]]; then
-              package_args+=(--run "$POST_RUN")
-            elif [[ "$package_path" == "./internal/page" ]]; then
-              package_args+=(--run "$PAGE_RUN")
-            elif [[ "$package_path" == "./internal/member" ]]; then
-              package_args+=(--run "$MEMBER_RUN")
-            elif [[ "$package_path" == "./internal/maptheme" ]]; then
-              package_args+=(--run "$MAPTHEME_RUN")
-            elif [[ "$package_path" == "./internal/referencecatalog" ]]; then
-              package_args+=(--run "$REFERENCECATALOG_RUN")
-            fi
             GOWORK=off go run -tags=integration ./scripts/test/integration \
               --schema-root ../geul-schema \
               --postgres-image "$POSTGRES_IMAGE" \
               --minio-image "$MINIO_IMAGE" \
-              "${package_args[@]}"
+              --package "$package_path"
           done

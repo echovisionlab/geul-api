@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -17,6 +18,7 @@ import (
 )
 
 type fakeMCPFileRuntime struct {
+	importInput     *filemediadomain.RemoteFileImportInput
 	initiateRequest *managev1.InitiateMultipartUploadRequest
 	initiateResult  *managev1.InitiateMultipartUploadResponse
 	initiateError   error
@@ -36,6 +38,11 @@ type fakeMCPFileRuntime struct {
 	deliveryRequest *managev1.GetMediaDeliveryRequest
 	deliveryResult  *managev1.GetMediaDeliveryResponse
 	deliveryError   error
+}
+
+func (runtime *fakeMCPFileRuntime) ImportRemoteFile(_ context.Context, input filemediadomain.RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error) {
+	runtime.importInput = &input
+	return runtime.downloadResult, runtime.downloadError
 }
 
 func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(
@@ -97,6 +104,34 @@ func TestNewMCPFileFacadeRejectsMissingRuntime(t *testing.T) {
 	_, err := NewMCPFileFacade(nil)
 	if !errors.Is(err, ErrInvalidMCPFileDependency) {
 		t.Fatalf("NewMCPFileFacade() error = %v", err)
+	}
+}
+
+func TestMCPFileUploadUsesStandaloneNativeImportForAllKinds(t *testing.T) {
+	fileID, correlationID := uuid.NewString(), uuid.NewString()
+	for kind, uploadType := range map[MCPFileKind]managev1.UploadType{
+		MCPFileKindGeneral:    managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
+		MCPFileKindImage:      managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
+		MCPFileKindVideo:      managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
+		MCPFileKindAudio:      managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
+		MCPFileKindAttachment: managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
+		MCPFileKindMesh:       managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			runtime := &fakeMCPFileRuntime{downloadResult: &managev1.DownloadFromUrlResponse{FileId: fileID, Delivery: &commonv1.MediaDelivery{FileId: fileID, Extension: "txt", MimeType: "text/plain", FileSize: 12}}}
+			facade, err := NewMCPFileFacade(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file, err := facade.Upload(t.Context(), MCPFileUploadInput{DownloadURL: "https://example.com/download?sig=private", FileID: "opaque-not-a-uuid", FileName: "original.txt", MIMEType: "image/png"}, kind, correlationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filemediadomain.RemoteFileImportInput{UploadType: uploadType, SourceURL: "https://example.com/download?sig=private", FileName: "original.txt", CorrelationID: correlationID}
+			if runtime.importInput == nil || *runtime.importInput != want || file.ID != fileID || file.MIMEType != "text/plain" {
+				t.Fatalf("input/file = %+v / %+v", runtime.importInput, file)
+			}
+		})
 	}
 }
 

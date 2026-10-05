@@ -17,8 +17,8 @@ const (
 )
 
 var pageReferenceTools = []mcpserver.Tool{
-	relatedTool(ToolFormList, "List Forms", "List or search canonical Form IDs and source titles before editing a Page form section. Pass a selected id unchanged as form_id. Native status is a snapshot, not a guarantee of public form access. Continue with next_offset and the same filters. Authorization remains in the native admin list; form bodies and submissions are omitted.", formListInputJSONSchema, formListOutputJSONSchema, true, false),
-	relatedTool(ToolPostSeriesList, "List Post series", "List or search canonical Post series IDs and source titles before editing Page post list, table, or map sections. Pass a selected id unchanged as series_id. Continue with next_offset and the same filters. Authorization remains in the native admin list; content and managers are omitted.", postSeriesListInputJSONSchema, postSeriesListOutputJSONSchema, true, false),
+	oauthTool(ToolFormList, "List Forms", "List or search canonical Form IDs and source titles before editing a Page form section. Pass a selected id unchanged as form_id. Native status is a snapshot, not a guarantee of public form access. Continue with next_offset and the same filters. Authorization remains in the native admin list; form bodies and submissions are omitted.", formListInputJSONSchema, formListOutputJSONSchema, true, false),
+	oauthTool(ToolPostSeriesList, "List Post series", "List or search canonical Post series IDs and source titles before editing Page post list, table, or map sections. Pass a selected id unchanged as series_id. Continue with next_offset and the same filters. Authorization remains in the native admin list; content and managers are omitted.", postSeriesListInputJSONSchema, postSeriesListOutputJSONSchema, true, false),
 }
 
 type FormReferenceDiscovery interface {

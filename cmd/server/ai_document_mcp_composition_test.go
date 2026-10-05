@@ -16,6 +16,7 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -251,6 +252,14 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	require.Contains(t, response.Body.String(), `"name":"work_credit_add"`)
 	require.Contains(t, response.Body.String(), `"name":"file_transfer"`)
 	require.Contains(t, response.Body.String(), `"name":"file_read"`)
+	for _, tool := range []string{
+		"file_upload", "file_deletion_impact_get", "file_delete", "file_rename", "file_move",
+		"file_folder_create", "file_folder_rename", "file_folder_move", "file_folder_delete",
+		"document_file_caption_update",
+	} {
+		require.Contains(t, response.Body.String(), `"name":"`+tool+`"`)
+	}
+	require.Contains(t, response.Body.String(), `"openai/fileParams":["file"]`)
 	require.Contains(t, response.Body.String(), `"name":"document_file_add"`)
 	require.Contains(t, response.Body.String(), `"name":"document_file_replace"`)
 	require.Contains(t, response.Body.String(), `"name":"document_file_remove"`)
@@ -272,6 +281,52 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	require.Equal(t, compositionIdentityID, principal.IdentityID.String())
 	require.Equal(t, compositionMemberID, principal.MemberID.String())
 	require.Empty(t, principal.SessionID)
+}
+
+func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testing.T) {
+	files := &compositionFileRuntime{}
+	composition, err := newAIDocumentMCPComposition(
+		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
+		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{},
+		&compositionProgramEventApplication{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
+		compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, files,
+		aiDocumentMCPConfig{
+			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid", editorCollabHTTPClient: http.DefaultClient,
+		}, &compositionSignalPublisher{}, nil,
+	)
+	require.NoError(t, err)
+
+	response := httptest.NewRecorder()
+	composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{
+		"jsonrpc":"2.0","id":1,"method":"tools/call",
+		"params":{"name":"file_upload","arguments":{
+			"file":{"download_url":"https://files.example.test/opaque?signature=secret","file_id":"chatgpt-opaque-id","file_name":"diagram.png","mime_type":"image/png"},
+			"kind":"image","correlation_id":"b2011513-d89a-4c34-90e5-b59b3cb874f2"
+		}}
+	}`))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), `"isError":true`)
+	require.Contains(t, response.Body.String(), compositionFileID)
+	require.NotContains(t, response.Body.String(), "signature=secret")
+	require.NotNil(t, files.importInput)
+	require.Equal(t, managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, files.importInput.UploadType)
+	require.Equal(t, "diagram.png", files.importInput.FileName)
+	require.Equal(t, "b2011513-d89a-4c34-90e5-b59b3cb874f2", files.importInput.CorrelationID)
+	require.NotNil(t, files.principal)
+	require.Equal(t, compositionMemberID, files.principal.MemberID.String())
+
+	response = httptest.NewRecorder()
+	composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{
+		"jsonrpc":"2.0","id":2,"method":"tools/call",
+		"params":{"name":"file_delete","arguments":{"file_ids":["`+compositionFileID+`"]}}
+	}`))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), `"isError":true`)
+	require.Contains(t, response.Body.String(), `"accepted_file_ids":["`+compositionFileID+`"]`)
+	require.Equal(t, []string{compositionFileID}, files.deleteRequest.FileIds)
+	require.Equal(t, compositionMemberID, files.principal.MemberID.String())
 }
 
 func TestInteractiveMutationRelayClientUsesConfiguredURLAndInternalTrust(t *testing.T) {
@@ -317,10 +372,13 @@ type compositionDomainPort struct {
 }
 
 type compositionFileRuntime struct {
+	managev1connect.UnimplementedFileServiceHandler
 	mu             sync.Mutex
 	principal      *auth.UserInfo
 	deliveryFileID string
 	deliveryCalls  int
+	importInput    *filemedia.RemoteFileImportInput
+	deleteRequest  *managev1.DeleteFilesRequest
 }
 
 type compositionSignalPublisher struct{}
@@ -479,6 +537,40 @@ func (*compositionFileRuntime) DownloadFromUrl(
 	*connect.Request[managev1.DownloadFromUrlRequest],
 ) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
 	return connect.NewResponse(&managev1.DownloadFromUrlResponse{}), nil
+}
+
+func (runtime *compositionFileRuntime) ImportRemoteFile(
+	ctx context.Context,
+	input filemedia.RemoteFileImportInput,
+) (*managev1.DownloadFromUrlResponse, error) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.importInput = &input
+	if principal := auth.GetUser(ctx); principal != nil {
+		copy := *principal
+		runtime.principal = &copy
+	}
+	return &managev1.DownloadFromUrlResponse{
+		FileId: compositionFileID,
+		Delivery: &commonv1.MediaDelivery{
+			FileId: compositionFileID, Extension: "png", MimeType: "image/png", FileSize: 68,
+			FileName: &input.FileName,
+		},
+	}, nil
+}
+
+func (runtime *compositionFileRuntime) DeleteFiles(
+	ctx context.Context,
+	request *connect.Request[managev1.DeleteFilesRequest],
+) (*connect.Response[managev1.DeleteFilesResponse], error) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.deleteRequest = proto.Clone(request.Msg).(*managev1.DeleteFilesRequest)
+	if principal := auth.GetUser(ctx); principal != nil {
+		copy := *principal
+		runtime.principal = &copy
+	}
+	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: request.Msg.FileIds}), nil
 }
 
 func (runtime *compositionFileRuntime) GetMediaDelivery(
