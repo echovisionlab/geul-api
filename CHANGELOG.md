@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/echovisionlab/geul-api/compare/v1.3.2...v1.3.3) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** advertise compact inputs as recursive arrays ([#75](https://github.com/echovisionlab/geul-api/issues/75)) ([65d1c03](https://github.com/echovisionlab/geul-api/commit/65d1c03bb97d00c5ac3f5d960be5ff85736e2fe1))
+
 ## [1.3.2](https://github.com/echovisionlab/geul-api/compare/v1.3.1...v1.3.2) (2026-10-05)
 
 
