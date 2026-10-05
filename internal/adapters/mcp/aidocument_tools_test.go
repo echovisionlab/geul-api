@@ -264,7 +264,7 @@ func assertMCPToolAnnotations(t *testing.T, tool mcpserver.Tool, want map[string
 	}
 }
 
-func TestAIDocumentSchemasCoverRecursiveCompactWire(t *testing.T) {
+func TestAIDocumentProjectionSchemaCoversRecursiveCompactWire(t *testing.T) {
 	decodeDefs := func(raw string) map[string]json.RawMessage {
 		t.Helper()
 		var schema struct {
@@ -279,13 +279,9 @@ func TestAIDocumentSchemasCoverRecursiveCompactWire(t *testing.T) {
 		t.Helper()
 		var definition struct {
 			OneOf []map[string]any `json:"oneOf"`
-			AnyOf []map[string]any `json:"anyOf"`
 		}
 		if err := json.Unmarshal(raw, &definition); err != nil {
 			t.Fatalf("decode schema definition: %v", err)
-		}
-		if len(definition.AnyOf) != 0 {
-			return definition.AnyOf
 		}
 		return definition.OneOf
 	}
@@ -307,22 +303,6 @@ func TestAIDocumentSchemasCoverRecursiveCompactWire(t *testing.T) {
 			}
 		}
 		return false
-	}
-
-	input := decodeDefs(mutationInputJSONSchema)
-	fieldTargets := decodeVariants(input["fieldTarget"])
-	if len(fieldTargets) != 2 || fieldTargets[0]["maxItems"] != float64(4) || fieldTargets[1]["maxItems"] != float64(5) {
-		t.Fatalf("mutation fieldTarget does not expose scalar and typed-path forms: %s", input["fieldTarget"])
-	}
-	for _, kind := range []string{"l", "o"} {
-		if !hasKind(decodeVariants(input["value"]), kind) {
-			t.Fatalf("mutation value schema omitted recursive kind %q", kind)
-		}
-	}
-	for _, kind := range []string{"u", "s", "code", "fg", "bg"} {
-		if !hasKind(decodeVariants(input["inline"]), kind) {
-			t.Fatalf("mutation inline schema omitted mark %q", kind)
-		}
 	}
 
 	output := decodeDefs(projectionOutputJSONSchema)
@@ -363,135 +343,105 @@ func TestParagraphCreateSchemaRequiresPageRichTextParent(t *testing.T) {
 
 func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 	var schema struct {
-		Definitions map[string]json.RawMessage `json:"$defs"`
+		Definitions map[string]struct {
+			Description string `json:"description"`
+		} `json:"$defs"`
 	}
 	if err := json.Unmarshal([]byte(mutationInputJSONSchema), &schema); err != nil {
-		t.Fatalf("decode mutation schema: %v", err)
+		t.Fatal(err)
 	}
-	var operation struct {
-		Description string `json:"description"`
-		AnyOf       []struct {
-			Description string           `json:"description"`
-			PrefixItems []map[string]any `json:"prefixItems"`
-		} `json:"anyOf"`
-	}
-	if err := json.Unmarshal(schema.Definitions["operation"], &operation); err != nil {
-		t.Fatalf("decode operation definition: %v", err)
-	}
-	if operation.Description == "" {
-		t.Fatal("operation definition does not explain compact tuple semantics")
-	}
-	want := map[string]bool{
-		"fs": false, "fu": false, "bi": false, "bd": false, "bm": false, "bk": false,
-		"ri": false, "rd": false, "rm": false, "fa": false, "fd": false, "lc": false, "ld": false,
-	}
-	for _, variant := range operation.AnyOf {
-		if variant.Description == "" || len(variant.PrefixItems) == 0 {
-			t.Fatalf("operation variant is not self-describing: %s", schema.Definitions["operation"])
-		}
-		if kind, ok := variant.PrefixItems[0]["const"].(string); ok {
-			want[kind] = true
-			if kind == "fs" && !strings.Contains(variant.Description, `["i",[["t",text]]]`) {
-				t.Fatalf("paragraph example must use the inline value kind: %s", variant.Description)
-			}
-		}
-		if kinds, ok := variant.PrefixItems[0]["enum"].([]any); ok {
-			for _, value := range kinds {
-				if kind, ok := value.(string); ok {
-					want[kind] = true
-				}
-			}
+	operation := schema.Definitions["operation"].Description
+	for _, tuple := range []string{
+		`["fs",fieldTarget,typedValue]`, `["fu",fieldTarget]`,
+		`["bi",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]`, `["bd",blockHandle]`,
+		`["bm",blockHandle,parentBlockHandle,afterBlockHandle]`, `["bk",blockHandle,newBlockKind]`,
+		`["ri",blockHandle,relationHandle,newItemHandle,itemKind,afterItemHandle]`,
+		`["rd",blockHandle,relationHandle,itemHandle]`,
+		`["rm",sourceBlockHandle,sourceRelationHandle,itemHandle,targetBlockHandle,targetRelationHandle,afterItemHandle]`,
+		`["fa",fieldTarget,fileHandle]`, `["fd",fieldTarget]`, `["lc"]`, `["ld"]`,
+		`["i",[["t",text]]]`,
+	} {
+		if !strings.Contains(operation, tuple) {
+			t.Errorf("operation description omitted %s", tuple)
 		}
 	}
-	for kind, described := range want {
-		if !described {
-			t.Errorf("compact operation %q has no described schema variant", kind)
+	if !strings.Contains(operation, "server decoder validates") || !strings.Contains(operation, "only operation in its batch") {
+		t.Fatalf("operation validation/lifecycle instructions missing: %s", operation)
+	}
+	payload := schema.Definitions["compactPayload"].Description
+	for _, syntax := range []string{
+		`[block,"","",field]`, `[block,relation,item,field]`, `optional fifth item`,
+		`["f",field]`, `["i",stableItemHandle]`,
+		`["t",text]`, `["b",boolean]`, `["n",canonical-number-string]`, `["i",inline-items]`,
+		`["l",[[optionalStableItemHandle,typedValue],...]]`, `["o",[[field,typedValue],...]]`,
+		`b/em/u/s/code`, `fg/bg`, `["a",URL,inline-items]`, `["br"]`, `["math",expression]`, `["ph",placeholderHandle]`,
+	} {
+		if !strings.Contains(payload, syntax) {
+			t.Errorf("compact payload description omitted %s", syntax)
 		}
 	}
 }
 
-func TestMutationTupleUnionsKeepExactConstraintsWithoutExclusiveProjectionMatching(t *testing.T) {
+func TestMutationSchemaAdvertisesRecursiveHomogeneousArrays(t *testing.T) {
 	var schema struct {
+		Properties map[string]struct {
+			Items struct {
+				Ref string `json:"$ref"`
+			} `json:"items"`
+		} `json:"properties"`
 		Definitions map[string]json.RawMessage `json:"$defs"`
 	}
 	if err := json.Unmarshal([]byte(mutationInputJSONSchema), &schema); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"operation", "fieldPathSegment", "inline", "value"} {
-		var union struct {
-			OneOf json.RawMessage `json:"oneOf"`
-			AnyOf []struct {
-				PrefixItems []map[string]any `json:"prefixItems"`
-				Items       json.RawMessage  `json:"items"`
-				MinItems    *int             `json:"minItems"`
-				MaxItems    *int             `json:"maxItems"`
-			} `json:"anyOf"`
-		}
-		if err := json.Unmarshal(schema.Definitions[name], &union); err != nil {
-			t.Fatal(err)
-		}
-		if union.OneOf != nil || len(union.AnyOf) < 2 {
-			t.Fatalf("%s tuple union must permit overlapping connector projections: %s", name, schema.Definitions[name])
-		}
-		seenTags := map[string]bool{}
-		for _, branch := range union.AnyOf {
-			if len(branch.PrefixItems) == 0 || string(branch.Items) != "false" || branch.MinItems == nil || branch.MaxItems == nil ||
-				*branch.MinItems != len(branch.PrefixItems) || *branch.MaxItems != len(branch.PrefixItems) {
-				t.Fatalf("%s lost exact tuple length or trailing-item rejection", name)
-			}
-			tags, _ := branch.PrefixItems[0]["enum"].([]any)
-			if tag, ok := branch.PrefixItems[0]["const"].(string); ok {
-				tags = []any{tag}
-			}
-			if len(tags) == 0 {
-				t.Fatalf("%s lost its tuple discriminator", name)
-			}
-			for _, value := range tags {
-				tag, ok := value.(string)
-				if !ok || tag == "" || seenTags[tag] {
-					t.Fatalf("%s alternatives must retain disjoint string tags: %v", name, value)
-				}
-				seenTags[tag] = true
-			}
-		}
+	if len(schema.Definitions) != 2 || schema.Properties["o"].Items.Ref != "#/$defs/operation" {
+		t.Fatal("mutation operations must use only the operation and compactPayload definitions")
 	}
-	// The observed connector describes both bm and rd as arrays of strings.
-	// This verifies their source schemas have that overlapping coarse shape;
-	// it does not implement or claim to reproduce the connector's projector.
 	var operation struct {
-		AnyOf []struct {
-			PrefixItems []map[string]any `json:"prefixItems"`
-		} `json:"anyOf"`
+		Type     string `json:"type"`
+		MinItems int    `json:"minItems"`
+		MaxItems int    `json:"maxItems"`
+		Items    struct {
+			Ref string `json:"$ref"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(schema.Definitions["operation"], &operation); err != nil {
 		t.Fatal(err)
 	}
-	coarseShapes := map[string][]string{}
-	for _, branch := range operation.AnyOf {
-		tag, _ := branch.PrefixItems[0]["const"].(string)
-		if tag != "bm" && tag != "rd" {
-			continue
-		}
-		shape := []string{"string"}
-		for _, item := range branch.PrefixItems[1:] {
-			ref, _ := item["$ref"].(string)
-			var handle struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(schema.Definitions[strings.TrimPrefix(ref, "#/$defs/")], &handle); err != nil {
-				t.Fatal(err)
-			}
-			shape = append(shape, handle.Type)
-		}
-		coarseShapes[tag] = shape
+	if operation.Type != "array" || operation.MinItems != 1 || operation.MaxItems != 7 || operation.Items.Ref != "#/$defs/compactPayload" {
+		t.Fatalf("operation array contract = %+v", operation)
 	}
-	wantShape := []string{"string", "string", "string", "string"}
-	if !reflect.DeepEqual(coarseShapes["bm"], wantShape) || !reflect.DeepEqual(coarseShapes["rd"], wantShape) {
-		t.Fatalf("bm/rd coarse array shapes = %#v", coarseShapes)
+	var payload struct {
+		AnyOf []struct {
+			Type  string `json:"type"`
+			Items struct {
+				Ref string `json:"$ref"`
+			} `json:"items"`
+		} `json:"anyOf"`
+	}
+	if err := json.Unmarshal(schema.Definitions["compactPayload"], &payload); err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, branch := range payload.AnyOf {
+		types = append(types, branch.Type)
+		if branch.Type == "array" && branch.Items.Ref != "#/$defs/compactPayload" {
+			t.Fatal("nested compact arrays must recursively preserve the same payload types")
+		}
+	}
+	if !reflect.DeepEqual(types, []string{"string", "boolean", "array"}) {
+		t.Fatalf("compact payload must have disjoint string, boolean, and array alternatives, got %v", types)
+	}
+	for _, definition := range schema.Definitions {
+		for _, unsupported := range []string{`"prefixItems":`, `"items":false`, `"oneOf":`, `"const":`, `"enum":`} {
+			if strings.Contains(string(definition), unsupported) {
+				t.Fatalf("compact input definition retained tuple projection constraints: %s", definition)
+			}
+		}
 	}
 }
 
-func TestCompactBlockMovesReachApplyThroughHTTPWhileMalformedTuplesDoNot(t *testing.T) {
+func TestCompactOperationsReachApplyThroughHTTPWhileMalformedTuplesDoNot(t *testing.T) {
 	const documentID = "0c314c79-103b-4e0e-953e-5f9370851639"
 	const block = "51e895a2-24c4-4aaa-a28c-fc466c5590fd"
 	const parent = "0bb8af09-e358-488b-9950-c07b6d056ca5"
@@ -504,11 +454,19 @@ func TestCompactBlockMovesReachApplyThroughHTTPWhileMalformedTuplesDoNot(t *test
 		{"valid move batch", `[["bm","` + block + `","` + parent + `","` + after + `"],["bm","` + after + `","` + parent + `",""],["bm","` + block + `","` + parent + `","` + after + `"]]`, []core.Operation{
 			core.MoveBlockOperation(block, parent, after), core.MoveBlockOperation(after, parent, ""), core.MoveBlockOperation(block, parent, after),
 		}},
+		{"mixed recursive values", `[["fs",["` + block + `","","","enabled"],["b",true]],["fs",["` + block + `","","","width"],["n","12.5"]],["fs",["` + block + `","","","metadata"],["o",[["nested",["l",[["",["i",[["b",[["t","text"]]]]]]]]]]]]]`, []core.Operation{
+			core.SetFieldOperation(block, "enabled", core.Boolean(true)),
+			core.SetFieldOperation(block, "width", core.Number("12.5")),
+			core.SetFieldOperation(block, "metadata", core.Object(core.ObjectValue("nested", core.List(core.PositionalItem(core.RichText(core.Bold(core.InlineText("text")))))))),
+		}},
 		{"missing predecessor", `[["bm","` + block + `","` + parent + `"]]`, nil},
 		{"extra position", `[["bm","` + block + `","` + parent + `","` + after + `","extra"]]`, nil},
 		{"non-string parent", `[["bm","` + block + `",false,"` + after + `"]]`, nil},
 		{"null predecessor", `[["bm","` + block + `","` + parent + `",null]]`, nil},
 		{"unknown tag", `[["move","` + block + `","` + parent + `","` + after + `"]]`, nil},
+		{"native numeric payload", `[["fs",["` + block + `","","","width"],["n",12.5]]]`, nil},
+		{"object payload", `[["fs",["` + block + `","","","metadata"],{"t":"text"}]]`, nil},
+		{"null inline payload", `[["fs",["` + block + `","","","content"],["i",[["t",null]]]]]`, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b", Normalized: test.want}}
@@ -535,7 +493,7 @@ func TestCompactBlockMovesReachApplyThroughHTTPWhileMalformedTuplesDoNot(t *test
 					t.Fatal("malformed tuple reached the application")
 				}
 			} else if application.applyCalls != 1 || !reflect.DeepEqual(application.applyRequest.Operations, test.want) {
-				t.Fatalf("decoded move batch = %+v", application.applyRequest)
+				t.Fatalf("decoded compact batch = %+v", application.applyRequest)
 			}
 		})
 	}
