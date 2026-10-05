@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/echovisionlab/geul-api/compare/v1.3.1...v1.3.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** accept compact tuple unions in connectors ([#73](https://github.com/echovisionlab/geul-api/issues/73)) ([e538da7](https://github.com/echovisionlab/geul-api/commit/e538da7800c3422374de3cd9a24a524d12949961))
+
 ## [1.3.1](https://github.com/echovisionlab/geul-api/compare/v1.3.0...v1.3.1) (2026-10-05)
 
 
