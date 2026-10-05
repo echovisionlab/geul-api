@@ -295,8 +295,8 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 					TemplateID: mutation.TemplateID, DocumentID: documentID, Locale: mutation.Locale,
 					Batch: batch, ExpectedDocumentRevision: expected,
 					ExpectedTargetRevision: mutation.ExpectedTargetRevision,
-					AllowCreate:            false,
-					SetSubject:             mutation.SetSubject, Subject: targetSubject,
+					AllowCreate:            true, SeedSourceOnCreate: true,
+					SetSubject: mutation.SetSubject, Subject: targetSubject,
 					Now: now, Fence: fence,
 				},
 			)

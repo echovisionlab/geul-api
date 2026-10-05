@@ -7,6 +7,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
@@ -194,6 +195,10 @@ func projectDescriptorValue(
 				binding.Path = insertPathSegment(binding.Path, len(path), core.ListPath(handle))
 				files = append(files, binding)
 			}
+		}
+		if descriptorIsFile(*descriptor.Item) {
+			// File arrays expose bindings at their stable item paths, not values.
+			return core.Value{}, files, false, nil
 		}
 		return core.List(items...), files, true, nil
 	}
@@ -400,6 +405,9 @@ func setRichTextFile(message protoreflect.Message, block contentv1.ContentBlockD
 	if field == nil {
 		return errors.New("generated props field is missing")
 	}
+	if len(target.Path) != 0 && target.Path[len(target.Path)-1].Item != "" {
+		return setRichTextFileArrayItem(props, field, descriptor, target.Path, file)
+	}
 	targetMessage, targetField, targetDescriptor, err := resolveDescriptorPath(props, field, descriptor, target.Path)
 	if err != nil {
 		return err
@@ -421,6 +429,43 @@ func setRichTextFile(message protoreflect.Message, block contentv1.ContentBlockD
 	return nil
 }
 
+func setRichTextFileArrayItem(message protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, path []core.FieldPathSegment, file core.FileReference) error {
+	container, arrayField, arrayDescriptor, err := resolveDescriptorPath(message, field, descriptor, path[:len(path)-1])
+	if err != nil {
+		return err
+	}
+	if arrayDescriptor.Type != "array" || arrayDescriptor.Item == nil || !descriptorIsFile(*arrayDescriptor.Item) {
+		return errors.New("target is not a generated File array item")
+	}
+	list := container.Mutable(arrayField).List()
+	if list.Len() == 0 {
+		if file == "" {
+			return nil
+		}
+		if identity := arrayDescriptor.ItemIdentity; identity != nil && identity.Strategy == "fixed" {
+			// A batch may attach every face to a previously omitted cubemap array.
+			// The generated validator still rejects incomplete attachment states.
+			for range identity.Values {
+				list.Append(list.NewElement())
+			}
+		}
+	}
+	index, err := listIndexByHandle(list, arrayDescriptor, path[len(path)-1].Item)
+	if err != nil {
+		return err
+	}
+	attachment := list.Get(index).Message()
+	state := attachment.Descriptor().Oneofs().ByName("state")
+	if file == "" {
+		if selected := attachment.WhichOneof(state); selected != nil {
+			attachment.Clear(selected)
+		}
+		return nil
+	}
+	attachment.Set(state.Fields().ByName("active_file_id"), protoreflect.ValueOfString(string(file)))
+	return nil
+}
+
 func findContentDescriptor(fields []contentv1.ContentFieldDescriptor, name string) (contentv1.ContentFieldDescriptor, bool) {
 	for _, field := range fields {
 		if field.Name == name {
@@ -431,14 +476,87 @@ func findContentDescriptor(fields []contentv1.ContentFieldDescriptor, name strin
 }
 
 func setDescriptorAtPath(message protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, path []core.FieldPathSegment, value core.Value) error {
-	if len(path) == 0 {
-		return setDescriptorValue(message, field, descriptor, value)
-	}
 	targetMessage, targetField, targetDescriptor, err := resolveDescriptorPath(message, field, descriptor, path)
 	if err != nil {
 		return err
 	}
-	return setDescriptorValue(targetMessage, targetField, targetDescriptor, value)
+	if targetDescriptor.Type != "object" && targetDescriptor.Type != "array" {
+		return setDescriptorValue(targetMessage, targetField, targetDescriptor, value)
+	}
+	previous := proto.Clone(targetMessage.Interface()).ProtoReflect()
+	if err := setDescriptorValue(targetMessage, targetField, targetDescriptor, value); err != nil {
+		return err
+	}
+	return preserveDescriptorFiles(previous, targetMessage, targetField, targetDescriptor)
+}
+
+// File selectors live outside typed values. Preserve them only within object
+// parents and stable array items that survive a typed replacement.
+func preserveDescriptorFiles(previous, current protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor) error {
+	if !previous.Has(field) {
+		return nil
+	}
+	if descriptorIsFile(descriptor) {
+		current.Set(field, protoreflect.ValueOfMessage(proto.Clone(previous.Get(field).Message().Interface()).ProtoReflect()))
+		return nil
+	}
+	switch descriptor.Type {
+	case "object":
+		if !current.Has(field) {
+			return nil
+		}
+		before, after := previous.Get(field).Message(), current.Get(field).Message()
+		for _, child := range descriptor.Fields {
+			childField := findMessageField(before, child.Name)
+			if childField != nil {
+				if err := preserveDescriptorFiles(before, after, childField, child); err != nil {
+					return err
+				}
+			}
+		}
+	case "array":
+		identity := descriptor.ItemIdentity
+		if identity == nil || identity.Strategy == "position" {
+			return nil
+		}
+		before, after := previous.Get(field).List(), current.Mutable(field).List()
+		if descriptorIsFile(*descriptor.Item) {
+			// File-only arrays have no typed value and retain their fixed selectors.
+			if identity.Strategy == "fixed" {
+				for index := 0; index < before.Len(); index++ {
+					after.Append(protoreflect.ValueOfMessage(proto.Clone(before.Get(index).Message().Interface()).ProtoReflect()))
+				}
+			}
+			return nil
+		}
+		if descriptor.Item.Type != "object" {
+			return nil
+		}
+		for index := 0; index < before.Len(); index++ {
+			value, _, _, err := projectListItem(before.Get(index), field, *descriptor.Item, "", nil)
+			if err != nil {
+				return err
+			}
+			handle, err := projectedListHandle(identity, index, value)
+			if err != nil {
+				return err
+			}
+			currentIndex, err := listIndexByHandle(after, descriptor, handle)
+			if err != nil {
+				continue // A deleted stable item must not be recreated for its Files.
+			}
+			oldItem, newItem := before.Get(index).Message(), after.Get(currentIndex).Message()
+			for _, child := range descriptor.Item.Fields {
+				childField := findMessageField(oldItem, child.Name)
+				if childField != nil {
+					if err := preserveDescriptorFiles(oldItem, newItem, childField, child); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func clearDescriptorAtPath(message protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, path []core.FieldPathSegment) error {

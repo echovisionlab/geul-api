@@ -35,6 +35,7 @@ func (c *PageCodec) Compile(
 		return contentblock.Batch{}, nil, errors.New("localized Page document is required")
 	}
 	deleted := make(map[string]struct{})
+	affected := make(map[string]core.FieldTarget)
 	for index, operation := range operations {
 		if operation.Kind == core.OperationCreateTranslation || operation.Kind == core.OperationDeleteTranslation {
 			continue
@@ -45,6 +46,7 @@ func (c *PageCodec) Compile(
 		if err := c.applyPageOperation(working, role, operation, deleted); err != nil {
 			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil
 		}
+		c.updatePageAffectedLocaleValues(working, affected, operation)
 	}
 	mutation := &contentv1.PageSectionMutationBatch{
 		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
@@ -107,48 +109,140 @@ func (c *PageCodec) Compile(
 		}
 		return contentblock.Batch{DocumentID: documentID, ExpectedRevision: revision, ContributorMemberIDs: []uuid.UUID{contributor}}, nil, nil
 	}
-	affected := c.pageAffectedLocaleValues(working, operations)
-	batch, err := contentblock.BatchFromPageProtoWithAffectedLocaleValues(documentID, mutation, working.GetLocale(), affected)
+	batch, err := contentblock.BatchFromPageProtoWithAffectedLocaleValues(documentID, mutation, working.GetLocale(), pageAffectedLocaleValues(affected))
 	if err != nil {
 		return contentblock.Batch{}, nil, errs.InvalidArgument("operations", err.Error())
 	}
 	return batch, nil, nil
 }
 
-func (c *PageCodec) pageAffectedLocaleValues(document *contentv1.LocalizedPageDocument, operations []core.Operation) []*managev1.AIDocumentFieldTarget {
-	targets := make([]*managev1.AIDocumentFieldTarget, 0)
-	for _, operation := range operations {
-		if operation.SetField != nil {
-			target := operation.SetField.Target
-			_, _, sectionExists := findPageNode(document, string(target.Block))
-			if (sectionExists && target.Field == pageSectionLocaleField) || c.pageRichTextFieldIsLocale(document, target) {
-				targets = append(targets, fieldTargetToProto(target))
+func (c *PageCodec) updatePageAffectedLocaleValues(document *contentv1.LocalizedPageDocument, affected map[string]core.FieldTarget, operation core.Operation) {
+	var replaced *core.FieldTarget
+	if operation.SetField != nil {
+		replaced = &operation.SetField.Target
+	} else if operation.UnsetField != nil {
+		replaced = &operation.UnsetField.Target
+	}
+	for key, target := range affected {
+		// Track the current tree after every operation so a later same-ID insert
+		// cannot revive presence belonging to a deleted block or descendant.
+		if !c.pageLocaleValueTargetExists(document, target) ||
+			(replaced != nil && pageFieldTargetContains(*replaced, target)) ||
+			(operation.ReplaceBlockKind != nil && operation.ReplaceBlockKind.Block == target.Block) {
+			delete(affected, key)
+		}
+	}
+	var added []core.FieldTarget
+	if operation.SetField != nil {
+		added = pageLocaleSetLeaves(operation.SetField.Target, operation.SetField.Value)
+	} else if operation.InsertBlock != nil && c.baseCases[operation.InsertBlock.Kind] == nil && operation.InsertBlock.Kind != pageColumnBlockKind {
+		added = []core.FieldTarget{{Block: operation.InsertBlock.Block, Field: "content"}}
+	}
+	for _, target := range added {
+		if c.pageLocaleValueTargetExists(document, target) {
+			affected[pageLocaleTargetKey(fieldTargetToProto(target))] = target
+		}
+	}
+}
+
+func pageFieldTargetContains(parent, child core.FieldTarget) bool {
+	if parent.Block != child.Block || parent.Field != child.Field || len(parent.Path) > len(child.Path) {
+		return false
+	}
+	for index, segment := range parent.Path {
+		if segment != child.Path[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// Parent object/list replacement authors only the leaves supplied in its value.
+// Keep those leaves separate so a later child Unset can cancel just that leaf.
+func pageLocaleSetLeaves(target core.FieldTarget, value core.Value) []core.FieldTarget {
+	var result []core.FieldTarget
+	switch value.Kind {
+	case core.ValueKindObject:
+		for _, field := range value.Object {
+			child := target
+			child.Path = append(append([]core.FieldPathSegment(nil), target.Path...), core.ObjectPath(field.ID))
+			result = append(result, pageLocaleSetLeaves(child, field.Value)...)
+		}
+	case core.ValueKindList:
+		for _, item := range value.List {
+			if item.ID == "" {
+				continue // Atomic positional arrays have no individual presence handles.
+			}
+			child := target
+			child.Path = append(append([]core.FieldPathSegment(nil), target.Path...), core.ListPath(item.ID))
+			result = append(result, pageLocaleSetLeaves(child, item.Value)...)
+		}
+	default:
+		result = append(result, target)
+	}
+	return result
+}
+
+func (c *PageCodec) pageLocaleValueTargetExists(document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
+	if _, _, exists := findPageNode(document, string(target.Block)); exists {
+		if target.Field != pageSectionLocaleField {
+			return false
+		}
+		path := target.Path
+		sectionProps := len(path) == 2 && path[0].Field == "props" && path[1].Field != ""
+		unitProps := len(path) == 4 && path[0].Field == "units" && path[1].Item != "" && path[2].Field == "props" && path[3].Field != ""
+		if !sectionProps && !unitProps {
+			return false
+		}
+		locale, exists := findPageLocaleSection(document, string(target.Block))
+		if !exists {
+			return false
+		}
+		_, message, err := c.localeSectionMessage(locale.ProtoReflect())
+		if err != nil {
+			return false
+		}
+		container, field, err := pageResolvePath(message, path, false)
+		return err == nil && container != nil && field != nil && !field.IsList() && field.Kind() != protoreflect.MessageKind
+	}
+	if target.Field == richTextTableLocaleField {
+		path := target.Path
+		if len(path) != 5 || path[0].Field != "rows" || path[1].Item == "" || path[2].Field != "cells" || path[3].Item == "" || path[4].Field != "content" {
+			return false
+		}
+		// Shared table edits can remove a cell while its locale still exists.
+		// Such an orphan must not restore an earlier explicit empty write.
+		for _, section := range document.GetBase().GetNodes() {
+			for _, node := range section.GetSection().GetRichText().GetBlocks().GetNodes() {
+				if node.GetBlock().GetId() != string(target.Block) {
+					continue
+				}
+				for _, row := range node.GetBlock().GetTable().GetContent().GetRows() {
+					if row.GetId() != string(path[1].Item) {
+						continue
+					}
+					for _, cell := range row.GetCells() {
+						if cell.GetId() == string(path[3].Item) {
+							return true
+						}
+					}
+				}
 			}
 		}
-		if operation.InsertBlock == nil || c.baseCases[operation.InsertBlock.Kind] != nil || operation.InsertBlock.Kind == pageColumnBlockKind {
-			continue
-		}
-		// Later operations can delete or replace the inserted block. Restore
-		// explicit empty content only when the final block still exposes it.
-		target := core.FieldTarget{Block: operation.InsertBlock.Block, Field: "content"}
-		if c.pageRichTextFieldIsLocale(document, target) {
-			targets = append(targets, fieldTargetToProto(target))
-		}
+		return false
+	}
+	return len(target.Path) == 0 && c.pageRichTextFieldIsLocale(document, target)
+}
+
+func pageAffectedLocaleValues(affected map[string]core.FieldTarget) []*managev1.AIDocumentFieldTarget {
+	targets := make([]*managev1.AIDocumentFieldTarget, 0, len(affected))
+	for _, target := range affected {
+		targets = append(targets, fieldTargetToProto(target))
 	}
 	sort.Slice(targets, func(left, right int) bool {
 		return pageLocaleTargetKey(targets[left]) < pageLocaleTargetKey(targets[right])
 	})
-	result := targets[:0]
-	previous := ""
-	for _, target := range targets {
-		key := pageLocaleTargetKey(target)
-		if key == previous {
-			continue
-		}
-		result = append(result, target)
-		previous = key
-	}
-	return result
+	return targets
 }
 
 func (c *PageCodec) pageRichTextFieldIsLocale(document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
@@ -596,7 +690,13 @@ func (c *PageCodec) unsetPageField(document *contentv1.LocalizedPageDocument, ta
 	default:
 		return errors.New("field is not in the Page section catalog")
 	}
-	return pageClearPath(message, target.Path)
+	if err := pageClearPath(message, target.Path); err != nil {
+		return err
+	}
+	if target.Field == pageSectionDataField && pageWholeStableListPath(target.Path, "units") {
+		return c.reconcilePageImmersiveLocale(document, node)
+	}
+	return nil
 }
 
 func (c *PageCodec) setPageFile(document *contentv1.LocalizedPageDocument, target core.FieldTarget, file core.FileReference) error {

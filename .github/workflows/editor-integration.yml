@@ -23,8 +23,8 @@ jobs:
       max-parallel: 3
       matrix:
         include:
-          - suite: Audience, Campaign, Form and Legal
-            packages: ./internal/audience ./internal/campaign ./internal/form ./internal/legal
+          - suite: Audience, Campaign, Email, Form and Legal
+            packages: ./internal/audience ./internal/campaign ./internal/emailauthoring ./internal/form ./internal/legal
           - suite: Program Event, Release, Track and Translation Settings
             packages: ./internal/programevent ./internal/release ./internal/translation/application
           - suite: Work, ContentBlock, FilePolicy and Public Asset Cleanup
@@ -33,6 +33,7 @@ jobs:
       POSTGRES_IMAGE: registry.dsub.io/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a
       MINIO_IMAGE: geul-test-minio:local
       FILEMEDIA_RUN: ^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$
+      EMAILAUTHORING_RUN: ^(TestEmailTemplateAIDocumentImplicitTargetWriteIntegration|TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackValidateIntegration|TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegration)$
       WORKER_RUN: ^(TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycle|TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration)$
       PACKAGE_LIST: ${{ matrix.packages }}
     defaults:
@@ -114,6 +115,8 @@ jobs:
             package_args=(--package "$package_path")
             if [[ "$package_path" == "./internal/filemedia" ]]; then
               package_args+=(--run "$FILEMEDIA_RUN")
+            elif [[ "$package_path" == "./internal/emailauthoring" ]]; then
+              package_args+=(--run "$EMAILAUTHORING_RUN")
             elif [[ "$package_path" == "./internal/worker" ]]; then
               package_args+=(--run "$WORKER_RUN")
             fi

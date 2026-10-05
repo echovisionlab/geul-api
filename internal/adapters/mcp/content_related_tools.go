@@ -44,10 +44,10 @@ var contentRelatedTools = []mcpserver.Tool{
 	relatedTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	relatedTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false),
 	relatedTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group.", workCreditGroupUpdateInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	relatedTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true),
 	relatedTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	relatedTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	relatedTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role.", workCreditUpdateInputJSONSchema, contentActionOutputJSONSchema, false, true),
+	relatedTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
 	relatedTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	relatedTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false),
 	relatedTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true),
@@ -297,7 +297,7 @@ func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, too
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	output := map[string]any{"resource_type": "work_credit_group", "changed": true}
+	output := map[string]any{"resource_type": "work_credit_group"}
 	switch toolName {
 	case ToolWorkCreditGroupCreate:
 		response, err := tools.works.CreateWorkCreditGroup(ctx, connect.NewRequest(&managev1.CreateWorkCreditGroupRequest{WorkId: input.DocumentID, Name: input.Name}))
@@ -305,6 +305,7 @@ func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, too
 			return expectedToolError(err)
 		}
 		output["resource_id"], output["document_type"], output["document_id"], output["name"] = response.Msg.Id, "work", input.DocumentID, response.Msg.Name
+		output["changed"] = true
 	case ToolWorkCreditGroupUpdate:
 		response, err := tools.works.UpdateWorkCreditGroup(ctx, connect.NewRequest(&managev1.UpdateWorkCreditGroupRequest{GroupId: input.GroupID, Name: &input.Name}))
 		if err != nil {
@@ -336,7 +337,7 @@ func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	output := map[string]any{"resource_type": "work_credit", "changed": true}
+	output := map[string]any{"resource_type": "work_credit"}
 	switch toolName {
 	case ToolWorkCreditAdd:
 		response, err := tools.works.AddWorkCredit(ctx, connect.NewRequest(&managev1.AddWorkCreditRequest{WorkId: input.DocumentID, GroupId: input.GroupID, ArtistId: input.ArtistID, MemberId: input.MemberID, Name: input.Name, CreditRole: input.CreditRole}))
@@ -344,6 +345,7 @@ func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName
 			return expectedToolError(err)
 		}
 		output["resource_id"], output["document_type"], output["document_id"] = response.Msg.Id, "work", input.DocumentID
+		output["changed"] = true
 		copyWorkCreditMutationFields(output, response.Msg)
 	case ToolWorkCreditUpdate:
 		response, err := tools.works.UpdateWorkCredit(ctx, connect.NewRequest(&managev1.UpdateWorkCreditRequest{CreditId: input.CreditID, GroupId: input.GroupID, CreditRole: input.CreditRole}))
@@ -468,7 +470,7 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, argu
 	if page != nil {
 		output["total"], output["has_more"] = page.Total, page.HasMore
 		if page.HasMore {
-			output["next_offset"] = page.Offset + page.Limit
+			output["next_offset"] = int64(page.Offset) + int64(page.Limit)
 		}
 	}
 	return contentResult(output)

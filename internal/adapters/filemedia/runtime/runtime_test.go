@@ -42,7 +42,7 @@ func TestHandleFileDeleteKeepsFileAndAuthorizationUntilEveryObjectIsDeleted(t *t
 	generationID := uuid.NewString()
 	prefix, err := mediaauth.MediaHLSObjectPrefix(file.ID, generationID)
 	require.NoError(t, err)
-	key := prefix + "master.m3u8"
+	key := prefix + "/master.m3u8"
 	require.NoError(t, db.Create(&model.MediaGeneration{ID: generationID, FileID: file.ID, Kind: "hls", ObjectPrefix: prefix, ManifestName: "master.m3u8", Status: model.MediaGenerationStatusRetired, CreatedAt: now, UpdatedAt: now}).Error)
 
 	var storageMu sync.Mutex

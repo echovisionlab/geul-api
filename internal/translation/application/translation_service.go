@@ -374,7 +374,7 @@ func (s *TranslationService) ListTranslationJobs(
 
 	resp := &managev1.ListTranslationJobsResponse{
 		Jobs:       make([]*managev1.TranslationJob, 0, len(jobs)),
-		Pagination: &commonv1.PaginationResponse{Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total)},
+		Pagination: &commonv1.PaginationResponse{Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total},
 	}
 	for _, job := range jobs {
 		if err := validateTranslationJobRequester(&job); err != nil {
