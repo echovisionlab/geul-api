@@ -33,7 +33,7 @@ type MediaConfig struct {
 	MeshTempDir            string `envconfig:"ASSET_OPTIMIZER_TEMP_DIR" default:"/tmp/geul-media/mesh"`
 	AudioHLSBitrate        string `envconfig:"AUDIO_HLS_BITRATE" default:"128k"`
 	NodePath               string `envconfig:"NODE_BINARY_PATH" default:"node"`
-	GLTFTransformPath      string `envconfig:"GLTF_TRANSFORM_PATH" default:"/app/media/asset-optimizer/node_modules/.bin/gltf-transform"`
+	GLTFTransformPath      string `envconfig:"GLTF_TRANSFORM_PATH" default:"/app/media/asset-optimizer/scripts/asset-transform.mjs"`
 	ParticleMeshScriptPath string `envconfig:"PARTICLE_MESH_SCRIPT_PATH" default:"/app/media/asset-optimizer/scripts/optimize-particle-mesh.mjs"`
 	FontS3Prefix           string `envconfig:"CDN_FONT_S3_PREFIX" default:"fonts/"`
 	FontUpstreamURL        string `envconfig:"CDN_FONT_UPSTREAM_URL" default:"https://fonts.gstatic.com"`

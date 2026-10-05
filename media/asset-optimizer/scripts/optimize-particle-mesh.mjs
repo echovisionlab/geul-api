@@ -92,10 +92,12 @@ export function parseParticleMeshArgs(argv) {
   };
 }
 
-async function createIO() {
+export async function createIO() {
   const [decoder, encoder] = await Promise.all([
     draco3d.createDecoderModule(),
     draco3d.createEncoderModule(),
+    MeshoptDecoder.ready,
+    MeshoptEncoder.ready,
   ]);
   return new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({
     "draco3d.decoder": decoder,

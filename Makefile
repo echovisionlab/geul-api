@@ -1,7 +1,7 @@
 .PHONY: deps tidy test test-integration test-integration-db test-integration-runner test-integration-required build run clean
 
 INTEGRATION_SCHEMA_ROOT ?= ../geul-schema
-INTEGRATION_POSTGRES_IMAGE ?= registry.dsub.io/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a
+INTEGRATION_POSTGRES_IMAGE ?= registry.dsub.io/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f
 
 # Download dependencies.
 deps:
@@ -57,4 +57,4 @@ media-build:
 media-test: media-build
 	pnpm --dir media/og typecheck
 	pnpm --dir media/og test
-	node --test media/asset-optimizer/scripts/optimize-particle-mesh.test.mjs
+	npm --prefix media/asset-optimizer test

@@ -26,7 +26,7 @@ func TestLoad(t *testing.T) {
 		if cfg.MaxInputBytes != DefaultMaxInputBytes || cfg.WorkerCount != 1 {
 			t.Fatalf("unexpected defaults: %#v", cfg)
 		}
-		if cfg.GLTFTransformPath != "gltf-transform" || cfg.NodeBinaryPath != "node" || cfg.ParticleMeshScriptPath != "scripts/optimize-particle-mesh.mjs" {
+		if cfg.GLTFTransformPath != "scripts/asset-transform.mjs" || cfg.NodeBinaryPath != "node" || cfg.ParticleMeshScriptPath != "scripts/optimize-particle-mesh.mjs" {
 			t.Fatalf("unexpected optimizer paths: %#v", cfg)
 		}
 	})

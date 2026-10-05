@@ -55,7 +55,7 @@ jobs:
 
       - name: Build and test media tools
         run: |
-          npm install --global pnpm@11.22.0
+          npm install --global pnpm@12.9.1
           make media-test
 
       - name: Test
