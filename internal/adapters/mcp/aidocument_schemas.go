@@ -107,6 +107,9 @@ const readInputJSONSchema = `{
   }
 }`
 
+// Tuple tags make these alternatives disjoint. Use anyOf so
+// connectors that project tuples to array types can still accept valid values
+// when their projection makes alternatives overlap.
 const mutationInputJSONSchema = `{
   "type":"object",
   "additionalProperties":false,
@@ -123,7 +126,7 @@ const mutationInputJSONSchema = `{
   "$defs":{
     "handle":{"type":"string","minLength":1,"maxLength":160,"description":"Stable block, relation, item, field, or File handle returned by document_read. For a new block or relation item, supply a new unique stable handle."},
     "optionalHandle":{"type":"string","maxLength":160,"description":"A stable handle, or the empty string when no parent, predecessor, relation, or relation item applies."},
-    "fieldPathSegment":{"oneOf":[
+    "fieldPathSegment":{"anyOf":[
       {"type":"array","prefixItems":[{"const":"f"},{"type":"string","minLength":1,"maxLength":120}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","prefixItems":[{"const":"i"},{"$ref":"#/$defs/handle"}],"items":false,"minItems":2,"maxItems":2}
     ]},
@@ -136,7 +139,7 @@ const mutationInputJSONSchema = `{
         {"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/fieldPath"}
       ],"items":false,"minItems":5,"maxItems":5}
     ]},
-    "inline":{"oneOf":[
+    "inline":{"anyOf":[
       {"type":"array","prefixItems":[{"const":"t"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","prefixItems":[{"enum":["b","em","u","s","code"]},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","prefixItems":[{"enum":["fg","bg"]},{"type":"string","minLength":1,"maxLength":64},{"type":"array","items":{"$ref":"#/$defs/inline"},"minItems":1}],"items":false,"minItems":3,"maxItems":3},
@@ -147,7 +150,7 @@ const mutationInputJSONSchema = `{
     ]},
     "listItem":{"type":"array","prefixItems":[{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
     "objectField":{"type":"array","prefixItems":[{"type":"string","minLength":1,"maxLength":120},{"$ref":"#/$defs/value"}],"items":false,"minItems":2,"maxItems":2},
-    "value":{"description":"Typed field value; do not send an untagged JSON scalar.","oneOf":[
+    "value":{"description":"Typed field value; do not send an untagged JSON scalar.","anyOf":[
       {"type":"array","description":"Text value [\"t\",text].","prefixItems":[{"const":"t"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","description":"Boolean value [\"b\",boolean].","prefixItems":[{"const":"b"},{"type":"boolean"}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","description":"Numeric value [\"n\",canonical-number-string].","prefixItems":[{"const":"n"},{"type":"string","minLength":1}],"items":false,"minItems":2,"maxItems":2},
@@ -155,7 +158,7 @@ const mutationInputJSONSchema = `{
       {"type":"array","description":"Typed list value [\"l\",items].","prefixItems":[{"const":"l"},{"type":"array","items":{"$ref":"#/$defs/listItem"}}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","description":"Typed object value [\"o\",fields].","prefixItems":[{"const":"o"},{"type":"array","items":{"$ref":"#/$defs/objectField"}}],"items":false,"minItems":2,"maxItems":2}
     ]},
-    "operation":{"description":"One compact typed mutation. Tuple positions are authoritative and must not be reordered or replaced with an object.","oneOf":[
+    "operation":{"description":"One compact typed mutation. Tuple positions are authoritative and must not be reordered or replaced with an object.","anyOf":[
       {"type":"array","description":"Set field: [\"fs\",fieldTarget,typedValue]. For paragraph text, the field is normally content and the value is [\"i\",[[\"t\",text]]].","prefixItems":[{"const":"fs"},{"$ref":"#/$defs/fieldTarget"},{"$ref":"#/$defs/value"}],"items":false,"minItems":3,"maxItems":3},
       {"type":"array","description":"Unset field: [\"fu\",fieldTarget].","prefixItems":[{"const":"fu"},{"$ref":"#/$defs/fieldTarget"}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","description":"Insert block: [\"bi\",newBlockHandle,blockKind,parentBlockHandle,afterBlockHandle]. Use empty parent or after when document_read returns no such handle. Set the new block content with fs in the same batch.","prefixItems":[{"const":"bi"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/handle"},{"$ref":"#/$defs/optionalHandle"},{"$ref":"#/$defs/optionalHandle"}],"items":false,"minItems":5,"maxItems":5},

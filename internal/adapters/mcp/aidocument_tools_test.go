@@ -279,9 +279,13 @@ func TestAIDocumentSchemasCoverRecursiveCompactWire(t *testing.T) {
 		t.Helper()
 		var definition struct {
 			OneOf []map[string]any `json:"oneOf"`
+			AnyOf []map[string]any `json:"anyOf"`
 		}
 		if err := json.Unmarshal(raw, &definition); err != nil {
 			t.Fatalf("decode schema definition: %v", err)
+		}
+		if len(definition.AnyOf) != 0 {
+			return definition.AnyOf
 		}
 		return definition.OneOf
 	}
@@ -366,10 +370,10 @@ func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 	}
 	var operation struct {
 		Description string `json:"description"`
-		OneOf       []struct {
+		AnyOf       []struct {
 			Description string           `json:"description"`
 			PrefixItems []map[string]any `json:"prefixItems"`
-		} `json:"oneOf"`
+		} `json:"anyOf"`
 	}
 	if err := json.Unmarshal(schema.Definitions["operation"], &operation); err != nil {
 		t.Fatalf("decode operation definition: %v", err)
@@ -381,7 +385,7 @@ func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 		"fs": false, "fu": false, "bi": false, "bd": false, "bm": false, "bk": false,
 		"ri": false, "rd": false, "rm": false, "fa": false, "fd": false, "lc": false, "ld": false,
 	}
-	for _, variant := range operation.OneOf {
+	for _, variant := range operation.AnyOf {
 		if variant.Description == "" || len(variant.PrefixItems) == 0 {
 			t.Fatalf("operation variant is not self-describing: %s", schema.Definitions["operation"])
 		}
@@ -403,6 +407,137 @@ func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 		if !described {
 			t.Errorf("compact operation %q has no described schema variant", kind)
 		}
+	}
+}
+
+func TestMutationTupleUnionsKeepExactConstraintsWithoutExclusiveProjectionMatching(t *testing.T) {
+	var schema struct {
+		Definitions map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal([]byte(mutationInputJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"operation", "fieldPathSegment", "inline", "value"} {
+		var union struct {
+			OneOf json.RawMessage `json:"oneOf"`
+			AnyOf []struct {
+				PrefixItems []map[string]any `json:"prefixItems"`
+				Items       json.RawMessage  `json:"items"`
+				MinItems    *int             `json:"minItems"`
+				MaxItems    *int             `json:"maxItems"`
+			} `json:"anyOf"`
+		}
+		if err := json.Unmarshal(schema.Definitions[name], &union); err != nil {
+			t.Fatal(err)
+		}
+		if union.OneOf != nil || len(union.AnyOf) < 2 {
+			t.Fatalf("%s tuple union must permit overlapping connector projections: %s", name, schema.Definitions[name])
+		}
+		seenTags := map[string]bool{}
+		for _, branch := range union.AnyOf {
+			if len(branch.PrefixItems) == 0 || string(branch.Items) != "false" || branch.MinItems == nil || branch.MaxItems == nil ||
+				*branch.MinItems != len(branch.PrefixItems) || *branch.MaxItems != len(branch.PrefixItems) {
+				t.Fatalf("%s lost exact tuple length or trailing-item rejection", name)
+			}
+			tags, _ := branch.PrefixItems[0]["enum"].([]any)
+			if tag, ok := branch.PrefixItems[0]["const"].(string); ok {
+				tags = []any{tag}
+			}
+			if len(tags) == 0 {
+				t.Fatalf("%s lost its tuple discriminator", name)
+			}
+			for _, value := range tags {
+				tag, ok := value.(string)
+				if !ok || tag == "" || seenTags[tag] {
+					t.Fatalf("%s alternatives must retain disjoint string tags: %v", name, value)
+				}
+				seenTags[tag] = true
+			}
+		}
+	}
+	// The observed connector describes both bm and rd as arrays of strings.
+	// This verifies their source schemas have that overlapping coarse shape;
+	// it does not implement or claim to reproduce the connector's projector.
+	var operation struct {
+		AnyOf []struct {
+			PrefixItems []map[string]any `json:"prefixItems"`
+		} `json:"anyOf"`
+	}
+	if err := json.Unmarshal(schema.Definitions["operation"], &operation); err != nil {
+		t.Fatal(err)
+	}
+	coarseShapes := map[string][]string{}
+	for _, branch := range operation.AnyOf {
+		tag, _ := branch.PrefixItems[0]["const"].(string)
+		if tag != "bm" && tag != "rd" {
+			continue
+		}
+		shape := []string{"string"}
+		for _, item := range branch.PrefixItems[1:] {
+			ref, _ := item["$ref"].(string)
+			var handle struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(schema.Definitions[strings.TrimPrefix(ref, "#/$defs/")], &handle); err != nil {
+				t.Fatal(err)
+			}
+			shape = append(shape, handle.Type)
+		}
+		coarseShapes[tag] = shape
+	}
+	wantShape := []string{"string", "string", "string", "string"}
+	if !reflect.DeepEqual(coarseShapes["bm"], wantShape) || !reflect.DeepEqual(coarseShapes["rd"], wantShape) {
+		t.Fatalf("bm/rd coarse array shapes = %#v", coarseShapes)
+	}
+}
+
+func TestCompactBlockMovesReachApplyThroughHTTPWhileMalformedTuplesDoNot(t *testing.T) {
+	const documentID = "0c314c79-103b-4e0e-953e-5f9370851639"
+	const block = "51e895a2-24c4-4aaa-a28c-fc466c5590fd"
+	const parent = "0bb8af09-e358-488b-9950-c07b6d056ca5"
+	const after = "8272c725-6186-4c0c-a244-3cb7025ca92e"
+	for _, test := range []struct {
+		name       string
+		operations string
+		want       []core.Operation
+	}{
+		{"valid move batch", `[["bm","` + block + `","` + parent + `","` + after + `"],["bm","` + after + `","` + parent + `",""],["bm","` + block + `","` + parent + `","` + after + `"]]`, []core.Operation{
+			core.MoveBlockOperation(block, parent, after), core.MoveBlockOperation(after, parent, ""), core.MoveBlockOperation(block, parent, after),
+		}},
+		{"missing predecessor", `[["bm","` + block + `","` + parent + `"]]`, nil},
+		{"extra position", `[["bm","` + block + `","` + parent + `","` + after + `","extra"]]`, nil},
+		{"non-string parent", `[["bm","` + block + `",false,"` + after + `"]]`, nil},
+		{"null predecessor", `[["bm","` + block + `","` + parent + `",null]]`, nil},
+		{"unknown tag", `[["move","` + block + `","` + parent + `","` + after + `"]]`, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b", Normalized: test.want}}
+			tools := mustAIDocumentTools(t, application)
+			config := validHTTPConfig(nil)
+			config.Registry, config.Dispatcher = tools, tools
+			response := httptest.NewRecorder()
+			request := mcpHTTPRequest(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_apply","arguments":{"v":"dcdp/1","p":"page","d":"` + documentID + `","l":"en","edr":"0af8a257-9da1-4a5d-9ae3-22682b3b4219","o":` + test.operations + `}}}`)
+			newHTTPTestHandler(t, config).ServeHTTP(response, request)
+			var reply struct {
+				Result struct {
+					IsError bool `json:"isError"`
+				} `json:"result"`
+				Error json.RawMessage `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &reply); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != 200 || reply.Error != nil || reply.Result.IsError != (test.want == nil) {
+				t.Fatalf("HTTP result = %d %s", response.Code, response.Body.String())
+			}
+			if test.want == nil {
+				if application.applyCalls != 0 {
+					t.Fatal("malformed tuple reached the application")
+				}
+			} else if application.applyCalls != 1 || !reflect.DeepEqual(application.applyRequest.Operations, test.want) {
+				t.Fatalf("decoded move batch = %+v", application.applyRequest)
+			}
+		})
 	}
 }
 
