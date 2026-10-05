@@ -48,7 +48,7 @@ var documentTools = []mcpserver.Tool{
 		Name: ToolParagraphCreate, Title: "Create document paragraph",
 		Description: "Create one plain-text Paragraph Block in an existing document. " +
 			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
+		InputSchema: json.RawMessage(paragraphCreateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
 		Meta:            oauthSecurityMeta(),
@@ -57,7 +57,7 @@ var documentTools = []mcpserver.Tool{
 		Name: ToolParagraphUpdate, Title: "Update document paragraph",
 		Description: "Replace the plain text of one existing Paragraph Block. " +
 			"Read the Block first and pass its stable block_id with the exact current document and target revisions." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
+		InputSchema: json.RawMessage(paragraphUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -66,7 +66,7 @@ var documentTools = []mcpserver.Tool{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
 			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
+		InputSchema: json.RawMessage(blockDeleteInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -75,7 +75,7 @@ var documentTools = []mcpserver.Tool{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
 		Description: "Update locale-owned title or summary for a Post, Work, or Page, and source-owned category_ids or tag_ids for a Post. " +
 			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
-		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(focusedMutationOutputJSONSchema),
+		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
@@ -114,7 +114,11 @@ func readInputSchema() json.RawMessage  { return json.RawMessage(readInputJSONSc
 func projectionOutputSchema() json.RawMessage {
 	return outputSchemaWithSync(projectionOutputJSONSchema)
 }
-func acceptedOutputSchema() json.RawMessage { return outputSchemaWithSync(acceptedOutputJSONSchema) }
+func acceptedOutputSchema() json.RawMessage { return mutationOutputSchema(acceptedOutputJSONSchema) }
+
+func mutationOutputSchema(successJSON string) json.RawMessage {
+	return outputSchemaWithSync(`{"type":"object","oneOf":[` + successJSON + `,` + validationOutputJSONSchema + `]}`)
+}
 
 // AIDocumentTools is a static MCP registry and dispatcher backed by the same
 // application service used by the generated AIDocumentService transport.
@@ -200,13 +204,13 @@ type paragraphCreateArguments struct {
 	focusedMutationArguments
 	Parent core.BlockID `json:"parent_block_id,omitempty"`
 	After  core.BlockID `json:"after_block_id,omitempty"`
-	Text   string       `json:"text"`
+	Text   *string      `json:"text"`
 }
 
 type paragraphUpdateArguments struct {
 	focusedMutationArguments
 	Block core.BlockID `json:"block_id"`
-	Text  string       `json:"text"`
+	Text  *string      `json:"text"`
 }
 
 type blockDeleteArguments struct {
@@ -286,10 +290,16 @@ func (tools *AIDocumentTools) createParagraph(ctx context.Context, arguments mcp
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if input.Text == nil {
+		return executionError(errors.New("text is required and must be a string"))
+	}
+	if err := rejectNullArguments(arguments, "parent_block_id", "after_block_id"); err != nil {
+		return executionError(err)
+	}
 	block := core.BlockID(uuid.NewString())
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
 		core.InsertBlockOperation(block, "paragraph", input.Parent, input.After),
-		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(input.Text))),
+		core.SetFieldOperation(block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
 	if err != nil {
 		return executionError(err)
@@ -302,8 +312,11 @@ func (tools *AIDocumentTools) updateParagraph(ctx context.Context, arguments mcp
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
+	if input.Text == nil {
+		return executionError(errors.New("text is required and must be a string"))
+	}
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
-		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(input.Text))),
+		core.SetFieldOperation(input.Block, "content", core.RichText(core.InlineText(*input.Text))),
 	})
 	if err != nil {
 		return executionError(err)
@@ -326,6 +339,9 @@ func (tools *AIDocumentTools) deleteBlock(ctx context.Context, arguments mcpserv
 func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
 	var input metadataUpdateArguments
 	if err := decodeArguments(arguments, &input); err != nil {
+		return executionError(err)
+	}
+	if err := rejectNullArguments(arguments, "title", "summary", "clear_summary", "category_ids", "tag_ids"); err != nil {
 		return executionError(err)
 	}
 	if input.Summary != nil && input.ClearSummary {
@@ -465,6 +481,15 @@ func decodeArguments(arguments mcpserver.ToolArguments, target any) error {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("multiple argument values are not allowed")
+	}
+	return nil
+}
+
+func rejectNullArguments(arguments mcpserver.ToolArguments, names ...string) error {
+	for _, name := range names {
+		if bytes.Equal(bytes.TrimSpace(arguments[name]), []byte("null")) {
+			return fmt.Errorf("%s cannot be null", name)
+		}
 	}
 	return nil
 }

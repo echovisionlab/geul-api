@@ -113,6 +113,9 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	if name != ToolDocumentList {
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return executionError(err)
+	}
 	var input struct {
 		Profile string `json:"p"`
 		Query   string `json:"q,omitempty"`
@@ -124,6 +127,15 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	}
 	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
 		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
+	}
+	_, limitSupplied := arguments["limit"]
+	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
+		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
+	}
+	// The owning management APIs use int32 offsets. Validate before converting
+	// so a large offset cannot wrap around and select a different page.
+	if input.Offset < 0 || input.Offset > 1<<31-1 {
+		return executionError(errors.New("offset must be between 0 and 2147483647"))
 	}
 	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
 	if err != nil {

@@ -1,6 +1,7 @@
 package aidocument
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,6 +109,9 @@ func (t *FieldTarget) UnmarshalJSON(data []byte) error {
 	}
 	targets := []any{&t.Block, &t.Relation, &t.Item, &t.Field}
 	for index := range targets {
+		if bytes.Equal(bytes.TrimSpace(parts[index]), []byte("null")) {
+			return fmt.Errorf("compact field target item %d cannot be null", index)
+		}
 		if err := json.Unmarshal(parts[index], targets[index]); err != nil {
 			return fmt.Errorf("compact field target item %d: %w", index, err)
 		}
@@ -115,6 +119,9 @@ func (t *FieldTarget) UnmarshalJSON(data []byte) error {
 	if len(parts) == 5 {
 		if err := json.Unmarshal(parts[4], &t.Path); err != nil {
 			return fmt.Errorf("compact field target path: %w", err)
+		}
+		if len(t.Path) == 0 {
+			return errors.New("compact field target path must not be empty; omit it for a whole-field operation")
 		}
 	}
 	return nil
@@ -363,6 +370,9 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("operation %q must contain exactly %d items", o.Kind, want)
 		}
 		for index, target := range targets {
+			if bytes.Equal(bytes.TrimSpace(parts[index+1]), []byte("null")) {
+				return fmt.Errorf("operation %q item %d cannot be null", o.Kind, index+1)
+			}
 			if err := json.Unmarshal(parts[index+1], target); err != nil {
 				return fmt.Errorf("operation %q item %d: %w", o.Kind, index+1, err)
 			}

@@ -27,6 +27,7 @@ const (
 	ToolPostRepublish      = "post_republish"
 	ToolPostDelete         = "post_delete"
 	ToolWorkCreate         = "work_create"
+	ToolWorkSettingsGet    = "work_settings_get"
 	ToolWorkSettingsUpdate = "work_settings_update"
 	ToolWorkPublish        = "work_publish"
 	ToolWorkUnpublish      = "work_unpublish"
@@ -49,7 +50,8 @@ var contentManagementTools = []mcpserver.Tool{
 	contentTool(ToolPostRepublish, "Republish Post", "Move an archived Post back to published.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostDelete, "Delete Post", "Permanently delete a Post allowed by its current lifecycle state.", contentIDInputJSONSchema, true),
 	contentTool(ToolWorkCreate, "Create Work", "Create a new draft Work with an empty typed document in the requested source locale.", workCreateInputJSONSchema, false),
-	contentTool(ToolWorkSettingsUpdate, "Update Work settings", "Update Work slug, type, metadata, featured flag, clients, period, or Map Place relation. Use document_metadata_update for title or summary.", workSettingsUpdateInputJSONSchema, true),
+	relatedTool(ToolWorkSettingsGet, "Get Work settings", "Read current Work settings through the authorized Work service. Before editing metadata or client_ids, copy the returned metadata to observed_metadata and client_ids to observed_client_ids for work_settings_update.", contentIDInputJSONSchema, workSettingsOutputJSONSchema, true, false),
+	contentTool(ToolWorkSettingsUpdate, "Update Work settings", "Update Work slug, type, metadata, featured flag, clients, period, or Map Place relation. Read work_settings_get before editing metadata or client_ids and supply its unchanged values as observed_metadata or observed_client_ids; concurrent peer edits are merged using that observed baseline. Use document_metadata_update for title or summary.", workSettingsUpdateInputJSONSchema, true),
 	contentTool(ToolWorkPublish, "Publish Work", "Publish a draft Work or restore a legacy archived Work to published.", contentIDInputJSONSchema, true),
 	contentTool(ToolWorkUnpublish, "Unpublish Work", "Move a published Work back to draft.", contentIDInputJSONSchema, true),
 	contentTool(ToolWorkDelete, "Delete Work", "Permanently delete a Work allowed by its current lifecycle state.", contentIDInputJSONSchema, true),
@@ -85,6 +87,7 @@ type PostManagementApplication interface {
 }
 
 type WorkManagementApplication interface {
+	GetWork(context.Context, *connect.Request[managev1.GetWorkRequest]) (*connect.Response[managev1.Work], error)
 	CreateWork(context.Context, *connect.Request[managev1.CreateWorkRequest]) (*connect.Response[managev1.Work], error)
 	UpdateWork(context.Context, *connect.Request[managev1.UpdateWorkRequest]) (*connect.Response[managev1.UpdateWorkResponse], error)
 	PublishWork(context.Context, *connect.Request[managev1.PublishWorkRequest]) (*connect.Response[managev1.WorkLifecycleMutationResponse], error)
@@ -132,6 +135,8 @@ func (tools *ContentManagementTools) CallTool(ctx context.Context, _ mcpserver.P
 		return tools.schedulePost(ctx, arguments)
 	case ToolWorkCreate:
 		return tools.createWork(ctx, arguments)
+	case ToolWorkSettingsGet:
+		return tools.getWorkSettings(ctx, arguments)
 	case ToolWorkSettingsUpdate:
 		return tools.updateWork(ctx, arguments)
 	case ToolWorkPublish, ToolWorkUnpublish, ToolWorkDelete:
@@ -322,18 +327,56 @@ func (tools *ContentManagementTools) createWork(ctx context.Context, arguments m
 }
 
 type workSettingsArguments struct {
-	DocumentID string          `json:"document_id"`
-	Slug       *string         `json:"slug,omitempty"`
-	Type       *string         `json:"type,omitempty"`
-	Metadata   *map[string]any `json:"metadata,omitempty"`
-	Featured   *bool           `json:"featured,omitempty"`
-	ClientIDs  *[]string       `json:"client_ids,omitempty"`
-	Year       *int32          `json:"year,omitempty"`
-	Month      *int32          `json:"month,omitempty"`
-	MapPlaceID *string         `json:"map_place_id,omitempty"`
-	UntilYear  *int32          `json:"until_year,omitempty"`
-	UntilMonth *int32          `json:"until_month,omitempty"`
-	IsPresent  *bool           `json:"is_present,omitempty"`
+	DocumentID        string          `json:"document_id"`
+	Slug              *string         `json:"slug,omitempty"`
+	Type              *string         `json:"type,omitempty"`
+	Metadata          *map[string]any `json:"metadata,omitempty"`
+	ObservedMetadata  *map[string]any `json:"observed_metadata,omitempty"`
+	Featured          *bool           `json:"featured,omitempty"`
+	ClientIDs         *[]string       `json:"client_ids,omitempty"`
+	ObservedClientIDs *[]string       `json:"observed_client_ids,omitempty"`
+	Year              *int32          `json:"year,omitempty"`
+	Month             *int32          `json:"month,omitempty"`
+	MapPlaceID        *string         `json:"map_place_id,omitempty"`
+	UntilYear         *int32          `json:"until_year,omitempty"`
+	UntilMonth        *int32          `json:"until_month,omitempty"`
+	IsPresent         *bool           `json:"is_present,omitempty"`
+}
+
+func (tools *ContentManagementTools) getWorkSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	var input contentIDArguments
+	if err := decodeArguments(arguments, &input); err != nil {
+		return executionError(err)
+	}
+	response, err := tools.works.GetWork(ctx, connect.NewRequest(&managev1.GetWorkRequest{Id: input.DocumentID}))
+	if err != nil {
+		return expectedToolError(err)
+	}
+	work := response.Msg
+	metadata := map[string]any{}
+	if work.Metadata != nil {
+		metadata = work.Metadata.AsMap()
+	}
+	clientIDs := make([]string, 0, len(work.Clients))
+	for _, client := range work.Clients {
+		if client != nil {
+			clientIDs = append(clientIDs, client.Id)
+		}
+	}
+	output := map[string]any{
+		"document_type": "work", "document_id": work.Id,
+		"metadata": metadata, "client_ids": clientIDs, "slug": optionalStringValue(work.Slug),
+		"type": contentStatus(work.Type.String(), "WORK_TYPE_"), "featured": work.Featured,
+		"year": work.Year, "month": work.Month, "is_present": work.IsPresent,
+		"map_place_id": optionalStringValue(work.MapPlaceId), "document_revision": work.Revision,
+	}
+	if work.UntilYear != nil {
+		output["until_year"] = *work.UntilYear
+	}
+	if work.UntilMonth != nil {
+		output["until_month"] = *work.UntilMonth
+	}
+	return contentResult(output)
 }
 
 func (tools *ContentManagementTools) updateWork(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -344,9 +387,19 @@ func (tools *ContentManagementTools) updateWork(ctx context.Context, arguments m
 	if input.Slug == nil && input.Type == nil && input.Metadata == nil && input.Featured == nil && input.ClientIDs == nil && input.Year == nil && input.Month == nil && input.MapPlaceID == nil && input.UntilYear == nil && input.UntilMonth == nil && input.IsPresent == nil {
 		return executionError(errors.New("at least one Work setting is required"))
 	}
+	if input.Metadata != nil && input.ObservedMetadata == nil {
+		return executionError(errors.New("observed_metadata is required when updating metadata"))
+	}
+	if input.ClientIDs != nil && input.ObservedClientIDs == nil {
+		return executionError(errors.New("observed_client_ids is required when updating client_ids"))
+	}
 	request := &managev1.UpdateWorkRequest{Id: input.DocumentID, Slug: input.Slug, Featured: input.Featured, Year: input.Year, Month: input.Month, MapPlaceId: input.MapPlaceID, UntilYear: input.UntilYear, UntilMonth: input.UntilMonth, IsPresent: input.IsPresent}
 	var err error
 	request.Metadata, err = optionalStruct(input.Metadata)
+	if err != nil {
+		return executionError(err)
+	}
+	request.ObservedMetadata, err = optionalStruct(input.ObservedMetadata)
 	if err != nil {
 		return executionError(err)
 	}
@@ -359,6 +412,9 @@ func (tools *ContentManagementTools) updateWork(ctx context.Context, arguments m
 	}
 	if input.ClientIDs != nil {
 		request.Clients = &managev1.WorkClientsUpdate{ClientIds: *input.ClientIDs}
+	}
+	if input.ObservedClientIDs != nil {
+		request.ObservedClients = &managev1.WorkClientsUpdate{ClientIds: *input.ObservedClientIDs}
 	}
 	updated, err := tools.works.UpdateWork(ctx, connect.NewRequest(request))
 	if err != nil {

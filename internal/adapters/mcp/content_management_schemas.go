@@ -80,14 +80,35 @@ const workSettingsUpdateInputJSONSchema = `{
     "document_id":` + documentReferenceJSONSchema + `,
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "type":{"enum":["music_project","portfolio","article","contribution"]},
-    "metadata":{"type":"object"},"featured":{"type":"boolean"},
+    "metadata":{"type":"object"},
+    "observed_metadata":{"type":"object","description":"Copy metadata returned by work_settings_get before editing. Preserve unchanged fields to keep concurrent peer edits."},
+    "featured":{"type":"boolean"},
     "client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `},
+    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + documentReferenceJSONSchema + `,"description":"Copy client_ids returned by work_settings_get before editing, including an empty array when no clients were present."},
     "year":{"type":"integer","minimum":1,"maximum":9999},
     "month":{"type":"integer","minimum":1,"maximum":12},
     "map_place_id":{"type":"string","description":"Canonical Map Place UUID, or an empty string to remove the relation."},
     "until_year":{"type":"integer","minimum":1,"maximum":9999},
     "until_month":{"type":"integer","minimum":1,"maximum":12},
     "is_present":{"type":"boolean","description":"Setting true clears the stored until date. Setting false for a currently present Work requires until_year and until_month in the same call."}
+  },
+  "allOf":[
+    {"if":{"required":["metadata"]},"then":{"required":["observed_metadata"]}},
+    {"if":{"required":["client_ids"]},"then":{"required":["observed_client_ids"]}}
+  ]
+}`
+
+const workSettingsOutputJSONSchema = `{
+  "type":"object","additionalProperties":false,
+  "required":["document_type","document_id","metadata","client_ids","type","featured","year","month","is_present","document_revision"],
+  "properties":{
+    "document_type":{"const":"work"},"document_id":` + documentReferenceJSONSchema + `,
+    "metadata":{"type":"object"},"client_ids":{"type":"array","items":` + documentReferenceJSONSchema + `},
+    "slug":{"type":"string"},"type":{"enum":["music_project","portfolio","article","contribution"]},
+    "featured":{"type":"boolean"},"year":{"type":"integer"},"month":{"type":"integer"},
+    "until_year":{"type":"integer"},"until_month":{"type":"integer"},"is_present":{"type":"boolean"},
+    "map_place_id":` + documentReferenceJSONSchema + `,
+    "document_revision":{"type":"string","description":"Content document revision; Work settings edits use observed metadata/client values instead of this revision."}
   }
 }`
 

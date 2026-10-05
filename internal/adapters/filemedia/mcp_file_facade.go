@@ -107,6 +107,9 @@ type MCPFileSessionHandle struct {
 	Kind      MCPFileKind
 	FileID    string
 	UploadID  string
+	// ClientMediaBundleID identifies browser-prepared derivatives at completion.
+	// It is metadata alongside the four-field session identity.
+	ClientMediaBundleID string
 }
 
 type MCPFileTransferSession struct {
@@ -226,8 +229,15 @@ func (facade *MCPFileFacade) Complete(
 	if _, err := validateMCPFileSessionHandle(handle); err != nil {
 		return MCPFileTransferResult{}, err
 	}
+	var bundleID *string
+	if handle.ClientMediaBundleID != "" {
+		bundleID = pointer(handle.ClientMediaBundleID)
+	}
 	response, err := facade.files.CompleteMultipartUpload(ctx, connect.NewRequest(
-		&managev1.CompleteMultipartUploadRequest{FileId: handle.FileID, UploadId: handle.UploadID},
+		&managev1.CompleteMultipartUploadRequest{
+			FileId: handle.FileID, UploadId: handle.UploadID,
+			ClientMediaBundleId: bundleID,
+		},
 	))
 	if err != nil {
 		return MCPFileTransferResult{}, err
@@ -402,6 +412,7 @@ func mcpFileSessionFromCandidate(
 	if response.GetFileId() != handle.FileID || response.GetUploadId() != handle.UploadID {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("status response does not match the session handle")
 	}
+	handle.ClientMediaBundleID = response.GetClientMediaBundleId()
 	state, err := mcpTransferState(response.GetStatus())
 	if err != nil {
 		return MCPFileTransferSession{}, err

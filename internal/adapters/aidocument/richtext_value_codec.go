@@ -376,7 +376,11 @@ func setRichTextField(message protoreflect.Message, catalog contentv1.RichTextCa
 		if content == nil {
 			return errors.New("block does not expose table content")
 		}
-		return setTableValue(message.Mutable(content).Message(), value, target.Field == richTextTableLocaleField, catalog)
+		table := message.Mutable(content).Message()
+		if len(target.Path) != 0 {
+			return mutateTablePath(table, catalog, target, &value)
+		}
+		return setTableValue(table, value, target.Field == richTextTableLocaleField, catalog)
 	}
 	descriptor, ok := findContentDescriptor(block.Fields, string(target.Field))
 	if !ok {
@@ -394,9 +398,12 @@ func setRichTextField(message protoreflect.Message, catalog contentv1.RichTextCa
 	return setDescriptorAtPath(props, field, descriptor, target.Path, value)
 }
 
-func clearRichTextField(message protoreflect.Message, block contentv1.ContentBlockDescriptor, target core.FieldTarget) error {
+func clearRichTextField(message protoreflect.Message, catalog contentv1.RichTextCatalogDescriptor, block contentv1.ContentBlockDescriptor, target core.FieldTarget) error {
 	if target.Field == richTextContentField || target.Field == richTextTableField || target.Field == richTextTableLocaleField {
 		content := findMessageField(message, "content")
+		if content != nil && len(target.Path) != 0 && message.Has(content) {
+			return mutateTablePath(message.Get(content).Message(), catalog, target, nil)
+		}
 		if content != nil {
 			message.Clear(content)
 		}

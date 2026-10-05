@@ -217,9 +217,11 @@ func TestMCPFileStatusReturnsOnlyCompactPartProgress(t *testing.T) {
 	t.Parallel()
 
 	fileID := uuid.NewString()
+	bundleID := uuid.NewString()
 	lastActivity := timestamppb.New(time.Date(2026, 8, 23, 1, 2, 3, 0, time.FixedZone("KST", 9*60*60)))
 	runtime := &fakeMCPFileRuntime{findResult: &managev1.FindMultipartUploadCandidateResponse{
-		FileId: pointer(fileID), UploadId: pointer("upload-1"), TotalParts: 3, ChunkSize: 1024,
+		ClientMediaBundleId: &bundleID,
+		FileId:              pointer(fileID), UploadId: pointer("upload-1"), TotalParts: 3, ChunkSize: 1024,
 		Status:        managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
 		UploadedParts: []*managev1.UploadPartInfo{{PartNumber: 1, Etag: "must-not-leak"}, {PartNumber: 3, Etag: "must-not-leak"}},
 		FileName:      pointer("audio.wav"), MimeType: pointer("audio/wav"), FileSize: 3072,
@@ -239,7 +241,8 @@ func TestMCPFileStatusReturnsOnlyCompactPartProgress(t *testing.T) {
 		t.Fatalf("Find request = %#v", runtime.findRequest)
 	}
 	if result.Session == nil || !reflect.DeepEqual(result.Session.UploadedPartNumbers, []int32{1, 3}) ||
-		result.Session.LastActivityAt == nil || result.Session.LastActivityAt.Location() != time.UTC {
+		result.Session.LastActivityAt == nil || result.Session.LastActivityAt.Location() != time.UTC ||
+		result.Session.Handle.ClientMediaBundleID != bundleID {
 		t.Fatalf("Status() result = %#v", result)
 	}
 }
@@ -269,6 +272,7 @@ func TestMCPFileCompleteAndReadReturnBoundedVerifiedHandle(t *testing.T) {
 	t.Parallel()
 
 	fileID := uuid.NewString()
+	bundleID := uuid.NewString()
 	delivery := completeDelivery(fileID)
 	runtime := &fakeMCPFileRuntime{
 		completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: delivery},
@@ -278,12 +282,14 @@ func TestMCPFileCompleteAndReadReturnBoundedVerifiedHandle(t *testing.T) {
 	handle := MCPFileSessionHandle{
 		Transport: MCPFileTransportPresignedMultipart, Kind: MCPFileKindVideo,
 		FileID: fileID, UploadID: "upload-1",
+		ClientMediaBundleID: bundleID,
 	}
 	result, err := facade.Complete(context.Background(), handle)
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}
-	if runtime.completeRequest.GetFileId() != fileID || runtime.completeRequest.GetUploadId() != "upload-1" {
+	if runtime.completeRequest.GetFileId() != fileID || runtime.completeRequest.GetUploadId() != "upload-1" ||
+		runtime.completeRequest.GetClientMediaBundleId() != bundleID {
 		t.Fatalf("Complete request = %#v", runtime.completeRequest)
 	}
 	if result.File == nil || len(result.File.References) != 7 || result.File.DerivativeStatus != "ready" {
@@ -315,6 +321,30 @@ func TestMCPFileFacadeFailsClosedOnRuntimeMismatchAndPreservesAuthorityErrors(t 
 	_, err = facade.Read(context.Background(), fileID)
 	if !errors.Is(err, authorityError) {
 		t.Fatalf("Read() authority error = %v", err)
+	}
+}
+
+func TestMCPFileCompleteKeepsBundleOptionalAndPreservesMediaPrerequisite(t *testing.T) {
+	fileID := uuid.NewString()
+	runtime := &fakeMCPFileRuntime{completeResult: &managev1.CompleteMultipartUploadResponse{
+		FileId: fileID, Delivery: minimalDelivery(fileID),
+	}}
+	facade, _ := NewMCPFileFacade(runtime)
+	handle := MCPFileSessionHandle{
+		Transport: MCPFileTransportPresignedMultipart, Kind: MCPFileKindGeneral,
+		FileID: fileID, UploadID: "upload-binary",
+	}
+	if _, err := facade.Complete(t.Context(), handle); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.completeRequest.ClientMediaBundleId != nil {
+		t.Fatalf("completion fabricated a bundle: %+v", runtime.completeRequest)
+	}
+	prerequisiteError := connect.NewError(connect.CodeFailedPrecondition, errors.New("clientMediaBundleRequired: direct audio and video uploads require completed browser media"))
+	runtime.completeError = prerequisiteError
+	handle.Kind = MCPFileKindAudio
+	if _, err := facade.Complete(t.Context(), handle); !errors.Is(err, prerequisiteError) {
+		t.Fatalf("media prerequisite error changed or bypassed: %v", err)
 	}
 }
 

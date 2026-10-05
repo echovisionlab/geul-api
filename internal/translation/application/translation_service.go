@@ -364,7 +364,7 @@ func (s *TranslationService) ListTranslationJobs(
 	}
 
 	limit, offset := queryutil.NormalizePaginationParams(req.Msg.Pagination)
-	query, err = translationJobSortConfig.ApplySort(query, req.Msg.Sorts)
+	query, err = applyTranslationJobSort(query, req.Msg.Sorts)
 	if err != nil {
 		return nil, err
 	}
@@ -383,4 +383,17 @@ func (s *TranslationService) ListTranslationJobs(
 		resp.Jobs = append(resp.Jobs, toProtoTranslationJob(job))
 	}
 	return connect.NewResponse(resp), nil
+}
+
+func applyTranslationJobSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.DB, error) {
+	query, err := translationJobSortConfig.ApplySort(query, sorts)
+	if err != nil {
+		return nil, err
+	}
+	if len(sorts) != 0 {
+		// Explicit sort fields can tie. Preserve a unique order across offset
+		// pages just as the default sort does.
+		query = query.Order("id ASC")
+	}
+	return query, nil
 }

@@ -229,6 +229,7 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 		return mutation, nil, nil
 	}
 	contentOperations := make([]core.Operation, 0, len(operations))
+	contentIndexes := make([]int, 0, len(operations))
 	for index, operation := range operations {
 		if handled, issue := compilePageMetadataOperation(&mutation.Metadata, operation, index); handled {
 			if issue != nil {
@@ -237,8 +238,14 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 			continue
 		}
 		contentOperations = append(contentOperations, operation)
+		contentIndexes = append(contentIndexes, index)
 	}
 	batch, issues, err := p.codec.Compile(state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations)
+	for index := range issues {
+		if issues[index].Operation >= 0 && issues[index].Operation < len(contentIndexes) {
+			issues[index].Operation = contentIndexes[issues[index].Operation]
+		}
+	}
 	if err != nil || len(issues) != 0 {
 		return pagedomain.AIDocumentMutation{}, issues, err
 	}

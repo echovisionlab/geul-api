@@ -561,7 +561,11 @@ func parseMessage(body []byte) (incomingMessage, *protocolError) {
 
 	message := incomingMessage{method: method, params: envelope["params"], id: id, hasID: hasID}
 	if len(message.params) != 0 && !isJSONObject(message.params) {
-		return incomingMessage{}, &protocolError{code: -32602, message: "Invalid params", status: http.StatusOK, id: id}
+		status := http.StatusOK
+		if !hasID {
+			status = http.StatusBadRequest
+		}
+		return incomingMessage{}, &protocolError{code: -32602, message: "Invalid params", status: status, id: id}
 	}
 	return message, nil
 }
@@ -580,11 +584,36 @@ func validRequestID(raw json.RawMessage) bool {
 	case string:
 		return true
 	case json.Number:
-		_, err := strconv.ParseFloat(string(typed), 64)
-		return err == nil
+		return integerJSONNumber(string(typed))
 	default:
 		return false
 	}
+}
+
+// integerJSONNumber checks the decimal scale of an already valid JSON number.
+// It neither rounds the mantissa nor expands exponent notation into big integers.
+func integerJSONNumber(value string) bool {
+	mantissa, exponentText := value, "0"
+	if index := strings.IndexAny(value, "eE"); index >= 0 {
+		mantissa, exponentText = value[:index], value[index+1:]
+	}
+	fractionDigits := 0
+	if index := strings.IndexByte(mantissa, '.'); index >= 0 {
+		fractionDigits = len(mantissa) - index - 1
+	}
+	digits := strings.ReplaceAll(strings.TrimPrefix(mantissa, "-"), ".", "")
+	trimmed := strings.TrimRight(digits, "0")
+	if trimmed == "" {
+		return true
+	}
+	trailingZeros := len(digits) - len(trimmed)
+	exponent, err := strconv.ParseInt(exponentText, 10, 64)
+	if err != nil {
+		// JSON syntax is already checked. An overflowing exponent exceeds the
+		// bounded mantissa length, so its sign alone decides integrality.
+		return !strings.HasPrefix(exponentText, "-")
+	}
+	return exponent >= int64(fractionDigits-trailingZeros)
 }
 
 func validateTool(tool Tool) error {

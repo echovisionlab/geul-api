@@ -241,6 +241,7 @@ func (s *ReleaseService) ListReleasesAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("release.id ASC")
 
 	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&releases).Error; err != nil {
 		return nil, errs.Internal(err)

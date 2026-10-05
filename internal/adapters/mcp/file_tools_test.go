@@ -133,10 +133,13 @@ func TestFileToolsExposeCompactReferenceOnlySurface(t *testing.T) {
 				t.Fatalf("%s %s schema = %s (%v)", tool.Name, schemaName, schema, err)
 			}
 			lower := strings.ToLower(string(schema))
-			for _, forbidden := range []string{"base64", "bytes", "blob", "data:"} {
-				if strings.Contains(lower, forbidden) {
-					t.Fatalf("%s %s schema exposed %q", tool.Name, schemaName, forbidden)
+			for _, forbidden := range []string{"base64", "bytes", "blob"} {
+				if strings.Contains(lower, `"`+forbidden+`":`) {
+					t.Fatalf("%s %s schema exposed payload field %q", tool.Name, schemaName, forbidden)
 				}
+			}
+			if strings.Contains(lower, "data:") {
+				t.Fatalf("%s %s schema exposed a data URI", tool.Name, schemaName)
 			}
 		}
 	}
@@ -159,6 +162,7 @@ func TestFileToolsExposeCompactReferenceOnlySurface(t *testing.T) {
 
 func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 	fileID := uuid.NewString()
+	bundleID := uuid.NewString()
 	lastActivity := time.Date(2026, 8, 23, 10, 11, 12, 123, time.FixedZone("test", 9*60*60))
 	runtime := &recordingMCPFileRuntime{
 		initiateResult: &managev1.InitiateMultipartUploadResponse{
@@ -166,7 +170,8 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 			Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED,
 		},
 		findResult: &managev1.FindMultipartUploadCandidateResponse{
-			FileId: fileStringPointer(fileID), UploadId: fileStringPointer("upload-a"),
+			ClientMediaBundleId: &bundleID,
+			FileId:              fileStringPointer(fileID), UploadId: fileStringPointer("upload-a"),
 			FileName: fileStringPointer("audio.wav"), MimeType: fileStringPointer("audio/wav"), FileSize: 3072,
 			TotalParts: 3, ChunkSize: 1024,
 			Status:         managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
@@ -205,6 +210,10 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 		t.Fatalf("status request = %+v", request)
 	}
 	statusText := status.Content[0]["text"].(string)
+	statusSession := status.StructuredContent["x"].(map[string]any)
+	if statusSession["client_media_bundle_id"] != bundleID || !reflect.DeepEqual(statusSession["h"], handle) {
+		t.Fatalf("status changed the four-slot handle or lost bundle metadata: %+v", statusSession)
+	}
 	if !strings.Contains(statusText, `"u":[1,3]`) || !strings.Contains(statusText, `"a":"2026-08-23T01:11:12.000000123Z"`) ||
 		strings.Contains(statusText, "must-not-leak") {
 		t.Fatalf("status result = %s", statusText)
@@ -213,6 +222,7 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 
 func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 	fileID := uuid.NewString()
+	bundleID := uuid.NewString()
 	delivery := fileTestDelivery(fileID)
 	runtime := &recordingMCPFileRuntime{
 		completeResult: &managev1.CompleteMultipartUploadResponse{FileId: fileID, Delivery: delivery},
@@ -221,12 +231,13 @@ func TestFileToolsCompleteRemoteAndReadReturnVerifiedReferences(t *testing.T) {
 	}
 	tools := mustFileTools(t, runtime)
 
-	completeArguments := `{"a":"complete","h":["browser_upload_page","video","` + fileID + `","upload-v"]}`
+	completeArguments := `{"a":"complete","h":["browser_upload_page","video","` + fileID + `","upload-v"],"client_media_bundle_id":"` + bundleID + `"}`
 	completed, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileTransfer, fileToolArguments(t, completeArguments))
 	if err != nil {
 		t.Fatalf("file_transfer(complete) error = %v", err)
 	}
-	if runtime.completeRequest.GetFileId() != fileID || runtime.completeRequest.GetUploadId() != "upload-v" {
+	if runtime.completeRequest.GetFileId() != fileID || runtime.completeRequest.GetUploadId() != "upload-v" ||
+		runtime.completeRequest.GetClientMediaBundleId() != bundleID {
 		t.Fatalf("complete request = %+v", runtime.completeRequest)
 	}
 	if completed.StructuredContent["s"] != "ready" || !strings.Contains(completed.Content[0]["text"].(string), `"r":[["inline"`) {
@@ -267,6 +278,7 @@ func TestFileToolsRejectInlineOrActionIncompatibleArguments(t *testing.T) {
 		{name: "remote metadata", tool: ToolFileTransfer, arguments: `{"a":"begin","k":"image","t":"remote_https","u":"https://example.com/a.png","n":"a.png"}`},
 		{name: "short handle", tool: ToolFileTransfer, arguments: `{"a":"status","h":["presigned_multipart","image"]}`},
 		{name: "status extra field", tool: ToolFileTransfer, arguments: `{"a":"status","h":["presigned_multipart","image","` + fileID + `","upload"],"f":"` + fileID + `"}`},
+		{name: "status rejects completion bundle", tool: ToolFileTransfer, arguments: `{"a":"status","h":["presigned_multipart","image","` + fileID + `","upload"],"client_media_bundle_id":"` + uuid.NewString() + `"}`},
 		{name: "read inline field", tool: ToolFileRead, arguments: `{"f":"` + fileID + `","bytes":"AA=="}`},
 		{name: "read invalid ID", tool: ToolFileRead, arguments: `{"f":"not-a-uuid"}`},
 	}

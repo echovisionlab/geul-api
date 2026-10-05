@@ -265,8 +265,16 @@ func TestDocumentSyncSchemasPreserveSuccessAndRootReferences(t *testing.T) {
 				json.Unmarshal([]byte(original), &expected)
 				defs := expected["$defs"]
 				delete(expected, "$defs")
+				switch tool.Name {
+				case ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply:
+					var rejection map[string]any
+					if err := json.Unmarshal([]byte(validationOutputJSONSchema), &rejection); err != nil {
+						t.Fatal(err)
+					}
+					expected = map[string]any{"type": "object", "oneOf": []any{expected, rejection}}
+				}
 				if !reflect.DeepEqual(variants[0], expected) || !reflect.DeepEqual(root["$defs"], defs) {
-					t.Error("normal success schema or root definitions changed")
+					t.Error("normal success/rejection schema or root definitions changed")
 				}
 			}
 			sync := variants[1].(map[string]any)

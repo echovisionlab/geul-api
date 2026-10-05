@@ -18,15 +18,16 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "9"
+const mcpServerImplementationVersion = "10"
 
 const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist when a document UUID is unknown. " +
 	"Pass the returned d unchanged to document_open and document_read; never use a slug or URL as d. " +
 	"Use the focused Post, Work, and Page creation, settings, lifecycle, scheduling, and deletion tools for root management actions. " +
+	"Use work_settings_get before updating Work metadata or clients, and pass the read values unchanged as observed_metadata or observed_client_ids with the intended new values. " +
 	"Use the focused featured-image, Post participant, Work credit, version, and slug-check tools for related management actions. " +
 	"Use reference_search to resolve Category, Tag, Client, Map Place, Member, or Artist UUIDs, and file_list to resolve existing File UUIDs. " +
 	"Use document_file_add, document_file_replace, or document_file_remove to reuse existing Files as document File Blocks without uploading or deleting File bytes. Use file_usage_list to inspect every authorized use. " +
-	"Use document_file_download_policy_get before document_file_download_policy_update; expected_file_id is only a compare-and-set guard for the exact current File Block attachment. " +
+	"Use document_file_download_policy_get before document_file_download_policy_update; copy its audience and every audience_segments ID into observed_policy.audience and observed_policy.audience_segment_ids. expected_file_id is only a compare-and-set guard for the exact current File Block attachment. " +
 	"Use document_metadata_update for title or summary, and for Post categories or tags, after reading exact current revisions. " +
 	"For ordinary plain-text paragraph creation, update, or deletion, read the target and use the focused document_paragraph_create, document_paragraph_update, or document_block_delete tool with the exact current revisions. " +
 	"Use document_validate only when the user explicitly requests a dry run. Use document_apply only for advanced typed batches that focused tools cannot represent. " +

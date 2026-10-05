@@ -22,6 +22,38 @@ import (
 
 const discoveryDocumentID = "44444444-4444-4444-8444-444444444444"
 
+func TestDocumentDiscoveryRejectsPaginationOutsideOwningAPIBounds(t *testing.T) {
+	for _, profile := range []string{"post", "work", "page", "program_event", "release", "artist"} {
+		for _, pagination := range []string{`"offset":null`, `"offset":-1`, `"offset":2147483648`, `"offset":4294967296`, `"limit":null`, `"limit":0`, `"limit":-1`, `"limit":51`, `"limit":4294967296`} {
+			t.Run(profile+"/"+pagination, func(t *testing.T) {
+				posts := &recordingPostDocumentDiscovery{}
+				releases, artists := &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{}
+				events := &recordingProgramEventDocumentDiscovery{}
+				tools, err := NewDocumentDiscoveryTools(posts, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, events, releases, artists)
+				require.NoError(t, err)
+				_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`",`+pagination+`}`))
+				var executionErr *mcpserver.ToolExecutionError
+				require.ErrorAs(t, err, &executionErr)
+				require.Empty(t, posts.input)
+				require.Nil(t, events.request)
+				require.Nil(t, releases.request)
+				require.Nil(t, artists.request)
+			})
+		}
+	}
+}
+
+func TestDocumentDiscoveryPreservesMaximumOwningAPIOffset(t *testing.T) {
+	releases := &recordingReleaseDocumentDiscovery{}
+	tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, &recordingArtistDocumentDiscovery{})
+	require.NoError(t, err)
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"release","limit":50,"offset":2147483647}`))
+	require.NoError(t, err)
+	require.Equal(t, int32(2147483647), releases.request.Msg.Pagination.Offset)
+	require.Equal(t, int32(50), releases.request.Msg.Pagination.Limit)
+	require.Nil(t, result.StructuredContent["next_offset"])
+}
+
 func TestDocumentDiscoveryToolDescriptorAndAuthorizedResult(t *testing.T) {
 	slug := "test-post"
 	updatedAt := time.Date(2026, time.August, 27, 5, 2, 3, 0, time.UTC)

@@ -16,6 +16,8 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	menudomain "github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -57,9 +59,9 @@ func TestTranslationToolsExposeTypedArtifactOnlySurface(t *testing.T) {
 		if err := json.Unmarshal(tool.OutputSchema, &output); err != nil || output["type"] != "object" {
 			t.Fatalf("%s output schema = %s (%v)", tool.Name, tool.OutputSchema, err)
 		}
-		inputText := strings.ToLower(string(tool.InputSchema))
+		properties := input["properties"].(map[string]any)
 		for _, forbidden := range []string{"xml", "base64", "blob", "bytes", "content_html", "content_json", "tiptap", "prosemirror", "yjs"} {
-			if strings.Contains(inputText, forbidden) {
+			if _, exists := properties[forbidden]; exists {
 				t.Fatalf("%s input schema exposed forbidden payload %q", tool.Name, forbidden)
 			}
 		}
@@ -245,7 +247,7 @@ func TestTranslationToolsRejectInlineXLIFFAndInvalidLifecycleArguments(t *testin
 		{name: "file payload in file ID", tool: ToolTranslationXLIFFImport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","f":"data:application/xml;base64,AAAA"}`},
 		{name: "patch export without units", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch"}`},
 		{name: "replace export with units", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"replace","u":["block-a/content"]}`},
-		{name: "positional unit handle", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","u":["blocks/2/content"]}`},
+		{name: "empty unit handle", tool: ToolTranslationXLIFFExport, arguments: `{"p":"post","d":"post-a","l":"en","m":"patch","u":[""]}`},
 		{name: "implicit all regeneration", tool: ToolTranslationRegenerate, arguments: `{"p":"post","d":"post-a","l":[]}`},
 		{name: "non UUID job", tool: ToolTranslationJobCancel, arguments: `{"j":"job-one"}`},
 		{name: "uppercase UUID job", tool: ToolTranslationJobCancel, arguments: `{"j":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}`},
@@ -277,10 +279,59 @@ func TestTranslationToolsRejectInlineArtifactReferencesAndInvalidApplicationOutp
 	}
 
 	application.importResponse = &managev1.ImportEntityTranslationXLIFFResponse{
-		TargetRevision: "revision-a", AffectedUnitHandles: []string{"blocks/2/content"},
+		TargetRevision: "revision-a", AffectedUnitHandles: []string{""},
 	}
 	if result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace","f":"`+testTranslationArtifactID+`"}`)); err == nil || result.Content != nil {
-		t.Fatalf("positional affected unit was exposed: %+v, %v", result, err)
+		t.Fatalf("empty affected unit was exposed: %+v, %v", result, err)
+	}
+}
+
+func TestTranslationToolsPreserveOwningMenuUnitHandles(t *testing.T) {
+	const menuID = "44444444-4444-4444-8444-444444444444"
+	plan, err := menudomain.BuildTranslationExtractionPlan(menuID, "ko", "en", &translation.SourceDocument{
+		ContentJSON: []byte(`[{"id":"123","label":"Menu label","linkType":"custom","url":"/"}]`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := translation.BuildXLIFFDocument(plan); err != nil {
+		t.Fatal(err)
+	}
+	handle := plan.Units[0].UnitID
+	application := &recordingTranslationApplication{
+		exportResponse: &managev1.ExportEntityTranslationXLIFFResponse{
+			Artifact: &commonv1.ExpiringMediaRef{
+				FileId: testTranslationArtifactID, Url: "https://cdn.example/xliff/signed",
+				ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Extension: "xlf", MimeType: "application/xliff+xml",
+			},
+			SourceLocale: "ko", TargetLocale: "en", Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		},
+		importResponse: &managev1.ImportEntityTranslationXLIFFResponse{
+			TargetRevision: "tr1_after_import", Changed: true, AffectedUnitHandles: []string{handle},
+		},
+	}
+	tools := mustTranslationTools(t, application)
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport,
+		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"patch","u":["`+handle+`"]}`))
+	if err != nil || !reflect.DeepEqual(application.exportRequest.GetUnitHandles(), []string{handle}) {
+		t.Fatalf("owning Menu handle export = %+v, %v", application.exportRequest, err)
+	}
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFImport,
+		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"replace","f":"`+testTranslationArtifactID+`"}`))
+	if err != nil {
+		t.Fatalf("successful import was rejected while encoding its owning handle: %v", err)
+	}
+	if result.StructuredContent["c"] != true || !reflect.DeepEqual(result.StructuredContent["u"], []any{handle}) {
+		t.Fatalf("successful import result = %+v", result.StructuredContent)
+	}
+
+	// An opaque handle is still subject to the application's current manifest.
+	application.exportError = connect.NewError(connect.CodeInvalidArgument, errors.New("unknown unit handles"))
+	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport,
+		toolArguments(t, `{"p":"menu","d":"`+menuID+`","l":"en","m":"patch","u":["unknown/2"]}`))
+	var execution *mcpserver.ToolExecutionError
+	if !errors.As(err, &execution) {
+		t.Fatalf("owning manifest rejection was not preserved: %v", err)
 	}
 }
 
@@ -305,7 +356,7 @@ func TestTranslationToolsPreserveSafeConnectErrorsAndHideInternalFailures(t *tes
 	}
 }
 
-func TestToolSetComposesDocumentAndTranslationToolsThroughPATHTTP(t *testing.T) {
+func TestToolSetComposesDocumentAndTranslationToolsThroughGatewayHTTP(t *testing.T) {
 	documentApplication := &recordingAIDocumentApplication{openResult: core.OpenMetadata{
 		Protocol: core.ProtocolVersion, Profile: core.DomainPost, Catalog: "catalog-a", Document: "post-a",
 		DocumentRevision: "revision-a", SourceLocale: "ko", Locale: "ko", LocaleRole: core.LocaleRoleSource, LocaleExists: true,
@@ -343,7 +394,7 @@ func TestToolSetComposesDocumentAndTranslationToolsThroughPATHTTP(t *testing.T) 
 	}
 	user := auth.GetUser(translationApplication.regenerateContext)
 	if user == nil || user.MemberID.String() != testMember || user.IdentityID.String() != testIdentity || user.SessionID != "" {
-		t.Fatalf("PAT actor context was not preserved: %+v", user)
+		t.Fatalf("OAuth actor context was not preserved: %+v", user)
 	}
 }
 

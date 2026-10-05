@@ -21,6 +21,7 @@ type ToolProvider interface {
 
 // ToolSet composes disjoint domain tool providers without moving their
 // application behavior or authorization into the MCP transport.
+// Each provider lists its full static catalog; permissions are checked on call.
 type ToolSet struct {
 	providers []ToolProvider
 	byName    map[string]int

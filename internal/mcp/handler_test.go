@@ -684,6 +684,52 @@ func TestJSONRPCValidationPreservesValidIDs(t *testing.T) {
 	}
 }
 
+func TestJSONRPCNumericIDsMustBeIntegersAndPreserveRepresentation(t *testing.T) {
+	handler := newTestHandler(t, testDependencies{})
+	for _, test := range []struct {
+		id    string
+		valid bool
+	}{
+		{id: "1.5"},
+		{id: "1.0000000000000001"},
+		{id: "1e-1"},
+		{id: "12e-2"},
+		{id: "-1.5"},
+		{id: "1e-999999999999999999999"},
+		{id: "9007199254740993", valid: true},
+		{id: "-9007199254740993", valid: true},
+		{id: "1.0", valid: true},
+		{id: "1.5e1", valid: true},
+		{id: "1200E-2", valid: true},
+		{id: "1e+3", valid: true},
+		{id: "1e999999999999999999999", valid: true},
+		{id: "0e-999999999999999999999", valid: true},
+	} {
+		t.Run(test.id, func(t *testing.T) {
+			response := serveRPC(handler, `{"jsonrpc":"2.0","id":`+test.id+`,"method":"ping"}`)
+			if test.valid {
+				if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":`+test.id+`,"result":{}`) {
+					t.Fatalf("integer ID was not preserved: %d %s", response.Code, response.Body.String())
+				}
+			} else if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":-32600`) {
+				t.Fatalf("fractional ID was accepted: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMalformedNotificationParametersUseHTTPError(t *testing.T) {
+	handler := newTestHandler(t, testDependencies{})
+	for _, params := range []string{"[]", "null", `"invalid"`, "42"} {
+		t.Run(params, func(t *testing.T) {
+			response := serveRPC(handler, `{"jsonrpc":"2.0","method":"notifications/initialized","params":`+params+`}`)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":-32602`) {
+				t.Fatalf("malformed notification = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRequestBodyLimit(t *testing.T) {
 	handler := newTestHandler(t, testDependencies{maxBodyBytes: 32})
 	response := serveRPC(handler, `{"jsonrpc":"2.0","id":1,"method":"ping"}`)

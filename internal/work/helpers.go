@@ -70,6 +70,16 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 	return normalizeInitialSourceLocale(ctx, db, "")
 }
 
+func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, identity auth.IdentityManager, requestedLocale, acceptLanguage string) (string, error) {
+	if requestedLocale != "" {
+		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
+			return *locale, nil
+		}
+		return "", errs.InvalidArgument("source_locale", "must be a supported canonical locale")
+	}
+	return resolveInitialSourceLocale(ctx, db, identity, acceptLanguage), nil
+}
+
 func normalizeOptionalNullableString(value *string) (*string, bool) {
 	if value == nil {
 		return nil, false

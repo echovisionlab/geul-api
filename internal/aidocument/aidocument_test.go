@@ -518,6 +518,54 @@ func TestDecodeRejectsUnknownCanonicalSurface(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsMalformedTargetBeforeWholeFieldDeletion(t *testing.T) {
+	for _, path := range []string{"null", "[]"} {
+		t.Run(path, func(t *testing.T) {
+			wire := []byte(`{"v":"dcdp/1","p":"post","d":"doc-handle","l":"ko","edr":"rev-7","o":[["fu",["root","","","title",` + path + `]]]}`)
+			request, err := DecodeApplyRequest(wire)
+			if err != nil {
+				return
+			}
+			document := testDocument("ko", true)
+			validation := ValidateOperations(document, request)
+			if len(validation.Issues) != 0 || validation.Conflict != nil {
+				t.Fatalf("malformed target passed decoding but was rejected later: %+v", validation)
+			}
+			after, err := DocumentAfterOperations(document, validation.Normalized)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, node := range after.Nodes {
+				if node.ID == "root" && len(node.Localized) == 0 {
+					t.Fatalf("malformed nested path %s deleted the entire title", path)
+				}
+			}
+			t.Fatal("malformed nested path was accepted")
+		})
+	}
+}
+
+func TestDecodeRejectsNullOptionalHandlesBeforeRootMove(t *testing.T) {
+	for _, operation := range []string{
+		`["bm","paragraph-a",null,""]`,
+		`["bm","paragraph-a","",null]`,
+		`["bi","paragraph-new","paragraph",null,""]`,
+		`["bi","paragraph-new","paragraph","",null]`,
+		`["ri","root","credits","credit-new","credit",null]`,
+		`["rm","root","credits","credit-primary","root","credits",null]`,
+		`["fu",["root",null,"","title"]]`,
+		`["fu",["root","",null,"title"]]`,
+	} {
+		t.Run(operation, func(t *testing.T) {
+			wire := []byte(`{"v":"dcdp/1","p":"post","d":"doc-handle","l":"ko","edr":"rev-7","o":[` + operation + `]}`)
+			request, err := DecodeApplyRequest(wire)
+			if err == nil {
+				t.Fatalf("null optional handle became an empty root/predecessor/field handle: %+v", request.Operations)
+			}
+		})
+	}
+}
+
 func TestCompactDecodersResetReusedReceivers(t *testing.T) {
 	var operation Operation
 	if err := json.Unmarshal([]byte(`["rm","root","credits","credit-primary","root","credits","credit-secondary"]`), &operation); err != nil {
@@ -551,6 +599,35 @@ func TestCompactDecodersResetReusedReceivers(t *testing.T) {
 	}
 	if inline.Kind != InlineKindHardBreak || inline.Text != "" || inline.Target != "" || inline.Children != nil {
 		t.Fatalf("reused inline item retained its previous payload: %+v", inline)
+	}
+}
+
+func TestCompactValueRejectsNullPayloadWithoutRejectingExplicitEmpty(t *testing.T) {
+	for _, wire := range []string{
+		`["t",null]`, `["b",null]`, `["n",null]`, `["i",null]`, `["l",null]`, `["o",null]`,
+		`["i",[["t",null]]]`, `["i",[["a",null,[["t","link"]]]]]`,
+		`["i",[["b",null]]]`, `["i",[["fg",null,[["t","color"]]]]]`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			var value Value
+			if err := json.Unmarshal([]byte(wire), &value); err == nil {
+				t.Fatalf("null payload decoded as %+v", value)
+			}
+		})
+	}
+	for _, wire := range []string{
+		`["t",""]`, `["b",false]`, `["i",[]]`, `["l",[]]`, `["o",[]]`, `["i",[["t",""]]]`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			var value Value
+			if err := json.Unmarshal([]byte(wire), &value); err != nil {
+				t.Fatalf("explicit empty payload rejected: %v", err)
+			}
+			encoded, err := json.Marshal(value)
+			if err != nil || string(encoded) != wire {
+				t.Fatalf("explicit empty changed: %s, %v", encoded, err)
+			}
+		})
 	}
 }
 
@@ -1057,7 +1134,7 @@ func TestServiceAppliesOnlyValidatedBatchAndPreservesPortErrors(t *testing.T) {
 	}
 }
 
-func TestServiceApplyCompletesDomainValidationErrorWithoutOverwritingOrMutatingIt(t *testing.T) {
+func TestServiceApplyPreservesCompletedDomainValidationError(t *testing.T) {
 	request := applyRequest("en", "rev-7", SetFieldOperation("paragraph-b", "content", Text("translated")))
 	domainError := &ValidationError{Result: ValidationResult{Issues: []OperationIssue{{
 		Operation: 0, Code: IssueInvalidOperation, Message: "domain constraint",

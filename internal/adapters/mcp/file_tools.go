@@ -22,7 +22,10 @@ const (
 var fileTools = []mcpserver.Tool{
 	{
 		Name: ToolFileTransfer, Title: "Transfer a File",
-		Description: "Begin, inspect, or complete one File ingest through the existing File authority.",
+		Description: "Begin, inspect, or complete one File ingest through the existing File authority. " +
+			"Multipart bytes use the existing authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives; " +
+			"complete must pass the client_media_bundle_id returned by status after browser preparation. " +
+			"For a public HTTPS source, remote_https uses the existing server import and processing flow.",
 		InputSchema: fileTransferInputSchema(), OutputSchema: fileTransferOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, true),
@@ -91,6 +94,11 @@ type fileSessionArguments struct {
 	Handle []string `json:"h"`
 }
 
+type fileCompleteArguments struct {
+	fileSessionArguments
+	ClientMediaBundleID string `json:"client_media_bundle_id,omitempty"`
+}
+
 type fileReadArguments struct {
 	FileID string `json:"f"`
 }
@@ -113,7 +121,7 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 			FileName: input.FileName, MIMEType: input.MIMEType, FileSize: input.FileSize,
 			FileLastModified: input.LastModified, RemoteURL: input.RemoteURL,
 		})
-	case "status", "complete":
+	case "status":
 		var input fileSessionArguments
 		if err := decodeArguments(arguments, &input); err != nil {
 			return executionError(err)
@@ -122,11 +130,18 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 		if handleErr != nil {
 			return executionError(handleErr)
 		}
-		if action == "status" {
-			result, err = tools.files.Status(ctx, handle)
-		} else {
-			result, err = tools.files.Complete(ctx, handle)
+		result, err = tools.files.Status(ctx, handle)
+	case "complete":
+		var input fileCompleteArguments
+		if err := decodeArguments(arguments, &input); err != nil {
+			return executionError(err)
 		}
+		handle, handleErr := fileSessionHandle(input.Handle)
+		if handleErr != nil {
+			return executionError(handleErr)
+		}
+		handle.ClientMediaBundleID = input.ClientMediaBundleID
+		result, err = tools.files.Complete(ctx, handle)
 	default:
 		return executionError(fmt.Errorf("unsupported file transfer action %q", action))
 	}
@@ -191,15 +206,16 @@ type compactFileTransferResult struct {
 }
 
 type compactFileSession struct {
-	Handle         [4]string                      `json:"h"`
-	State          filemedia.MCPFileTransferState `json:"s"`
-	FileName       string                         `json:"n,omitempty"`
-	MIMEType       string                         `json:"m,omitempty"`
-	FileSize       int64                          `json:"z,omitempty"`
-	TotalParts     int32                          `json:"p"`
-	ChunkSize      int32                          `json:"c"`
-	UploadedParts  []int32                        `json:"u"`
-	LastActivityAt string                         `json:"a,omitempty"`
+	Handle              [4]string                      `json:"h"`
+	State               filemedia.MCPFileTransferState `json:"s"`
+	FileName            string                         `json:"n,omitempty"`
+	MIMEType            string                         `json:"m,omitempty"`
+	FileSize            int64                          `json:"z,omitempty"`
+	TotalParts          int32                          `json:"p"`
+	ChunkSize           int32                          `json:"c"`
+	UploadedParts       []int32                        `json:"u"`
+	LastActivityAt      string                         `json:"a,omitempty"`
+	ClientMediaBundleID string                         `json:"client_media_bundle_id,omitempty"`
 }
 
 type compactFileHandle struct {
@@ -246,7 +262,8 @@ func compactFileSessionFrom(session filemedia.MCPFileTransferSession) *compactFi
 		},
 		State: session.State, FileName: session.FileName, MIMEType: session.MIMEType,
 		FileSize: session.FileSize, TotalParts: session.TotalParts, ChunkSize: session.ChunkSize,
-		UploadedParts: append([]int32(nil), session.UploadedPartNumbers...),
+		UploadedParts:       append([]int32(nil), session.UploadedPartNumbers...),
+		ClientMediaBundleID: session.Handle.ClientMediaBundleID,
 	}
 	if result.UploadedParts == nil {
 		result.UploadedParts = []int32{}

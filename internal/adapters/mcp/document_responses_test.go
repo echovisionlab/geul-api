@@ -2,15 +2,19 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	"connectrpc.com/connect"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 )
 
 func TestAcceptedResponseWireContract(t *testing.T) {
 	targetRevision := core.Revision("target-revision")
-	emptyRevision := core.Revision("")
 	tests := []struct {
 		name    string
 		result  core.ApplyResult
@@ -29,14 +33,14 @@ func TestAcceptedResponseWireContract(t *testing.T) {
 				{Operation: 1, Kind: core.OperationSetField},
 			}},
 			created: "block-a",
-			want:    `{"block_id":"block-a","c":[[0,"bi",["block-a","section-a"]],[1,"fs",null]],"dr":"document-revision","tr":"target-revision"}`,
+			want:    `{"block_id":"block-a","c":[[0,"bi",["block-a","section-a"]],[1,"fs",[]]],"dr":"document-revision","tr":"target-revision"}`,
 		},
 		{
-			name: "empty handles remain null and supplied empty revision remains present",
-			result: core.ApplyResult{DocumentRevision: "document-revision", TargetRevision: &emptyRevision, Changes: []core.Change{
+			name: "empty handles remain arrays with a supplied target revision",
+			result: core.ApplyResult{DocumentRevision: "document-revision", TargetRevision: &targetRevision, Changes: []core.Change{
 				{Operation: 0, Kind: core.OperationDeleteBlock, AffectedHandles: []string{}},
 			}},
-			want: `{"c":[[0,"bd",null]],"dr":"document-revision","tr":""}`,
+			want: `{"c":[[0,"bd",[]]],"dr":"document-revision","tr":"target-revision"}`,
 		},
 	}
 	for _, test := range tests {
@@ -60,6 +64,52 @@ func TestAcceptedResponseWireContract(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidationResponsePreservesOperationIndexAndArrayHandles(t *testing.T) {
+	validation := core.ValidationResult{Issues: []core.OperationIssue{{
+		Operation: 2, Code: core.IssueInvalidOperation, Handle: "block:form:field:field-a",
+		Message: "source payload identity does not match the block handle",
+	}}}
+	application := &recordingAIDocumentApplication{applyError: &core.ValidationError{Result: validation}}
+	response, err := mustAIDocumentTools(t, application).applyRequest(t.Context(), core.ApplyRequest{}, "")
+	if err != nil || !response.IsError || len(response.Content) != 1 {
+		t.Fatalf("operation rejection = %+v, %v", response, err)
+	}
+	want := `{"i":[[2,"invalid_operation","block:form:field:field-a","source payload identity does not match the block handle"]]}`
+	if response.Content[0]["text"] != want {
+		t.Fatalf("rejection text = %v; want %s", response.Content[0]["text"], want)
+	}
+	encoded, err := encodeValidation(core.ValidationResult{Conflict: &core.Conflict{
+		Code: core.ConflictDocumentRevision, CurrentDocumentRevision: "current-revision",
+	}})
+	if err != nil || string(encoded) != `{"x":["document_revision_conflict","current-revision",null,[]]}` {
+		t.Fatalf("batch conflict = %s, %v", encoded, err)
+	}
+}
+
+func TestBatchCompilationErrorIsAnActionableToolFailure(t *testing.T) {
+	application := &recordingAIDocumentApplication{applyError: connect.NewError(connect.CodeInvalidArgument,
+		errors.New("operations: incomplete required block content"))}
+	tools := mustAIDocumentTools(t, application)
+	config := validHTTPConfig(nil)
+	config.Registry, config.Dispatcher = tools, tools
+	response := httptest.NewRecorder()
+	newHTTPTestHandler(t, config).ServeHTTP(response, mcpHTTPRequest(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_apply","arguments":{"v":"dcdp/1","p":"form","d":"55555555-5555-4555-8555-555555555555","l":"en","edr":"revision","o":[["fu",["document","","","title"]]]}}}`))
+	var envelope struct {
+		Error  json.RawMessage `json:"error"`
+		Result struct {
+			IsError bool             `json:"isError"`
+			Content []map[string]any `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(envelope.Error) != 0 || !envelope.Result.IsError ||
+		len(envelope.Result.Content) != 1 || envelope.Result.Content[0]["text"] != "operations: incomplete required block content" {
+		t.Fatalf("batch rejection = %d %s", response.Code, response.Body.String())
 	}
 }
 

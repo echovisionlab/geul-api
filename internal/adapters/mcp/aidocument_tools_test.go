@@ -85,6 +85,7 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{
 		DocumentRevision: "revision-b", Changed: true,
+		Changes: []core.Change{{Operation: 1, Kind: core.OperationUnsetField, AffectedHandles: []string{"field:document/summary"}}},
 	}}
 	tools := mustAIDocumentTools(t, application)
 	categoryID := "11111111-1111-4111-8111-111111111111"
@@ -98,6 +99,33 @@ func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	}
 	if result.StructuredContent["dr"] != "revision-b" {
 		t.Fatalf("document_metadata_update result = %#v", result.StructuredContent)
+	}
+	var outputSchema struct {
+		Properties struct {
+			Changes struct {
+				Items struct {
+					PrefixItems []struct {
+						Enum []string `json:"enum"`
+					} `json:"prefixItems"`
+				} `json:"items"`
+			} `json:"c"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(focusedMutationOutputJSONSchema), &outputSchema); err != nil {
+		t.Fatal(err)
+	}
+	change := result.StructuredContent["c"].([]any)[0].([]any)
+	if change[1] != string(core.OperationUnsetField) {
+		t.Fatalf("clear summary change=%v", change)
+	}
+	allowed := false
+	for _, kind := range outputSchema.Properties.Changes.Items.PrefixItems[1].Enum {
+		if kind == change[1] {
+			allowed = true
+		}
+	}
+	if !allowed {
+		t.Fatalf("accepted clear summary kind %q excluded by output schema", change[1])
 	}
 	request := application.applyRequest
 	if request.Profile != core.DomainPost || request.Document != "44444444-4444-4444-8444-444444444444" || request.ExpectedDocumentRevision != "revision-a" {
@@ -117,6 +145,103 @@ func TestDocumentMetadataUpdateBuildsFocusedExactOperations(t *testing.T) {
 	}
 	if got := request.Operations[3].SetField.Value.List; len(got) != 0 {
 		t.Fatalf("tag operation = %#v", request.Operations[3])
+	}
+}
+
+func TestDocumentMetadataUpdateRejectsNullInsteadOfApplyingOtherFields(t *testing.T) {
+	for _, field := range []string{"title", "summary", "clear_summary", "category_ids", "tag_ids"} {
+		t.Run(field, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			arguments := toolArguments(t, `{
+				"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444",
+				"locale":"ko","expected_document_revision":"revision-a","title":"Changed","tag_ids":[]
+			}`)
+			arguments[field] = json.RawMessage("null")
+			result, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolMetadataUpdate, arguments)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.applyCalls != 0 || result.Content != nil {
+				t.Fatalf("null %s partially applied metadata: calls=%d result=%+v error=%v", field, application.applyCalls, result, err)
+			}
+		})
+	}
+}
+
+func TestParagraphCreateRejectsNullPlacementHandles(t *testing.T) {
+	for _, field := range []string{"parent_block_id", "after_block_id"} {
+		t.Run(field, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+			arguments := toolArguments(t, `{
+				"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444",
+				"locale":"ko","expected_document_revision":"revision-a","text":"New paragraph"
+			}`)
+			arguments[field] = json.RawMessage("null")
+			_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, ToolParagraphCreate, arguments)
+			var execution *mcpserver.ToolExecutionError
+			if !errors.As(err, &execution) || application.applyCalls != 0 {
+				t.Fatalf("null %s became root/first placement: calls=%d error=%v", field, application.applyCalls, err)
+			}
+		})
+	}
+}
+
+func TestMutationToolsDeclareStructuredValidationRejections(t *testing.T) {
+	operation := core.SetFieldOperation("paragraph-a", "content", core.Text("wrong kind"))
+	for _, name := range []string{ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply} {
+		t.Run(name, func(t *testing.T) {
+			application := &recordingAIDocumentApplication{applyError: &core.ValidationError{Result: core.ValidationResult{
+				Normalized: []core.Operation{operation},
+				Issues:     []core.OperationIssue{{Operation: 0, Code: core.IssueValueKindMismatch, Handle: "field:paragraph-a/content", Message: "wrong value kind"}},
+			}}}
+			arguments := toolArguments(t, `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"}`)
+			switch name {
+			case ToolParagraphCreate:
+				arguments["text"] = json.RawMessage(`"paragraph"`)
+			case ToolParagraphUpdate:
+				arguments["text"] = json.RawMessage(`"paragraph"`)
+				arguments["block_id"] = json.RawMessage(`"paragraph-a"`)
+			case ToolBlockDelete:
+				arguments["block_id"] = json.RawMessage(`"paragraph-a"`)
+			case ToolMetadataUpdate:
+				arguments["title"] = json.RawMessage(`"Changed"`)
+			case ToolDocumentApply:
+				arguments = toolArguments(t, `{"v":"dcdp/1","p":"post","d":"44444444-4444-4444-8444-444444444444","l":"ko","edr":"revision-a","o":[["fs",["paragraph-a","","","content"],["t","wrong kind"]]]}`)
+			}
+			tools := mustAIDocumentTools(t, application)
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, arguments)
+			if err != nil || !result.IsError || result.StructuredContent["i"] == nil || result.StructuredContent["o"] == nil {
+				t.Fatalf("missing structured rejection: %+v %v", result, err)
+			}
+			listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range listed {
+				if tool.Name != name {
+					continue
+				}
+				var schema struct {
+					OneOf []struct {
+						OneOf []struct {
+							Properties map[string]json.RawMessage `json:"properties"`
+						} `json:"oneOf"`
+					} `json:"oneOf"`
+				}
+				if err := json.Unmarshal(tool.OutputSchema, &schema); err != nil {
+					t.Fatal(err)
+				}
+				declared := false
+				for _, branch := range schema.OneOf {
+					for _, resultBranch := range branch.OneOf {
+						if resultBranch.Properties["i"] != nil && resultBranch.Properties["o"] != nil {
+							declared = true
+						}
+					}
+				}
+				if !declared {
+					t.Fatalf("actual i/o validation rejection excluded by %s output schema: %s", name, tool.OutputSchema)
+				}
+			}
+		})
 	}
 }
 
@@ -262,6 +387,9 @@ func TestMutationSchemaDescribesEveryCompactOperationTuple(t *testing.T) {
 		}
 		if kind, ok := variant.PrefixItems[0]["const"].(string); ok {
 			want[kind] = true
+			if kind == "fs" && !strings.Contains(variant.Description, `["i",[["t",text]]]`) {
+				t.Fatalf("paragraph example must use the inline value kind: %s", variant.Description)
+			}
 		}
 		if kinds, ok := variant.PrefixItems[0]["enum"].([]any); ok {
 			for _, value := range kinds {
@@ -408,6 +536,44 @@ func TestFocusedDocumentToolsTranslatePlainParagraphActionsToTypedApply(t *testi
 			t.Fatalf("delete operations = %+v, want %+v", application.applyRequest.Operations, want)
 		}
 	})
+}
+
+func TestFocusedParagraphTextRequiresPresenceAndPreservesExplicitEmpty(t *testing.T) {
+	for _, tool := range []string{ToolParagraphCreate, ToolParagraphUpdate} {
+		for _, test := range []struct {
+			name  string
+			text  string
+			valid bool
+		}{
+			{"missing", "", false},
+			{"null", `,"text":null`, false},
+			{"explicit empty", `,"text":""`, true},
+		} {
+			t.Run(tool+"/"+test.name, func(t *testing.T) {
+				application := &recordingAIDocumentApplication{applyResult: core.ApplyResult{DocumentRevision: "revision-b"}}
+				arguments := `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"`
+				if tool == ToolParagraphUpdate {
+					arguments += `,"block_id":"paragraph-a"`
+				}
+				arguments += test.text + `}`
+				_, err := mustAIDocumentTools(t, application).CallTool(t.Context(), mcpserver.Principal{}, tool, toolArguments(t, arguments))
+				if !test.valid {
+					var execution *mcpserver.ToolExecutionError
+					if !errors.As(err, &execution) || application.applyCalls != 0 {
+						t.Fatalf("invalid required text reached Apply: calls=%d, err=%v", application.applyCalls, err)
+					}
+					return
+				}
+				if err != nil || application.applyCalls != 1 {
+					t.Fatalf("explicit empty text rejected: calls=%d, err=%v", application.applyCalls, err)
+				}
+				operation := application.applyRequest.Operations[len(application.applyRequest.Operations)-1]
+				if !reflect.DeepEqual(operation.SetField.Value, core.RichText(core.InlineText(""))) {
+					t.Fatalf("explicit empty replacement=%+v", operation.SetField.Value)
+				}
+			})
+		}
+	}
 }
 
 func TestAIDocumentToolsOpenAndRead(t *testing.T) {

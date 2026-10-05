@@ -107,7 +107,10 @@ func (s *PostService) persistNewPost(
 		if err := ensureNewPostRouteAvailable(ctx, tx, post.Slug); err != nil {
 			return err
 		}
-		sourceLocale := resolveInitialSourceLocale(ctx, tx, s.kratosClient, acceptLanguage)
+		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, s.kratosClient, request.SourceLocale, acceptLanguage)
+		if err != nil {
+			return err
+		}
 		post.SourceLocale = sourceLocale
 		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile:      postContentDocumentProfile,
