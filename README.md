@@ -4,7 +4,7 @@ Geul API is a Go service for content, media, identity, and MCP operations.
 
 ## Quick start
 
-Requires Go 1.26.6, Node 24.19.0, pnpm 11.22.0, FFmpeg/FFprobe, ImageMagick,
+Requires Go 1.27.1, Node 24.21.0, pnpm 12.9.1, FFmpeg/FFprobe, ImageMagick,
 and the runtime values described by
 `internal/config.Config`. The trust boundary is configured explicitly with
 `AUTH_HEADER_NAME` and `INTERNAL_SERVICE_HEADER_NAME`; invalid or missing
@@ -77,7 +77,7 @@ For source execution after `make media-build`, also set:
 
 ```sh
 export OG_WORKER_SCRIPT="$PWD/media/og/dist/index.js"
-export GLTF_TRANSFORM_PATH="$PWD/media/asset-optimizer/node_modules/.bin/gltf-transform"
+export GLTF_TRANSFORM_PATH="$PWD/media/asset-optimizer/scripts/asset-transform.mjs"
 export PARTICLE_MESH_SCRIPT_PATH="$PWD/media/asset-optimizer/scripts/optimize-particle-mesh.mjs"
 ```
 

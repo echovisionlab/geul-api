@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.1-alpine3.24@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.1-alpine3.24@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -19,7 +19,7 @@ RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -
 
 FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS og-builder
 WORKDIR /app/media/og
-RUN npm install --global pnpm@11.22.0
+RUN npm install --global pnpm@12.9.1
 COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY media/og/ ./
@@ -49,6 +49,7 @@ COPY media/og/THIRD_PARTY_LICENSES ./media/og/THIRD_PARTY_LICENSES
 COPY --from=mesh-builder /app/media/asset-optimizer/node_modules ./media/asset-optimizer/node_modules
 COPY media/asset-optimizer/package.json media/asset-optimizer/LICENSE.md ./media/asset-optimizer/
 COPY media/asset-optimizer/scripts/optimize-particle-mesh.mjs ./media/asset-optimizer/scripts/optimize-particle-mesh.mjs
+COPY --chmod=755 media/asset-optimizer/scripts/asset-transform.mjs ./media/asset-optimizer/scripts/asset-transform.mjs
 
 COPY --chmod=755 media/og-node /usr/local/bin/geul-og-node
 ENV OG_NODE_BINARY_PATH=/usr/local/bin/geul-og-node

@@ -534,7 +534,7 @@ func (s *RuntimeStack) StartBackend(t *testing.T) {
 		"ASSET_OPTIMIZER_TEMP_DIR":     filepath.Join(tempDir, "mesh"),
 		"WAVEFORM_TEMP_DIR":            filepath.Join(tempDir, "waveform"),
 		"WAVEFORM_FFMPEG_PATH":         s.waveformFFmpegPath,
-		"GLTF_TRANSFORM_PATH":          filepath.Join(mediaRoot, "asset-optimizer/node_modules/.bin/gltf-transform"),
+		"GLTF_TRANSFORM_PATH":          filepath.Join(mediaRoot, "asset-optimizer/scripts/asset-transform.mjs"),
 		"PARTICLE_MESH_SCRIPT_PATH":    filepath.Join(mediaRoot, "asset-optimizer/scripts/optimize-particle-mesh.mjs"),
 		"OG_WORKER_SCRIPT":             filepath.Join(mediaRoot, "og/dist/index.js"),
 		"OG_PORT":                      fmt.Sprint(reserveLocalPort(t)),

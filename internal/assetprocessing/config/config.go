@@ -22,7 +22,7 @@ type Config struct {
 
 	DatabaseDSN string `envconfig:"DATABASE_DSN" required:"true"`
 
-	GLTFTransformPath      string `envconfig:"GLTF_TRANSFORM_PATH" default:"gltf-transform"`
+	GLTFTransformPath      string `envconfig:"GLTF_TRANSFORM_PATH" default:"scripts/asset-transform.mjs"`
 	NodeBinaryPath         string `envconfig:"NODE_BINARY_PATH" default:"node"`
 	ParticleMeshScriptPath string `envconfig:"PARTICLE_MESH_SCRIPT_PATH" default:"scripts/optimize-particle-mesh.mjs"`
 	TempDir                string `envconfig:"ASSET_OPTIMIZER_TEMP_DIR" default:"/tmp/asset-optimizer"`

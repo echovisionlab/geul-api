@@ -13,26 +13,21 @@
     "node": "24.21.0"
   },
   "scripts": {
-    "check:compose": "docker compose --env-file scripts/ci/asset-optimizer-compose.env -f compose/asset-optimizer.yml config >/dev/null",
-    "check:yaml": "node scripts/ci/validate-yaml.mjs",
     "format": "prettier --write \"**/*.{js,mjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{js,mjs,json,md,yml,yaml}\"",
     "test": "node --test \"scripts/**/*.test.mjs\""
   },
   "dependencies": {
-    "@gltf-transform/cli": "4.4.2",
-    "@gltf-transform/core": "4.4.2",
-    "@gltf-transform/extensions": "4.4.2",
-    "@gltf-transform/functions": "4.4.2",
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "csv-stringify": "6.9.0",
     "draco3dgltf": "1.5.7",
-    "meshoptimizer": "1.2.0"
+    "keyframe-resample": "0.1.0",
+    "meshoptimizer": "1.3.0",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
-    "prettier": "^3.9.6",
-    "yaml": "^2.9.0"
-  },
-  "overrides": {
-    "brace-expansion": "2.1.7",
-    "sharp": "0.35.5"
+    "prettier": "^3.9.9"
   }
 }
