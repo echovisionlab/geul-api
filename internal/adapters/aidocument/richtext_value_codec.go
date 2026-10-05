@@ -4,15 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
-	"unicode"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protoreflect.EnumNumber, enum protoreflect.EnumDescriptor) (string, error) {
+func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protoreflect.EnumNumber, field protoreflect.FieldDescriptor) (string, error) {
+	enum := field.Enum()
 	if enum == nil {
 		return "", errors.New("stored enum descriptor is missing")
 	}
@@ -23,8 +23,7 @@ func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protorefle
 	name := string(stored.Name())
 	for _, candidate := range descriptor.Values {
 		text := fmt.Sprint(candidate)
-		normalized := normalizedEnumToken(text)
-		if strings.HasSuffix(name, "_"+normalized) {
+		if pageGeneratedEnumName(field, text) == name {
 			return text, nil
 		}
 	}
@@ -32,35 +31,11 @@ func canonicalEnum(descriptor contentv1.ContentFieldDescriptor, value protorefle
 }
 
 func setEnum(field protoreflect.FieldDescriptor, canonical string) (protoreflect.EnumNumber, error) {
-	want := normalizedEnumToken(canonical)
-	values := field.Enum().Values()
-	for index := 0; index < values.Len(); index++ {
-		value := values.Get(index)
-		if strings.HasSuffix(string(value.Name()), "_"+want) {
-			return value.Number(), nil
-		}
+	name := pageGeneratedEnumName(field, canonical)
+	if value := field.Enum().Values().ByName(protoreflect.Name(name)); value != nil {
+		return value.Number(), nil
 	}
 	return 0, fmt.Errorf("enum value %q is not supported", canonical)
-}
-
-func normalizedEnumToken(value string) string {
-	var normalized strings.Builder
-	var previous rune
-	for index, current := range value {
-		if current == '-' || current == ':' || current == '.' || unicode.IsSpace(current) {
-			if normalized.Len() > 0 && previous != '_' {
-				normalized.WriteByte('_')
-			}
-			previous = '_'
-			continue
-		}
-		if unicode.IsUpper(current) && index > 0 && previous != '_' && (unicode.IsLower(previous) || unicode.IsDigit(previous)) {
-			normalized.WriteByte('_')
-		}
-		normalized.WriteRune(unicode.ToUpper(current))
-		previous = current
-	}
-	return normalized.String()
 }
 
 func numberText(value protoreflect.Value, kind protoreflect.Kind) string {
@@ -88,7 +63,7 @@ func projectScalarValue(
 	case "integer", "number":
 		return core.Number(numberText(value, field.Kind())), nil
 	case "enum", "enum_int":
-		canonical, err := canonicalEnum(descriptor, value.Enum(), field.Enum())
+		canonical, err := canonicalEnum(descriptor, value.Enum(), field)
 		if err != nil {
 			return core.Value{}, err
 		}
@@ -111,21 +86,8 @@ func scalarProtoValue(
 		return protoreflect.ValueOfString(value.Text), nil
 	case "boolean":
 		return protoreflect.ValueOfBool(value.Boolean), nil
-	case "integer":
-		number, err := strconv.ParseInt(value.Text, 10, 64)
-		if err != nil {
-			return protoreflect.Value{}, err
-		}
-		if field.Kind() == protoreflect.Int32Kind {
-			return protoreflect.ValueOfInt32(int32(number)), nil
-		}
-		return protoreflect.ValueOfInt64(number), nil
-	case "number":
-		number, err := strconv.ParseFloat(value.Text, 64)
-		if err != nil {
-			return protoreflect.Value{}, err
-		}
-		return protoreflect.ValueOfFloat64(number), nil
+	case "integer", "number":
+		return pageScalarValue(field, value)
 	case "enum", "enum_int":
 		enum, err := setEnum(field, value.Text)
 		if err != nil {
@@ -233,6 +195,10 @@ func projectDescriptorValue(
 				binding.Path = insertPathSegment(binding.Path, len(path), core.ListPath(handle))
 				files = append(files, binding)
 			}
+		}
+		if descriptorIsFile(*descriptor.Item) {
+			// File arrays expose bindings at their stable item paths, not values.
+			return core.Value{}, files, false, nil
 		}
 		return core.List(items...), files, true, nil
 	}
@@ -376,7 +342,11 @@ func setRichTextField(message protoreflect.Message, catalog contentv1.RichTextCa
 		if content == nil {
 			return errors.New("block does not expose table content")
 		}
-		return setTableValue(message.Mutable(content).Message(), value, target.Field == richTextTableLocaleField, catalog)
+		table := message.Mutable(content).Message()
+		if len(target.Path) != 0 {
+			return mutateTablePath(table, catalog, target, &value)
+		}
+		return setTableValue(table, value, target.Field == richTextTableLocaleField, catalog)
 	}
 	descriptor, ok := findContentDescriptor(block.Fields, string(target.Field))
 	if !ok {
@@ -394,9 +364,12 @@ func setRichTextField(message protoreflect.Message, catalog contentv1.RichTextCa
 	return setDescriptorAtPath(props, field, descriptor, target.Path, value)
 }
 
-func clearRichTextField(message protoreflect.Message, block contentv1.ContentBlockDescriptor, target core.FieldTarget) error {
+func clearRichTextField(message protoreflect.Message, catalog contentv1.RichTextCatalogDescriptor, block contentv1.ContentBlockDescriptor, target core.FieldTarget) error {
 	if target.Field == richTextContentField || target.Field == richTextTableField || target.Field == richTextTableLocaleField {
 		content := findMessageField(message, "content")
+		if content != nil && len(target.Path) != 0 && message.Has(content) {
+			return mutateTablePath(message.Get(content).Message(), catalog, target, nil)
+		}
 		if content != nil {
 			message.Clear(content)
 		}
@@ -432,6 +405,9 @@ func setRichTextFile(message protoreflect.Message, block contentv1.ContentBlockD
 	if field == nil {
 		return errors.New("generated props field is missing")
 	}
+	if len(target.Path) != 0 && target.Path[len(target.Path)-1].Item != "" {
+		return setRichTextFileArrayItem(props, field, descriptor, target.Path, file)
+	}
 	targetMessage, targetField, targetDescriptor, err := resolveDescriptorPath(props, field, descriptor, target.Path)
 	if err != nil {
 		return err
@@ -453,6 +429,43 @@ func setRichTextFile(message protoreflect.Message, block contentv1.ContentBlockD
 	return nil
 }
 
+func setRichTextFileArrayItem(message protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, path []core.FieldPathSegment, file core.FileReference) error {
+	container, arrayField, arrayDescriptor, err := resolveDescriptorPath(message, field, descriptor, path[:len(path)-1])
+	if err != nil {
+		return err
+	}
+	if arrayDescriptor.Type != "array" || arrayDescriptor.Item == nil || !descriptorIsFile(*arrayDescriptor.Item) {
+		return errors.New("target is not a generated File array item")
+	}
+	list := container.Mutable(arrayField).List()
+	if list.Len() == 0 {
+		if file == "" {
+			return nil
+		}
+		if identity := arrayDescriptor.ItemIdentity; identity != nil && identity.Strategy == "fixed" {
+			// A batch may attach every face to a previously omitted cubemap array.
+			// The generated validator still rejects incomplete attachment states.
+			for range identity.Values {
+				list.Append(list.NewElement())
+			}
+		}
+	}
+	index, err := listIndexByHandle(list, arrayDescriptor, path[len(path)-1].Item)
+	if err != nil {
+		return err
+	}
+	attachment := list.Get(index).Message()
+	state := attachment.Descriptor().Oneofs().ByName("state")
+	if file == "" {
+		if selected := attachment.WhichOneof(state); selected != nil {
+			attachment.Clear(selected)
+		}
+		return nil
+	}
+	attachment.Set(state.Fields().ByName("active_file_id"), protoreflect.ValueOfString(string(file)))
+	return nil
+}
+
 func findContentDescriptor(fields []contentv1.ContentFieldDescriptor, name string) (contentv1.ContentFieldDescriptor, bool) {
 	for _, field := range fields {
 		if field.Name == name {
@@ -463,14 +476,87 @@ func findContentDescriptor(fields []contentv1.ContentFieldDescriptor, name strin
 }
 
 func setDescriptorAtPath(message protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, path []core.FieldPathSegment, value core.Value) error {
-	if len(path) == 0 {
-		return setDescriptorValue(message, field, descriptor, value)
-	}
 	targetMessage, targetField, targetDescriptor, err := resolveDescriptorPath(message, field, descriptor, path)
 	if err != nil {
 		return err
 	}
-	return setDescriptorValue(targetMessage, targetField, targetDescriptor, value)
+	if targetDescriptor.Type != "object" && targetDescriptor.Type != "array" {
+		return setDescriptorValue(targetMessage, targetField, targetDescriptor, value)
+	}
+	previous := proto.Clone(targetMessage.Interface()).ProtoReflect()
+	if err := setDescriptorValue(targetMessage, targetField, targetDescriptor, value); err != nil {
+		return err
+	}
+	return preserveDescriptorFiles(previous, targetMessage, targetField, targetDescriptor)
+}
+
+// File selectors live outside typed values. Preserve them only within object
+// parents and stable array items that survive a typed replacement.
+func preserveDescriptorFiles(previous, current protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor) error {
+	if !previous.Has(field) {
+		return nil
+	}
+	if descriptorIsFile(descriptor) {
+		current.Set(field, protoreflect.ValueOfMessage(proto.Clone(previous.Get(field).Message().Interface()).ProtoReflect()))
+		return nil
+	}
+	switch descriptor.Type {
+	case "object":
+		if !current.Has(field) {
+			return nil
+		}
+		before, after := previous.Get(field).Message(), current.Get(field).Message()
+		for _, child := range descriptor.Fields {
+			childField := findMessageField(before, child.Name)
+			if childField != nil {
+				if err := preserveDescriptorFiles(before, after, childField, child); err != nil {
+					return err
+				}
+			}
+		}
+	case "array":
+		identity := descriptor.ItemIdentity
+		if identity == nil || identity.Strategy == "position" {
+			return nil
+		}
+		before, after := previous.Get(field).List(), current.Mutable(field).List()
+		if descriptorIsFile(*descriptor.Item) {
+			// File-only arrays have no typed value and retain their fixed selectors.
+			if identity.Strategy == "fixed" {
+				for index := 0; index < before.Len(); index++ {
+					after.Append(protoreflect.ValueOfMessage(proto.Clone(before.Get(index).Message().Interface()).ProtoReflect()))
+				}
+			}
+			return nil
+		}
+		if descriptor.Item.Type != "object" {
+			return nil
+		}
+		for index := 0; index < before.Len(); index++ {
+			value, _, _, err := projectListItem(before.Get(index), field, *descriptor.Item, "", nil)
+			if err != nil {
+				return err
+			}
+			handle, err := projectedListHandle(identity, index, value)
+			if err != nil {
+				return err
+			}
+			currentIndex, err := listIndexByHandle(after, descriptor, handle)
+			if err != nil {
+				continue // A deleted stable item must not be recreated for its Files.
+			}
+			oldItem, newItem := before.Get(index).Message(), after.Get(currentIndex).Message()
+			for _, child := range descriptor.Item.Fields {
+				childField := findMessageField(oldItem, child.Name)
+				if childField != nil {
+					if err := preserveDescriptorFiles(oldItem, newItem, childField, child); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func clearDescriptorAtPath(message protoreflect.Message, field protoreflect.FieldDescriptor, descriptor contentv1.ContentFieldDescriptor, path []core.FieldPathSegment) error {
@@ -570,7 +656,7 @@ func canonicalFieldText(message protoreflect.Message, field protoreflect.FieldDe
 		return ""
 	}
 	if descriptor.Type == "enum" || descriptor.Type == "enum_int" {
-		value, _ := canonicalEnum(descriptor, message.Get(field).Enum(), field.Enum())
+		value, _ := canonicalEnum(descriptor, message.Get(field).Enum(), field)
 		return value
 	}
 	return message.Get(field).String()

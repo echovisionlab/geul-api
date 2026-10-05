@@ -19,6 +19,7 @@ const (
 	ToolDocumentFileAdd                  = "document_file_add"
 	ToolDocumentFileReplace              = "document_file_replace"
 	ToolDocumentFileRemove               = "document_file_remove"
+	ToolDocumentFileCaptionUpdate        = "document_file_caption_update"
 	ToolDocumentFileDownloadPolicyGet    = "document_file_download_policy_get"
 	ToolDocumentFileDownloadPolicyUpdate = "document_file_download_policy_update"
 	ToolFileUsageList                    = "file_usage_list"
@@ -32,6 +33,7 @@ var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileAdd, Title: "Add an existing File to a document",
 		Description: "Add a new File Block that reuses an existing File; this does not upload or copy bytes. " +
+			"Image Files render as images through the native File Block. An optional caption is saved in the same mutation. " +
 			"Read the document first and pass its exact current revision. New File Block download policy starts disabled." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta(),
@@ -39,7 +41,7 @@ var fileBlockTools = []mcpserver.Tool{
 	{
 		Name: ToolDocumentFileReplace, Title: "Replace a document File Block attachment",
 		Description: "Replace the existing File attached to one File Block with another existing File; this does not upload or delete File bytes. " +
-			"The server verifies the target is a File Block and resets that attachment's download policy to disabled." + syncRequiredGuidance,
+			"The server verifies the target is a File Block, preserves its captions, and resets that attachment's download policy to disabled." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileReplaceInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	},
@@ -51,15 +53,24 @@ var fileBlockTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
 	},
 	{
+		Name: ToolDocumentFileCaptionUpdate, Title: "Update a File Block caption",
+		Description: "Set the plain-text caption of one existing File Block, including an image. Caption is locale-owned; an empty string explicitly clears it in the requested locale. " +
+			"Read the Block first and pass its exact current document and target revisions. File attachment and bytes are unchanged." + syncRequiredGuidance,
+		InputSchema: json.RawMessage(documentFileCaptionUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
+		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
+	},
+	{
 		Name: ToolDocumentFileDownloadPolicyGet, Title: "Read a File Block download policy",
 		Description: "Read the download audience owned by one exact File Block attachment. " +
-			"The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership.",
+			"The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership. " +
+			"For an update, copy the returned audience and every audience_segments ID into observed_policy; preserve that exact read baseline.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyGetInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
 	},
 	{
 		Name: ToolDocumentFileDownloadPolicyUpdate, Title: "Update a File Block download policy",
 		Description: "Set disabled, public, authenticated, or restricted download access on one exact File Block attachment. " +
+			"Pass observed_policy from the prior policy read so independent policy changes can be merged. " +
 			"expected_file_id is only a compare-and-set guard against replacing a different current File; it is not relation authority. Public access can expose the original File outside this site.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyUpdateInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, true), Meta: oauthSecurityMeta(),
@@ -113,6 +124,8 @@ func (tools *FileBlockTools) CallTool(ctx context.Context, _ mcpserver.Principal
 		return tools.replace(ctx, arguments)
 	case ToolDocumentFileRemove:
 		return tools.remove(ctx, arguments)
+	case ToolDocumentFileCaptionUpdate:
+		return tools.updateCaption(ctx, arguments)
 	case ToolDocumentFileDownloadPolicyGet:
 		return tools.getDownloadPolicy(ctx, arguments)
 	case ToolDocumentFileDownloadPolicyUpdate:
@@ -126,9 +139,10 @@ func (tools *FileBlockTools) CallTool(ctx context.Context, _ mcpserver.Principal
 
 type documentFileAddArguments struct {
 	focusedMutationArguments
-	Parent core.BlockID `json:"parent_block_id,omitempty"`
-	After  core.BlockID `json:"after_block_id,omitempty"`
-	FileID string       `json:"file_id"`
+	Parent  core.BlockID `json:"parent_block_id,omitempty"`
+	After   core.BlockID `json:"after_block_id,omitempty"`
+	FileID  string       `json:"file_id"`
+	Caption *string      `json:"caption,omitempty"`
 }
 
 type documentFileReplaceArguments struct {
@@ -142,6 +156,12 @@ type documentFileRemoveArguments struct {
 	Block core.BlockID `json:"block_id"`
 }
 
+type documentFileCaptionArguments struct {
+	focusedMutationArguments
+	Block   core.BlockID `json:"block_id"`
+	Caption *string      `json:"caption"`
+}
+
 type documentFilePolicyArguments struct {
 	DocumentType string `json:"document_type"`
 	DocumentID   string `json:"document_id"`
@@ -150,9 +170,15 @@ type documentFilePolicyArguments struct {
 
 type documentFilePolicyUpdateArguments struct {
 	documentFilePolicyArguments
-	ExpectedFileID     string   `json:"expected_file_id"`
+	ExpectedFileID     string                               `json:"expected_file_id"`
+	Audience           string                               `json:"audience"`
+	AudienceSegmentIDs []string                             `json:"audience_segment_ids,omitempty"`
+	ObservedPolicy     *fileDownloadPolicyObservedArguments `json:"observed_policy"`
+}
+
+type fileDownloadPolicyObservedArguments struct {
 	Audience           string   `json:"audience"`
-	AudienceSegmentIDs []string `json:"audience_segment_ids,omitempty"`
+	AudienceSegmentIDs []string `json:"audience_segment_ids"`
 }
 
 type fileBlockSelectionError struct{ message string }
@@ -166,6 +192,9 @@ type fileUsageListArguments struct {
 }
 
 func (tools *FileBlockTools) add(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if err := rejectNullArguments(arguments, "caption"); err != nil {
+		return executionError(err)
+	}
 	var input documentFileAddArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
@@ -181,14 +210,45 @@ func (tools *FileBlockTools) add(ctx context.Context, arguments mcpserver.ToolAr
 		return executionError(err)
 	}
 	block := core.BlockID(uuid.NewString())
-	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
+	operations := []core.Operation{
 		core.InsertBlockOperation(block, fileBlockKind, input.Parent, input.After),
 		core.AttachFileOperation(block, fileBlockField, core.FileReference(fileID)),
-	})
+	}
+	if input.Caption != nil {
+		operations = append(operations, core.SetFieldOperation(block, "caption", core.Text(*input.Caption)))
+	}
+	request, err := focusedApplyRequest(input.focusedMutationArguments, operations)
 	if err != nil {
 		return executionError(err)
 	}
 	return applyFocusedDocumentRequest(ctx, tools.documents, request, block)
+}
+
+func (tools *FileBlockTools) updateCaption(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	var input documentFileCaptionArguments
+	if err := decodeArguments(arguments, &input); err != nil {
+		return executionError(err)
+	}
+	if input.Caption == nil {
+		return executionError(errors.New("caption is required and cannot be null"))
+	}
+	if err := validateFileBlockMutationIdentity(input.focusedMutationArguments); err != nil {
+		return executionError(err)
+	}
+	blockID, err := canonicalFileBlockUUID(string(input.Block), "block_id")
+	if err != nil {
+		return executionError(err)
+	}
+	if err := tools.requireFileBlock(ctx, input.focusedMutationArguments, core.BlockID(blockID)); err != nil {
+		return expectedOrExecutionError(err)
+	}
+	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{
+		core.SetFieldOperation(core.BlockID(blockID), "caption", core.Text(*input.Caption)),
+	})
+	if err != nil {
+		return executionError(err)
+	}
+	return applyFocusedDocumentRequest(ctx, tools.documents, request, "")
 }
 
 func (tools *FileBlockTools) replace(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -319,28 +379,28 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, arguments
 	if err != nil {
 		return executionError(err)
 	}
-	segmentIDs := make([]string, len(input.AudienceSegmentIDs))
-	if len(segmentIDs) > 20 {
-		return executionError(errors.New("audience_segment_ids cannot contain more than 20 values"))
+	segmentIDs, err := fileDownloadPolicySegmentIDs(input.AudienceSegmentIDs, audience, "audience_segment_ids")
+	if err != nil {
+		return executionError(err)
 	}
-	seen := make(map[string]struct{}, len(segmentIDs))
-	for index, raw := range input.AudienceSegmentIDs {
-		segmentIDs[index], err = canonicalFileBlockUUID(raw, fmt.Sprintf("audience_segment_ids[%d]", index))
-		if err != nil {
-			return executionError(err)
-		}
-		if _, duplicate := seen[segmentIDs[index]]; duplicate {
-			return executionError(fmt.Errorf("audience_segment_ids contains duplicate UUID %q", segmentIDs[index]))
-		}
-		seen[segmentIDs[index]] = struct{}{}
+	if input.ObservedPolicy == nil || input.ObservedPolicy.AudienceSegmentIDs == nil {
+		return executionError(errors.New("observed_policy with audience and audience_segment_ids is required"))
 	}
-	if audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED && len(segmentIDs) != 0 {
-		return executionError(errors.New("audience_segment_ids are allowed only for restricted audience"))
+	observedAudience, err := fileDownloadAudience(input.ObservedPolicy.Audience)
+	if err != nil {
+		return executionError(fmt.Errorf("observed_policy.audience: %w", err))
+	}
+	observedSegments, err := fileDownloadPolicySegmentIDs(input.ObservedPolicy.AudienceSegmentIDs, observedAudience, "observed_policy.audience_segment_ids")
+	if err != nil {
+		return executionError(err)
 	}
 	response, err := tools.files.UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 		EntityType: selector.EntityType, EntityId: selector.EntityId,
 		BlockId: selector.BlockId, ReferencePath: selector.ReferencePath,
 		ExpectedFileId: expectedFileID, Audience: audience, AudienceSegmentIds: segmentIDs,
+		ObservedPolicy: &managev1.FileDownloadPolicyObservedState{
+			Audience: observedAudience, AudienceSegmentIds: observedSegments,
+		},
 	}))
 	if err != nil {
 		return fileToolCallError(err)
@@ -349,6 +409,29 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, arguments
 		return mcpserver.ToolResult{}, errors.New("file policy service returned an empty response")
 	}
 	return fileBlockPolicyResult(response.Msg.Policy)
+}
+
+func fileDownloadPolicySegmentIDs(values []string, audience managev1.FileDownloadAudience, field string) ([]string, error) {
+	if len(values) > 20 {
+		return nil, fmt.Errorf("%s cannot contain more than 20 values", field)
+	}
+	if audience != managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED && len(values) != 0 {
+		return nil, fmt.Errorf("%s are allowed only for restricted audience", field)
+	}
+	ids := make([]string, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for index, raw := range values {
+		id, err := canonicalFileBlockUUID(raw, fmt.Sprintf("%s[%d]", field, index))
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return nil, fmt.Errorf("%s contains duplicate UUID %q", field, id)
+		}
+		ids[index] = id
+		seen[id] = struct{}{}
+	}
+	return ids, nil
 }
 
 func fileBlockPolicySelector(input documentFilePolicyArguments) (*managev1.GetFileDownloadPolicyRequest, error) {

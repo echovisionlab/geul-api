@@ -282,7 +282,8 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 			}
 		}
 		changedFields = append(changedFields, relationFields...)
-		changed = metadataChanged || posterChanged || len(relationFields) > 0
+		creditsChanged := len(creditReplacement.changes) > 0 || creditReplacement.orderChanged
+		changed = metadataChanged || posterChanged || len(relationFields) > 0 || creditsChanged
 		if !changed {
 			return nil
 		}

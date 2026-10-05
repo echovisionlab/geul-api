@@ -1,5 +1,61 @@
 # Changelog
 
+## [1.4.0](https://github.com/echovisionlab/geul-api/compare/v1.3.4...v1.4.0) (2026-10-05)
+
+
+### Features
+
+* **mcp:** add admin content and file management workflows ([#79](https://github.com/echovisionlab/geul-api/issues/79)) ([a5cc7c2](https://github.com/echovisionlab/geul-api/commit/a5cc7c2a97472384fb140a117c0ff66a70e955e6))
+
+## [1.3.4](https://github.com/echovisionlab/geul-api/compare/v1.3.3...v1.3.4) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** preserve document state and owning outcomes ([#77](https://github.com/echovisionlab/geul-api/issues/77)) ([146ab2e](https://github.com/echovisionlab/geul-api/commit/146ab2ec6a78661a0e24ae455f4975314fd1d83e))
+
+## [1.3.3](https://github.com/echovisionlab/geul-api/compare/v1.3.2...v1.3.3) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** advertise compact inputs as recursive arrays ([#75](https://github.com/echovisionlab/geul-api/issues/75)) ([65d1c03](https://github.com/echovisionlab/geul-api/commit/65d1c03bb97d00c5ac3f5d960be5ff85736e2fe1))
+
+## [1.3.2](https://github.com/echovisionlab/geul-api/compare/v1.3.1...v1.3.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **mcp:** accept compact tuple unions in connectors ([#73](https://github.com/echovisionlab/geul-api/issues/73)) ([e538da7](https://github.com/echovisionlab/geul-api/commit/e538da7800c3422374de3cd9a24a524d12949961))
+
+## [1.3.1](https://github.com/echovisionlab/geul-api/compare/v1.3.0...v1.3.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* preserve MCP mutation intent and align tool contracts ([#70](https://github.com/echovisionlab/geul-api/issues/70)) ([9f7f54a](https://github.com/echovisionlab/geul-api/commit/9f7f54aa076e6b6d2767d53565cf236cce6fd871))
+
+## [1.3.0](https://github.com/echovisionlab/geul-api/compare/v1.2.1...v1.3.0) (2026-10-05)
+
+
+### Features
+
+* stream upload sources for browser processing ([#69](https://github.com/echovisionlab/geul-api/issues/69)) ([793a59c](https://github.com/echovisionlab/geul-api/commit/793a59c0063e6efc8009912869d6d9357b822208))
+
+## [1.2.1](https://github.com/echovisionlab/geul-api/compare/v1.2.0...v1.2.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* allow public asset cleanup without Cloudflare ([#67](https://github.com/echovisionlab/geul-api/issues/67)) ([600b854](https://github.com/echovisionlab/geul-api/commit/600b8543c2e0f05d8c74f787858e710e21df3a3e))
+
+## [1.2.0](https://github.com/echovisionlab/geul-api/compare/v1.1.2...v1.2.0) (2026-10-04)
+
+
+### Features
+
+* accept complete browser-prepared media uploads ([7502a84](https://github.com/echovisionlab/geul-api/commit/7502a842a707a4ff9d3c785fe5cb72993d402515))
+
 ## [1.1.2](https://github.com/echovisionlab/geul-api/compare/v1.1.1...v1.1.2) (2026-10-03)
 
 

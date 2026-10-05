@@ -2,12 +2,12 @@ package aidocumentadapter
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
-
-	"connectrpc.com/connect"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -16,6 +16,25 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
+
+const (
+	programEventMetadataBlockID   core.BlockID   = "document"
+	programEventMetadataBlockKind core.BlockKind = "program_event"
+	programEventTitleField        core.FieldID   = "title"
+	programEventSummaryField      core.FieldID   = "summary"
+)
+
+func programEventCatalog(codec *RichTextCodec) core.Catalog {
+	catalog := codec.Catalog()
+	catalog.BlockKinds = append(catalog.BlockKinds, programEventMetadataBlockKind)
+	catalog.Fields = append(catalog.Fields,
+		core.FieldRule{BlockKind: programEventMetadataBlockKind, Field: programEventTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipSource},
+		core.FieldRule{BlockKind: programEventMetadataBlockKind, Field: programEventSummaryField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
+	)
+	fingerprint := sha256.Sum256([]byte(catalog.Fingerprint + ":program-event-title-summary:dcdp/1"))
+	catalog.Fingerprint = hex.EncodeToString(fingerprint[:])
+	return catalog
+}
 
 // NewProgramEventRegistration binds DCDP to the existing Program Event
 // aggregate service. The adapter owns only generated Rich Text projection and
@@ -76,11 +95,18 @@ func (p *programEventPort) project(
 	if err != nil {
 		return core.Document{}, fmt.Errorf("project Program Event AI document: %w", err)
 	}
+	metadata := core.Node{ID: programEventMetadataBlockID, Kind: programEventMetadataBlockKind,
+		Shared: []core.FieldValue{{ID: programEventTitleField, Value: core.Text(state.Title)}},
+	}
+	if state.LocaleExists && state.Summary != nil {
+		metadata.Localized = append(metadata.Localized, core.FieldValue{ID: programEventSummaryField, Value: core.Text(*state.Summary)})
+	}
+	nodes = append([]core.Node{metadata}, nodes...)
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
 		TargetRevision: programEventCoreRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
-		LocaleExists: state.LocaleExists, Catalog: p.codec.Catalog(), Nodes: nodes,
+		LocaleExists: state.LocaleExists, Catalog: programEventCatalog(p.codec), Nodes: nodes,
 	}, nil
 }
 
@@ -233,15 +259,82 @@ func (p *programEventPort) compileCommand(
 		command.DeleteTranslation = true
 		return command, nil, nil
 	}
+	contentOperations := make([]core.Operation, 0, len(operations))
+	contentIndexes := make([]int, 0, len(operations))
+	for index, operation := range operations {
+		handled, issue := compileProgramEventMetadataOperation(&command.Metadata, loaded.Role(), operation, index)
+		if issue != nil {
+			return programeventdomain.AIDocumentCommand{}, []core.OperationIssue{*issue}, nil
+		}
+		if !handled {
+			contentOperations = append(contentOperations, operation)
+			contentIndexes = append(contentIndexes, index)
+		}
+	}
+	if len(contentOperations) == 0 {
+		command.Batch = &contentblock.Batch{DocumentID: state.ContentDocumentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{contributor}}
+		return command, nil, nil
+	}
 	batch, issues, err := p.codec.Compile(
 		state.ContentDocumentID, localized, loaded.Role(), loaded.DocumentRevision,
-		contributor, operations,
+		contributor, contentOperations,
 	)
+	for index := range issues {
+		if issues[index].Operation >= 0 && issues[index].Operation < len(contentIndexes) {
+			issues[index].Operation = contentIndexes[issues[index].Operation]
+		}
+	}
 	if err != nil || len(issues) != 0 {
 		return programeventdomain.AIDocumentCommand{}, issues, err
 	}
 	command.Batch = &batch
 	return command, nil, nil
+}
+
+func compileProgramEventMetadataOperation(patch *programeventdomain.AIDocumentMetadataPatch, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {
+	var target core.FieldTarget
+	var value *core.Value
+	switch operation.Kind {
+	case core.OperationSetField:
+		target, value = operation.SetField.Target, &operation.SetField.Value
+	case core.OperationUnsetField:
+		target = operation.UnsetField.Target
+	default:
+		return false, nil
+	}
+	if target.Block != programEventMetadataBlockID {
+		return false, nil
+	}
+	fail := func(code core.IssueCode, message string) (bool, *core.OperationIssue) {
+		return true, &core.OperationIssue{Operation: index, Code: code, Handle: strings.Join(programEventOperationHandles(operation), ":"), Message: message}
+	}
+	if target.Relation != "" || target.Item != "" || len(target.Path) != 0 {
+		return fail(core.IssueInvalidOperation, "Program Event metadata does not expose nested or relation targets")
+	}
+	if target.Field != programEventTitleField && target.Field != programEventSummaryField {
+		return fail(core.IssueUnknownField, "unsupported Program Event metadata field")
+	}
+	if target.Field == programEventTitleField {
+		if role != core.LocaleRoleSource {
+			return fail(core.IssueInvalidOperation, "Program Event title is source-owned")
+		}
+		if value == nil || value.Kind != core.ValueKindText || strings.TrimSpace(value.Text) == "" {
+			return fail(core.IssueInvalidOperation, "Program Event source title cannot be empty or removed")
+		}
+		title := strings.TrimSpace(value.Text)
+		patch.SetTitle, patch.Title = true, &title
+		return true, nil
+	}
+	if value == nil {
+		patch.SetSummary, patch.Summary = true, nil
+		return true, nil
+	}
+	if value.Kind != core.ValueKindText {
+		return fail(core.IssueValueKindMismatch, "Program Event summary must be text")
+	}
+	summary := value.Text
+	patch.SetSummary, patch.Summary = true, &summary
+	return true, nil
 }
 
 func programEventLocalizedDocument(state programeventdomain.AIDocumentState) (*contentv1.LocalizedRichTextDocument, error) {
@@ -286,10 +379,28 @@ func validateProgramEventIdentity(identity core.DocumentIdentity) error {
 func validateProgramEventOperations(document core.Document, operations []core.Operation) []core.OperationIssue {
 	issues := make([]core.OperationIssue, 0)
 	for index, operation := range operations {
+		invalidStructure := false
+		switch operation.Kind {
+		case core.OperationInsertBlock:
+			invalidStructure = operation.InsertBlock.Block == programEventMetadataBlockID || operation.InsertBlock.Kind == programEventMetadataBlockKind
+		case core.OperationDeleteBlock:
+			invalidStructure = operation.DeleteBlock.Block == programEventMetadataBlockID
+		case core.OperationMoveBlock:
+			invalidStructure = operation.MoveBlock.Block == programEventMetadataBlockID
+		case core.OperationReplaceBlockKind:
+			invalidStructure = operation.ReplaceBlockKind.Block == programEventMetadataBlockID || operation.ReplaceBlockKind.Kind == programEventMetadataBlockKind
+		}
+		if invalidStructure {
+			issues = append(issues, core.OperationIssue{Operation: index, Code: core.IssueInvalidOperation, Handle: string(programEventMetadataBlockID), Message: "Program Event metadata structure is fixed"})
+			continue
+		}
 		if operation.Kind != core.OperationUnsetField {
 			continue
 		}
 		target := operation.UnsetField.Target
+		if target.Block == programEventMetadataBlockID && target.Field == programEventSummaryField {
+			continue
+		}
 		for _, node := range document.Nodes {
 			if node.ID != target.Block {
 				continue
@@ -309,23 +420,25 @@ func validateProgramEventOperations(document core.Document, operations []core.Op
 }
 
 func programEventDomainIssue(err error, operations []core.Operation) *core.OperationIssue {
-	index := -1
-	code := core.IssueInvalidOperation
-	switch {
-	case errors.Is(err, contentblock.ErrFileReference):
-		code = core.IssueInvalidFileReference
-		for candidate, operation := range operations {
-			if operation.Kind == core.OperationAttachFile || operation.Kind == core.OperationDetachFile {
-				index = candidate
-				break
-			}
-		}
-	case errors.Is(err, contentblock.ErrInvalidMutation):
-	case connect.CodeOf(err) == connect.CodeInvalidArgument || connect.CodeOf(err) == connect.CodeFailedPrecondition:
-	default:
+	if !errors.Is(err, contentblock.ErrFileReference) {
 		return nil
 	}
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
+	index := -1
+	for candidate, operation := range operations {
+		if operation.Kind != core.OperationAttachFile && operation.Kind != core.OperationDetachFile {
+			continue
+		}
+		// A batch-level File error identifies an operation only when exactly
+		// one File mutation is present. Preserve the original error otherwise.
+		if index >= 0 {
+			return nil
+		}
+		index = candidate
+	}
+	if index < 0 {
+		return nil
+	}
+	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 
 func programEventOperationHandles(operation core.Operation) []string {

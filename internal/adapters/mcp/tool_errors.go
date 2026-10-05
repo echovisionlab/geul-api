@@ -34,3 +34,7 @@ func expectedToolError(err error) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, err
 	}
 }
+
+func executionError(err error) (mcpserver.ToolResult, error) {
+	return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: err.Error()}
+}

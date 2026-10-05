@@ -155,12 +155,9 @@ func (s *TranslationService) RegenerateEntityTranslations(
 	for index := range result.createdJobs {
 		s.metrics.recordQueuedJob(ctx, &result.createdJobs[index])
 	}
-	created, err := s.publishRegeneratedTranslationJobs(result.jobs)
-	if err != nil {
-		return nil, err
-	}
+	responseJobs := toProtoTranslationJobs(result.jobs)
 	outcome = "succeeded"
-	return connect.NewResponse(&managev1.RegenerateEntityTranslationsResponse{Jobs: created}), nil
+	return connect.NewResponse(&managev1.RegenerateEntityTranslationsResponse{Jobs: responseJobs}), nil
 }
 
 type regeneratedTranslationJobsResult struct {
@@ -334,13 +331,11 @@ func createRegeneratedTranslationJobWithDB(
 	return activeJobs[len(activeJobs)-1], false, nil
 }
 
-func (s *TranslationService) publishRegeneratedTranslationJobs(
-	jobs []model.TranslationJob,
-) ([]*managev1.TranslationJob, error) {
-	created := make([]*managev1.TranslationJob, 0, len(jobs))
+func toProtoTranslationJobs(jobs []model.TranslationJob) []*managev1.TranslationJob {
+	responseJobs := make([]*managev1.TranslationJob, 0, len(jobs))
 	for index := range jobs {
 		job := &jobs[index]
-		created = append(created, toProtoTranslationJob(*job))
+		responseJobs = append(responseJobs, toProtoTranslationJob(*job))
 	}
-	return created, nil
+	return responseJobs
 }

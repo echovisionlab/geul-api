@@ -127,7 +127,7 @@ func (s *PostService) ListPostVersions(
 	return connect.NewResponse(&managev1.ListPostVersionsResponse{
 		Versions: result,
 		Pagination: &commonv1.PaginationResponse{
-			Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total),
+			Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total,
 		},
 	}), nil
 }

@@ -344,3 +344,122 @@ func coreObjectValue(value core.Value, field core.FieldID) (core.Value, bool) {
 	}
 	return core.Value{}, false
 }
+
+// Missing locale cells keep source fallback until an operation targets them.
+// Create only the selected stable row/cell handles, without copying source text
+// or manufacturing explicit empty values for unrelated cells.
+func ensureTableLocalePath(base *contentv1.RichTextTableBase, locale *contentv1.TableBlockLocale, path []core.FieldPathSegment) error {
+	if len(path) < 2 || path[0].Field != richTextTableRowsField || path[1].Item == "" {
+		return nil
+	}
+	rowID := string(path[1].Item)
+	var sourceRow *contentv1.RichTextTableRowBase
+	for _, row := range base.GetRows() {
+		if row.GetId() == rowID {
+			sourceRow = row
+			break
+		}
+	}
+	var targetRow *contentv1.RichTextTableRowLocale
+	for _, row := range locale.GetContent().GetRows() {
+		if row.GetRowId() == rowID {
+			targetRow = row
+			break
+		}
+	}
+	if targetRow == nil {
+		if sourceRow == nil {
+			return fmt.Errorf("table row %q does not exist", rowID)
+		}
+		if locale.Content == nil {
+			locale.Content = &contentv1.RichTextTableLocale{}
+		}
+		targetRow = &contentv1.RichTextTableRowLocale{RowId: rowID}
+		locale.Content.Rows = append(locale.Content.Rows, targetRow)
+	}
+	if len(path) < 4 || path[2].Field != richTextTableCellsField || path[3].Item == "" {
+		return nil
+	}
+	cellID := string(path[3].Item)
+	for _, cell := range targetRow.GetCells() {
+		if cell.GetCellId() == cellID {
+			return nil
+		}
+	}
+	for _, cell := range sourceRow.GetCells() {
+		if cell.GetId() == cellID {
+			targetRow.Cells = append(targetRow.Cells, &contentv1.RichTextTableCellLocale{CellId: cellID})
+			return nil
+		}
+	}
+	return fmt.Errorf("table cell %q does not exist", cellID)
+}
+
+// mutateTablePath edits the typed table value before using the existing whole
+// table builder. Row/cell handles, untouched content and generated validation
+// retain the same meaning as whole-table replacement.
+func mutateTablePath(message protoreflect.Message, catalog contentv1.RichTextCatalogDescriptor, target core.FieldTarget, replacement *core.Value) error {
+	localized := target.Field == richTextTableLocaleField
+	var value core.Value
+	var err error
+	if localized {
+		value, err = projectLocaleTable(message, catalog.Table)
+	} else {
+		value, err = projectBaseTable(message, catalog.Table)
+	}
+	if err != nil {
+		return err
+	}
+	if err := mutateTableValuePath(&value, target.Path, replacement); err != nil {
+		return err
+	}
+	return setTableValue(message, value, localized, catalog)
+}
+
+func mutateTableValuePath(value *core.Value, path []core.FieldPathSegment, replacement *core.Value) error {
+	segment := path[0]
+	if segment.Field != "" {
+		if value.Kind != core.ValueKindObject {
+			return errors.New("table field path traverses a non-object value")
+		}
+		for index := range value.Object {
+			if value.Object[index].ID != segment.Field {
+				continue
+			}
+			if len(path) != 1 {
+				return mutateTableValuePath(&value.Object[index].Value, path[1:], replacement)
+			}
+			if replacement == nil {
+				value.Object = append(value.Object[:index], value.Object[index+1:]...)
+			} else {
+				value.Object[index].Value = *replacement
+			}
+			return nil
+		}
+		if len(path) == 1 {
+			if replacement != nil {
+				value.Object = append(value.Object, core.ObjectValue(segment.Field, *replacement))
+			}
+			return nil
+		}
+		return fmt.Errorf("table field %q does not exist", segment.Field)
+	}
+	if value.Kind != core.ValueKindList {
+		return errors.New("table item path traverses a non-list value")
+	}
+	for index := range value.List {
+		if value.List[index].ID != segment.Item {
+			continue
+		}
+		if len(path) != 1 {
+			return mutateTableValuePath(&value.List[index].Value, path[1:], replacement)
+		}
+		if replacement == nil {
+			value.List = append(value.List[:index], value.List[index+1:]...)
+		} else {
+			value.List[index].Value = *replacement
+		}
+		return nil
+	}
+	return fmt.Errorf("table row or cell %q does not exist", segment.Item)
+}

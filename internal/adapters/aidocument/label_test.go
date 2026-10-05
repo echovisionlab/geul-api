@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
@@ -101,17 +102,23 @@ func TestLabelExactValidationUsesGeneratedRangesAndValuesOnlyTargetRule(t *testi
 	document, err := registration.Port.Load(t.Context(), labelIdentity(), "en")
 	require.NoError(t, err)
 
-	validation, err := service.Validate(t.Context(), labelRequest("en",
+	widthRequest := labelRequest("en",
 		core.SetFieldOperation(labelBlockID, "previewWidth", core.Number("101")),
-	))
-	require.NoError(t, err)
-	require.NotEmpty(t, validation.Issues)
-	require.Equal(t, core.IssueInvalidOperation, validation.Issues[0].Code)
+	)
+	validation, err := service.Validate(t.Context(), widthRequest)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "previewWidth")
+	require.Empty(t, validation.Issues)
+	_, err = service.Apply(t.Context(), widthRequest)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "previewWidth")
+	require.Empty(t, api.mutation, "generated validation must reject before domain mutation")
 	validation, err = service.Validate(t.Context(), labelRequest("en",
 		core.SetFieldOperation(labelBlockID, richTextContentField, core.RichText(core.InlineMath("x"))),
 	))
-	require.NoError(t, err)
-	require.NotEmpty(t, validation.Issues, "compact generated inline catalog must reject math")
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.ErrorContains(t, err, "inline math is forbidden")
+	require.Empty(t, validation.Issues)
 
 	fileValidation := core.ValidateOperations(document, core.ApplyRequest{
 		Protocol: core.ProtocolVersion, Profile: core.DomainLabel, Document: labelTestID,

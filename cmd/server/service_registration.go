@@ -395,14 +395,15 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	// Authenticated multipart upload plane. Managed public-asset bytes are
 	// relayed through the API; approved editor and large-media types use the
 	// short-lived public S3 presigned control endpoints.
-	mux.Handle("/upload/media-artifact", auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleClientMediaArtifact)))
+	mux.Handle("/upload/media-artifact", auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleClientMediaArtifact))))
+	mux.Handle("/upload/source", auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleUploadSource))))
 	mux.Handle(
 		"/upload/part",
-		auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleUploadPart)),
+		auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleUploadPart))),
 	)
 	mux.Handle(
 		"/upload/prefix",
-		auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleVerifyUploadPrefix)),
+		auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleVerifyUploadPrefix))),
 	)
 	mux.Handle(
 		"/upload/part/presign",
@@ -412,7 +413,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		"/upload/part/confirm",
 		auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleConfirmUploadPart)),
 	)
-	slog.Info("Registered handlers", "paths", []string{"/upload/part", "/upload/prefix", "/upload/part/presign", "/upload/part/confirm"})
+	slog.Info("Registered handlers", "paths", []string{"/upload/source", "/upload/part", "/upload/prefix", "/upload/part/presign", "/upload/part/confirm"})
 
 	music := musicServiceRegistration{
 		dependencies: deps, files: fileService, checkpoints: collaborationRuntime.Checkpoints,
@@ -421,8 +422,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	artistService, internalArtistService := music.registerArtist()
 	labelService := music.registerLabel()
-	releaseService, internalReleaseService := music.registerRelease()
-	music.registerTaxonomy()
+	releaseService, internalReleaseService, trackService := music.registerRelease()
+	genreService, styleService, formatService := music.registerTaxonomy()
 
 	aiService := ai.NewService(metadataAIJobs)
 	aiPath, aiHandler := managev1connect.NewAIServiceHandler(aiService, handlerOpts...)
@@ -813,14 +814,24 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		programEventService,
 		releaseService,
 		artistService,
-		contentReferenceApplications{
-			categories: categoryService,
-			tags:       tagService,
-			clients:    clientService,
-			mapPlaces:  mapPlaceService,
-			members:    memberService,
-			artists:    artistService,
-			files:      fileService,
+		contentMCPApplications{
+			categories:  categoryService,
+			tags:        tagService,
+			clients:     clientService,
+			mapPlaces:   mapPlaceService,
+			members:     memberService,
+			artists:     artistService,
+			files:       fileService,
+			eventTypes:  programEventTypeService,
+			eventSeries: programEventSeriesService,
+			labels:      labelService,
+			genres:      genreService,
+			styles:      styleService,
+			formats:     formatService,
+			forms:       formService,
+			postSeries:  seriesService,
+			tracks:      trackService,
+			mapThemes:   mapThemeService,
 		},
 		translationService,
 		fileService,

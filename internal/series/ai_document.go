@@ -212,24 +212,32 @@ func (s *AIDocumentService) applyAISetField(
 		if err != nil {
 			return false, err
 		}
-		if value == mutation.state.root.Slug {
+		current := mutation.state.root.Slug
+		if mutation.slug != nil {
+			current = *mutation.slug
+		}
+		if value == current {
 			return false, nil
 		}
 		if err := validateSeriesUpdateSlug(ctx, tx, mutation.state.root.ID, &value); err != nil {
 			return false, err
 		}
 		mutation.slug = &value
-		mutation.slugChanged = true
+		mutation.slugChanged = value != mutation.state.root.Slug
 		return true, nil
 	case postSeriesAIFieldStatus:
 		if err := validateSeriesStatus(value); err != nil {
 			return false, err
 		}
-		if value == mutation.state.root.Status {
+		current := mutation.state.root.Status
+		if mutation.status != nil {
+			current = *mutation.status
+		}
+		if value == current {
 			return false, nil
 		}
 		mutation.status = &value
-		mutation.statusChanged = true
+		mutation.statusChanged = value != mutation.state.root.Status
 		return true, nil
 	default:
 		return false, errs.InvalidArgument("field", "unsupported Post Series field")

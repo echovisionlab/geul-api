@@ -271,7 +271,10 @@ func (s *WorkService) GetWork(
 		return nil, err
 	}
 	protoWork := s.toProtoWork(&work, imageAsset, ogAsset)
-	protoWork.Clients = s.getWorkClients(ctx, work.ID)
+	protoWork.Clients, err = s.getWorkClients(ctx, work.ID)
+	if err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(protoWork), nil
 }
 
@@ -334,6 +337,7 @@ func (s *WorkService) ListWorksAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("work.id ASC")
 
 	if err := query.Limit(int(pg.Limit)).Offset(int(pg.Offset)).Find(&works).Error; err != nil {
 		return nil, errs.Internal(err)
@@ -435,7 +439,7 @@ func (s *WorkService) CreateWork(
 	) error {
 		return s.createWorkWithDB(
 			ctx, tx, &work, title, req.Msg.Summary, req.Msg.Document,
-			req.Header().Get("Accept-Language"),
+			req.Msg.SourceLocale, req.Header().Get("Accept-Language"),
 			write,
 		)
 	})
@@ -518,6 +522,7 @@ func (s *WorkService) createWorkWithDB(
 	title string,
 	summary *string,
 	document *contentv1.RichTextDocument,
+	requestedLocale string,
 	acceptLanguage string,
 	write authzmutation.WriteRelationships,
 ) error {
@@ -530,7 +535,10 @@ func (s *WorkService) createWorkWithDB(
 		}
 	}
 	now := time.Now().UTC()
-	sourceLocale := resolveInitialSourceLocale(ctx, tx, s.kratosClient, acceptLanguage)
+	sourceLocale, err := resolveCreateSourceLocale(ctx, tx, s.kratosClient, requestedLocale, acceptLanguage)
+	if err != nil {
+		return err
+	}
 	work.SourceLocale = sourceLocale
 	if document != nil {
 		if document.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK {

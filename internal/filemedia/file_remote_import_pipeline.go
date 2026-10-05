@@ -101,6 +101,13 @@ func (s *FileService) prepareRemoteImport(ctx context.Context, opts remoteFileIm
 	if err := s.checkRemoteImportPermission(ctx, request); err != nil {
 		return request, err
 	}
+	// General imports only become durable when a correlation is supplied. Scope
+	// that newly durable identity to its authenticated owner, leaving existing
+	// editor and entity-bound retry identities unchanged.
+	if request.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && opts.checkPermission && strings.TrimSpace(opts.correlationID) != "" {
+		opts.actorMemberID = auth.GetUser(ctx).MemberID.String()
+		request.opts.actorMemberID = opts.actorMemberID
+	}
 	request.projectionIdentity, err = normalizeFileIngestProjectionIdentity(
 		request.uploadType,
 		opts.transcodeEntityType,
@@ -275,10 +282,6 @@ func (s *FileService) openRemoteImportSource(
 	emitter *fileIngestEventEmitter,
 	fail func(error) error,
 ) (*remoteImportSource, error) {
-	parsedURL, err := url.Parse(request.opts.sourceURL)
-	if err != nil {
-		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
-	}
 	resolver := s.remoteImportResolver
 	if resolver == nil {
 		resolver = net.DefaultResolver
@@ -287,11 +290,31 @@ func (s *FileService) openRemoteImportSource(
 	if dial == nil {
 		dial = new(net.Dialer).DialContext
 	}
+	client := newRemoteImportHTTPClient(ctx, resolver, dial, s.remoteImportBaseTransport)
+	return s.openRemoteImportSourceWithClient(ctx, request, emitter, fail, client)
+}
+
+func (s *FileService) openRemoteImportSourceWithClient(
+	ctx context.Context,
+	request preparedRemoteImport,
+	emitter *fileIngestEventEmitter,
+	fail func(error) error,
+	client *remoteImportHTTPClient,
+) (*remoteImportSource, error) {
+	parsedURL, err := url.Parse(request.opts.sourceURL)
+	if err != nil {
+		client.CloseIdleConnections()
+		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
+	}
+	resolver := s.remoteImportResolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
 	target, err := validateRemoteImportURL(ctx, resolver, parsedURL)
 	if err != nil {
+		client.CloseIdleConnections()
 		return nil, fail(errs.InvalidArgument("url", err.Error()))
 	}
-	client := newRemoteImportHTTPClient(ctx, resolver, dial, s.remoteImportBaseTransport)
 	requestContext := context.WithValue(ctx, remoteImportTargetContextKey{}, target)
 	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodGet, request.opts.sourceURL, nil)
 	if err != nil {
@@ -301,7 +324,7 @@ func (s *FileService) openRemoteImportSource(
 	response, err := client.Do(httpRequest)
 	if err != nil {
 		client.CloseIdleConnections()
-		return nil, fail(errs.Internal(fmt.Errorf("failed to download: %w", err)))
+		return nil, fail(errs.Internal(fmt.Errorf("failed to download: %w", remoteImportDownloadCause(err))))
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
@@ -317,6 +340,18 @@ func (s *FileService) openRemoteImportSource(
 	source.client = client
 	return source, nil
 }
+
+// Transport and redirect errors can embed both requested and signed redirect
+// URLs, including inside plain error strings. Keep the cause for cancellation
+// checks while publishing a fixed reason to logs and lifecycle events.
+func remoteImportDownloadCause(err error) error {
+	return remoteImportDownloadFailure{cause: err}
+}
+
+type remoteImportDownloadFailure struct{ cause error }
+
+func (remoteImportDownloadFailure) Error() string         { return "remote download failed" }
+func (failure remoteImportDownloadFailure) Unwrap() error { return failure.cause }
 
 func validateRemoteImportSource(
 	response *http.Response,
@@ -390,7 +425,11 @@ func (s *FileService) storeRemoteImportSource(
 	fail func(error) error,
 ) (*storedRemoteImport, error) {
 	fileID := request.identity.fileID
-	fileName := canonicalRemoteImportFilename(remoteImportFileName(source.parsedURL), fileID, source.detectedMime)
+	name := strings.TrimSpace(request.opts.fileName)
+	if name == "" {
+		name = remoteImportFileName(source.parsedURL)
+	}
+	fileName := canonicalRemoteImportFilename(name, fileID, source.detectedMime)
 	hasher := sha256.New()
 	body := &countingReader{
 		reader: io.TeeReader(io.MultiReader(bytes.NewReader(source.prefix), source.body), hasher),

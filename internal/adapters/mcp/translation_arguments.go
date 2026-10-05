@@ -38,12 +38,15 @@ type translationJobsListArguments struct {
 	Limit        int32                   `json:"n,omitempty"`
 	Offset       int32                   `json:"o,omitempty"`
 	Sort         string                  `json:"k,omitempty"`
-	Descending   bool                    `json:"z,omitempty"`
+	Descending   *bool                   `json:"z,omitempty"`
 }
 
 func translationLocales(input []core.Locale) ([]string, error) {
 	if len(input) == 0 {
 		return nil, errors.New("at least one explicit target locale is required")
+	}
+	if len(input) > 32 {
+		return nil, errors.New("at most 32 explicit target locales are allowed")
 	}
 	locales := make([]string, 0, len(input))
 	seen := make(map[core.Locale]struct{}, len(input))
@@ -158,12 +161,12 @@ func translationJobsListRequest(input translationJobsListArguments) (*managev1.L
 			return nil, fmt.Errorf("unsupported translation Job sort %q", input.Sort)
 		}
 		order := commonv1.SortOrder_SORT_ORDER_ASC
-		if input.Descending {
+		if input.Descending != nil && *input.Descending {
 			order = commonv1.SortOrder_SORT_ORDER_DESC
 		}
 		request.Sorts = []*commonv1.SortSpec{{Field: input.Sort, Order: order}}
-	} else if input.Descending {
-		return nil, errors.New("descending requires an explicit sort field")
+	} else if input.Descending != nil {
+		return nil, errors.New("sort direction requires an explicit sort field")
 	}
 	return request, nil
 }
@@ -190,12 +193,17 @@ func validateCompactLocale(locale core.Locale) error {
 	if value == "" || len(value) > 35 {
 		return errors.New("locale must contain 1 to 35 characters")
 	}
-	for index, character := range value {
-		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || (character == '-' && index > 0 && index < len(value)-1) {
-			continue
+	for _, subtag := range strings.Split(value, "-") {
+		if subtag == "" {
+			return fmt.Errorf("locale %q requires non-empty alphanumeric subtags", locale)
 		}
-		return fmt.Errorf("locale %q is not a canonical locale identifier", locale)
+		for _, character := range subtag {
+			if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+				(character >= '0' && character <= '9') {
+				continue
+			}
+			return fmt.Errorf("locale %q requires non-empty alphanumeric subtags", locale)
+		}
 	}
 	return nil
 }

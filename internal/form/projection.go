@@ -95,6 +95,7 @@ func toProtoFormSummaryWithSubmissionCount(
 		Status:          managev1.FormStatus(managev1.FormStatus_value[string(f.Status)]),
 		SubmissionCount: int32(submissionCount),
 		CreatedAt:       timestamppb.New(f.CreatedAt),
+		SourceLocale:    f.SourceLocale,
 	}
 
 	if f.Slug != nil {

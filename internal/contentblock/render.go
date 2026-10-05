@@ -293,7 +293,8 @@ func mergeRichTextLocaleBlock(
 		target.GetBulletListItem() != nil,
 		target.GetNumberedListItem() != nil,
 		target.GetCheckListItem() != nil,
-		target.GetQuote() != nil:
+		target.GetQuote() != nil,
+		target.GetCallout() != nil:
 		return proto.Clone(target).(*contentv1.RichTextBlockLocale)
 	case target.GetTable() != nil:
 		return mergeRichTextTableLocaleBlock(source, target)

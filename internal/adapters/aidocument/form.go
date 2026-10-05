@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	formintrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -220,12 +221,36 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 		mutation.DeleteTranslation = true
 		return mutation, nil, nil
 	}
+	kinds := make(map[core.BlockID]core.BlockKind, len(document.Nodes))
+	for _, node := range document.Nodes {
+		kinds[node.ID] = node.Kind
+	}
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil {
 			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: "Form locale copy uses explicit empty instead of unset"}}, nil
 		}
 		if formOperationMutatesRoot(operation) {
 			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: "block:document", Message: "Form document root cannot be structurally changed"}}, nil
+		}
+		switch operation.Kind {
+		case core.OperationInsertBlock:
+			kinds[operation.InsertBlock.Block] = operation.InsertBlock.Kind
+		case core.OperationReplaceBlockKind:
+			kinds[operation.ReplaceBlockKind.Block] = operation.ReplaceBlockKind.Kind
+		case core.OperationSetField:
+			if operation.SetField.Target.Field != formRawField {
+				continue
+			}
+			node := core.Node{
+				ID: operation.SetField.Target.Block, Kind: kinds[operation.SetField.Target.Block],
+				Shared: []core.FieldValue{{ID: formRawField, Value: operation.SetField.Value}},
+			}
+			if _, err := formObjectFromNode(node); err != nil {
+				return formdomain.AIDocumentMutation{}, []core.OperationIssue{{
+					Operation: index, Code: core.IssueInvalidOperation,
+					Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: err.Error(),
+				}}, nil
+			}
 		}
 	}
 	next, err := core.DocumentAfterOperations(document, operations)
@@ -238,7 +263,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 	}
 	schema, err := formDocumentSchema(next)
 	if err != nil {
-		return formdomain.AIDocumentMutation{}, nil, err
+		return formdomain.AIDocumentMutation{}, nil, errs.InvalidArgument("operations", err.Error())
 	}
 	currentTitle, currentTitlePresent, err := formDocumentTitle(document)
 	if err != nil {
@@ -318,7 +343,20 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 	if !state.LocaleExists && len(state.LocaleSchema) != 0 {
 		return nil, errors.New("missing Form locale cannot carry a persisted schema")
 	}
-	if err := formdomain.ValidateAIDocumentAuthoringSchemas(state.SourceSchema, state.LocaleSchema); err != nil {
+	localeSchema := state.LocaleSchema
+	if state.Locale != state.SourceLocale && len(localeSchema) != 0 {
+		// Persisted target copy can predate a source structure edit. Validate its
+		// stable identities, then retain only that copy on the current source shape.
+		if err := formdomain.ValidateAIDocumentAuthoringSchemas(localeSchema, nil); err != nil {
+			return nil, err
+		}
+		var err error
+		localeSchema, _, err = formdomain.NormalizeLocalizedFormSchemaOverlay(state.SourceSchema, localeSchema)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := formdomain.ValidateAIDocumentAuthoringSchemas(state.SourceSchema, localeSchema); err != nil {
 		return nil, err
 	}
 	source, err := decodeFormSchema(state.SourceSchema)
@@ -326,8 +364,8 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 		return nil, err
 	}
 	var localized map[string]any
-	if state.LocaleExists && len(state.LocaleSchema) != 0 {
-		localized, err = decodeFormSchema(state.LocaleSchema)
+	if state.LocaleExists && len(localeSchema) != 0 {
+		localized, err = decodeFormSchema(localeSchema)
 		if err != nil {
 			return nil, err
 		}
@@ -685,6 +723,27 @@ func formObjectFromNode(node core.Node) (map[string]any, error) {
 	var object map[string]any
 	if err := json.Unmarshal([]byte(raw.Text), &object); err != nil {
 		return nil, fmt.Errorf("form %s source payload: %w", node.ID, err)
+	}
+	stableID := formString(object, "id")
+	var handle string
+	var err error
+	switch node.Kind {
+	case formStepKind:
+		handle, err = formintrav1.FormStepBlockHandle(stableID)
+	case formFieldKind:
+		handle, err = formintrav1.FormFieldBlockHandle(stableID)
+	case formOptionKind:
+		handle, err = formintrav1.FormOptionBlockHandle(stableID)
+	case formValidatorKind:
+		handle, err = formintrav1.FormValidatorBlockHandle(stableID)
+	default:
+		return nil, fmt.Errorf("unsupported Form source node kind %q", node.Kind)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("form %s source identity: %w", node.ID, err)
+	}
+	if core.BlockID(handle) != node.ID {
+		return nil, fmt.Errorf("form %s source payload identity %q does not match the block handle", node.ID, stableID)
 	}
 	return object, nil
 }

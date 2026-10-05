@@ -54,6 +54,7 @@ func publicAssetCleanupForIntegration(h *Handlers) *mediaassetdomain.PublicAsset
 			h.config.CloudflareAPIURL,
 			h.config.CloudflareZoneID,
 			h.config.CloudflareAPIToken,
+			h.config.CloudflareCachePurgeEnabled,
 			h.httpClient,
 		)
 		h.publicAssets = mediaassetdomain.NewPublicAssetCleanup(

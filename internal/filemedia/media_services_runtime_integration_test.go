@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestRuntimeIntegratedOGGenerationThroughAuthenticatedAPI(t *testing.T) {
 	require.Equal(t, "WEBP", string(body[8:12]))
 }
 
-func TestRuntimeIntegratedVideoAndMeshWorkers(t *testing.T) {
+func TestRuntimeClientVideoAndMeshOptimization(t *testing.T) {
 	stack := testutil.SetupSharedRuntimeStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	client := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
@@ -62,13 +63,15 @@ func TestRuntimeIntegratedVideoAndMeshWorkers(t *testing.T) {
 		_, delivery := completeRuntimeEditorMediaUploadAndWait(t, stack, client, admin, managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, "video/mp4", runtimeTestFileName("integrated-video.mp4"), body, func(d *commonv1.MediaDelivery) bool {
 			return d.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY && d.GetPlayback().GetUrl() != ""
 		})
-		res, err := http.Get(delivery.GetPlayback().GetUrl())
-		require.NoError(t, err)
-		defer res.Body.Close()
-		require.Equal(t, http.StatusOK, res.StatusCode)
-		playlist, err := io.ReadAll(res.Body)
-		require.NoError(t, err)
+		require.NotEmpty(t, delivery.GetThumbnail().GetUrl())
+		playlist := getRuntimePublicMediaBytes(t, delivery.GetPlayback().GetUrl())
 		require.Contains(t, string(playlist), "#EXTM3U")
+		// ffprobe follows the same public playlist and confirms actual video/audio
+		// streams; a READY row or syntactically plausible playlist is insufficient.
+		streams := runRuntimeClientMediaCommand(t, "ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", delivery.GetPlayback().GetUrl())
+		require.Contains(t, string(streams), "video")
+		require.Contains(t, string(streams), "audio")
+		require.True(t, strings.Contains(string(playlist), ".ts"), "client playlist must reference MPEG-TS media")
 	})
 	t.Run("mesh", func(t *testing.T) {
 		body, err := os.ReadFile(testutil.RepositoryTestMeshGLB(t))

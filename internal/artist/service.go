@@ -299,6 +299,7 @@ func (s *ArtistService) ListArtistsAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("artist.id ASC")
 
 	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&artists).Error; err != nil {
 		return nil, errs.Internal(err)

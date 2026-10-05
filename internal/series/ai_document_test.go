@@ -320,6 +320,83 @@ func TestPostSeriesAIDocumentSelectsOneExactActionPerCommand(t *testing.T) {
 	}
 }
 
+func TestPostSeriesAIDocumentRepeatedMetadataAssignmentsUseFinalValue(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		field   core.FieldID
+		values  []string
+		want    string
+		changed bool
+	}{
+		{"status reset", postSeriesAIFieldStatus, []string{"SERIES_STATUS_PUBLISHED", "SERIES_STATUS_DRAFT"}, "SERIES_STATUS_DRAFT", false},
+		{"status repeated", postSeriesAIFieldStatus, []string{"SERIES_STATUS_PUBLISHED", "SERIES_STATUS_PUBLISHED"}, "SERIES_STATUS_PUBLISHED", true},
+		{"status final assignment", postSeriesAIFieldStatus, []string{"SERIES_STATUS_PUBLISHED", "SERIES_STATUS_DRAFT", "SERIES_STATUS_PUBLISHED"}, "SERIES_STATUS_PUBLISHED", true},
+		{"slug reset", postSeriesAIFieldSlug, []string{"changed-series", "post-series"}, "post-series", false},
+		{"slug repeated", postSeriesAIFieldSlug, []string{"changed-series", "changed-series"}, "changed-series", true},
+		{"slug final assignment", postSeriesAIFieldSlug, []string{"changed-series", "post-series", "final-series"}, "final-series", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			port, db, seriesID, _, og := newSeriesAIDocumentFixture(t)
+			require.NoError(t, db.Exec("CREATE TABLE page (slug TEXT NOT NULL)").Error)
+			application, err := core.NewService(port)
+			require.NoError(t, err)
+			identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
+			before, err := port.Load(t.Context(), identity, "en")
+			require.NoError(t, err)
+			operations := make([]core.Operation, 0, len(test.values))
+			for _, value := range test.values {
+				operations = append(operations, core.SetFieldOperation(postSeriesAIDocumentBlock, test.field, core.Text(value)))
+			}
+			request := core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainPostSeries, Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: before.DocumentRevision, Operations: operations}
+			result, err := application.Apply(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, test.changed, result.Changed)
+			require.Len(t, result.Normalized, len(operations))
+			var stored model.Series
+			require.NoError(t, db.Where("id = ?", seriesID).Take(&stored).Error)
+			if test.field == postSeriesAIFieldStatus {
+				require.Equal(t, test.want, stored.Status)
+			} else {
+				require.Equal(t, test.want, stored.Slug)
+			}
+			if !test.changed {
+				require.Equal(t, before.DocumentRevision, result.DocumentRevision)
+				require.Empty(t, result.Changes)
+				require.Empty(t, og.locales)
+			}
+		})
+	}
+}
+
+func TestPostSeriesAIDocumentStatusResetKeepsOtherFieldChange(t *testing.T) {
+	port, db, seriesID, _, _ := newSeriesAIDocumentFixture(t)
+	application, err := core.NewService(port)
+	require.NoError(t, err)
+	identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
+	before, err := port.Load(t.Context(), identity, "en")
+	require.NoError(t, err)
+	result, err := application.Apply(t.Context(), core.ApplyRequest{
+		Protocol: core.ProtocolVersion, Profile: core.DomainPostSeries, Document: identity.Reference,
+		Locale: "en", ExpectedDocumentRevision: before.DocumentRevision,
+		Operations: []core.Operation{
+			core.SetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldStatus, core.Text("SERIES_STATUS_PUBLISHED")),
+			core.SetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldTitle, core.Text("Changed title")),
+			core.SetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldStatus, core.Text("SERIES_STATUS_DRAFT")),
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Len(t, result.Normalized, 3)
+	require.Len(t, result.Changes, 1)
+	require.Equal(t, 1, result.Changes[0].Operation)
+	var stored model.Series
+	require.NoError(t, db.Where("id = ?", seriesID).Take(&stored).Error)
+	require.Equal(t, "SERIES_STATUS_DRAFT", stored.Status)
+	after, err := port.Load(t.Context(), identity, "en")
+	require.NoError(t, err)
+	require.Equal(t, "Changed title", requireAIDocumentLocalizedText(t, after, postSeriesAIFieldTitle))
+}
+
 func TestPostSeriesExactMutationUsesOneDecisionAndValidateRollsBack(t *testing.T) {
 	port, db, seriesID, _, _ := newSeriesAIDocumentFixture(t)
 	access := &recordingSeriesAIDocumentAccess{}

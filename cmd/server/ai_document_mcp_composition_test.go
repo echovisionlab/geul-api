@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -26,6 +26,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -70,7 +71,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -104,7 +105,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "9", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "15", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -115,6 +116,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"not routine version changes",
 			"p=release",
 			"p=artist",
+			"Use work_settings_get before updating Work metadata or clients",
+			"observed_policy.audience_segment_ids",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
@@ -129,7 +132,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -145,7 +148,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing.T) {
+func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *testing.T) {
 	port := &compositionDomainPort{}
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(port),
@@ -155,7 +158,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -192,7 +195,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedPATLookup(t *testing
 	response = httptest.NewRecorder()
 	composition.mcpHandler.ServeHTTP(response, compositionMCPRequest("Bearer must-not-be-reverified"))
 	require.Equal(t, http.StatusUnauthorized, response.Code)
-	require.Equal(t, 2, port.loadCount(), "main MCP must not dispatch or repeat PAT/Member authentication")
+	require.Equal(t, 2, port.loadCount(), "main MCP must not dispatch or repeat credential/Member authentication")
 }
 
 func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedContext(t *testing.T) {
@@ -205,7 +208,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionReferenceApplications(),
+		compositionContentApplications(),
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		files,
 		aiDocumentMCPConfig{
@@ -227,11 +230,36 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), `"name":"document_list"`)
 	require.Contains(t, response.Body.String(), `"name":"reference_search"`)
+	for _, tool := range []string{
+		"post_settings_get", "page_settings_get", "document_catalog",
+		"program_event_create", "program_event_settings_get", "program_event_settings_update",
+		"program_event_publish", "program_event_archive", "program_event_delete",
+		"program_event_type_list", "program_event_series_list", "label_list",
+		"member_admin_list", "member_admin_get",
+		"release_create", "release_settings_get", "release_settings_update", "release_publish", "release_unpublish", "release_delete",
+		"release_artwork_set", "release_artwork_remove", "release_slug_check",
+		"release_relations_get", "release_artists_set", "release_labels_set", "release_categories_set", "release_genres_set", "release_styles_set", "release_formats_set", "release_credits_set",
+		"track_list", "track_create", "track_settings_update", "track_delete", "track_credits_set", "track_reorder",
+		"map_place_get", "map_place_get_many", "map_place_list", "map_place_create", "map_place_settings_update", "map_place_delete",
+		"map_theme_list", "map_theme_resolve", "map_theme_get", "map_theme_create", "map_theme_copy", "map_theme_delete", "map_theme_set_default", "map_theme_settings_update",
+		"genre_list", "style_list", "format_list", "form_list", "post_series_list", "member_tag_list",
+		"program_event_media_list", "program_event_media_add", "program_event_media_remove", "program_event_media_reorder",
+	} {
+		require.Contains(t, response.Body.String(), `"name":"`+tool+`"`)
+	}
 	require.Contains(t, response.Body.String(), `"name":"file_list"`)
 	require.Contains(t, response.Body.String(), `"name":"document_featured_image_set"`)
 	require.Contains(t, response.Body.String(), `"name":"work_credit_add"`)
 	require.Contains(t, response.Body.String(), `"name":"file_transfer"`)
 	require.Contains(t, response.Body.String(), `"name":"file_read"`)
+	for _, tool := range []string{
+		"file_upload", "file_deletion_impact_get", "file_delete", "file_rename", "file_move",
+		"file_folder_create", "file_folder_rename", "file_folder_move", "file_folder_delete",
+		"document_file_caption_update",
+	} {
+		require.Contains(t, response.Body.String(), `"name":"`+tool+`"`)
+	}
+	require.Contains(t, response.Body.String(), `"openai/fileParams":["file"]`)
 	require.Contains(t, response.Body.String(), `"name":"document_file_add"`)
 	require.Contains(t, response.Body.String(), `"name":"document_file_replace"`)
 	require.Contains(t, response.Body.String(), `"name":"document_file_remove"`)
@@ -253,6 +281,52 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 	require.Equal(t, compositionIdentityID, principal.IdentityID.String())
 	require.Equal(t, compositionMemberID, principal.MemberID.String())
 	require.Empty(t, principal.SessionID)
+}
+
+func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testing.T) {
+	files := &compositionFileRuntime{}
+	composition, err := newAIDocumentMCPComposition(
+		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
+		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{},
+		&compositionProgramEventApplication{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
+		compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, files,
+		aiDocumentMCPConfig{
+			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
+			internalServiceHeaderName: compositionInternalServiceHeaderName,
+			editorCollabURL:           "http://collab.invalid", editorCollabHTTPClient: http.DefaultClient,
+		}, &compositionSignalPublisher{}, nil,
+	)
+	require.NoError(t, err)
+
+	response := httptest.NewRecorder()
+	composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{
+		"jsonrpc":"2.0","id":1,"method":"tools/call",
+		"params":{"name":"file_upload","arguments":{
+			"file":{"download_url":"https://files.example.test/opaque?signature=secret","file_id":"chatgpt-opaque-id","file_name":"diagram.png","mime_type":"image/png"},
+			"kind":"image","correlation_id":"b2011513-d89a-4c34-90e5-b59b3cb874f2"
+		}}
+	}`))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), `"isError":true`)
+	require.Contains(t, response.Body.String(), compositionFileID)
+	require.NotContains(t, response.Body.String(), "signature=secret")
+	require.NotNil(t, files.importInput)
+	require.Equal(t, managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, files.importInput.UploadType)
+	require.Equal(t, "diagram.png", files.importInput.FileName)
+	require.Equal(t, "b2011513-d89a-4c34-90e5-b59b3cb874f2", files.importInput.CorrelationID)
+	require.NotNil(t, files.principal)
+	require.Equal(t, compositionMemberID, files.principal.MemberID.String())
+
+	response = httptest.NewRecorder()
+	composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{
+		"jsonrpc":"2.0","id":2,"method":"tools/call",
+		"params":{"name":"file_delete","arguments":{"file_ids":["`+compositionFileID+`"]}}
+	}`))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), `"isError":true`)
+	require.Contains(t, response.Body.String(), `"accepted_file_ids":["`+compositionFileID+`"]`)
+	require.Equal(t, []string{compositionFileID}, files.deleteRequest.FileIds)
+	require.Equal(t, compositionMemberID, files.principal.MemberID.String())
 }
 
 func TestInteractiveMutationRelayClientUsesConfiguredURLAndInternalTrust(t *testing.T) {
@@ -298,10 +372,13 @@ type compositionDomainPort struct {
 }
 
 type compositionFileRuntime struct {
+	managev1connect.UnimplementedFileServiceHandler
 	mu             sync.Mutex
 	principal      *auth.UserInfo
 	deliveryFileID string
 	deliveryCalls  int
+	importInput    *filemedia.RemoteFileImportInput
+	deleteRequest  *managev1.DeleteFilesRequest
 }
 
 type compositionSignalPublisher struct{}
@@ -349,15 +426,69 @@ type compositionFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
 }
 
-func compositionReferenceApplications() contentReferenceApplications {
-	return contentReferenceApplications{
-		categories: &compositionCategoryReferences{},
-		tags:       &compositionTagReferences{},
-		clients:    &compositionClientReferences{},
-		mapPlaces:  &compositionMapPlaceReferences{},
-		members:    &compositionMemberReferences{},
-		artists:    &compositionArtistReferences{},
-		files:      &compositionFileReferences{},
+type compositionProgramEventTypeReferences struct {
+	managev1connect.UnimplementedProgramEventTypeServiceHandler
+}
+
+type compositionProgramEventSeriesReferences struct {
+	managev1connect.UnimplementedProgramEventSeriesServiceHandler
+}
+
+type compositionLabelReferences struct {
+	managev1connect.UnimplementedLabelServiceHandler
+}
+
+type compositionGenreReferences struct {
+	managev1connect.UnimplementedGenreServiceHandler
+}
+
+type compositionStyleReferences struct {
+	managev1connect.UnimplementedStyleServiceHandler
+}
+
+type compositionFormatReferences struct {
+	managev1connect.UnimplementedFormatServiceHandler
+}
+
+type compositionFormReferences struct {
+	managev1connect.UnimplementedFormServiceHandler
+}
+
+type compositionPostSeriesReferences struct {
+	managev1connect.UnimplementedSeriesServiceHandler
+}
+
+type compositionTrackReferences struct {
+	managev1connect.UnimplementedTrackServiceHandler
+}
+
+type compositionMapThemeReferences struct {
+	managev1connect.UnimplementedMapThemeServiceHandler
+}
+
+func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, string, int64, *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error) {
+	return nil, false, nil
+}
+
+func compositionContentApplications() contentMCPApplications {
+	return contentMCPApplications{
+		categories:  &compositionCategoryReferences{},
+		tags:        &compositionTagReferences{},
+		clients:     &compositionClientReferences{},
+		mapPlaces:   &compositionMapPlaceReferences{},
+		members:     &compositionMemberReferences{},
+		artists:     &compositionArtistReferences{},
+		files:       &compositionFileReferences{},
+		eventTypes:  &compositionProgramEventTypeReferences{},
+		eventSeries: &compositionProgramEventSeriesReferences{},
+		labels:      &compositionLabelReferences{},
+		genres:      &compositionGenreReferences{},
+		styles:      &compositionStyleReferences{},
+		formats:     &compositionFormatReferences{},
+		forms:       &compositionFormReferences{},
+		postSeries:  &compositionPostSeriesReferences{},
+		tracks:      &compositionTrackReferences{},
+		mapThemes:   &compositionMapThemeReferences{},
 	}
 }
 
@@ -406,6 +537,40 @@ func (*compositionFileRuntime) DownloadFromUrl(
 	*connect.Request[managev1.DownloadFromUrlRequest],
 ) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
 	return connect.NewResponse(&managev1.DownloadFromUrlResponse{}), nil
+}
+
+func (runtime *compositionFileRuntime) ImportRemoteFile(
+	ctx context.Context,
+	input filemedia.RemoteFileImportInput,
+) (*managev1.DownloadFromUrlResponse, error) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.importInput = &input
+	if principal := auth.GetUser(ctx); principal != nil {
+		copy := *principal
+		runtime.principal = &copy
+	}
+	return &managev1.DownloadFromUrlResponse{
+		FileId: compositionFileID,
+		Delivery: &commonv1.MediaDelivery{
+			FileId: compositionFileID, Extension: "png", MimeType: "image/png", FileSize: 68,
+			FileName: &input.FileName,
+		},
+	}, nil
+}
+
+func (runtime *compositionFileRuntime) DeleteFiles(
+	ctx context.Context,
+	request *connect.Request[managev1.DeleteFilesRequest],
+) (*connect.Response[managev1.DeleteFilesResponse], error) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	runtime.deleteRequest = proto.Clone(request.Msg).(*managev1.DeleteFilesRequest)
+	if principal := auth.GetUser(ctx); principal != nil {
+		copy := *principal
+		runtime.principal = &copy
+	}
+	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: request.Msg.FileIds}), nil
 }
 
 func (runtime *compositionFileRuntime) GetMediaDelivery(
@@ -575,7 +740,7 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &compositionProgramEventApplication{},
-		releases, artists, compositionReferenceApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
+		releases, artists, compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
 			authHeaderName:            compositionAuthHeaderName,

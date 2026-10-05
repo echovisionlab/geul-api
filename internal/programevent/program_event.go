@@ -503,6 +503,7 @@ func (s *ProgramEventService) ListProgramEventsAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("program_event.id ASC")
 	limit, offset := paginationLimitOffset(req.Msg.Pagination, 50)
 	var events []model.ProgramEvent
 	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&events).Error; err != nil {

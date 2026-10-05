@@ -65,6 +65,14 @@ hostnames and signed paths can keep pointing to the delivery listener.
 Set `IMGPROXY_KEY` and `IMGPROXY_SALT` to the same hex secrets as imgproxy and
 `CDN_IMGPROXY_URL` to its address (default `http://127.0.0.1:8080`).
 
+`CLOUDFLARE_CACHE_PURGE_ENABLED` defaults to `true`, requiring
+`CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_API_TOKEN` for public asset deletion.
+Set it to `false` when CDN/media DNS records point directly to the origin
+without Cloudflare proxy caching. Credentials are then optional, and cleanup
+still deletes objects and finalizes the asset lifecycle without a Cloudflare
+request. Canonical asset-prefix validation and delivery cache headers remain
+in effect. Disable purging only after traffic no longer uses Cloudflare's cache.
+
 For source execution after `make media-build`, also set:
 
 ```sh
@@ -78,30 +86,124 @@ export PARTICLE_MESH_SCRIPT_PATH="$PWD/media/asset-optimizer/scripts/optimize-pa
 Keep the termination grace period above `OG_SHUTDOWN_TIMEOUT_MS` (120000 by
 default) plus API cleanup time; Compose allows 140 seconds.
 
-## Integration tests
+## MCP management outputs
 
-Build the matching Identity Kratos image before running integration tests:
+`work_credit_group_update` and `work_credit_update` return the current resource
+values after a successful update. Their output schemas omit `changed`: the owning
+API does not report whether persistence changed, so an equal-value update must
+not be counted as a write. Clients should use the output schemas returned by
+`tools/list`; the MCP server implementation version is `15`.
+
+Administrator document workflows include settings reads, typed content and
+metadata edits, publication, withdrawal, and existing version and File controls.
+`post_settings_get` returns the settings revision required by
+`post_settings_update`; `page_settings_get` returns the Page layout and display
+settings. Page layout edits use `document_metadata_update` with the current
+source-document revision. `post_unpublish` moves a published Post, or an archived
+Post managed by an administrator, directly to draft without republishing it.
+
+Program Event management reuses its owning create, settings, publish, archive,
+and delete APIs. Event types, series, and Labels have reference lists; existing
+document tools edit the event body, source title, and locale summary. Event
+archive retains the archived lifecycle rather than moving to draft.
+The media tools read, upsert, remove, and reorder its native role-specific media
+collection. Upserting an existing event/role/File edits its alt and caption;
+omitting either value clears it. An unchanged reorder is a no-op.
+
+Release tools cover settings, draft/publication, artwork, slug checks, and the
+seven native relation setters. Read `release_relations_get` first and pass the
+exact observed arrays back to the relevant setter. Setters return native
+`success`; a fresh relation read is a separate operation. Track tools cover
+creation, settings, credits, deletion, and complete release ordering. Track
+publication follows its Release. `genre_list`, `style_list`, and `format_list`
+resolve music references.
+
+`file_upload` imports a ChatGPT attachment directly into the File library without
+a Post or Page association. Its top-level `file` field uses OpenAI's
+[`openai/fileParams` contract](https://developers.openai.com/plugins/reference#_meta-fields-on-tool-descriptor):
+`download_url`, opaque ChatGPT `file_id`, and optional `file_name`/`mime_type`.
+The server streams the download through the existing File authority, validates
+the actual bytes, and returns a DSUB File UUID. The ChatGPT file ID is never a
+DSUB File selector. Keep the same UUID `correlation_id` when retrying an upload.
+Use `kind=general` for library storage or a supported media kind for its existing
+processing flow. The signed source URL is not returned to the model.
+
+`file_list` browses and searches files and folders. File Manager tools rename and
+move files, create/rename/move/delete folders, and inspect file deletion impacts.
+`file_delete` returns native accepted and rejected IDs: acceptance schedules
+durable deletion; references prevent deletion. Folder deletion preserves the
+native all-or-nothing reference check.
+
+`document_file_add`, `document_file_replace`, and `document_file_remove` place
+and remove existing files in Post/Page bodies. Image MIME files render as images
+through the native File Block. Add can set its caption atomically;
+`document_file_caption_update` edits or clears the localized caption using the
+exact document revision. Replacement preserves the caption. Removing a Block
+keeps the reusable File in the library. Page placements require a rich-text
+parent Block. Attachment download policy remains a separate explicit action.
+
+`file_transfer` accepts `k=track_audio` and `track_id` to use the existing Track
+audio attachment authority. Copy the current `audio_original_file_id` from
+`track_list` into `expected_current_file_id`; omit it only when no audio exists.
+Keep the returned scoped handle through status and completion. Direct audio
+completion still requires browser-prepared media and its
+`client_media_bundle_id`. Remote media imports require a UUID `correlation_id`
+that remains unchanged across retries.
+
+Map Place tools cover administrator listing, single/batch reads, creation,
+settings, and deletion. Map Theme tools cover discovery, resolution, creation,
+copying, deletion, default selection, and full snapshot editing with its actual
+revision. Snapshot edits use the current request actor's fresh permission,
+revision check, and audit transaction. Neither Map domain has a publication
+lifecycle. `form_list` and `post_series_list` resolve Page block dependencies.
+
+`member_admin_list` and `member_admin_get` reuse the administrator Member APIs,
+including live authorization and personal-data access auditing. Their compact
+account projection excludes provider identifiers and authentication credentials.
+It includes the avatar asset ID; `member_tag_list` resolves its tag IDs without
+returning individual Member data.
+`document_catalog` reads an authorized document's supported kinds, typed fields,
+relations, and File ownership; domain defaults and constraints remain with the
+owning compiler.
+
+## Tests
+
+CI runs unit and package tests with `go test ./...`, media-tool tests, `go vet`,
+and the server build. Input validation, authorization decisions, state
+transitions, and adapter mappings belong in unit tests. Reuse the owning
+service's tests when an adapter only delegates to it.
+
+Use integration tests for PostgreSQL constraints, transaction rollback, and
+storage or external-service behavior that an in-process test cannot exercise.
+They use the `integration` build tag. The local database suite needs only a
+reviewed schema checkout and the pinned PostgreSQL image:
 
 ```sh
-docker build -f ../geul-identity/Dockerfile.kratos -t geul-identity-kratos:local ../geul-identity
+make test-integration-db
 ```
 
-An explicit test image can be selected with `GEUL_TEST_KRATOS_IMAGE`. Stock
-Kratos omits the credential inventory required by account settings policy and
-is not a substitute for this source-built runtime.
+Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
+local inputs. The runner starts its own PostgreSQL container and creates
+disposable databases.
 
-Unit and package tests run with `go test ./...`. Integration tests are
-explicitly tagged and require a local reviewed schema checkout plus the
-already available runtime images:
+Existing native system tests are available locally for changes to the relevant
+service boundary. For a focused regression, pass its package and test name:
 
 ```sh
-make test-integration
+GOWORK=off go run -tags=integration ./scripts/test/integration \
+  --schema-root ../geul-schema \
+  --package ./internal/page \
+  --run '^TestPageAIDocumentLayoutExactMutationIntegration$'
 ```
 
-The harness never pulls images or applies production schema automatically.
-Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact local inputs.
-Media delivery and processing run from this API checkout; imgproxy remains a
-preinstalled native-engine image.
+The native runner currently requires pinned runtime images, the sibling
+Identity, collaboration, Common, Contracts, and Telemetry checkouts, their
+frozen-lockfile Node dependencies, media assets, FFmpeg/FFprobe, and `cwebp`.
+Prepare the matching Kratos image with
+`docker build -f ../geul-identity/Dockerfile.kratos -t geul-identity-kratos:local ../geul-identity`,
+or select one with `GEUL_TEST_KRATOS_IMAGE`. Stock Kratos lacks the required
+settings inventory. The runner does not pull images automatically. These
+system tests are not a second full-stack CI gate for every API change.
 
 ## License
 

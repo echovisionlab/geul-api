@@ -43,7 +43,7 @@ func encodeValidation(validation core.ValidationResult) ([]byte, error) {
 			validation.Conflict.Code,
 			validation.Conflict.CurrentDocumentRevision,
 			validation.Conflict.CurrentTargetRevision,
-			append([]string(nil), validation.Conflict.AffectedHandles...),
+			append([]string{}, validation.Conflict.AffectedHandles...),
 		}
 	}
 	return json.Marshal(output)
@@ -77,7 +77,7 @@ func acceptedOutput(result core.ApplyResult) (map[string]any, error) {
 		changes = append(changes, [3]any{
 			change.Operation,
 			change.Kind,
-			append([]string(nil), change.AffectedHandles...),
+			append([]string{}, change.AffectedHandles...),
 		})
 	}
 	output := map[string]any{"dr": result.DocumentRevision, "c": changes}

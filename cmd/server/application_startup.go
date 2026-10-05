@@ -171,6 +171,7 @@ func initializeApplicationDependencies(
 		cfg.CloudflareAPIURL,
 		cfg.CloudflareZoneID,
 		cfg.CloudflareAPIToken,
+		cfg.CloudflareCachePurgeEnabled,
 		http.DefaultClient,
 	)
 	publicAssetCleanup := mediaasset.NewPublicAssetCleanup(

@@ -77,3 +77,57 @@ func TestDocumentAfterOperationsDeletesTranslationValuesOnly(t *testing.T) {
 		t.Fatalf("unexpected translation delete result: %+v", updated)
 	}
 }
+
+func TestDocumentAfterOperationsPreservesEarlierSiblingMoves(t *testing.T) {
+	for _, parent := range []BlockID{"", "root"} {
+		for _, test := range []struct {
+			name string
+			tail Operation
+			want []BlockID
+		}{
+			{"insert", InsertBlockOperation("d", "paragraph", parent, "a"), []BlockID{"c", "a", "d", "b"}},
+			{"move", MoveBlockOperation("b", parent, "a"), []BlockID{"c", "a", "b"}},
+			{"delete", DeleteBlockOperation("b"), []BlockID{"c", "a"}},
+		} {
+			t.Run(string(parent)+"/"+test.name, func(t *testing.T) {
+				document := Document{
+					Identity: DocumentIdentity{Domain: DomainForm, Reference: "form-a"}, DocumentRevision: "r1",
+					SourceLocale: "ko", Locale: "ko", LocaleExists: true,
+					Catalog: Catalog{Fingerprint: "catalog", BlockKinds: []BlockKind{"paragraph"}},
+					Nodes: []Node{
+						{ID: "a", Kind: "paragraph", Parent: parent, Order: 0},
+						{ID: "b", Kind: "paragraph", Parent: parent, Order: 1},
+						{ID: "c", Kind: "paragraph", Parent: parent, Order: 2},
+					},
+				}
+				if parent != "" {
+					document.Nodes = append(document.Nodes, Node{ID: parent, Kind: "paragraph"})
+				}
+				operations := []Operation{MoveBlockOperation("c", parent, ""), test.tail}
+				validation := ValidateOperations(document, ApplyRequest{
+					Protocol: ProtocolVersion, Profile: DomainForm, Document: "form-a", Locale: "ko",
+					ExpectedDocumentRevision: "r1", Operations: operations,
+				})
+				if !validation.Valid() {
+					t.Fatalf("valid sibling batch rejected: %+v", validation)
+				}
+				updated, err := DocumentAfterOperations(document, operations)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got []BlockID
+				for _, node := range updated.Nodes {
+					if node.Parent == parent {
+						if node.Order != len(got) {
+							t.Fatalf("sibling %q order=%d, want=%d", node.ID, node.Order, len(got))
+						}
+						got = append(got, node.ID)
+					}
+				}
+				if !reflect.DeepEqual(got, test.want) {
+					t.Fatalf("sibling order=%v, want=%v", got, test.want)
+				}
+			})
+		}
+	}
+}

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -142,11 +141,6 @@ func (s *FileService) getMediaDelivery(
 	response, err := s.getFileUrlsForID(ctx, req.Msg.FileId)
 	if err != nil {
 		return nil, err
-	}
-	if err := s.populateFileProcessingStatus(ctx, map[string]*commonv1.MediaDelivery{
-		req.Msg.FileId: response.GetDelivery(),
-	}); err != nil {
-		slog.Warn("Failed to populate file processing status", "error", err, "fileId", req.Msg.FileId)
 	}
 	fenced, changed, err := s.finalizeManageFileURLResponses(ctx, map[string]*managev1.GetMediaDeliveryResponse{
 		req.Msg.FileId: response,
@@ -314,51 +308,14 @@ func (s *FileService) loadFileURLResponses(
 
 // getFileUrlsForID is a helper that returns delivery refs for a single file ID.
 func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*managev1.GetMediaDeliveryResponse, error) {
-	var file storedFileDeliveryRow
-	if err := s.db.WithContext(ctx).
-		Table("file").
-		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id", "client_media_bundle_id").
-		Where("id = ? AND delete_requested_at IS NULL", fileID).
-		First(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("file", fileID)
-		}
-		return nil, errs.Internal(fmt.Errorf("failed to query file: %w", err))
-	}
-
-	response, err := s.fileURLsResponseFromStoredFile(
-		file.ID,
-		file.Extension,
-		file.MimeType,
-		file.FileSize,
-		file.FileName,
-	)
+	responses, err := s.loadFileURLResponses(ctx, []string{fileID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	response.ClientMediaBundleId = file.ClientMediaBundleID
-	if file.FileName != nil {
-		response.Delivery.FileName = file.FileName
+	response := responses[fileID]
+	if response == nil {
+		return nil, errs.NotFound("file", fileID)
 	}
-	if file.DurationSeconds != nil {
-		duration := int32(*file.DurationSeconds)
-		response.Delivery.DurationSeconds = &duration
-	}
-	response.IngestSlotId = file.IngestSlotID
-	response.IngestAttemptId = file.IngestAttemptID
-
-	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, []string{fileID})
-	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to query file derivatives: %w", err))
-	}
-	byType := make(map[string]storedDerivativeDeliveryRow, len(derivatives))
-	for _, derivative := range derivatives {
-		byType[derivative.Type] = derivative
-	}
-	if err := s.attachFileDerivativeURLs(response, fileID, byType); err != nil {
-		return nil, errs.Internal(err)
-	}
-
 	return response, nil
 }
 

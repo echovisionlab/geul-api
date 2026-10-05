@@ -649,6 +649,72 @@ func TestUnencodableToolResultIsInternalError(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"code":-32603`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
+	if response.Body.String() != `{"jsonrpc":"2.0","id":5,"error":{"code":-32603,"message":"Internal error"}}`+"\n" ||
+		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("encoding error changed its RPC envelope or headers: %s %v", response.Body.String(), response.Header())
+	}
+}
+
+type countingToolValue struct {
+	calls int
+}
+
+func (value *countingToolValue) MarshalJSON() ([]byte, error) {
+	value.calls++
+	return []byte(`{"text":"encoded"}`), nil
+}
+
+func TestToolResultIsEncodedOnceWithItsRPCEnvelope(t *testing.T) {
+	value := &countingToolValue{}
+	handler := newTestHandler(t, testDependencies{
+		dispatcher: dispatcherFunc(func(context.Context, Principal, string, ToolArguments) (ToolResult, error) {
+			return ToolResult{
+				Content: []ContentBlock{TextContent("ok")}, StructuredContent: map[string]any{"value": value},
+			}, nil
+		}),
+	})
+	response := serveRPC(handler, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"document_read","arguments":{}}}`)
+	if value.calls != 1 {
+		t.Fatalf("tool value encoded %d times, want once", value.calls)
+	}
+	if response.Code != http.StatusOK || response.Body.String() != `{"jsonrpc":"2.0","id":5,"result":{"content":[{"text":"ok","type":"text"}],"structuredContent":{"value":{"text":"encoded"}}}}`+"\n" {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("response headers = %v", response.Header())
+	}
+}
+
+func TestOtherRPCResultEncodingFailureKeepsHTTPError(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeRPCResult(response, json.RawMessage(`5`), map[string]any{"invalid": make(chan struct{})})
+	if response.Code != http.StatusInternalServerError || response.Body.String() != "Internal Server Error\n" ||
+		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("non-tool encoding error changed its HTTP fallback: %d %s %v", response.Code, response.Body.String(), response.Header())
+	}
+}
+
+type failedResponseWriter struct {
+	header http.Header
+	status int
+	writes int
+}
+
+func (writer *failedResponseWriter) Header() http.Header    { return writer.header }
+func (writer *failedResponseWriter) WriteHeader(status int) { writer.status = status }
+func (writer *failedResponseWriter) Write([]byte) (int, error) {
+	writer.writes++
+	return 0, errors.New("connection closed")
+}
+
+func TestRPCNetworkWriteFailureDoesNotWriteAnotherResponse(t *testing.T) {
+	handler := newTestHandler(t, testDependencies{})
+	response := &failedResponseWriter{header: make(http.Header)}
+	handler.ServeHTTP(response, rpcRequest(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"document_read","arguments":{}}}`))
+	if response.status != http.StatusOK || response.writes != 1 ||
+		response.header.Get("Cache-Control") != "no-store" || response.header.Get("Content-Type") != "application/json" {
+		t.Fatalf("network failure rewrote the RPC response: %+v", response)
+	}
 }
 
 func TestJSONRPCValidationPreservesValidIDs(t *testing.T) {
@@ -679,6 +745,52 @@ func TestJSONRPCValidationPreservesValidIDs(t *testing.T) {
 			}
 			if test.wantID != "" && !strings.Contains(response.Body.String(), `"id":`+test.wantID) {
 				t.Fatalf("body = %s, want id %s", response.Body.String(), test.wantID)
+			}
+		})
+	}
+}
+
+func TestJSONRPCNumericIDsMustBeIntegersAndPreserveRepresentation(t *testing.T) {
+	handler := newTestHandler(t, testDependencies{})
+	for _, test := range []struct {
+		id    string
+		valid bool
+	}{
+		{id: "1.5"},
+		{id: "1.0000000000000001"},
+		{id: "1e-1"},
+		{id: "12e-2"},
+		{id: "-1.5"},
+		{id: "1e-999999999999999999999"},
+		{id: "9007199254740993", valid: true},
+		{id: "-9007199254740993", valid: true},
+		{id: "1.0", valid: true},
+		{id: "1.5e1", valid: true},
+		{id: "1200E-2", valid: true},
+		{id: "1e+3", valid: true},
+		{id: "1e999999999999999999999", valid: true},
+		{id: "0e-999999999999999999999", valid: true},
+	} {
+		t.Run(test.id, func(t *testing.T) {
+			response := serveRPC(handler, `{"jsonrpc":"2.0","id":`+test.id+`,"method":"ping"}`)
+			if test.valid {
+				if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":`+test.id+`,"result":{}`) {
+					t.Fatalf("integer ID was not preserved: %d %s", response.Code, response.Body.String())
+				}
+			} else if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":-32600`) {
+				t.Fatalf("fractional ID was accepted: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMalformedNotificationParametersUseHTTPError(t *testing.T) {
+	handler := newTestHandler(t, testDependencies{})
+	for _, params := range []string{"[]", "null", `"invalid"`, "42"} {
+		t.Run(params, func(t *testing.T) {
+			response := serveRPC(handler, `{"jsonrpc":"2.0","method":"notifications/initialized","params":`+params+`}`)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":-32602`) {
+				t.Fatalf("malformed notification = %d %s", response.Code, response.Body.String())
 			}
 		})
 	}

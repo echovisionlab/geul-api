@@ -416,7 +416,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 			if messageText == "" {
 				messageText = "Tool execution failed"
 			}
-			writeRPCResult(response, message.id, ToolResult{
+			writeToolResult(response, message.id, ToolResult{
 				Content: []ContentBlock{TextContent(messageText)},
 				IsError: true,
 			})
@@ -432,11 +432,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
-	if _, err := json.Marshal(result); err != nil {
-		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
-		return
-	}
-	writeRPCResult(response, message.id, result)
+	writeToolResult(response, message.id, result)
 }
 
 func (h *handler) listTools(ctx context.Context, principal Principal) ([]Tool, error) {
@@ -561,7 +557,11 @@ func parseMessage(body []byte) (incomingMessage, *protocolError) {
 
 	message := incomingMessage{method: method, params: envelope["params"], id: id, hasID: hasID}
 	if len(message.params) != 0 && !isJSONObject(message.params) {
-		return incomingMessage{}, &protocolError{code: -32602, message: "Invalid params", status: http.StatusOK, id: id}
+		status := http.StatusOK
+		if !hasID {
+			status = http.StatusBadRequest
+		}
+		return incomingMessage{}, &protocolError{code: -32602, message: "Invalid params", status: status, id: id}
 	}
 	return message, nil
 }
@@ -580,11 +580,36 @@ func validRequestID(raw json.RawMessage) bool {
 	case string:
 		return true
 	case json.Number:
-		_, err := strconv.ParseFloat(string(typed), 64)
-		return err == nil
+		return integerJSONNumber(string(typed))
 	default:
 		return false
 	}
+}
+
+// integerJSONNumber checks the decimal scale of an already valid JSON number.
+// It neither rounds the mantissa nor expands exponent notation into big integers.
+func integerJSONNumber(value string) bool {
+	mantissa, exponentText := value, "0"
+	if index := strings.IndexAny(value, "eE"); index >= 0 {
+		mantissa, exponentText = value[:index], value[index+1:]
+	}
+	fractionDigits := 0
+	if index := strings.IndexByte(mantissa, '.'); index >= 0 {
+		fractionDigits = len(mantissa) - index - 1
+	}
+	digits := strings.ReplaceAll(strings.TrimPrefix(mantissa, "-"), ".", "")
+	trimmed := strings.TrimRight(digits, "0")
+	if trimmed == "" {
+		return true
+	}
+	trailingZeros := len(digits) - len(trimmed)
+	exponent, err := strconv.ParseInt(exponentText, 10, 64)
+	if err != nil {
+		// JSON syntax is already checked. An overflowing exponent exceeds the
+		// bounded mantissa length, so its sign alone decides integrality.
+		return !strings.HasPrefix(exponentText, "-")
+	}
+	return exponent >= int64(fractionDigits-trailingZeros)
 }
 
 func validateTool(tool Tool) error {
@@ -740,28 +765,42 @@ type rpcResponse struct {
 	Error   *rpcErrorBody   `json:"error,omitempty"`
 }
 
+// writeToolResult retains tools/call's JSON-RPC error contract when a domain
+// result cannot be encoded. Other RPC results retain the HTTP error fallback.
+func writeToolResult(response http.ResponseWriter, id json.RawMessage, result ToolResult) {
+	if err := writeJSON(response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result}); err != nil {
+		writeRPCError(response, http.StatusOK, id, -32603, "Internal error")
+	}
+}
+
 func writeRPCResult(response http.ResponseWriter, id json.RawMessage, result any) {
-	writeJSON(response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result})
+	if err := writeJSON(response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result}); err != nil {
+		writeHTTPError(response, http.StatusInternalServerError, "Internal Server Error")
+	}
 }
 
 func writeRPCError(response http.ResponseWriter, status int, id json.RawMessage, code int, message string) {
-	writeJSON(response, status, rpcResponse{
+	if err := writeJSON(response, status, rpcResponse{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &rpcErrorBody{Code: code, Message: message},
-	})
+	}); err != nil {
+		writeHTTPError(response, http.StatusInternalServerError, "Internal Server Error")
+	}
 }
 
-func writeJSON(response http.ResponseWriter, status int, value any) {
+// writeJSON encodes the complete response before writing headers. Its error
+// reports encoding failure; network write failures remain with net/http.
+func writeJSON(response http.ResponseWriter, status int, value any) error {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		writeHTTPError(response, http.StatusInternalServerError, "Internal Server Error")
-		return
+		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_, _ = response.Write(append(encoded, '\n'))
+	return nil
 }
 
 func writeHTTPError(response http.ResponseWriter, status int, message string) {

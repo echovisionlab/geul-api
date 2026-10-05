@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -74,6 +76,43 @@ func TestFileListReturnsCanonicalFileAndFolderIDs(t *testing.T) {
 	}
 }
 
+func TestFileListEnforcesPageSizeBeforeCallingApplication(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		payload  string
+		pageSize int32
+		invalid  bool
+	}{
+		{name: "omitted", payload: `{}`, pageSize: 20},
+		{name: "minimum", payload: `{"page_size":1}`, pageSize: 1},
+		{name: "maximum", payload: `{"page_size":100}`, pageSize: 100},
+		{name: "zero", payload: `{"page_size":0}`, invalid: true},
+		{name: "negative", payload: `{"page_size":-1}`, invalid: true},
+		{name: "above maximum", payload: `{"page_size":101}`, invalid: true},
+		{name: "native directory maximum", payload: `{"page_size":10000}`, invalid: true},
+		{name: "null", payload: `{"page_size":null}`, invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := &recordingFileReferences{}
+			tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileList, toolArguments(t, test.payload))
+			if test.invalid {
+				var executionErr *mcpserver.ToolExecutionError
+				if !errors.As(err, &executionErr) || files.request != nil {
+					t.Fatalf("invalid page_size reached application: err=%v request=%+v", err, files.request)
+				}
+				return
+			}
+			if err != nil || files.request == nil || files.request.Msg.PageSize != test.pageSize {
+				t.Fatalf("page_size request=%+v, err=%v, want=%d", files.request, err, test.pageSize)
+			}
+		})
+	}
+}
+
 func newRecordingReferenceDiscoveryTools(t *testing.T) *ReferenceDiscoveryTools {
 	t.Helper()
 	tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, &recordingClientReferences{}, &recordingMapPlaceReferences{}, &recordingMemberReferences{}, &recordingArtistReferences{}, &recordingFileReferences{})
@@ -99,13 +138,49 @@ type recordingTagReferences struct {
 }
 type recordingClientReferences struct {
 	managev1connect.UnimplementedClientServiceHandler
+	request *connect.Request[managev1.SearchClientsRequest]
+	count   int
 }
+
+func (r *recordingClientReferences) SearchClients(_ context.Context, request *connect.Request[managev1.SearchClientsRequest]) (*connect.Response[managev1.SearchClientsResponse], error) {
+	r.request = request
+	items := make([]*managev1.Client, r.count)
+	for index := range items {
+		items[index] = &managev1.Client{Id: managementWorkID, Name: "Client"}
+	}
+	return connect.NewResponse(&managev1.SearchClientsResponse{Clients: items}), nil
+}
+
 type recordingMapPlaceReferences struct {
 	managev1connect.UnimplementedMapPlaceServiceHandler
+	request *connect.Request[managev1.SearchMapPlacesRequest]
+	count   int
 }
+
+func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, request *connect.Request[managev1.SearchMapPlacesRequest]) (*connect.Response[managev1.SearchMapPlacesResponse], error) {
+	r.request = request
+	items := make([]*managev1.MapPlaceBasic, r.count)
+	for index := range items {
+		items[index] = &managev1.MapPlaceBasic{Id: managementWorkID, Name: "Place"}
+	}
+	return connect.NewResponse(&managev1.SearchMapPlacesResponse{Places: items}), nil
+}
+
 type recordingMemberReferences struct {
 	managev1connect.UnimplementedMemberServiceHandler
+	request *connect.Request[managev1.SearchMembersRequest]
+	count   int
 }
+
+func (r *recordingMemberReferences) SearchMembers(_ context.Context, request *connect.Request[managev1.SearchMembersRequest]) (*connect.Response[managev1.SearchMembersResponse], error) {
+	r.request = request
+	items := make([]*commonv1.MemberSummary, r.count)
+	for index := range items {
+		items[index] = &commonv1.MemberSummary{Id: managementWorkID, Nickname: "Member"}
+	}
+	return connect.NewResponse(&managev1.SearchMembersResponse{Members: items}), nil
+}
+
 type recordingArtistReferences struct {
 	managev1connect.UnimplementedArtistServiceHandler
 }
@@ -122,4 +197,65 @@ func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, reques
 		{Item: &managev1.FileManagerItem_File{File: &managev1.FileManagerFile{Id: "22222222-2222-4222-8222-222222222222", FileName: "cover.png", MimeType: "image/png", CreatedAt: now}}},
 		{Item: &managev1.FileManagerItem_Folder{Folder: &managev1.FileFolder{Id: "33333333-3333-4333-8333-333333333333", Name: "Covers", CreatedAt: now}}},
 	}, Total: 2}), nil
+}
+
+func TestReferenceQuickSearchProbesTruncationWithinServiceCaps(t *testing.T) {
+	for _, referenceType := range []string{"client", "map_place", "member"} {
+		maximum := 50
+		if referenceType == "member" {
+			maximum = 100
+		}
+		for _, test := range []struct {
+			name                                 string
+			limit, count, wantRequest, wantCount int
+			hasMore                              any
+		}{
+			{"complete", 20, 5, 21, 5, false},
+			{"extra match", 20, 21, 21, 20, true},
+			{"full cap is unknown", maximum, maximum, maximum, maximum, nil},
+			{"short cap is complete", maximum, maximum - 1, maximum, maximum - 1, false},
+		} {
+			t.Run(referenceType+"/"+test.name, func(t *testing.T) {
+				clients, places, members := &recordingClientReferences{count: test.count}, &recordingMapPlaceReferences{count: test.count}, &recordingMemberReferences{count: test.count}
+				tools, err := NewReferenceDiscoveryTools(&recordingCategoryReferences{}, &recordingTagReferences{}, clients, places, members, &recordingArtistReferences{}, &recordingFileReferences{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReferenceSearch, toolArguments(t, fmt.Sprintf(`{"reference_type":%q,"query":"Candidate","limit":%d}`, referenceType, test.limit)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				requestLimit := int32(0)
+				switch referenceType {
+				case "client":
+					requestLimit = clients.request.Msg.Limit
+				case "map_place":
+					requestLimit = places.request.Msg.Limit
+				case "member":
+					requestLimit = members.request.Msg.Limit
+				}
+				if requestLimit != int32(test.wantRequest) {
+					t.Fatalf("service limit=%d want=%d", requestLimit, test.wantRequest)
+				}
+				hasMore, present := result.StructuredContent["has_more"]
+				if !present || hasMore != test.hasMore || result.StructuredContent["count"] != float64(test.wantCount) || len(result.StructuredContent["items"].([]any)) != test.wantCount {
+					t.Fatalf("result=%#v", result.StructuredContent)
+				}
+			})
+		}
+	}
+}
+
+func TestReferenceQuickSearchRejectsLimitOutsideServiceCap(t *testing.T) {
+	tools := newRecordingReferenceDiscoveryTools(t)
+	for _, test := range []struct {
+		referenceType string
+		limit         int
+	}{{"client", 51}, {"map_place", 100}, {"member", 101}} {
+		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReferenceSearch, toolArguments(t, fmt.Sprintf(`{"reference_type":%q,"query":"Candidate","limit":%d}`, test.referenceType, test.limit)))
+		var executionErr *mcpserver.ToolExecutionError
+		if !errors.As(err, &executionErr) {
+			t.Fatalf("%s limit %d was accepted: %v", test.referenceType, test.limit, err)
+		}
+	}
 }
