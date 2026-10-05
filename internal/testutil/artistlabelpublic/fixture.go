@@ -233,11 +233,13 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
 		ReleaseId: releaseResponse.Msg.Id,
 		Artists:   []*managev1.ReleaseArtistInput{{ArtistId: mainArtist.Id, SortOrder: 1}, {ArtistId: otherArtist.Id, SortOrder: 2}},
+		Observed:  &managev1.ReleaseArtistsSnapshot{},
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseLabels(ctx, connect.NewRequest(&managev1.SetReleaseLabelsRequest{
 		ReleaseId: releaseResponse.Msg.Id,
 		Labels:    []*managev1.ReleaseLabelInput{{LabelId: mainLabel.Id, SortOrder: 1}},
+		Observed:  &managev1.ReleaseLabelsSnapshot{},
 	}))
 	require.NoError(t, err)
 	releaseArtworkFileID := seedArtistLabelFixtureFile(t, db, "release-artwork.png", "image/png", "artwork")
@@ -260,11 +262,13 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
 		ReleaseId: bareReleaseResponse.Msg.Id,
 		Artists:   []*managev1.ReleaseArtistInput{{ArtistId: bareReleaseArtist.Id, SortOrder: 1}},
+		Observed:  &managev1.ReleaseArtistsSnapshot{},
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseLabels(ctx, connect.NewRequest(&managev1.SetReleaseLabelsRequest{
 		ReleaseId: bareReleaseResponse.Msg.Id,
 		Labels:    []*managev1.ReleaseLabelInput{{LabelId: bareReleaseLabel.Id, SortOrder: 1}},
+		Observed:  &managev1.ReleaseLabelsSnapshot{},
 	}))
 	require.NoError(t, err)
 	bareRelease, err := manageRelease.PublishRelease(ctx, connect.NewRequest(&managev1.PublishReleaseRequest{Id: bareReleaseResponse.Msg.Id}))
@@ -279,11 +283,13 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
 		ReleaseId: draftRelease.Msg.Id,
 		Artists:   []*managev1.ReleaseArtistInput{{ArtistId: mainArtist.Id, SortOrder: 1}},
+		Observed:  &managev1.ReleaseArtistsSnapshot{},
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseLabels(ctx, connect.NewRequest(&managev1.SetReleaseLabelsRequest{
 		ReleaseId: draftRelease.Msg.Id,
 		Labels:    []*managev1.ReleaseLabelInput{{LabelId: mainLabel.Id, SortOrder: 1}},
+		Observed:  &managev1.ReleaseLabelsSnapshot{},
 	}))
 	require.NoError(t, err)
 

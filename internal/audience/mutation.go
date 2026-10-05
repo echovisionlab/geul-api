@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -132,6 +133,12 @@ func (s *AudienceService) EstimateSegmentCount(
 type segmentUpdatePlan struct {
 	request         *managev1.UpdateSegmentRequest
 	requestedConfig *model.AudienceSegmentConfig
+	observed        *segmentConfigBaseline
+}
+
+type segmentConfigBaseline struct {
+	segmentType string
+	config      model.AudienceSegmentConfig
 }
 
 func buildSegmentUpdatePlan(request *managev1.UpdateSegmentRequest) (segmentUpdatePlan, error) {
@@ -139,7 +146,30 @@ func buildSegmentUpdatePlan(request *managev1.UpdateSegmentRequest) (segmentUpda
 	if request.SegmentType != nil && *request.SegmentType == managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED {
 		return plan, errs.InvalidArgumentMsg("segment type is required")
 	}
+	if (request.SegmentType != nil || request.Config != nil) && request.Observed == nil {
+		return plan, errs.InvalidArgument("observed", "segment type and config are required when updating segment type or config")
+	}
+	if request.Observed != nil {
+		if request.Observed.SegmentType == managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED || request.Observed.Config == nil {
+			return plan, errs.InvalidArgumentMsg("observed segment type and config are required")
+		}
+		observedConfig, err := toModelSegmentConfig(request.Observed.Config)
+		if err != nil {
+			return plan, errs.InvalidArgumentMsg("observed config is invalid")
+		}
+		observedType := request.Observed.SegmentType.String()
+		if err := ValidateSegmentConfigForType(observedType, observedConfig); err != nil {
+			return plan, errs.InvalidArgumentMsg("observed config is invalid for its segment type")
+		}
+		plan.observed = &segmentConfigBaseline{segmentType: observedType, config: observedConfig}
+	}
 	if request.Config == nil {
+		if plan.observed != nil && request.SegmentType != nil &&
+			(*request.SegmentType).String() != plan.observed.segmentType {
+			// An intentional type switch resets the coupled filter config even if
+			// the caller omitted config, so relation-backed filters are cleared too.
+			plan.requestedConfig = &model.AudienceSegmentConfig{}
+		}
 		return plan, nil
 	}
 	config, err := toModelSegmentConfig(request.Config)
@@ -239,17 +269,79 @@ func lockSegmentForUpdate(ctx context.Context, tx *gorm.DB, segmentID string, se
 
 func (plan segmentUpdatePlan) nextState(segment model.AudienceSegment) (string, model.AudienceSegmentConfig, error) {
 	nextType := segment.SegmentType
-	if plan.request.SegmentType != nil {
-		nextType = (*plan.request.SegmentType).String()
-	}
 	nextConfig := segment.Config
-	if plan.requestedConfig != nil {
-		nextConfig = *plan.requestedConfig
+	if plan.observed != nil {
+		typeChangedFromBaseline := plan.request.SegmentType != nil &&
+			(*plan.request.SegmentType).String() != plan.observed.segmentType
+		if typeChangedFromBaseline {
+			nextType = (*plan.request.SegmentType).String()
+			if plan.requestedConfig != nil {
+				nextConfig = *plan.requestedConfig
+			} else {
+				nextConfig = model.AudienceSegmentConfig{}
+			}
+		} else if plan.requestedConfig != nil {
+			// The editor did not change type. Preserve a concurrent type switch and
+			// merge each config leaf against the state the editor actually observed.
+			nextConfig = mergeSegmentConfig(segment.Config, plan.observed.config, *plan.requestedConfig)
+		}
 	}
 	if err := ValidateSegmentConfigForType(nextType, nextConfig); err != nil {
 		return "", nextConfig, errs.InvalidArgumentMsg(err.Error())
 	}
 	return nextType, nextConfig, nil
+}
+
+func mergeSegmentConfig(current, observed, desired model.AudienceSegmentConfig) model.AudienceSegmentConfig {
+	merged := model.AudienceSegmentConfig{
+		MemberTagIDs:     mergeObservedStringSet(current.MemberTagIDs, observed.MemberTagIDs, desired.MemberTagIDs),
+		AccountRoles:     mergeObservedStringSet(current.AccountRoles, observed.AccountRoles, desired.AccountRoles),
+		ExcludeMemberIDs: mergeObservedStringSet(current.ExcludeMemberIDs, observed.ExcludeMemberIDs, desired.ExcludeMemberIDs),
+		CreatedAfter:     mergeObservedTime(current.CreatedAfter, observed.CreatedAfter, desired.CreatedAfter),
+		CreatedBefore:    mergeObservedTime(current.CreatedBefore, observed.CreatedBefore, desired.CreatedBefore),
+	}
+	sortSegmentConfig(&merged)
+	return merged
+}
+
+func mergeObservedStringSet(current, observed, desired []string) []string {
+	merged := make(map[string]struct{}, len(current)+len(desired))
+	for _, value := range current {
+		merged[value] = struct{}{}
+	}
+	observedSet := make(map[string]struct{}, len(observed))
+	desiredSet := make(map[string]struct{}, len(desired))
+	for _, value := range observed {
+		observedSet[value] = struct{}{}
+	}
+	for _, value := range desired {
+		desiredSet[value] = struct{}{}
+		if _, existed := observedSet[value]; !existed {
+			merged[value] = struct{}{}
+		}
+	}
+	for _, value := range observed {
+		if _, retained := desiredSet[value]; !retained {
+			delete(merged, value)
+		}
+	}
+	result := make([]string, 0, len(merged))
+	for value := range merged {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func mergeObservedTime(current, observed, desired *time.Time) *time.Time {
+	if equalTime(observed, desired) {
+		return current
+	}
+	if desired == nil {
+		return nil
+	}
+	value := *desired
+	return &value
 }
 
 func ensureAudienceAccessTypeCompatible(tx *gorm.DB, segment model.AudienceSegment, nextType string) error {

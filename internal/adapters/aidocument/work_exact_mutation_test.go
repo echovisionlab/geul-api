@@ -229,3 +229,48 @@ func exactWorkLocalizedDocument(blockID uuid.UUID) *contentv1.LocalizedRichTextD
 		},
 	}
 }
+
+func TestWorkMixedMetadataAndContentRejectionKeepsOriginalOperationIndex(t *testing.T) {
+	_, document, block, row, _ := localizedTableDocumentForTest(t)
+	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK)
+	require.NoError(t, err)
+	document.Profile = contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK
+	document.Locale, document.LocaleOverlay.Locale = "en", "en"
+	workID, revision := uuid.NewString(), uuid.New()
+	api := &exactWorkDocumentAPI{state: workdomain.AIDocumentState{
+		Work: model.Work{ID: workID}, SourceLocale: "en", Locale: "en", LocaleExists: true,
+		DocumentRevision: revision.String(), ViewerMemberID: uuid.NewString(), Document: document,
+		Snapshot: contentblock.Snapshot{Document: contentblock.Document{ID: uuid.New(), Revision: revision}},
+	}}
+	port := &workPort{application: api, codec: codec, catalog: workCatalog(codec)}
+	service, err := core.NewService(port)
+	require.NoError(t, err)
+	path := []core.FieldPathSegment{core.ObjectPath("rows"), core.ListPath(core.RelationItemID(row)), core.ObjectPath("cells"), core.ListPath(core.RelationItemID(uuid.NewString())), core.ObjectPath("header")}
+	request := core.ApplyRequest{
+		Protocol: core.ProtocolVersion, Profile: core.DomainWork, Document: core.DocumentReference(workID),
+		Locale: "en", ExpectedDocumentRevision: core.Revision(revision.String()), Operations: []core.Operation{
+			core.SetFieldOperation(workMetadataBlockID, workTitleField, core.Text("Changed")),
+			core.SetNestedFieldOperation(core.BlockID(block), richTextTableField, path, core.Boolean(true)),
+		},
+	}
+	loaded, err := port.project(request.Identity(), request.Locale, api.state)
+	require.NoError(t, err)
+	command, generic := core.ValidateLoadedApply(loaded, request)
+	require.True(t, generic.Valid(), "%+v", generic)
+	_, issues, err := port.compile(api.state, uuid.MustParse(api.state.ViewerMemberID), loaded, command.Operations)
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	require.Equal(t, 1, issues[0].Operation)
+	validation, err := service.Validate(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, validation.Issues, 1)
+	require.Equal(t, 1, validation.Issues[0].Operation)
+	require.Equal(t, core.IssueInvalidOperation, validation.Issues[0].Code)
+	require.Contains(t, validation.Issues[0].Message, "does not exist")
+	_, err = service.Apply(t.Context(), request)
+	var invalid *core.ValidationError
+	require.ErrorAs(t, err, &invalid)
+	require.Len(t, invalid.Result.Issues, 1)
+	require.Equal(t, 1, invalid.Result.Issues[0].Operation)
+	require.False(t, api.mutation.Metadata.SetTitle, "rejected mixed batch reached persistence")
+}

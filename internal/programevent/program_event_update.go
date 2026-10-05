@@ -282,7 +282,8 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 			}
 		}
 		changedFields = append(changedFields, relationFields...)
-		changed = metadataChanged || posterChanged || len(relationFields) > 0
+		creditsChanged := len(creditReplacement.changes) > 0 || creditReplacement.orderChanged
+		changed = metadataChanged || posterChanged || len(relationFields) > 0 || creditsChanged
 		if !changed {
 			return nil
 		}
@@ -453,39 +454,33 @@ func applyProgramEventPosterUpdate(ctx context.Context, tx *gorm.DB, mediaAssets
 func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventID string, r *managev1.UpdateProgramEventRequest) ([]string, programEventCreditReplacement, error) {
 	changed := make([]string, 0, 3)
 	creditReplacement := programEventCreditReplacement{}
+	if err := validateProgramEventRelationBaselines(r); err != nil {
+		return nil, creditReplacement, err
+	}
 	if r.ReplaceArtists || len(r.Artists) > 0 {
-		current, err := loadProgramEventArtists(ctx, tx, eventID)
+		didChange, err := mergeAndApplyProgramEventArtists(ctx, tx, eventID, r.ObservedArtists.Artists, r.Artists)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
-		if !sameProgramEventArtists(current, r.Artists) {
-			if err := replaceProgramEventArtists(ctx, tx, eventID, r.Artists); err != nil {
-				return nil, creditReplacement, err
-			}
+		if didChange {
 			changed = append(changed, "artists")
 		}
 	}
 	if r.ReplaceLabels || len(r.Labels) > 0 {
-		current, err := loadProgramEventLabels(ctx, tx, eventID)
+		didChange, err := mergeAndApplyProgramEventLabels(ctx, tx, eventID, r.ObservedLabels.Labels, r.Labels)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
-		if !sameProgramEventLabels(current, r.Labels) {
-			if err := replaceProgramEventLabels(ctx, tx, eventID, r.Labels); err != nil {
-				return nil, creditReplacement, err
-			}
+		if didChange {
 			changed = append(changed, "labels")
 		}
 	}
 	if r.ReplaceClients || len(r.Clients) > 0 {
-		current, err := loadProgramEventClients(ctx, tx, eventID)
+		didChange, err := mergeAndApplyProgramEventClients(ctx, tx, eventID, r.ObservedClients.Clients, r.Clients)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
-		if !sameProgramEventClients(current, r.Clients) {
-			if err := replaceProgramEventClients(ctx, tx, eventID, r.Clients); err != nil {
-				return nil, creditReplacement, err
-			}
+		if didChange {
 			changed = append(changed, "clients")
 		}
 	}
@@ -504,36 +499,15 @@ func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventI
 	return changed, creditReplacement, nil
 }
 
-func sameProgramEventArtists(left, right []*managev1.ProgramEventArtist) bool {
-	if len(left) != len(right) {
-		return false
+func validateProgramEventRelationBaselines(r *managev1.UpdateProgramEventRequest) error {
+	if (r.ReplaceArtists || len(r.Artists) > 0) && r.ObservedArtists == nil {
+		return errs.InvalidArgument("observed_artists", "is required when updating artists")
 	}
-	for i := range left {
-		if left[i].GetArtistId() != right[i].GetArtistId() || left[i].GetRole() != right[i].GetRole() || left[i].GetSortOrder() != right[i].GetSortOrder() {
-			return false
-		}
+	if (r.ReplaceLabels || len(r.Labels) > 0) && r.ObservedLabels == nil {
+		return errs.InvalidArgument("observed_labels", "is required when updating labels")
 	}
-	return true
-}
-func sameProgramEventLabels(left, right []*managev1.ProgramEventLabel) bool {
-	if len(left) != len(right) {
-		return false
+	if (r.ReplaceClients || len(r.Clients) > 0) && r.ObservedClients == nil {
+		return errs.InvalidArgument("observed_clients", "is required when updating clients")
 	}
-	for i := range left {
-		if left[i].GetLabelId() != right[i].GetLabelId() || left[i].GetRole() != right[i].GetRole() || left[i].GetSortOrder() != right[i].GetSortOrder() {
-			return false
-		}
-	}
-	return true
-}
-func sameProgramEventClients(left, right []*managev1.ProgramEventClient) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i].GetClientId() != right[i].GetClientId() || left[i].GetRole() != right[i].GetRole() || left[i].GetSortOrder() != right[i].GetSortOrder() {
-			return false
-		}
-	}
-	return true
+	return nil
 }

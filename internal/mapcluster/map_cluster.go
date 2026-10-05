@@ -6,6 +6,12 @@ import (
 )
 
 const (
+	// WorldTileSize is MapLibre GL's zoom-zero world width in CSS pixels.
+	// Viewport zooms and cluster radii use this 512 * 2^zoom projection.
+	WorldTileSize = 512.0
+	// MinViewportZoom matches the public map renderer's configured minimum zoom.
+	// Negative zooms allow the 512px world to fit smaller mobile viewports.
+	MinViewportZoom           = -2.0
 	mapClusterDefaultRadiusPx = 56.0
 	// MapClusterDefaultMinPoints is the default number of place groups required for a cluster.
 	MapClusterDefaultMinPoints = 2
@@ -212,7 +218,7 @@ func mapComponentBreakoutZoom[T interface{}](
 
 func lngLatToWorldPixel(lng, lat, zoom float64) (float64, float64) {
 	lat = Clamp(lat, -85.05112878, 85.05112878)
-	scale := 256.0 * math.Pow(2, zoom)
+	scale := WorldTileSize * math.Pow(2, zoom)
 	x := (lng + 180.0) / 360.0 * scale
 	sinLat := math.Sin(lat * math.Pi / 180.0)
 	y := (0.5 - math.Log((1+sinLat)/(1-sinLat))/(4*math.Pi)) * scale

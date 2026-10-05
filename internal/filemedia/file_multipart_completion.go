@@ -23,10 +23,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type multipartCompletion struct {
+	clientMediaPlan *clientMediaPlan
 	session         model.UploadSession
 	uploadType      managev1.UploadType
 	target          fileIngestProjectionIdentity
@@ -88,6 +90,9 @@ func (s *FileService) CompleteMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.CompleteMultipartUploadRequest],
 ) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, errs.InvalidArgument("request", "completion request is required")
+	}
 	var response *connect.Response[managev1.CompleteMultipartUploadResponse]
 	err := withMultipartCompletionAdvisoryLock(
 		ctx,
@@ -113,6 +118,9 @@ func (s *FileService) CompleteMultipartUpload(
 			}
 			if err := lockedService.persistMultipartCompletion(ctx, completion); err != nil {
 				return err
+			}
+			if err := lockedService.registerClientMediaBundle(ctx, completion); err != nil {
+				return completion.publishFailure(clientMediaCompletionError(err))
 			}
 			if err := lockedService.attachOrProjectMultipartCompletion(ctx, completion); err != nil {
 				return err
@@ -141,6 +149,9 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 		return nil, false, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
 	}
 
+	if err := clientMediaBundleMatches(session, request.GetClientMediaBundleId()); err != nil {
+		return nil, false, err
+	}
 	objectKey, err := uploadSessionObjectKey(session)
 	if err != nil {
 		return nil, false, errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
@@ -158,16 +169,21 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 	if err := s.checkEntityPermission(ctx, uploadType, entityType, session.EntityID, user.MemberID.String()); err != nil {
 		return nil, false, err
 	}
+	verifiedClientPlan, err := s.loadClientMediaPlan(ctx, session, user.MemberID.String())
+	if err != nil {
+		return nil, false, err
+	}
 	target, err := fileIngestTargetFromStoredSession(session)
 	if err != nil {
 		return nil, false, errs.Internal(fmt.Errorf("invalid upload session ingest target: %w", err))
 	}
 	completion := &multipartCompletion{
-		session:       session,
-		uploadType:    uploadType,
-		target:        target,
-		objectKey:     objectKey,
-		correlationID: request.GetCorrelationId(),
+		clientMediaPlan: verifiedClientPlan,
+		session:         session,
+		uploadType:      uploadType,
+		target:          target,
+		objectKey:       objectKey,
+		correlationID:   request.GetCorrelationId(),
 	}
 	completion.progressEmitter = newFileIngestEventEmitter(
 		ctx,
@@ -191,6 +207,9 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 		s.getUploadConfig(uploadType),
 	)
 	if err != nil {
+		return nil, false, completion.publishFailure(err)
+	}
+	if err := requireDirectClientMediaBundle(uploadType, verifiedMime, session, request.GetClientMediaBundleId()); err != nil {
 		return nil, false, completion.publishFailure(err)
 	}
 	completion.verifiedMime = verifiedMime
@@ -278,6 +297,21 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 	uploadType := managev1.UploadType(uploadTypeValue)
 	if err := s.authorizeManageFileDeliveries(ctx, []string{fileID}); err != nil {
 		return nil, err
+	}
+	if file.ClientMediaBundleID != nil || request.GetClientMediaBundleId() != "" {
+		if file.ClientMediaBundleID == nil || *file.ClientMediaBundleID != request.GetClientMediaBundleId() {
+			return nil, errs.FailedPrecondition("completed client media bundle does not match")
+		}
+		if file.UploadedByMemberID == nil || *file.UploadedByMemberID != user.MemberID.String() {
+			return nil, errs.PermissionDenied("completed client media bundle belongs to another member")
+		}
+		ready, err := clientMediaFileReady(ctx, s.db, file)
+		if err != nil {
+			return nil, errs.Internal(err)
+		}
+		if !ready {
+			return nil, errs.FailedPrecondition("completed client media derivatives are not ready")
+		}
 	}
 
 	target, err := CanonicalMediaObjectTargetForFile(file)
@@ -716,7 +750,13 @@ func (s *FileService) attachOrProjectMultipartCompletion(
 
 	// Only Track original audio has a durable attachment finalizer. Document
 	// Block attachment is a separate revision-CAS mutation.
-	if !completion.target.requiresDurableAttachment() || completion.progressEmitter == nil {
+	if !completion.target.requiresDurableAttachment() {
+		return nil
+	}
+	if err := s.attachPreparedTrack(ctx, completion); err != nil {
+		return completion.publishFailure(err)
+	}
+	if completion.progressEmitter == nil {
 		return nil
 	}
 	if err := completion.progressEmitter.publishAttachedConfirmed(
@@ -729,10 +769,33 @@ func (s *FileService) attachOrProjectMultipartCompletion(
 	return nil
 }
 
+// Prepared media is already READY; attach through the existing Track CAS before
+// publishing the existing durable projection and ready lifecycle events.
+func (s *FileService) attachPreparedTrack(ctx context.Context, completion *multipartCompletion) error {
+	if completion.session.ClientMediaBundleID == nil {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireFreshFileIngestAuthority(ctx, tx, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID); err != nil {
+			return err
+		}
+		service := *s
+		service.db = tx
+		_, err := service.attachTrackOriginalAudio(ctx, &intrav1.AttachTrackOriginalAudioRequest{
+			TrackId: completion.session.EntityID, VerifiedFileId: completion.session.FileID,
+			IngestAttemptId: derefString(completion.session.AttemptID), ExpectedCurrentFileId: completion.session.ExpectedFileID,
+		})
+		return err
+	})
+}
+
 func (s *FileService) publishMultipartDownstreamCommands(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) error {
+	if completion.session.ClientMediaBundleID != nil {
+		return s.publishClientMediaReady(ctx, completion)
+	}
 	if completion.target.requiresDurableAttachment() {
 		return nil
 	}
@@ -746,6 +809,9 @@ func (s *FileService) finishMultipartCompletion(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
+	if err := s.cleanupClientMediaStaging(ctx, completion.session); err != nil {
+		return nil, errs.Internal(err)
+	}
 	if err := s.deleteCompletedUploadSession(ctx, completion.session.UploadID); err != nil {
 		return nil, errs.Internal(fmt.Errorf("failed to delete completed upload session: %w", err))
 	}

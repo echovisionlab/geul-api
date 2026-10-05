@@ -686,6 +686,15 @@ func resolveSiteUploadEntityID(
 // prefix verification, presign, and confirmation. A signed part URL itself is
 // intentionally independent of the application session until its short expiry.
 func (s *FileService) checkPartUploadPermission(ctx context.Context, userID string, session model.UploadSession) error {
+	if session.ClientMediaBundleID != nil {
+		plan, err := decodeClientMediaPlan(session)
+		if err != nil {
+			return errs.Internal(err)
+		}
+		if plan.MemberID != userID {
+			return errs.PermissionDenied("client media bundle belongs to another member")
+		}
+	}
 	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
 	target, entityID, err := s.resolvePartUploadPermissionTarget(ctx, uploadType, session)
 	if err != nil {
@@ -952,6 +961,11 @@ func (s *FileService) AbortMultipartUpload(
 			return nil, errs.Internal(err)
 		}
 	}
+	if session.ClientMediaBundleID != nil {
+		if err := s.checkPartUploadPermission(ctx, user.MemberID.String(), session); err != nil {
+			return nil, err
+		}
+	}
 	fileKey, err := uploadSessionObjectKey(session)
 	if err != nil {
 		return nil, errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
@@ -982,6 +996,9 @@ func (s *FileService) AbortMultipartUpload(
 		progressEmitter.publishFailed("Upload aborted", 0, nil)
 	}
 
+	if err := s.cleanupClientMediaStaging(cleanupCtx, session); err != nil {
+		return nil, errs.Internal(err)
+	}
 	if err := s.deleteAbortedUploadSession(cleanupCtx, session.UploadID); err != nil {
 		return nil, errs.Internal(fmt.Errorf("failed to delete upload session after abort: %w", err))
 	}

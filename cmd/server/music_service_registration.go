@@ -120,7 +120,7 @@ func (m musicServiceRegistration) registerLabel() *label.LabelService {
 	return labelService
 }
 
-func (m musicServiceRegistration) registerRelease() *releasepkg.InternalReleaseService {
+func (m musicServiceRegistration) registerRelease() (*releasepkg.ReleaseService, *releasepkg.InternalReleaseService, *releasepkg.TrackService) {
 	deps := m.dependencies
 	trackFileManager := filemediaadapter.NewTrackFileManager(m.files)
 	releaseTrackFiles := releaseadapter.NewTrackFiles(trackFileManager)
@@ -168,10 +168,10 @@ func (m musicServiceRegistration) registerRelease() *releasepkg.InternalReleaseS
 	)
 	m.registerPublic(openv1connect.NewReleaseServiceHandler(publicReleaseService, m.publicOptions...))
 
-	return internalReleaseService
+	return releaseService, internalReleaseService, trackService
 }
 
-func (m musicServiceRegistration) registerTaxonomy() {
+func (m musicServiceRegistration) registerTaxonomy() (*referencecatalog.GenreService, *referencecatalog.StyleService, *referencecatalog.FormatService) {
 	deps := m.dependencies
 	genreService := referencecatalog.NewAuditedGenreService(deps.db, deps.telemetryWriter, deps.spicedbClient)
 	m.registerManage(managev1connect.NewGenreServiceHandler(genreService, m.manageOptions...))
@@ -181,4 +181,5 @@ func (m musicServiceRegistration) registerTaxonomy() {
 
 	formatService := referencecatalog.NewAuditedFormatService(deps.db, deps.telemetryWriter, deps.spicedbClient)
 	m.registerManage(managev1connect.NewFormatServiceHandler(formatService, m.manageOptions...))
+	return genreService, styleService, formatService
 }

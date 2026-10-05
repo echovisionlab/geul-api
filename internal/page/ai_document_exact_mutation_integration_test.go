@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/model"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -141,6 +144,85 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 	require.Equal(t, beforeTitle, afterTitle)
 	require.Equal(t, beforeRevision, afterRevision)
 	require.Equal(t, []string{"edit"}, checker.actions)
+}
+
+func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
+	db := newServiceIntegrationDB(t)
+	identityID := integrationTestUUID()
+	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page layout AI document")
+	spiceDB := integrationSpiceDB(t)
+	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	ctx := withPageAuditedRequestContext(t, workIntegrationAdminCtx(identityID))
+	store := newPageIntegrationContentBlockStore(t, spiceDB)
+	pageService := NewPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"),
+		&recordingPageDeleteFileDeleter{}, noopAsyncPublisher{},
+		&fakeIdentityManager{identity: postIntegrationIdentity(identityID, "en")}, spiceDB,
+		WithPageContentBlockStore(store), WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}))
+	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Page layout AI document"}))
+	require.NoError(t, err)
+	checker := &countingPageAIDocumentPermissionChecker{allowed: true}
+	internal := NewInternalPageService(db, noopAsyncPublisher{}, checker, newPageRuntimeForTest(db, "https://cdn.example.com"),
+		WithInternalPageContentBlockStore(store), WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)))
+	application, err := NewAIDocumentService(internal)
+	require.NoError(t, err)
+	before, err := application.Load(ctx, created.Msg.Id, "en")
+	require.NoError(t, err)
+	layout := model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned}
+	sectionID := uuid.NewString()
+	compile := func(state AIDocumentState, body bool) (AIDocumentMutation, error) {
+		contributor := uuid.MustParse(state.ViewerMemberID)
+		batch := contentblock.Batch{DocumentID: state.DocumentID, ExpectedRevision: state.Snapshot.Document.Revision, ContributorMemberIDs: []uuid.UUID{contributor}}
+		if body {
+			var err error
+			batch, err = contentblock.BatchFromPageProtoWithAffectedLocaleValues(state.DocumentID, &contentv1.PageSectionMutationBatch{
+				BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+				ExpectedRevision:        state.Revision, ContributorMemberIds: []string{contributor.String()},
+				BaseMutations: []*contentv1.PageSectionMutation{{Operation: &contentv1.PageSectionMutation_Upsert{Upsert: &contentv1.UpsertPageSection{Node: &contentv1.PageSectionNode{
+					Section:   &contentv1.PageSection{Id: sectionID, Settings: &contentv1.PageSectionSettings{}, Value: &contentv1.PageSection_RichText{RichText: &contentv1.RichTextSection{Props: &contentv1.RichTextSectionProps{}, Blocks: &contentv1.RichTextBlockGraph{}}}},
+					Placement: &contentv1.PageSectionPlacement{},
+				}}}}},
+				LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{Locale: "en", Mutations: []*contentv1.PageSectionLocaleMutation{{Operation: &contentv1.PageSectionLocaleMutation_Upsert{Upsert: &contentv1.UpsertPageSectionLocale{Section: &contentv1.PageSectionLocale{
+					SectionId: sectionID, Value: &contentv1.PageSectionLocale_RichText{RichText: &contentv1.RichTextSectionLocale{Props: &contentv1.RichTextSectionLocaleProps{}, Blocks: &contentv1.RichTextLocaleOverlay{Locale: "en"}}},
+				}}}}}}},
+			}, "en", nil)
+			if err != nil {
+				return AIDocumentMutation{}, err
+			}
+		}
+		return AIDocumentMutation{
+			PageID: state.Page.ID, Locale: state.Locale, ObservedSourceLocale: state.SourceLocale,
+			ExpectedRevision: state.Snapshot.Document.Revision, ExpectedTargetRevision: state.TargetRevision,
+			ObservedLocaleExists: state.LocaleExists, ContributorMemberID: state.ViewerMemberID,
+			Metadata: AIDocumentMetadataPatch{SetDocumentLayout: true, DocumentLayout: layout}, Batch: batch,
+		}, nil
+	}
+	result, err := application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionValidate,
+		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, true) })
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	validated, err := application.Load(ctx, created.Msg.Id, "en")
+	require.NoError(t, err)
+	require.Equal(t, before.Page.DocumentLayout, validated.Page.DocumentLayout)
+	require.Equal(t, before.Revision, validated.Revision)
+	require.Empty(t, validated.Document.Base.Nodes)
+	result, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply,
+		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, true) })
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	stored, err := application.Load(ctx, created.Msg.Id, "en")
+	require.NoError(t, err)
+	require.Equal(t, layout, stored.Page.DocumentLayout)
+	require.NotEqual(t, before.Revision, stored.Revision)
+	require.Len(t, stored.Document.Base.Nodes, 1)
+	require.Equal(t, sectionID, stored.Document.Base.Nodes[0].Section.Id)
+	result, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply,
+		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, false) })
+	require.NoError(t, err)
+	require.False(t, result.Changed)
+	require.Equal(t, stored.Revision, result.DocumentRevision)
+	var auditCount int64
+	require.NoError(t, db.Table("public.domain_audit").Where("target_id = ? AND attributes->'changed_fields' @> '[\"document_layout\"]'::jsonb", created.Msg.Id).Count(&auditCount).Error)
+	require.EqualValues(t, 1, auditCount, "Validate rollback and no-op must not append layout audit")
 }
 
 type countingPageAIDocumentPermissionChecker struct {

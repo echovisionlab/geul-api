@@ -82,7 +82,14 @@ func configureTranscoding(group *Group, cfg *config.Config, conn *mq.Connection)
 		return err
 	}
 	group.closers = append(group.closers, publisher)
-	processor, err := handler.NewHandler(handler.Options{JobTimeoutMinutes: cfg.Media.JobTimeoutMinutes, AudioHLSBitrate: cfg.Media.AudioHLSBitrate, FFmpeg: executor, Storage: store, Publisher: publisher})
+	processor, err := handler.NewHandler(handler.Options{
+		JobTimeoutMinutes: cfg.Media.JobTimeoutMinutes,
+		AudioHLSBitrate:   cfg.Media.AudioHLSBitrate,
+		FFmpeg:            executor,
+		Storage:           store,
+		Publisher:         publisher,
+		Admission:         newTranscodeJobAdmission(conn.DB()),
+	})
 	if err != nil {
 		return err
 	}

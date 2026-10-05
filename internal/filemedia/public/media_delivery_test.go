@@ -159,7 +159,7 @@ func newMediaDeliveryTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
 			file_name TEXT NOT NULL,
 			mime_type TEXT NOT NULL,

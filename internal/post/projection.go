@@ -473,16 +473,17 @@ var postSortConfig = queryutil.SortConfig{
 // Note: Author is not populated here - use toProtoPostWithAuthor for that
 func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *managev1.Post {
 	post := &managev1.Post{
-		Id:              p.ID,
-		Title:           p.Title,
-		Document:        p.ContentDocument,
-		Revision:        p.ContentRevision,
-		BlockMedia:      p.BlockMedia,
-		Status:          managev1.PostStatus(managev1.PostStatus_value[string(p.Status)]),
-		CommentsEnabled: p.CommentsEnabled,
-		DocumentLayout:  p.DocumentLayout.Proto(),
-		CreatedAt:       timestamppb.New(p.CreatedAt),
-		OgAsset:         ogAsset,
+		Id:                    p.ID,
+		Title:                 p.Title,
+		Document:              p.ContentDocument,
+		Revision:              p.ContentRevision,
+		ConfigurationRevision: p.ConfigurationRevision,
+		BlockMedia:            p.BlockMedia,
+		Status:                managev1.PostStatus(managev1.PostStatus_value[string(p.Status)]),
+		CommentsEnabled:       p.CommentsEnabled,
+		DocumentLayout:        p.DocumentLayout.Proto(),
+		CreatedAt:             timestamppb.New(p.CreatedAt),
+		OgAsset:               ogAsset,
 	}
 
 	if p.Slug != nil {

@@ -39,13 +39,17 @@ func TestMapPlaceCurrentAuthorityRejectsStaleRequestPrivilegesIntegration(t *tes
 	service := auditedMapPlaceServiceForTest(t, db, "https://cdn.example.com", spiceDB, apitelemetry.NewDurableWriter(db))
 
 	setMapPlaceAuditActorRole(t, spiceDB, identityID, policyv1.Role.User())
-	_, err := service.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
+	_, err := service.ListMapPlacesAdmin(ctx, connect.NewRequest(&managev1.ListMapPlacesAdminRequest{}))
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	_, err = service.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name: "Rejected stale create", Address: "1 Authority Road", Lat: 37.5, Lng: 127.0,
 	}))
 	require.Error(t, err)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 
 	setMapPlaceAuditActorRole(t, spiceDB, identityID, policyv1.Role.Author())
+	_, err = service.ListMapPlacesAdmin(ctx, connect.NewRequest(&managev1.ListMapPlacesAdminRequest{}))
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	created, err := service.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name: "Current authority place", Address: "2 Authority Road", Lat: 37.6, Lng: 127.1,
 	}))

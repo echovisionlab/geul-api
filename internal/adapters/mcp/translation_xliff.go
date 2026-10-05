@@ -3,7 +3,6 @@ package mcp
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
@@ -39,6 +38,9 @@ var translationInterchangeModeNames = func() map[managev1.TranslationInterchange
 }()
 
 func translationXLIFFExportRequest(arguments mcpserver.ToolArguments) (*managev1.ExportEntityTranslationXLIFFRequest, error) {
+	if err := rejectNullArguments(arguments, "u"); err != nil {
+		return nil, err
+	}
 	var input translationXLIFFExportArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return nil, err
@@ -64,6 +66,9 @@ func translationXLIFFExportRequest(arguments mcpserver.ToolArguments) (*managev1
 }
 
 func translationXLIFFImportRequest(arguments mcpserver.ToolArguments) (*managev1.ImportEntityTranslationXLIFFRequest, error) {
+	if err := rejectNullArguments(arguments, "er"); err != nil {
+		return nil, err
+	}
 	var input translationXLIFFImportArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return nil, err
@@ -102,6 +107,9 @@ func translationInterchangeMode(mode string) (managev1.TranslationInterchangeMod
 }
 
 func validateXLIFFSelection(mode managev1.TranslationInterchangeMode, handles []string) error {
+	if len(handles) > 1000 {
+		return errors.New("XLIFF export allows at most 1000 explicit unit handles")
+	}
 	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH && len(handles) == 0 {
 		return errors.New("patch XLIFF export requires at least one stable unit handle")
 	}
@@ -137,27 +145,9 @@ func inspectStableUnitHandleSet(handles []string) (string, error) {
 }
 
 func validateStableUnitHandle(handle string) error {
-	if err := validateCompactOpaque("stable unit handle", handle, 256); err != nil {
-		return err
-	}
-	if strings.ContainsAny(handle, "[]") {
-		return fmt.Errorf("stable unit handle %q contains a positional path", handle)
-	}
-	for _, segment := range strings.FieldsFunc(handle, func(character rune) bool {
-		return character == '/' || character == '.' || character == ':'
-	}) {
-		allDigits := segment != ""
-		for _, character := range segment {
-			if character < '0' || character > '9' {
-				allDigits = false
-				break
-			}
-		}
-		if allDigits {
-			return fmt.Errorf("stable unit handle %q contains a positional index", handle)
-		}
-	}
-	return nil
+	// Handles are opaque owning-domain identities. The application checks them
+	// against the current manifest; digit segments can be valid Menu item IDs.
+	return validateCompactOpaque("stable unit handle", handle, 256)
 }
 
 func compactInterchangeMode(mode managev1.TranslationInterchangeMode) (string, error) {

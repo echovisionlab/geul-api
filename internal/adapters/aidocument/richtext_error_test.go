@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
+
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -22,12 +24,9 @@ func TestRichTextCodecGeneratedValidationRejectsMalformedMarkParameter(t *testin
 		t.Fatalf("representation conversion duplicated generated color policy: %v", err)
 	}
 	_, issues, err := codec.Compile(uuid.New(), localizedParagraphDocument(blockID, "before"), core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), []core.Operation{operation})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(issues) != 1 || issues[0].Operation != -1 || issues[0].Code != core.IssueInvalidOperation ||
-		!strings.Contains(issues[0].Message, "flatten Rich Text mutation") || !strings.Contains(issues[0].Message, "invalid editor color") {
-		t.Fatalf("issues = %+v", issues)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || len(issues) != 0 ||
+		!strings.Contains(err.Error(), "flatten Rich Text mutation") || !strings.Contains(err.Error(), "invalid editor color") {
+		t.Fatalf("batch validation = (%+v, %v)", issues, err)
 	}
 }
 
@@ -56,12 +55,9 @@ func TestRichTextCodecRejectsInlineMathOutsideGeneratedProfileCapability(t *test
 		uuid.New(),
 		[]core.Operation{operation},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(issues) != 1 || issues[0].Operation != -1 || issues[0].Code != core.IssueInvalidOperation ||
-		!strings.Contains(issues[0].Message, "flatten Rich Text mutation") || !strings.Contains(issues[0].Message, "inline math is forbidden") {
-		t.Fatalf("issues = %+v", issues)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || len(issues) != 0 ||
+		!strings.Contains(err.Error(), "flatten Rich Text mutation") || !strings.Contains(err.Error(), "inline math is forbidden") {
+		t.Fatalf("batch validation = (%+v, %v)", issues, err)
 	}
 }
 
@@ -185,12 +181,9 @@ func assertGeneratedInlineProfileRejection(t *testing.T, codec *RichTextCodec, p
 		uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(),
 		[]core.Operation{core.SetFieldOperation(core.BlockID(blockID.String()), "content", core.RichText(item))},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(issues) != 1 || issues[0].Operation != -1 || issues[0].Code != core.IssueInvalidOperation ||
-		!strings.Contains(issues[0].Message, "flatten Rich Text mutation") || !strings.Contains(issues[0].Message, "profile") {
-		t.Fatalf("generated profile issues = %+v", issues)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || len(issues) != 0 ||
+		!strings.Contains(err.Error(), "flatten Rich Text mutation") || !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("batch validation = (%+v, %v)", issues, err)
 	}
 }
 

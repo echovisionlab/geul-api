@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
@@ -293,6 +292,7 @@ func (p *emailRichTextPort) compile(
 	}
 
 	blockOperations := make([]core.Operation, 0, len(operations))
+	blockIndexes := make([]int, 0, len(operations))
 	for index, operation := range operations {
 		if issue := p.validateOperation(index, document, operation); issue != nil {
 			return emailRichTextMutation{}, []core.OperationIssue{*issue}, nil
@@ -303,11 +303,17 @@ func (p *emailRichTextPort) compile(
 			continue
 		}
 		blockOperations = append(blockOperations, unwrapEmailRichTextRoot(operation))
+		blockIndexes = append(blockIndexes, index)
 	}
 	batch, issues, err := p.codec.Compile(
 		state.DocumentID, state.Document, document.Role(), document.DocumentRevision,
 		contributor, blockOperations,
 	)
+	for index := range issues {
+		if issues[index].Operation >= 0 && issues[index].Operation < len(blockIndexes) {
+			issues[index].Operation = blockIndexes[issues[index].Operation]
+		}
+	}
 	if err == nil && len(issues) == 0 {
 		mutation.Batch = &batch
 	}
@@ -434,23 +440,25 @@ func emailRichTextStringRevision(value *core.Revision) *string {
 }
 
 func emailRichTextDomainIssue(err error, operations []core.Operation) *core.OperationIssue {
-	index := -1
-	code := core.IssueInvalidOperation
-	switch {
-	case errors.Is(err, contentblock.ErrFileReference):
-		code = core.IssueInvalidFileReference
-		for candidate, operation := range operations {
-			if operation.Kind == core.OperationAttachFile || operation.Kind == core.OperationDetachFile {
-				index = candidate
-				break
-			}
-		}
-	case errors.Is(err, contentblock.ErrInvalidMutation):
-	case connect.CodeOf(err) == connect.CodeInvalidArgument || connect.CodeOf(err) == connect.CodeFailedPrecondition:
-	default:
+	if !errors.Is(err, contentblock.ErrFileReference) {
 		return nil
 	}
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
+	index := -1
+	for candidate, operation := range operations {
+		if operation.Kind != core.OperationAttachFile && operation.Kind != core.OperationDetachFile {
+			continue
+		}
+		// A batch-level File error identifies an operation only when exactly
+		// one File mutation is present. Preserve the original error otherwise.
+		if index >= 0 {
+			return nil
+		}
+		index = candidate
+	}
+	if index < 0 {
+		return nil
+	}
+	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 
 func emailRichTextSemanticChanges(document core.Document, operations []core.Operation) ([]core.Change, error) {

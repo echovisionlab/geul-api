@@ -187,13 +187,22 @@ func runRuntimeMultipartCompletionFailure(
 	)
 	require.EqualValues(t, initResp.Msg.GetTotalParts(), countUploadParts(t, stack.DB, initResp.Msg.GetUploadId()))
 
+	var bundleID *string
+	switch input.uploadType {
+	case managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO:
+		bundleID = runtimePtr(prepareRuntimeCompletionFailureMediaBundle(t, fileClient, stack.BackendURL, user, initResp.Msg, "audio"))
+	case managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO:
+		bundleID = runtimePtr(prepareRuntimeCompletionFailureMediaBundle(t, fileClient, stack.BackendURL, user, initResp.Msg, "video"))
+	}
+
 	stack.MarkMultipartCompletionFailure(t, initResp.Msg.GetUploadId())
 	correlationID := uuid.NewString()
 	failedReceiver := newFileIngestSignalReceiver(t, stack.PostgresDSN)
 	completeReq := connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-		FileId:        initResp.Msg.GetFileId(),
-		UploadId:      initResp.Msg.GetUploadId(),
-		CorrelationId: &correlationID,
+		FileId:              initResp.Msg.GetFileId(),
+		UploadId:            initResp.Msg.GetUploadId(),
+		CorrelationId:       &correlationID,
+		ClientMediaBundleId: bundleID,
 	})
 	setAuthHeaders(completeReq.Header(), user)
 
@@ -226,6 +235,24 @@ func runRuntimeMultipartCompletionFailure(
 		totalParts:    initResp.Msg.GetTotalParts(),
 		failedEvent:   failedEvent,
 	}
+}
+
+func prepareRuntimeCompletionFailureMediaBundle(
+	t *testing.T,
+	fileClient managev1connect.FileServiceClient,
+	backendURL string,
+	user *testutil.OryUser,
+	upload *managev1.InitiateMultipartUploadResponse,
+	kind string,
+) string {
+	t.Helper()
+
+	// Reuse the sealed-plan fixture, but prepare and stage it through the real
+	// browser API before injecting failure of the original S3 multipart object.
+	session, objects := clientMediaTestBundle(t, kind)
+	plan, err := decodeClientMediaPlan(session)
+	require.NoError(t, err)
+	return uploadRuntimeClientMediaBundle(t, fileClient, backendURL, user, upload, plan, objects)
 }
 
 func uploadRuntimeMultipartBody(

@@ -127,6 +127,8 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 				operationCtx context.Context,
 				operationDB *gorm.DB,
 			) error {
+				targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
+				recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS
 				_, assignErr := NewCampaignService(
 					operationDB,
 					newCampaignRuntimeFixture(nil, nil),
@@ -139,9 +141,9 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 					connect.NewRequest(
 						&managev1.UpdateCampaignConfigurationRequest{
 							Id:             campaign.Msg.Campaign.Id,
-							TargetMode:     managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL,
+							TargetMode:     &targetMode,
 							LayoutId:       &layoutID,
-							RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS,
+							RecipientScope: &recipientScope,
 						},
 					),
 				)

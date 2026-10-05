@@ -216,18 +216,12 @@ func (s *TermsService) CreateTermsVersion(
 		if s.contentBlocks == nil {
 			return errs.InternalMsg("terms content Block store is not configured")
 		}
-		if req.Msg.Document == nil {
-			return errs.Required("document")
-		}
 		title := "Terms of Service"
 		if req.Msg.Title != nil && *req.Msg.Title != "" {
 			title = *req.Msg.Title
 		}
 		now := time.Now().UTC()
 		sourceLocale := resolveInitialSourceLocale(ctx, tx, req.Header().Get("Accept-Language"))
-		if req.Msg.Document.GetSourceLocale() != sourceLocale {
-			return errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
-		}
 		created, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile: legalContentDocumentProfile, SourceLocale: sourceLocale,
 		})
@@ -242,17 +236,22 @@ func (s *TermsService) CreateTermsVersion(
 		`, title, managev1.TermsStatus_TERMS_STATUS_DRAFT.String(), now, now, contentDocumentID, sourceLocale).Scan(&terms).Error; err != nil {
 			return err
 		}
-		replacement, err := contentblock.ReplaceFromRichTextProto(
-			created.Document.ID, created.Document.Revision, req.Msg.Document,
-		)
-		if err != nil {
-			return normalizeLegalContentBlockError("terms", err)
-		}
-		_, err = s.contentBlocks.ReplaceSnapshot(
-			ctx, tx, replacement, legalDocumentOwnershipFence("terms", terms.ID),
-		)
-		if err != nil {
-			return normalizeLegalContentBlockError("terms", err)
+		if req.Msg.Document != nil {
+			if req.Msg.Document.GetSourceLocale() != sourceLocale {
+				return errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
+			}
+			replacement, err := contentblock.ReplaceFromRichTextProto(
+				created.Document.ID, created.Document.Revision, req.Msg.Document,
+			)
+			if err != nil {
+				return normalizeLegalContentBlockError("terms", err)
+			}
+			_, err = s.contentBlocks.ReplaceSnapshot(
+				ctx, tx, replacement, legalDocumentOwnershipFence("terms", terms.ID),
+			)
+			if err != nil {
+				return normalizeLegalContentBlockError("terms", err)
+			}
 		}
 		finalSnapshot, err := s.contentBlocks.LoadSnapshotInTransaction(
 			ctx, tx, created.Document.ID, sourceLocale,

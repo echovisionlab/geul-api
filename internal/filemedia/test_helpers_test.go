@@ -183,7 +183,7 @@ func newServiceUnitDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id text PRIMARY KEY, file_name text, mime_type text, file_size integer,
 			extension text, sha256 blob, duration_seconds integer,
 			ingest_slot_id text, ingest_attempt_id text,

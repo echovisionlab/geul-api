@@ -3,12 +3,18 @@ package jobregistry
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
+// ErrExplicitCancellation identifies a user or file-lifecycle cancellation.
+// Parent-context shutdowns keep their own cancellation cause so queue delivery
+// can remain redeliverable.
+var ErrExplicitCancellation = errors.New("transcode job explicitly cancelled")
+
 type entry struct {
 	groupID string
-	cancel  context.CancelFunc
+	cancel  context.CancelCauseFunc
 }
 
 // Registry owns the active job sessions.
@@ -22,16 +28,16 @@ type Session struct {
 
 	registry *Registry
 	eventID  string
-	cancel   context.CancelFunc
+	cancel   context.CancelCauseFunc
 	close    sync.Once
 }
 
 // Start registers a job unless the event is already active.
 func (r *Registry) Start(parent context.Context, eventID, groupID string) (*Session, bool) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(parent)
 	_, exists := r.running.LoadOrStore(eventID, entry{groupID: groupID, cancel: cancel})
 	if exists {
-		cancel()
+		cancel(nil)
 		return nil, false
 	}
 	return &Session{
@@ -42,11 +48,17 @@ func (r *Registry) Start(parent context.Context, eventID, groupID string) (*Sess
 	}, true
 }
 
+// IsExplicitCancellation reports whether ctx was stopped by a registry
+// cancellation request rather than by its parent delivery context.
+func IsExplicitCancellation(ctx context.Context) bool {
+	return ctx != nil && errors.Is(context.Cause(ctx), ErrExplicitCancellation)
+}
+
 // Close removes the job and cancels its context exactly once.
 func (s *Session) Close() {
 	s.close.Do(func() {
 		s.registry.running.Delete(s.eventID)
-		s.cancel()
+		s.cancel(nil)
 	})
 }
 
@@ -56,7 +68,7 @@ func (r *Registry) CancelEvent(eventID string) bool {
 	if !found {
 		return false
 	}
-	value.(entry).cancel()
+	value.(entry).cancel(ErrExplicitCancellation)
 	return true
 }
 
@@ -67,7 +79,7 @@ func (r *Registry) CancelGroup(groupID string) bool {
 		registered := value.(entry)
 		if registered.groupID == groupID {
 			found = true
-			registered.cancel()
+			registered.cancel(ErrExplicitCancellation)
 		}
 		return true
 	})

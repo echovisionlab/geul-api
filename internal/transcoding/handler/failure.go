@@ -6,9 +6,23 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/transcoding/jobregistry"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
+
+const transcodeCancellationResultTimeout = 5 * time.Second
+
+func publishExplicitCancellationResult[T transcodeCommand](
+	w transcodeWorkflow[T],
+	ctx context.Context,
+	command T,
+	startedAt time.Time,
+) error {
+	resultCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), transcodeCancellationResultTimeout)
+	defer cancel()
+	return w.fail(resultCtx, command, startedAt, jobregistry.ErrExplicitCancellation)
+}
 
 func (p *audioProcessor) fail(
 	ctx context.Context,

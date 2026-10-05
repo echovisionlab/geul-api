@@ -1,5 +1,3 @@
-//go:build integration
-
 package publiccontent
 
 import (
@@ -13,7 +11,7 @@ import (
 )
 
 func TestResolveWithPolicyUsesExistingTargetAndOnlyMissingFieldFallback(t *testing.T) {
-	db := newLocalizationIntegrationDB(t)
+	db := newLocalizationTestDB(t)
 	entityID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO series (id, source_locale) VALUES (?, ?)`, entityID, "en").Error)
 	sourceTitle, sourceBody := "Source title", "Source body"
@@ -37,7 +35,7 @@ func TestResolveWithPolicyUsesExistingTargetAndOnlyMissingFieldFallback(t *testi
 }
 
 func TestDeletedTargetFallsBackAndRecreatedEmptyTargetIsImmediatelyVisible(t *testing.T) {
-	db := newLocalizationIntegrationDB(t)
+	db := newLocalizationTestDB(t)
 	entityID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO series (id, source_locale) VALUES (?, ?)`, entityID, "en").Error)
 	require.NoError(t, db.Exec(`INSERT INTO series_translation (entity_id, locale, title, content_text) VALUES (?, 'en', 'Source', 'Source body')`, entityID).Error)
@@ -65,7 +63,7 @@ func TestDeletedTargetFallsBackAndRecreatedEmptyTargetIsImmediatelyVisible(t *te
 }
 
 func TestResolveBatchReportsEveryStoredTargetLocale(t *testing.T) {
-	db := newLocalizationIntegrationDB(t)
+	db := newLocalizationTestDB(t)
 	entityID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO series (id, source_locale) VALUES (?, 'en')`, entityID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO series_translation (entity_id, locale, title) VALUES (?, 'en', 'Source'), (?, 'fr', ''), (?, 'ko', NULL)`, entityID, entityID, entityID).Error)
@@ -82,7 +80,7 @@ func TestResolveBatchReportsEveryStoredTargetLocale(t *testing.T) {
 	require.Equal(t, "en", selections[entityID].DisplayedLocale)
 }
 
-func newLocalizationIntegrationDB(t *testing.T) *gorm.DB {
+func newLocalizationTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)

@@ -305,6 +305,16 @@ func TestCleanupRetiredMediaGenerationsS3FailureDoesNotStarveFollowingRows(t *te
 }
 
 func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycle(t *testing.T) {
+	t.Run("purge enabled", func(t *testing.T) {
+		testCleanupPublicAssetLifecycle(t, true)
+	})
+	t.Run("purge disabled", func(t *testing.T) {
+		testCleanupPublicAssetLifecycle(t, false)
+	})
+}
+
+func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
+	t.Helper()
 	ctx := context.Background()
 	db := newWorkerIntegrationDB(t)
 	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
@@ -314,6 +324,11 @@ func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycl
 	var purged []string
 	var purgeAttempts int
 	cloudflare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !purgeEnabled {
+			t.Error("disabled purge must not send an HTTP request")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "/zones/test-zone/purge_cache", r.URL.Path)
 		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
@@ -335,6 +350,7 @@ func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycl
 	t.Cleanup(cloudflare.Close)
 	cfg.CDNURL = "https://cdn.example.com"
 	cfg.CloudflareAPIURL = cloudflare.URL
+	cfg.CloudflareCachePurgeEnabled = purgeEnabled
 	cfg.CloudflareZoneID = "test-zone"
 	cfg.CloudflareAPIToken = "test-token"
 
@@ -379,10 +395,14 @@ func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycl
 	require.NoError(t, db.First(&deleted, "id = ?", asset.ID).Error)
 	require.Equal(t, model.PublicAssetStatusDeleted, deleted.Status)
 	require.WithinDuration(t, now, deleted.DeletedAt.UTC(), time.Millisecond)
-	require.Equal(t, []string{
-		"cdn.example.com/asset/" + asset.ID + "/image.webp",
-		"cdn.example.com/asset/" + asset.ID + "/image.webp",
-	}, purged)
+	if purgeEnabled {
+		require.Equal(t, []string{
+			"cdn.example.com/asset/" + asset.ID + "/image.webp",
+			"cdn.example.com/asset/" + asset.ID + "/image.webp",
+		}, purged)
+	} else {
+		require.Empty(t, purged)
+	}
 	require.Empty(t, listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, "asset/"))
 }
 

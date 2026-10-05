@@ -243,6 +243,7 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 	t.Cleanup(cloudflare.Close)
 	cfg.CDNURL = "https://cdn.example.com"
 	cfg.CloudflareAPIURL = cloudflare.URL
+	cfg.CloudflareCachePurgeEnabled = true
 	cfg.CloudflareZoneID = "test-zone"
 	cfg.CloudflareAPIToken = "test-token"
 

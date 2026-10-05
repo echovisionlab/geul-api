@@ -102,9 +102,20 @@ func buildProgramEventAIDocumentContentUpdatedEvent(
 	if !result.Changed {
 		return nil
 	}
+	fields := make([]string, 0, 3)
+	if command.Metadata.SetTitle {
+		fields = append(fields, "title")
+	}
+	if command.Metadata.SetSummary {
+		fields = append(fields, "summary")
+	}
+	if command.Batch == nil || len(command.Batch.Upserts) != 0 || len(command.Batch.Deletes) != 0 ||
+		len(command.Batch.Reorders) != 0 || len(command.Batch.LocaleGroups) != 0 {
+		fields = append(fields, "content")
+	}
 	return buildProgramEventBlockContentUpdatedEvent(
 		command.EventID,
-		[]string{"content"},
+		fields,
 		result.DocumentRevision,
 		[]string{command.ContributorMemberID.String()},
 		command.RequestedLocale,

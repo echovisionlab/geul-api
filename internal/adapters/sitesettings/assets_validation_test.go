@@ -13,7 +13,7 @@ import (
 func TestAssetsValidateAttachment(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE file (id TEXT PRIMARY KEY, mime_type TEXT NOT NULL, file_size INTEGER NOT NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY, mime_type TEXT NOT NULL, file_size INTEGER NOT NULL)`).Error)
 	insert := func(mimeType string, fileSize int64) string {
 		fileID := uuid.NewString()
 		require.NoError(t, db.Exec(`INSERT INTO file (id, mime_type, file_size) VALUES (?, ?, ?)`, fileID, mimeType, fileSize).Error)

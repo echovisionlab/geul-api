@@ -448,7 +448,7 @@ func newPublicFileDownloadUnitDB(t *testing.T) *gorm.DB {
 			created_at DATETIME NOT NULL,
 			PRIMARY KEY (track_id, audience_segment_id)
 		);
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
 			file_name TEXT,
 			extension TEXT NOT NULL,

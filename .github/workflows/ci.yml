@@ -1,10 +1,13 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - '.release-please-manifest.json'
+      - 'CHANGELOG.md'
+      - 'release-please-config.json'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

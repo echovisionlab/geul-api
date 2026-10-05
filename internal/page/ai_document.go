@@ -36,11 +36,13 @@ type AIDocumentState struct {
 }
 
 type AIDocumentMetadataPatch struct {
-	EnsureLocale bool
-	SetTitle     bool
-	Title        *string
-	SetSummary   bool
-	Summary      *string
+	EnsureLocale      bool
+	SetTitle          bool
+	Title             *string
+	SetSummary        bool
+	Summary           *string
+	SetDocumentLayout bool
+	DocumentLayout    model.DocumentLayout
 }
 
 type AIDocumentMutation struct {
@@ -188,6 +190,9 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 		return contentblock.Result{}, nil, errs.InvalidArgument("source_locale", "observed source locale is required")
 	}
 	if mutation.Locale != mutation.ObservedSourceLocale {
+		if mutation.Metadata.SetDocumentLayout {
+			return contentblock.Result{}, nil, errs.InvalidArgument("document_layout", "only the source locale may change Page document layout")
+		}
 		if len(mutation.Batch.Upserts) != 0 || len(mutation.Batch.Deletes) != 0 || len(mutation.Batch.Reorders) != 0 {
 			return contentblock.Result{}, nil, errs.InvalidArgument("operations", "non-source locale cannot mutate the Page section graph")
 		}
@@ -226,13 +231,24 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	if mutation.ExpectedTargetRevision != nil {
 		return contentblock.Result{}, nil, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 	}
+	if mutation.Metadata.SetDocumentLayout {
+		if err := mutation.Metadata.DocumentLayout.Validate(); err != nil {
+			return contentblock.Result{}, nil, errs.InvalidArgument("document_layout", err.Error())
+		}
+	}
 	result, err := s.internal.contentBlocks.ApplyBatchWithMetadata(
 		ctx, tx, mutation.Batch, fence,
 		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			return applyPageAIDocumentMetadata(
+			effect, err := applyPageAIDocumentMetadata(
 				ctx, tx, mutation.PageID, mutation.Locale,
 				mutation.ObservedLocaleExists, mutation.Metadata, now,
 			)
+			if err != nil || !mutation.Metadata.SetDocumentLayout {
+				return effect, err
+			}
+			layoutEffect, err := applyPageDocumentLayoutMetadata(ctx, tx, mutation.PageID, mutation.Metadata.DocumentLayout, now, s.internal.auditWriter)
+			effect.Changed = effect.Changed || layoutEffect.Changed
+			return effect, err
 		},
 	)
 	if err != nil || !result.Changed {

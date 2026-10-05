@@ -30,6 +30,17 @@ func (p *Publisher) enqueue(
 	message proto.Message,
 ) error {
 	startedAt := time.Now()
+	err := p.enqueueUsing(ctx, p.conn.DB(), queue, messageID, messageType, message)
+	emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), err != nil)
+	return err
+}
+
+func (p *Publisher) enqueueUsing(
+	ctx context.Context,
+	executor eventpkg.DBTX,
+	queue, messageID, messageType string,
+	message proto.Message,
+) error {
 	body, err := (proto.MarshalOptions{Deterministic: true}).Marshal(message)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
@@ -38,10 +49,9 @@ func (p *Publisher) enqueue(
 	if err != nil {
 		return err
 	}
-	_, err = p.client.Enqueue(ctx, p.conn.DB(), queue, envelope, injectMessageCorrelation(ctx, map[string]string{
+	_, err = p.client.Enqueue(ctx, executor, queue, envelope, injectMessageCorrelation(ctx, map[string]string{
 		"content_type": eventpkg.ContentTypeProtobuf,
 	}), 0)
-	emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), err != nil)
 	return err
 }
 

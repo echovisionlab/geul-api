@@ -295,7 +295,7 @@ func (s *LabelService) ListLabels(
 			Total:   int32(total),
 			Limit:   limit,
 			Offset:  offset,
-			HasMore: offset+limit < int32(total),
+			HasMore: (queryutil.Pagination{Offset: offset, Limit: limit}).HasMore(total),
 		},
 	}), nil
 }
@@ -424,7 +424,7 @@ func (s *LabelService) ListLabelsAdmin(
 			Total:   int32(total),
 			Limit:   limit,
 			Offset:  offset,
-			HasMore: offset+limit < int32(total),
+			HasMore: (queryutil.Pagination{Offset: offset, Limit: limit}).HasMore(total),
 		},
 	}), nil
 }

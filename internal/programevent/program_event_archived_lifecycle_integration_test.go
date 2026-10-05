@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -75,6 +76,11 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	}))
 	require.NoError(t, err)
 	require.NotNil(t, published.Msg.PublishedAt)
+	var publishedRow model.ProgramEvent
+	require.NoError(t, db.Select("published_at", "updated_at").First(&publishedRow, "id = ?", created.Msg.Id).Error)
+	require.NotNil(t, publishedRow.PublishedAt)
+	require.Equal(t, publishedRow.PublishedAt.UnixNano(), published.Msg.PublishedAt.AsTime().UnixNano())
+	require.Equal(t, publishedRow.UpdatedAt.UnixNano(), published.Msg.UpdatedAt.AsTime().UnixNano())
 	originalPublishedAt := published.Msg.PublishedAt.AsTime()
 
 	archived, err := eventService.ArchiveProgramEvent(ctx, connect.NewRequest(&managev1.ArchiveProgramEventRequest{

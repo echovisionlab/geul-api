@@ -70,6 +70,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"),
 			ExpectedFileId: fileID,
 			Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
+			ObservedPolicy: observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED),
 		},
 	))
 	require.NoError(t, err)
@@ -82,6 +83,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 			Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
 			AudienceSegmentIds: []string{segmentID, segmentID},
+			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED),
 		},
 	))
 	require.NoError(t, err)
@@ -95,6 +97,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 			Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
 			AudienceSegmentIds: []string{segmentID},
+			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
@@ -106,6 +109,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 			Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
 			AudienceSegmentIds: []string{archivedSegmentID},
+			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
@@ -121,6 +125,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			BlockId:    managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 			Audience:           managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
 			AudienceSegmentIds: tooManySegmentIDs,
+			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
@@ -164,7 +169,8 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
 			EntityId:   currentPostID,
 			BlockId:    managePolicyString(currentBlockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
-			Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
+			Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
+			ObservedPolicy: observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED),
 		}),
 	)
 	require.NoError(t, err)
@@ -238,7 +244,7 @@ func newManageFileDownloadPolicyUnitDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`ATTACH DATABASE ':memory:' AS kratos`).Error)
 	require.NoError(t, db.Exec(`
-		CREATE TABLE file (
+		CREATE TABLE file ( client_media_bundle_id TEXT,
 			id TEXT PRIMARY KEY,
 			file_name TEXT,
 			extension TEXT NOT NULL,

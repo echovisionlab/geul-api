@@ -199,6 +199,8 @@ func (a *TrackAttachment) AttachOriginalWithDB(
 	input filemediadomain.TrackOriginalAudioInput,
 ) (filemediadomain.TrackOriginalAudioAttachment, error) {
 	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasedomain.TrackOriginalAudioInput{
+		ClientMediaReady:      input.ClientMediaReady,
+		DurationSeconds:       input.DurationSeconds,
 		TrackID:               input.TrackID,
 		VerifiedFileID:        input.VerifiedFileID,
 		ExpectedCurrentFileID: input.ExpectedCurrentFileID,

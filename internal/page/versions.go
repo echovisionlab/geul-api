@@ -81,7 +81,7 @@ func (s *PageService) ListPageVersions(
 			Total:   int32(total),
 			Limit:   limit,
 			Offset:  offset,
-			HasMore: offset+limit < int32(total),
+			HasMore: int64(offset)+int64(limit) < total,
 		},
 	}), nil
 }

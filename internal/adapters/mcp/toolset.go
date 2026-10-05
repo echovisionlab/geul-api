@@ -21,6 +21,7 @@ type ToolProvider interface {
 
 // ToolSet composes disjoint domain tool providers without moving their
 // application behavior or authorization into the MCP transport.
+// Each provider lists its full static catalog; permissions are checked on call.
 type ToolSet struct {
 	providers []ToolProvider
 	byName    map[string]int
@@ -132,6 +133,17 @@ func toolAnnotations(readOnly, destructive, openWorld bool) map[string]any {
 	}
 }
 
+func cloneAnnotations(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
 func cloneSecuritySchemes(values []mcpserver.ToolSecurityScheme) []mcpserver.ToolSecurityScheme {
 	if values == nil {
 		return nil
@@ -156,6 +168,10 @@ func cloneToolMeta(value map[string]any) map[string]any {
 				continue
 			}
 		}
+		if names, ok := item.([]string); ok {
+			result[key] = append([]string(nil), names...)
+			continue
+		}
 		result[key] = item
 	}
 	return result
@@ -167,6 +183,14 @@ func toolDefinitionNames(tools []mcpserver.Tool) []string {
 		names[index] = tool.Name
 	}
 	return names
+}
+
+func oauthTool(name, title, description, inputSchema, outputSchema string, readOnly, destructive bool) mcpserver.Tool {
+	return mcpserver.Tool{
+		Name: name, Title: title, Description: description,
+		InputSchema: json.RawMessage(inputSchema), OutputSchema: json.RawMessage(outputSchema),
+		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(readOnly, destructive, false), Meta: oauthSecurityMeta(),
+	}
 }
 
 func (set *ToolSet) CallTool(

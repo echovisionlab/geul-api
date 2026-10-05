@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -90,6 +92,8 @@ type remoteFileImportOptions struct {
 	entityType            string
 	transcodeEntityType   managev1.TranscodeEntityType
 	sourceURL             string
+	fileName              string
+	actorMemberID         string
 	correlationID         string
 	slotID                string
 	expectedCurrentFileID *string
@@ -98,6 +102,42 @@ type remoteFileImportOptions struct {
 	checkPermission       bool
 	operationIdentity     *remoteImportOperationIdentity
 	operationLockHeld     bool
+}
+
+// RemoteFileImportInput imports one standalone File through the existing
+// streamed remote ingest authority. FileName is a display hint; MIME and the
+// canonical extension always come from verified bytes.
+type RemoteFileImportInput struct {
+	UploadType    managev1.UploadType
+	SourceURL     string
+	FileName      string
+	CorrelationID string
+}
+
+func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error) {
+	if input.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && !isEditorFileIngestUploadType(input.UploadType) {
+		return nil, errs.InvalidArgument("upload_type", "standalone File import requires a File library upload kind")
+	}
+	user := auth.GetUser(ctx)
+	if user == nil {
+		return nil, errs.AuthenticationRequired()
+	}
+	if strings.TrimSpace(input.CorrelationID) == "" {
+		return nil, errs.InvalidArgument("correlation_id", "standalone File import requires a stable correlation UUID")
+	}
+	fileName := strings.TrimSpace(input.FileName)
+	if fileName != "" {
+		fileName = path.Base(strings.ReplaceAll(fileName, `\`, "/"))
+	}
+	result, err := s.importRemoteFile(ctx, remoteFileImportOptions{
+		uploadType: input.UploadType,
+		sourceURL:  input.SourceURL, fileName: fileName, correlationID: input.CorrelationID,
+		actorMemberID: user.MemberID.String(), emitLifecycle: true, triggerTranscoding: true, checkPermission: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return remoteFileImportResponse(result), nil
 }
 
 type remoteFileImportResult struct {
@@ -300,13 +340,17 @@ func (s *FileService) DownloadFromUrl(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.DownloadFromUrlResponse{
+	return connect.NewResponse(remoteFileImportResponse(result)), nil
+}
+
+func remoteFileImportResponse(result *remoteFileImportResult) *managev1.DownloadFromUrlResponse {
+	return &managev1.DownloadFromUrlResponse{
 		FileId:                result.fileID,
 		Delivery:              mediaDeliveryFromRemoteImport(result),
 		SlotId:                optionalNonEmptyString(result.slotID),
 		IngestAttemptId:       optionalNonEmptyString(result.attemptID),
 		ExpectedCurrentFileId: result.expectedCurrentFileID,
-	}), nil
+	}
 }
 
 func mediaDeliveryFromRemoteImport(result *remoteFileImportResult) *commonv1.MediaDelivery {

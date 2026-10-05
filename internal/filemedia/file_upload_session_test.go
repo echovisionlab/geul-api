@@ -151,7 +151,7 @@ func TestDeleteCompletedUploadSessionFailurePreservesRetry(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open("file:completed-upload-delete-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		status TEXT NOT NULL
 	)`).Error)
@@ -186,7 +186,7 @@ func TestDeleteAbortedUploadSessionFailureDoesNotReportCleanupSuccess(t *testing
 
 	db, err := gorm.Open(sqlite.Open("file:aborted-upload-delete-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		status TEXT NOT NULL
 	)`).Error)
@@ -293,7 +293,7 @@ func newAbortMultipartUploadRPCFixture(
 
 	db, err := gorm.Open(sqlite.Open("file:abort-rpc-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		upload_type TEXT NOT NULL,
@@ -360,7 +360,7 @@ func TestClaimUploadPartActivityOnlyRefreshesWritableSessions(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open("file:upload-part-activity-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -411,7 +411,7 @@ func TestRecordUploadedPartCannotOverwriteFinalizingOrAbortedState(t *testing.T)
 
 	db, err := gorm.Open(sqlite.Open("file:record-upload-part-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -495,7 +495,7 @@ func TestRecordRetryableMultipartPartFailurePreservesResumableStatus(t *testing.
 
 	db, err := gorm.Open(sqlite.Open("file:upload-part-retryable-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -538,7 +538,7 @@ func TestClaimMultipartCompletionDoesNotResurrectTerminalSession(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open("file:multipart-completion-claim-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		file_size INTEGER NOT NULL,
@@ -626,7 +626,7 @@ func TestClaimUploadSessionAbortRejectsFinalizingSession(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open("file:multipart-abort-claim-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		status TEXT NOT NULL,

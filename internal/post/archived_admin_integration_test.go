@@ -50,6 +50,7 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	require.NoError(t, err)
 	require.NotNil(t, created.Msg.Document)
 	require.NotEmpty(t, created.Msg.Revision)
+	require.NotEmpty(t, created.Msg.ConfigurationRevision)
 	_, err = service.AddPostAuthor(adminCtx, connect.NewRequest(&managev1.AddPostAuthorRequest{
 		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(authorID),
 	}))
@@ -69,16 +70,17 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	require.NotNil(t, authorPost.Msg.Document, "an archived Post Author can render the canonical document read-only")
 	require.NotContains(t, authorPost.Msg.AllowedActions, managev1.PostAction_POST_ACTION_EDIT)
 
-	commentsEnabled := false
+	commentsEnabled := true
 	_, err = service.UpdatePost(authorCtx, connect.NewRequest(&managev1.UpdatePostRequest{
-		Id: created.Msg.Id, CommentsEnabled: &commentsEnabled,
+		Id: created.Msg.Id, ExpectedConfigurationRevision: authorPost.Msg.ConfigurationRevision, CommentsEnabled: &commentsEnabled,
 	}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	updated, err := service.UpdatePost(adminCtx, connect.NewRequest(&managev1.UpdatePostRequest{
-		Id: created.Msg.Id, CommentsEnabled: &commentsEnabled,
+		Id: created.Msg.Id, ExpectedConfigurationRevision: authorPost.Msg.ConfigurationRevision, CommentsEnabled: &commentsEnabled,
 	}))
 	require.NoError(t, err)
-	require.False(t, updated.Msg.CommentsEnabled)
+	require.True(t, updated.Msg.CommentsEnabled)
+	require.NotEqual(t, authorPost.Msg.ConfigurationRevision, updated.Msg.ConfigurationRevision)
 
 	_, err = service.AddPostCollaborator(authorCtx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{
 		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(collaboratorID),

@@ -36,6 +36,32 @@ func TestApplyProgramEventTimeAndLocationUpdatesRevalidatesLockedTimeRange(t *te
 	require.Equal(t, "keep concurrent title", fields["title"])
 }
 
+func TestProgramEventRelationWritesRequireObservedBaselines(t *testing.T) {
+	cases := []struct {
+		name    string
+		request *managev1.UpdateProgramEventRequest
+	}{
+		{name: "artists", request: &managev1.UpdateProgramEventRequest{Artists: []*managev1.ProgramEventArtist{{ArtistId: "artist"}}}},
+		{name: "empty artist replacement", request: &managev1.UpdateProgramEventRequest{ReplaceArtists: true}},
+		{name: "labels", request: &managev1.UpdateProgramEventRequest{Labels: []*managev1.ProgramEventLabel{{LabelId: "label"}}}},
+		{name: "clients", request: &managev1.UpdateProgramEventRequest{Clients: []*managev1.ProgramEventClient{{ClientId: "client"}}}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateProgramEventRelationBaselines(test.request)
+			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		})
+	}
+}
+
+func TestProgramEventObservedOnlyRelationBaselinesDoNotStartWrites(t *testing.T) {
+	require.NoError(t, validateProgramEventRelationBaselines(&managev1.UpdateProgramEventRequest{
+		ObservedArtists: &managev1.ProgramEventArtistsSnapshot{},
+		ObservedLabels:  &managev1.ProgramEventLabelsSnapshot{},
+		ObservedClients: &managev1.ProgramEventClientsSnapshot{},
+	}))
+}
+
 func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeChange(t *testing.T) {
 	mapPlaceMode := managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String()
 	initialPlace := "place-before"

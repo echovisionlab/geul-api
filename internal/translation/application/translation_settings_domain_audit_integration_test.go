@@ -12,6 +12,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 func TestTranslationSettingsAuditOmitsProtectedTermValuesIntegration(t *testing.T) {
@@ -28,8 +29,10 @@ func TestTranslationSettingsAuditOmitsProtectedTermValuesIntegration(t *testing.
 	)
 	_, err = service.UpdateTranslationSettings(ctx, connect.NewRequest(
 		&managev1.UpdateTranslationSettingsRequest{Settings: &managev1.TranslationSettings{
-			DefaultLocale: "en", ProtectedTerms: []string{" Photoshop ", "Photoshop", "React Native"},
-		}},
+			ProtectedTerms: []string{" Photoshop ", "Photoshop", "React Native"},
+		}, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
+			BaseSettings: &managev1.TranslationSettings{},
+		},
 	))
 	require.NoError(t, err)
 

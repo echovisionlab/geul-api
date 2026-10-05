@@ -42,28 +42,80 @@ func TestCampaignDomainAuditMemberMutationsAndRollbackIntegration(t *testing.T) 
 	id := created.Msg.Campaign.Id
 	_, err = service.UpdateCampaignName(ctx, connect.NewRequest(&managev1.UpdateCampaignNameRequest{Id: id, Name: "Audit campaign renamed"}))
 	require.NoError(t, err)
-	// The exact same configuration is a semantic no-op and adds no Audit row.
-	_, err = service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
-		Id: id, TargetMode: managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL,
-		RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_ALL_MATCHING_USERS,
+	targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
+	recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_ALL_MATCHING_USERS
+	subscribedScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS
+	// Presence of the optional fields defines a patch; repeating it is a no-op.
+	configured, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, TargetMode: &targetMode, RecipientScope: &recipientScope,
 	}))
 	require.NoError(t, err)
-	_, err = service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
-		Id: id, TargetMode: managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL,
-		RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_ALL_MATCHING_USERS,
+	require.True(t, configured.Msg.Changed)
+	noOp, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, TargetMode: &targetMode, RecipientScope: &recipientScope,
 	}))
 	require.NoError(t, err)
+	require.False(t, noOp.Msg.Changed)
+	// A recipient-only patch must keep the target mode and segment pair.
+	recipientOnly, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, RecipientScope: &subscribedScope,
+	}))
+	require.NoError(t, err)
+	require.True(t, recipientOnly.Msg.Changed)
+	require.Equal(t, targetMode, recipientOnly.Msg.TargetMode)
+	require.Nil(t, recipientOnly.Msg.SegmentId)
+	require.Equal(t, subscribedScope, recipientOnly.Msg.RecipientScope)
+	// A target pair patch must not reset the omitted recipient scope.
+	targetOnly, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, TargetMode: &targetMode,
+	}))
+	require.NoError(t, err)
+	require.False(t, targetOnly.Msg.Changed)
+	require.Equal(t, subscribedScope, targetOnly.Msg.RecipientScope)
+	require.Nil(t, targetOnly.Msg.SegmentId)
+	// A layout-only patch must preserve target and recipient fields.
+	emptyLayoutID := ""
+	layoutOnly, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, LayoutId: &emptyLayoutID,
+	}))
+	require.NoError(t, err)
+	require.False(t, layoutOnly.Msg.Changed)
+	require.Equal(t, targetMode, layoutOnly.Msg.TargetMode)
+	require.Equal(t, subscribedScope, layoutOnly.Msg.RecipientScope)
+	// Empty requests are rejected instead of replacing omitted configuration.
+	_, err = service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{Id: id}))
+	require.Error(t, err)
+	segmentID := "segment-1"
+	_, err = service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, SegmentId: &segmentID,
+	}))
+	require.Error(t, err)
+	segmentMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_SEGMENT
+	_, err = service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, TargetMode: &segmentMode,
+	}))
+	require.Error(t, err)
+	// A single-field patch restores recipient scope without replacing other fields.
+	restoredScope, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
+		Id: id, RecipientScope: &recipientScope,
+	}))
+	require.NoError(t, err)
+	require.True(t, restoredScope.Msg.Changed)
+	require.Equal(t, targetMode, restoredScope.Msg.TargetMode)
+	require.Equal(t, recipientScope, restoredScope.Msg.RecipientScope)
 
 	var rows []campaignAuditRow
 	require.NoError(t, db.Raw(`SELECT action, target_type, target_id, actor_member_id::text AS actor_member_id, request_id::text AS request_id, attributes FROM domain_audit WHERE target_type = 'campaign' AND target_id = ? ORDER BY occurred_at, audit_id`, id).Scan(&rows).Error)
-	require.Len(t, rows, 3)
-	require.Equal(t, []string{"campaign.created", "campaign.updated", "campaign.updated"}, []string{rows[0].Action, rows[1].Action, rows[2].Action})
+	require.Len(t, rows, 5)
+	require.Equal(t, []string{"campaign.created", "campaign.updated", "campaign.updated", "campaign.updated", "campaign.updated"}, []string{rows[0].Action, rows[1].Action, rows[2].Action, rows[3].Action, rows[4].Action})
 	for _, row := range rows {
 		require.Equal(t, memberID, row.ActorMemberID)
 		require.Equal(t, sharedtelemetry.RequestIDFromContext(ctx), row.RequestID)
 	}
 	require.Contains(t, string(rows[1].Attributes), `"name"`)
 	require.Contains(t, string(rows[2].Attributes), `"recipient_scope"`)
+	require.Contains(t, string(rows[3].Attributes), `"recipient_scope"`)
+	require.Contains(t, string(rows[4].Attributes), `"recipient_scope"`)
 
 	failing := NewAuditedCampaignService(
 		db, newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)),

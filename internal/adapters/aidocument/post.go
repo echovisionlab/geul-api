@@ -275,6 +275,7 @@ func (p *postPort) compile(
 		return mutation, nil, nil
 	}
 	contentOperations := make([]core.Operation, 0, len(operations))
+	contentIndexes := make([]int, 0, len(operations))
 	for index, operation := range operations {
 		if issue := validatePostMetadataStructure(operation, index); issue != nil {
 			return postdomain.AIDocumentMutation{}, []core.OperationIssue{*issue}, nil
@@ -285,11 +286,17 @@ func (p *postPort) compile(
 		}
 		if !handled {
 			contentOperations = append(contentOperations, operation)
+			contentIndexes = append(contentIndexes, index)
 		}
 	}
 	batch, issues, err := p.codec.Compile(
 		documentID, state.LocalizedDocument, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations,
 	)
+	for index := range issues {
+		if issues[index].Operation >= 0 && issues[index].Operation < len(contentIndexes) {
+			issues[index].Operation = contentIndexes[issues[index].Operation]
+		}
+	}
 	if err != nil || len(issues) != 0 {
 		return postdomain.AIDocumentMutation{}, issues, err
 	}

@@ -39,7 +39,7 @@ func TestFindExpiredUploadSessionsLoadsIndependentFileAndTrackIdentity(t *testin
 
 	db, err := gorm.Open(sqlite.Open("file:expired-upload-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_type TEXT NOT NULL,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,
@@ -472,7 +472,7 @@ func newExpiredUploadCleanupDB(t *testing.T, session expiredUploadSession) (*gor
 
 	db, err := gorm.Open(sqlite.Open("file:expired-upload-cleanup-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE upload_session (
+	require.NoError(t, db.Exec(`CREATE TABLE upload_session ( client_media_bundle_id TEXT, client_media_manifest TEXT,
 		upload_type TEXT NOT NULL,
 		upload_id TEXT PRIMARY KEY,
 		file_id TEXT NOT NULL,

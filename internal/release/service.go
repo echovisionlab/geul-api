@@ -241,6 +241,7 @@ func (s *ReleaseService) ListReleasesAdmin(
 	if err != nil {
 		return nil, err
 	}
+	query = query.Order("release.id ASC")
 
 	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&releases).Error; err != nil {
 		return nil, errs.Internal(err)
@@ -333,6 +334,14 @@ func (s *ReleaseService) CreateRelease(
 	if title == "" {
 		return nil, errs.Required("title")
 	}
+	requestedSourceLocale := req.Msg.SourceLocale
+	if requestedSourceLocale != "" {
+		var err error
+		requestedSourceLocale, err = normalizeReleaseDocumentLocale(requestedSourceLocale)
+		if err != nil {
+			return nil, errs.InvalidArgument("source_locale", "must be a supported canonical locale")
+		}
+	}
 
 	release := model.Release{
 		Type:   releaseTypeToString(req.Msg.Type),
@@ -385,7 +394,10 @@ func (s *ReleaseService) CreateRelease(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, createCan); err != nil {
 			return err
 		}
-		sourceLocale := resolveInitialSourceLocale(ctx, tx, s.kratosClient, req.Header().Get("Accept-Language"))
+		sourceLocale := requestedSourceLocale
+		if sourceLocale == "" {
+			sourceLocale = resolveInitialSourceLocale(ctx, tx, s.kratosClient, req.Header().Get("Accept-Language"))
+		}
 		release.SourceLocale = sourceLocale
 		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile:      releaseContentProfile,
