@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/config"
@@ -14,9 +15,9 @@ import (
 )
 
 const (
-	// fontCSSCacheVersion isolates deterministic WOFF2 CSS from legacy cache
-	// entries whose format depended on the first client's User-Agent.
-	fontCSSCacheVersion = "v2"
+	// fontCSSCacheVersion bypasses legacy CSS and browser-cached font responses
+	// that did not vary their CORS headers by Origin.
+	fontCSSCacheVersion = "v3"
 
 	// googleFontsWOFF2UserAgent is a fixed capability token, not a client
 	// identity. Google Fonts varies CSS by User-Agent; this evergreen browser
@@ -24,6 +25,8 @@ const (
 	// Firefox instead of letting the first client poison the shared cache.
 	googleFontsWOFF2UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+var googleFontURL = regexp.MustCompile(`https://fonts\.gstatic\.com/[^\s)'"<>]+`)
 
 type FontCSSProxy struct {
 	cfg           *config.Config
@@ -51,8 +54,7 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cache key based on schema version and query hash (includes family,
-	// display, etc.). The version deliberately bypasses User-Agent-dependent
-	// CSS cached before responses became deterministic.
+	// display, etc.). The version also bypasses CSS with unversioned font URLs.
 	queryHash := p.hashQuery(query)
 	cacheKey := "font-css/" + fontCSSCacheVersion + "/" + queryHash + ".css"
 
@@ -99,7 +101,19 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	css := strings.ReplaceAll(string(body), "https://fonts.gstatic.com", p.cfg.CDNPublicURL+"/fonts")
+	css := googleFontURL.ReplaceAllStringFunc(string(body), func(fontURL string) string {
+		fontURL = strings.Replace(fontURL, "https://fonts.gstatic.com", p.cfg.CDNPublicURL+"/fonts", 1)
+		fontURL, fragment, hasFragment := strings.Cut(fontURL, "#")
+		separator := "?"
+		if strings.Contains(fontURL, "?") {
+			separator = "&"
+		}
+		fontURL += separator + "v=" + strings.TrimPrefix(fontCSSCacheVersion, "v")
+		if hasFragment {
+			fontURL += "#" + fragment
+		}
+		return fontURL
+	})
 	data = []byte(css)
 
 	cacheResponseInBackground(

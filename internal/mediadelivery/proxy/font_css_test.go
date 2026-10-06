@@ -119,6 +119,46 @@ func TestFontCSSProxyUsesDeterministicCacheAcrossClientUserAgents(t *testing.T) 
 	}
 }
 
+func TestFontCSSProxyBypassesLegacyCacheAndVersionsRewrittenURLs(t *testing.T) {
+	const query = "family=Inter&display=swap&v=3"
+	const upstreamCSS = `@font-face {
+  src: url(https://fonts.gstatic.com/s/inter/font.woff2) format('woff2'),
+       url("https://fonts.gstatic.com/s/inter/other.woff2?token=a%2Bb#face") format("woff2"),
+       url('https://fonts.gstatic.com/s/inter/third.woff2') format('woff2');
+} /* https://unrelated.example/font.woff2 */`
+	const wantCSS = `@font-face {
+  src: url(https://cdn.example/fonts/s/inter/font.woff2?v=3) format('woff2'),
+       url("https://cdn.example/fonts/s/inter/other.woff2?token=a%2Bb&v=3#face") format("woff2"),
+       url('https://cdn.example/fonts/s/inter/third.woff2?v=3') format('woff2');
+} /* https://unrelated.example/font.woff2 */`
+	proxy := NewFontCSSProxy(fontCSSProxyConfig("http://cache.invalid", "https://fonts.example"), nil)
+	legacyKey := "font-css/v2/" + proxy.hashQuery(query) + ".css"
+	cache := &fontCSSMemoryCache{objects: map[string][]byte{legacyKey: []byte("legacy CSS")}}
+	proxy.storage, proxy.runBackground = cache, runSynchronously
+	upstreamCalls := 0
+	proxy.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalls++
+		if r.URL.RawQuery != query {
+			t.Fatalf("upstream query = %q", r.URL.RawQuery)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(upstreamCSS))}, nil
+	})}
+	for range 2 {
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fonts/css2?"+query, nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != wantCSS {
+			t.Fatalf("status=%d CSS=%q", rec.Code, rec.Body.String())
+		}
+	}
+	wantKey := "font-css/v3/" + proxy.hashQuery(query) + ".css"
+	if upstreamCalls != 1 || len(cache.putKeys) != 1 || cache.putKeys[0] != wantKey {
+		t.Fatalf("upstream calls=%d cache writes=%q", upstreamCalls, cache.putKeys)
+	}
+	if string(cache.objects[legacyKey]) != "legacy CSS" {
+		t.Fatal("legacy cache entry changed")
+	}
+}
+
 func TestFontCSSProxyFailureModes(t *testing.T) {
 	s3 := newProxyFakeMinioServer(t, map[string]proxyFakeS3Object{})
 	defer s3.Close()
