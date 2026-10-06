@@ -15,13 +15,8 @@ var fixedPageRouteNamespaces = map[string]struct{}{
 	"changelog": {}, "favicon.ico": {}, "files": {}, "login": {},
 	"manifest.webmanifest": {}, "my": {}, "onboarding": {}, "privacy": {},
 	"robots.txt": {}, "s": {}, "sitemap": {}, "sitemap.xml": {}, "sitemaps": {},
-	"subscribe": {}, "tag": {}, "terms": {}, "tools": {}, "unsubscribe": {},
+	"subscribe": {}, "tag": {}, "terms": {}, "unsubscribe": {},
 	"user": {}, "verification": {}, "verify": {},
-}
-
-// These exact roots are CMS Pages while their child paths remain app-owned.
-var cmsPageRootExceptions = map[string]struct{}{
-	"tools": {},
 }
 
 type pageRouteResource struct {
@@ -49,15 +44,15 @@ func pageSlugRoot(slug string) string {
 	return strings.ToLower(root)
 }
 
-// IsReservedPagePath reports whether the first route segment is reserved by a
-// fixed site route.
+// IsReservedPagePath reports whether a fixed site route owns this namespace or path.
 func IsReservedPagePath(slug string) bool {
 	slug = strings.TrimSpace(slug)
 	root := pageSlugRoot(slug)
 	if _, reserved := fixedPageRouteNamespaces[root]; reserved {
-		if _, cmsRoot := cmsPageRootExceptions[root]; cmsRoot && !strings.Contains(slug, "/") {
-			return false
-		}
+		return true
+	}
+	lowerPath := strings.ToLower(slug)
+	if lowerPath == "tools/p5-runner" || strings.HasPrefix(lowerPath, "tools/p5-runner/") {
 		return true
 	}
 	// Resource detail routes are conditionally occupied by a current entity.

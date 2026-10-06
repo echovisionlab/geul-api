@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -78,7 +79,10 @@ func (s *PageService) pageResponseByWithReadyOg(
 	if err != nil {
 		return nil, err
 	}
-	protoPage := s.toProtoPage(page, ogAsset, featuredDeliveries[page.ID])
+	protoPage, err := s.toProtoPage(page, ogAsset, featuredDeliveries[page.ID])
+	if err != nil {
+		return nil, err
+	}
 	protoPage.Document = document
 	protoPage.Revision = snapshot.Document.Revision.String()
 	protoPage.BlockMedia = blockMedia
@@ -118,6 +122,9 @@ func (s *PageService) loadPageContentProjection(
 		)
 		if err != nil {
 			return errs.NotFound("page", value)
+		}
+		if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
+			return err
 		}
 		documentID, err := loadPageContentDocumentIDForRead(ctx, tx, page.ID)
 		if err != nil {
@@ -162,8 +169,13 @@ func (s *PageService) toProtoPage(
 	p *model.Page,
 	ogAsset *commonv1.AssetRef,
 	featuredImage *commonv1.MediaDelivery,
-) *managev1.Page {
+) (*managev1.Page, error) {
+	accessPolicy, err := pageaccess.Decode(p.AccessPolicy)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	page := &managev1.Page{
+		AccessPolicy:          accessPolicy,
 		Id:                    p.ID,
 		Title:                 p.Title,
 		SourceLocale:          p.SourceLocale,
@@ -185,11 +197,16 @@ func (s *PageService) toProtoPage(
 	if p.PublishedAt != nil {
 		page.PublishedAt = timestamppb.New(*p.PublishedAt)
 	}
-	return page
+	return page, nil
 }
 
-func (s *PageService) toProtoPageSummary(p *model.Page) *managev1.PageSummary {
+func (s *PageService) toProtoPageSummary(p *model.Page) (*managev1.PageSummary, error) {
+	accessPolicy, err := pageaccess.Decode(p.AccessPolicy)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	summary := &managev1.PageSummary{
+		AccessPolicy: accessPolicy,
 		Id:           p.ID,
 		Title:        p.Title,
 		SourceLocale: p.SourceLocale,
@@ -206,7 +223,7 @@ func (s *PageService) toProtoPageSummary(p *model.Page) *managev1.PageSummary {
 		summary.PublishedAt = timestamppb.New(*p.PublishedAt)
 	}
 
-	return summary
+	return summary, nil
 }
 
 // CheckPageSlugAvailable checks if a slug is available.

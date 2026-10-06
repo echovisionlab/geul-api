@@ -23,6 +23,7 @@ func TestPageContentUpdatedFieldSpecs(t *testing.T) {
 		"status":              {path: "state.status", kind: state},
 		"showTitle":           {path: "settings.show_title", kind: configuration},
 		"documentLayout":      {path: "settings.document_layout", kind: configuration},
+		"accessPolicy":        {path: "settings.access_policy", kind: configuration},
 		"sourceLocale":        {path: "settings.source_locale", kind: configuration},
 	}, pageContentUpdatedFieldSpecs)
 }

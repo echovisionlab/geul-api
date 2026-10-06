@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	sitemapdomain "github.com/echovisionlab/geul-api/internal/sitemap"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -53,6 +54,7 @@ func (s *PostgresStore) LoadHomepage(ctx context.Context, pageID string) (*sitem
 		Select("id, published_at, updated_at").
 		Where("id = ?", pageID).
 		Where("status = ?", managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()).
+		Where(pageaccess.PublicSQL).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -174,6 +176,9 @@ func (s *PostgresStore) listEntries(
 		Table(table).
 		Select("id, slug, published_at, updated_at, created_at").
 		Where("status IN ?", statuses)
+	if table == "page" {
+		query = query.Where(pageaccess.PublicSQL)
+	}
 	if requireSlug {
 		query = query.Where("slug IS NOT NULL AND slug <> ''")
 	}

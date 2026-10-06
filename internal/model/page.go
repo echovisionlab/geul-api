@@ -13,21 +13,22 @@ type PageStatus string
 // Page represents a CMS page (Domain Object)
 // Maps to: schema migrations - page table
 type Page struct {
-	ID                    string         `gorm:"column:id;primaryKey"`
-	ContentDocumentID     *string        `gorm:"column:content_document_id;type:uuid"`
-	SourceLocale          string         `gorm:"column:source_locale;type:text;not null;default:en"`
-	Title                 string         `gorm:"-"`
-	Summary               *string        `gorm:"-"`
-	Slug                  *string        `gorm:"column:slug"`
-	DocumentLayout        DocumentLayout `gorm:"column:document_layout;type:jsonb;not null"`
-	Status                PageStatus     `gorm:"column:status"`
-	ShowTitle             bool           `gorm:"column:show_title"`
-	FeaturedImageFileID   *string        `gorm:"column:featured_image_file_id;type:uuid"`
-	OgAssetID             *string        `gorm:"column:og_asset_id;type:uuid"`
-	SourceLocaleOgAssetID *string        `gorm:"-"`
-	PublishedAt           *time.Time     `gorm:"column:published_at"`
-	CreatedAt             time.Time      `gorm:"column:created_at"`
-	UpdatedAt             time.Time      `gorm:"column:updated_at"`
+	ID                    string          `gorm:"column:id;primaryKey"`
+	ContentDocumentID     *string         `gorm:"column:content_document_id;type:uuid"`
+	SourceLocale          string          `gorm:"column:source_locale;type:text;not null;default:en"`
+	Title                 string          `gorm:"-"`
+	Summary               *string         `gorm:"-"`
+	Slug                  *string         `gorm:"column:slug"`
+	DocumentLayout        DocumentLayout  `gorm:"column:document_layout;type:jsonb;not null"`
+	AccessPolicy          json.RawMessage `gorm:"column:access_policy;type:jsonb;not null;default:'{}'"`
+	Status                PageStatus      `gorm:"column:status"`
+	ShowTitle             bool            `gorm:"column:show_title"`
+	FeaturedImageFileID   *string         `gorm:"column:featured_image_file_id;type:uuid"`
+	OgAssetID             *string         `gorm:"column:og_asset_id;type:uuid"`
+	SourceLocaleOgAssetID *string         `gorm:"-"`
+	PublishedAt           *time.Time      `gorm:"column:published_at"`
+	CreatedAt             time.Time       `gorm:"column:created_at"`
+	UpdatedAt             time.Time       `gorm:"column:updated_at"`
 }
 
 func (Page) TableName() string {

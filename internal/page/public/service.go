@@ -20,6 +20,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -36,6 +38,7 @@ type PageService struct {
 	shareLinks  ShareLinkAccessChecker
 	media       MediaResolver
 	blocks      *contentblock.Store
+	permissions pageaccess.PermissionChecker
 }
 
 type PageServiceOption func(*PageService)
@@ -53,6 +56,10 @@ func WithPageContentBlockStore(store *contentblock.Store) PageServiceOption {
 	return func(s *PageService) {
 		s.blocks = store
 	}
+}
+
+func WithPageAccessPermissionChecker(checker pageaccess.PermissionChecker) PageServiceOption {
+	return func(s *PageService) { s.permissions = checker }
 }
 
 var pageLocalizationSpec = publiccontent.Spec{
@@ -259,6 +266,7 @@ func (s *PageService) buildPageResponse(
 	var page model.Page
 	var mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
 	visible := false
+	accessReason := commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		if err := tx.WithContext(ctx).
@@ -302,9 +310,17 @@ func (s *PageService) buildPageResponse(
 				}
 			}
 		} else {
+			accessReason, err = pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
+			if err != nil {
+				return errs.Internal(err)
+			}
+			if accessReason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+				return nil
+			}
 			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessPublic
 		}
 		visible = true
+		accessReason = commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED
 
 		documentID, err := pagedomain.LoadPageContentDocumentIDForPublicRead(ctx, tx, page.ID)
 		if err != nil {
@@ -368,11 +384,16 @@ func (s *PageService) buildPageResponse(
 		return nil, err
 	}
 	if !visible {
-		return connect.NewResponse(&openv1.GetPageResponse{}), nil
+		return connect.NewResponse(&openv1.GetPageResponse{AccessReason: accessReason}), nil
+	}
+	accessPolicy, err := pageaccess.Decode(page.AccessPolicy)
+	if err != nil {
+		return nil, errs.Internal(err)
 	}
 	pagedomain.OverlayPageSourceLocaleMetadataForPublic(&page, sourceMetadata)
 
 	protoPage := &openv1.Page{
+		AccessPolicy:   accessPolicy,
 		Id:             page.ID,
 		Title:          page.Title,
 		ShowTitle:      page.ShowTitle,
@@ -424,8 +445,9 @@ func (s *PageService) buildPageResponse(
 	}
 
 	return connect.NewResponse(&openv1.GetPageResponse{
-		Page:       protoPage,
-		BlockMedia: blockMedia,
+		AccessReason: accessReason,
+		Page:         protoPage,
+		BlockMedia:   blockMedia,
 	}), nil
 }
 

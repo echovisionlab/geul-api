@@ -195,10 +195,11 @@ func newContentBlockMediaUnitDB(t *testing.T) *gorm.DB {
 	)
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`ATTACH DATABASE ':memory:' AS kratos`).Error)
+	// SQLite returns the Page policy as bytes, matching the PostgreSQL JSONB driver.
 	require.NoError(t, db.Exec(`
 		CREATE TABLE content_document (id TEXT PRIMARY KEY);
 		CREATE TABLE post (id TEXT PRIMARY KEY, status TEXT NOT NULL, content_document_id TEXT NOT NULL);
-		CREATE TABLE page (id TEXT PRIMARY KEY, status TEXT NOT NULL, content_document_id TEXT NOT NULL);
+		CREATE TABLE page (id TEXT PRIMARY KEY, status TEXT NOT NULL, content_document_id TEXT NOT NULL, access_policy BLOB NOT NULL DEFAULT X'7B7D');
 		CREATE TABLE work (id TEXT PRIMARY KEY, status TEXT NOT NULL, content_document_id TEXT NOT NULL);
 		CREATE TABLE program_event (id TEXT PRIMARY KEY, status TEXT NOT NULL, content_document_id TEXT NOT NULL);
 		CREATE TABLE share_link (
