@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/echovisionlab/geul-api/compare/v1.4.1...v1.4.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **mcp:** accept complete HTTPS file source URLs ([#88](https://github.com/echovisionlab/geul-api/issues/88)) ([11febec](https://github.com/echovisionlab/geul-api/commit/11febec08c854470f9d79ded12448b1e9fcb0490))
+
 ## [1.4.1](https://github.com/echovisionlab/geul-api/compare/v1.4.0...v1.4.1) (2026-10-05)
 
 
