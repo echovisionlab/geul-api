@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/echovisionlab/geul-api/compare/v1.4.3...v1.5.0) (2026-10-06)
+
+
+### Features
+
+* **page:** enforce audiences and support independent tool embeds ([#92](https://github.com/echovisionlab/geul-api/issues/92)) ([318d3d0](https://github.com/echovisionlab/geul-api/commit/318d3d0816f48fecd4fb81de84085378ca052436))
+
 ## [1.4.3](https://github.com/echovisionlab/geul-api/compare/v1.4.2...v1.4.3) (2026-10-06)
 
 
