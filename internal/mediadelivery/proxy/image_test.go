@@ -171,14 +171,25 @@ func TestParseImageOptions(t *testing.T) {
 
 func TestParsePublicImageOptions(t *testing.T) {
 	for name, query := range map[string]map[string][]string{
-		"unmanaged width": {"w": {"100"}},
-		"explicit format": {"format": {"webp"}},
-		"unknown option":  {"dpr": {"2"}},
-		"duplicate width": {"w": {"320", "640"}},
+		"unmanaged width":     {"w": {"100"}},
+		"poster height width": {"w": {"240"}},
+		"unmanaged height":    {"h": {"241"}},
+		"oversized width":     {"w": {"4097"}},
+		"oversized height":    {"h": {"4097"}},
+		"zero height":         {"h": {"0"}},
+		"quality over max":    {"q": {"101"}},
+		"explicit format":     {"format": {"webp"}},
+		"unknown option":      {"dpr": {"2"}},
+		"duplicate width":     {"w": {"320", "640"}},
+		"duplicate height":    {"h": {"240", "256"}},
 	} {
 		if _, err := parseImageOptions(query, true); err == nil {
 			t.Fatalf("public %s accepted", name)
 		}
+	}
+	poster, err := parseImageOptions(map[string][]string{"w": {"160"}, "h": {"240"}, "fit": {"fill"}}, true)
+	if err != nil || poster != (imageOptions{Width: 160, Height: 240, Quality: 80, Fit: "fill"}) {
+		t.Fatalf("public poster options = %#v, err=%v", poster, err)
 	}
 	for _, quality := range []int{1, 37, 80, 100} {
 		got, err := parseImageOptions(map[string][]string{"w": {"320"}, "q": {strconv.Itoa(quality)}, "fit": {"fill"}}, true)

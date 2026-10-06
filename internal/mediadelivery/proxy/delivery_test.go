@@ -187,12 +187,23 @@ func TestImageTransformationUsesCanonicalObjectKey(t *testing.T) {
 	}, imgproxy)
 	defer closeServers()
 
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/asset/"+testAssetID+"/image.png?w=320&q=80", nil))
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "transformed", rec.Body.String())
-	require.Contains(t, gotPath, "/plain/s3://media/asset/"+testAssetID+".png")
-	require.Equal(t, "public, max-age=31536000, immutable", rec.Header().Get("Cache-Control"))
+	for _, tt := range []struct {
+		name, query, resize string
+	}{
+		{"width only", "w=320&q=80", "/rs:fit:320:0/"},
+		{"poster thumbnail", "w=160&h=240&fit=fill&q=80", "/rs:fill:160:240/"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/asset/"+testAssetID+"/image.png?"+tt.query, nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, "transformed", rec.Body.String())
+			require.Contains(t, gotPath, tt.resize)
+			require.NotContains(t, gotPath, "/insecure/")
+			require.Contains(t, gotPath, "/plain/s3://media/asset/"+testAssetID+".png")
+			require.Equal(t, "public, max-age=31536000, immutable", rec.Header().Get("Cache-Control"))
+		})
+	}
 }
 
 func TestExtensionContentTypeMatrix(t *testing.T) {
