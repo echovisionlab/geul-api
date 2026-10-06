@@ -85,6 +85,33 @@ func TestFontProxyFetchesUpstreamOnCacheMiss(t *testing.T) {
 	}
 }
 
+func TestFontProxyVersionedURLReusesCachedBytes(t *testing.T) {
+	cache := &fontCSSMemoryCache{objects: make(map[string][]byte)}
+	proxy := NewFontProxy(fontProxyConfig("http://cache.invalid", "https://fonts.example"), nil)
+	proxy.storage, proxy.runBackground = cache, runSynchronously
+	upstreamCalls := 0
+	proxy.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		upstreamCalls++
+		if r.URL.Path != "/s/inter/font.woff2" || r.URL.RawQuery != "" {
+			t.Fatalf("upstream URL = %q", r.URL.String())
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("font bytes"))}, nil
+	})}
+	for _, suffix := range []string{"", "?v=3"} {
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fonts/s/inter/font.woff2"+suffix, nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != "font bytes" {
+			t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+		}
+	}
+	if upstreamCalls != 1 || len(cache.putKeys) != 1 || len(cache.objects) != 1 {
+		t.Fatalf("upstream calls=%d cache writes=%q objects=%d", upstreamCalls, cache.putKeys, len(cache.objects))
+	}
+	if cache.getKeys[0] != "fonts/s/inter/font.woff2" || cache.getKeys[0] != cache.getKeys[1] {
+		t.Fatalf("cache keys = %q", cache.getKeys)
+	}
+}
+
 func TestFontProxyUpstreamFailureModesAndDefaultContentType(t *testing.T) {
 	tests := []struct {
 		name        string

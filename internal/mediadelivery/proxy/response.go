@@ -12,6 +12,7 @@ func writeCacheableResponse(
 ) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", cacheControl)
+	w.Header().Add("Vary", "Origin")
 	if origin := r.Header.Get("Origin"); origin != "" && isAllowedOrigin(origin, allowedOrigins) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 	}
