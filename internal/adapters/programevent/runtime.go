@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -33,8 +34,15 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	bindingKey string,
 	expectedKind string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).BindReadyAssetForSourceFile(
+	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
+	asset, err := lifecycle.BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
+	)
+	if expectedKind != "poster" || connect.CodeOf(err) != connect.CodeNotFound {
+		return asset, err
+	}
+	return lifecycle.BindReadyAssetForSourceFile(
+		ctx, sourceFileID, ownerType, ownerID, bindingKey, "image",
 	)
 }
 
