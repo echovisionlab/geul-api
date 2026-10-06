@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/echovisionlab/geul-api/compare/v1.5.1...v1.5.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **media:** vary font CORS responses by origin and bypass stale cache ([#96](https://github.com/echovisionlab/geul-api/issues/96)) ([f7a604d](https://github.com/echovisionlab/geul-api/commit/f7a604dc7b0b3ba193746f2a153eb1034eeef033))
+
 ## [1.5.1](https://github.com/echovisionlab/geul-api/compare/v1.5.0...v1.5.1) (2026-10-06)
 
 
