@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/echovisionlab/geul-api/compare/v1.5.0...v1.5.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **media:** preserve poster image delivery aspect ratio ([#94](https://github.com/echovisionlab/geul-api/issues/94)) ([f36edf3](https://github.com/echovisionlab/geul-api/commit/f36edf33139dfa27295b40ed25fb0a6af8d3dc3e))
+
 ## [1.5.0](https://github.com/echovisionlab/geul-api/compare/v1.4.3...v1.5.0) (2026-10-06)
 
 
