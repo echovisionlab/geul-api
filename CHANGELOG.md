@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/echovisionlab/geul-api/compare/v1.4.2...v1.4.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **events:** reuse uploaded image assets for posters ([#90](https://github.com/echovisionlab/geul-api/issues/90)) ([4a867c3](https://github.com/echovisionlab/geul-api/commit/4a867c3579b09a26c0ba474f972863ea88664b20))
+
 ## [1.4.2](https://github.com/echovisionlab/geul-api/compare/v1.4.1...v1.4.2) (2026-10-06)
 
 
