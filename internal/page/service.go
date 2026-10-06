@@ -2,6 +2,7 @@ package page
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -98,10 +100,11 @@ func NewAuditedPageService(
 }
 
 type lockedPageMenuTargetState struct {
-	Slug              *string    `gorm:"column:slug"`
-	ShowTitle         bool       `gorm:"column:show_title"`
-	ContentDocumentID *uuid.UUID `gorm:"column:content_document_id;type:uuid"`
-	UpdatedAt         time.Time  `gorm:"column:updated_at"`
+	Slug              *string         `gorm:"column:slug"`
+	ShowTitle         bool            `gorm:"column:show_title"`
+	ContentDocumentID *uuid.UUID      `gorm:"column:content_document_id;type:uuid"`
+	UpdatedAt         time.Time       `gorm:"column:updated_at"`
+	AccessPolicy      json.RawMessage `gorm:"column:access_policy"`
 }
 
 func lockPageMenuTargetStateForUpdate(
@@ -113,7 +116,7 @@ func lockPageMenuTargetStateForUpdate(
 	if err := db.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Table("page").
-		Select("slug", "show_title", "content_document_id", "updated_at").
+		Select("slug", "show_title", "content_document_id", "updated_at", "access_policy").
 		Where("id = ?", pageID).
 		Take(&state).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -236,7 +239,10 @@ func (s *PageService) ListPagesAdmin(
 	// Convert to proto (summary without content)
 	protoPages := make([]*managev1.PageSummary, len(pages))
 	for i := range pages {
-		protoPages[i] = s.toProtoPageSummary(&pages[i])
+		protoPages[i], err = s.toProtoPageSummary(&pages[i])
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return connect.NewResponse(&managev1.ListPagesAdminResponse{
@@ -265,6 +271,14 @@ func (s *PageService) CreatePage(
 		return nil, errs.Required("title")
 	}
 	normalizedSlug, slugPresent := normalizeOptionalNullableString(req.Msg.Slug)
+	accessPolicy, err := pageaccess.Normalize(req.Msg.AccessPolicy)
+	if err != nil {
+		return nil, errs.InvalidArgument("access_policy", err.Error())
+	}
+	encodedPolicy, err := pageaccess.Encode(accessPolicy)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 
 	// Check slug uniqueness before creating
 	if slugPresent && normalizedSlug != nil {
@@ -275,6 +289,7 @@ func (s *PageService) CreatePage(
 
 	page := &model.Page{
 		DocumentLayout: model.DefaultDocumentLayout(),
+		AccessPolicy:   encodedPolicy,
 		Status:         model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()),
 		ShowTitle:      true, // Default
 		CreatedAt:      time.Now(),
@@ -289,11 +304,14 @@ func (s *PageService) CreatePage(
 	}
 	// Note: featured_image_file_id is set via SetPageFeaturedImage RPC
 
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(
+	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(
 		tx *gorm.DB,
 		write authzmutation.WriteRelationships,
 	) error {
 		if err := requireLockedPageCreate(ctx, tx, s.spiceDB); err != nil {
+			return err
+		}
+		if err := validatePageAccessPolicyTags(ctx, tx, accessPolicy); err != nil {
 			return err
 		}
 		if page.Slug != nil {
@@ -405,12 +423,17 @@ func (s *PageService) UpdatePage(
 	if changed {
 		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManagePageContentUpdatedEvent(req.Msg))
 	}
+	accessPolicy, err := pageaccess.Decode(page.AccessPolicy)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	return connect.NewResponse(&managev1.UpdatePageResponse{
-		Id:        page.ID,
-		Changed:   changed,
-		Slug:      page.Slug,
-		ShowTitle: page.ShowTitle,
-		UpdatedAt: timestamppb.New(page.UpdatedAt),
+		Id:           page.ID,
+		Changed:      changed,
+		Slug:         page.Slug,
+		ShowTitle:    page.ShowTitle,
+		UpdatedAt:    timestamppb.New(page.UpdatedAt),
+		AccessPolicy: accessPolicy,
 	}), nil
 }
 

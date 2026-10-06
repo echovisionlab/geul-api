@@ -18,7 +18,7 @@ func TestPageRouteNamespaceInventory(t *testing.T) {
 	if want := []string{
 		"_next", "account", "admin", "api", "auth", "category", "changelog", "favicon.ico",
 		"files", "login", "manifest.webmanifest", "my", "onboarding", "privacy", "robots.txt",
-		"s", "sitemap", "sitemap.xml", "sitemaps", "subscribe", "tag", "terms", "tools",
+		"s", "sitemap", "sitemap.xml", "sitemaps", "subscribe", "tag", "terms",
 		"unsubscribe", "user", "verification", "verify",
 	}; !slices.Equal(fixed, want) {
 		t.Fatalf("fixed Page route namespace drift: got %v, want %v", fixed, want)
@@ -32,7 +32,7 @@ func TestReservedPageSlugNamespace(t *testing.T) {
 	for _, slug := range []string{
 		"admin", "ADMIN", "admin/users", "_next/static", "files", "sitemap.xml",
 		"manifest.webmanifest", "robots.txt", "verification", "category/news",
-		"privacy/history", "tools/transcode", "tools/anything",
+		"privacy/history", "tools/p5-runner", "TOOLS/P5-RUNNER", "tools/p5-runner/child",
 	} {
 		if !IsReservedPagePath(slug) {
 			t.Fatalf("expected %q to be reserved", slug)
@@ -41,6 +41,8 @@ func TestReservedPageSlugNamespace(t *testing.T) {
 	for _, slug := range []string{
 		"edit", "EDIT", "about", "", "page-edit", "some/admin", "some/where",
 		"page", "pages", "posts", "works", "artists", "tools", "TOOLS",
+		"tools/transcode", "tools/youtube-audio", "tools/hwp", "tools/portadj",
+		"tools/anything", "tools/future-tool/details", "tools/p5-runner-extra",
 		"releases", "labels", "forms", "events", "page", "pages", "post", "artist", "label", "release", "work", "form",
 		"posts/article", "WORKS/example", "series/example", "campaigns/1", "event-series/example",
 		"works/something/somewhere", "campaigns/example/more", "series/example/more", "event-series/example/more",
@@ -106,7 +108,8 @@ func TestPageSlugRoutePathRejectsMalformedPathsAndRouteCollisions(t *testing.T) 
 
 	for _, slug := range []string{
 		"", " about", "about ", "/about", "about/", "about//team",
-		"about/./team", "about/../team", "admin/team", "tools/transcode",
+		"about/./team", "about/../team", "admin/team", "tools/p5-runner",
+		"TOOLS/P5-RUNNER", "tools/p5-runner/child",
 	} {
 		err := ValidatePagePath(slug)
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
@@ -119,6 +122,12 @@ func TestPageSlugRoutePathRejectsMalformedPathsAndRouteCollisions(t *testing.T) 
 		"works",
 		"posts",
 		"tools",
+		"tools/transcode",
+		"tools/youtube-audio",
+		"tools/hwp",
+		"tools/portadj",
+		"tools/future-tool/details",
+		"tools/p5-runner-extra",
 		"some/where",
 		"some/admin",
 		"works/something/somewhere",

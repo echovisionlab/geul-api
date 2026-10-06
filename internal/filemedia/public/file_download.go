@@ -18,6 +18,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -74,6 +76,7 @@ func (s *FileService) AuthorizeDownload(
 		}
 		mediaAccess, allowed, accessErr := s.resolveContentOwnerDownloadAccess(
 			ctx,
+			tx,
 			req.Msg.EntityType,
 			entityID,
 			ownerStatus,
@@ -121,6 +124,16 @@ func (s *FileService) AuthorizeDownload(
 		if !ownerFound || ownerStatus != evaluatedStatus {
 			response = connect.NewResponse(unavailableFileDownloadResponse())
 			return nil
+		}
+		if req.Msg.EntityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE && ownerStatus == managev1.PageStatus_PAGE_STATUS_PUBLISHED.String() {
+			reason, err := pageaccess.EvaluateStored(ctx, tx, s.spiceDB, entityID)
+			if err != nil {
+				return errs.Internal(err)
+			}
+			if reason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+				response = connect.NewResponse(unavailableFileDownloadResponse())
+				return nil
+			}
 		}
 		draftPrincipalActive, principalErr := lockDirectDraftDownloadPrincipal(ctx, tx, evaluatedMediaAccess)
 		if principalErr != nil {
@@ -431,6 +444,7 @@ func (s *FileService) resolveReleaseTrackDownloadSource(
 
 func (s *FileService) resolveContentOwnerDownloadAccess(
 	ctx context.Context,
+	db *gorm.DB,
 	entityType openv1.PublicMediaEntityType,
 	entityID string,
 	ownerStatus string,
@@ -454,6 +468,10 @@ func (s *FileService) resolveContentOwnerDownloadAccess(
 		return resolvedMediaAccess{}, false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
 	}
 	if slices.Contains(publicStatuses, ownerStatus) {
+		if entityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE {
+			reason, err := pageaccess.EvaluateStored(ctx, db, s.spiceDB, entityID)
+			return resolvedMediaAccess{}, reason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, err
+		}
 		return resolvedMediaAccess{}, true, nil
 	}
 	allowed, err := hasDraftResourceView(ctx, s.spiceDB, viewAction, entityID)

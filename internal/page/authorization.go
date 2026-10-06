@@ -11,6 +11,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -30,7 +32,17 @@ func (a *PolicyAuthority) RequireLockedView(ctx context.Context, tx *gorm.DB, pa
 	if a == nil {
 		return errs.DependencyUnavailable("Page policy access")
 	}
-	return requireLockedPagePermission(ctx, tx, a.checker, pageID, policyv1.Page.View)
+	if err := requireLockedPagePermission(ctx, tx, a.checker, pageID, policyv1.Page.View); err != nil {
+		return err
+	}
+	reason, err := pageaccess.EvaluateStored(ctx, tx, a.checker, pageID)
+	if err != nil {
+		return errs.Internal(err)
+	}
+	if reason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+		return errs.PermissionDenied("you do not have permission to access this page")
+	}
+	return nil
 }
 
 func (a *PolicyAuthority) RequireLockedEdit(ctx context.Context, tx *gorm.DB, pageID string) error {

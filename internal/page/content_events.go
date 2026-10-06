@@ -30,6 +30,7 @@ var pageContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
 	"status":              {path: "state.status", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE},
 	"showTitle":           {path: "settings.show_title", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 	"documentLayout":      {path: "settings.document_layout", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
+	"accessPolicy":        {path: "settings.access_policy", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 	"sourceLocale":        {path: "settings.source_locale", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 }
 
@@ -74,12 +75,15 @@ func buildManagePageContentUpdatedEvent(request *managev1.UpdatePageRequest) *ma
 	if request == nil {
 		return nil
 	}
-	fields := make([]string, 0, 2)
+	fields := make([]string, 0, 3)
 	if request.Slug != nil {
 		fields = append(fields, "slug")
 	}
 	if request.ShowTitle != nil {
 		fields = append(fields, "showTitle")
+	}
+	if request.AccessPolicy != nil {
+		fields = append(fields, "accessPolicy")
 	}
 	return buildContentUpdatedEvent(
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,

@@ -7,21 +7,26 @@ import (
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"google.golang.org/protobuf/proto"
 )
 
 type pageUpdate struct {
 	fields         structured.Fields
 	normalizedSlug *string
 	slugPresent    bool
+	accessPolicy   *commonv1.PageAccessPolicy
 }
 
 func (s *PageService) preparePageUpdate(
@@ -48,6 +53,18 @@ func (s *PageService) preparePageUpdate(
 	if request.ShowTitle != nil {
 		update.fields["show_title"] = *request.ShowTitle
 	}
+	if request.AccessPolicy != nil {
+		policy, err := pageaccess.Normalize(request.AccessPolicy)
+		if err != nil {
+			return pageUpdate{}, errs.InvalidArgument("access_policy", err.Error())
+		}
+		encoded, err := pageaccess.Encode(policy)
+		if err != nil {
+			return pageUpdate{}, errs.Internal(err)
+		}
+		update.accessPolicy = policy
+		update.fields["access_policy"] = encoded
+	}
 	return update, nil
 }
 
@@ -64,6 +81,13 @@ func (s *PageService) applyPageUpdate(ctx context.Context, page *model.Page, upd
 		if err := validatePageUpdateSlug(ctx, tx, page.ID, update); err != nil {
 			return err
 		}
+		if err := validatePageAccessPolicyTags(ctx, tx, update.accessPolicy); err != nil {
+			return err
+		}
+		currentPolicy, err := pageaccess.Decode(lockedPage.AccessPolicy)
+		if err != nil {
+			return errs.Internal(err)
+		}
 		// Keep the root value read under FOR UPDATE as an immutable rewrite
 		// input. The Page row update below must never influence which legacy
 		// slug-only Menu targets are selected for the same transaction.
@@ -71,7 +95,11 @@ func (s *PageService) applyPageUpdate(ctx context.Context, page *model.Page, upd
 		page.Slug = cloneOptionalString(previousSlug)
 		page.ShowTitle = lockedPage.ShowTitle
 		page.UpdatedAt = lockedPage.UpdatedAt
+		page.AccessPolicy = lockedPage.AccessPolicy
 		changedFields := pageUpdateChangedFields(lockedPage, update)
+		if update.accessPolicy != nil && !proto.Equal(currentPolicy, update.accessPolicy) {
+			changedFields = append(changedFields, "access_policy")
+		}
 		if len(changedFields) == 0 {
 			return nil
 		}
@@ -87,6 +115,12 @@ func (s *PageService) applyPageUpdate(ctx context.Context, page *model.Page, upd
 			page.ShowTitle = showTitle
 		}
 		page.UpdatedAt = mutationNow
+		if update.accessPolicy != nil {
+			page.AccessPolicy, err = pageaccess.Encode(update.accessPolicy)
+			if err != nil {
+				return errs.Internal(err)
+			}
+		}
 		if err := s.updatePageMenuTargetAfterSlugChange(ctx, tx, page.ID, previousSlug, update); err != nil {
 			return err
 		}
@@ -110,6 +144,22 @@ func pageUpdateChangedFields(page *lockedPageMenuTargetState, update pageUpdate)
 		fields = append(fields, "show_title")
 	}
 	return fields
+}
+
+func validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *commonv1.PageAccessPolicy) error {
+	if policy == nil || len(policy.UserTagIds) == 0 {
+		return nil
+	}
+	var ids []string
+	if err := tx.WithContext(ctx).Model(&model.UserTag{}).
+		Clauses(clause.Locking{Strength: "SHARE"}).
+		Where("id IN ?", policy.UserTagIds).Pluck("id", &ids).Error; err != nil {
+		return errs.Internal(err)
+	}
+	if len(ids) != len(policy.UserTagIds) {
+		return errs.InvalidArgument("access_policy.user_tag_ids", "selected user tag does not exist")
+	}
+	return nil
 }
 
 func validatePageUpdateSlug(ctx context.Context, tx *gorm.DB, pageID string, update pageUpdate) error {

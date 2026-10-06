@@ -91,6 +91,7 @@ func (r publicServiceRegistration) register() {
 		pagePublicAccess,
 		pageruntime.NewPublicMedia(publicFileService),
 		pagepublic.WithPageContentBlockStore(contentBlockStore),
+		pagepublic.WithPageAccessPermissionChecker(spicedbClient),
 	)
 	publicPagePath, publicPageHandler := openv1connect.NewPageServiceHandler(publicPageService, publicHandlerOpts...)
 	mux.Handle(publicPagePath, publicPageHandler)

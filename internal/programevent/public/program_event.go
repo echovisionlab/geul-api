@@ -1338,15 +1338,16 @@ func loadPublicProgramEventClients(ctx context.Context, db *gorm.DB, eventID str
 }
 
 type publicProgramEventCreditRow struct {
-	ID          string  `gorm:"column:id"`
-	Display     *string `gorm:"column:display_name"`
-	CreditRole  *string `gorm:"column:credit_role"`
-	Description *string `gorm:"column:description"`
-	SortOrder   int32   `gorm:"column:sort_order"`
-	ArtistID    *string `gorm:"column:artist_id"`
-	ArtistName  *string `gorm:"column:artist_name"`
-	ArtistSlug  *string `gorm:"column:artist_slug"`
-	MemberID    *string `gorm:"column:member_id"`
+	ID                string  `gorm:"column:id"`
+	Display           *string `gorm:"column:display_name"`
+	CreditRole        *string `gorm:"column:credit_role"`
+	Description       *string `gorm:"column:description"`
+	SortOrder         int32   `gorm:"column:sort_order"`
+	ArtistID          *string `gorm:"column:artist_id"`
+	ArtistName        *string `gorm:"column:artist_name"`
+	ArtistSlug        *string `gorm:"column:artist_slug"`
+	ArtistImageFileID *string `gorm:"column:artist_image_file_id"`
+	MemberID          *string `gorm:"column:member_id"`
 }
 
 func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context, eventID string) ([]*openv1.ProgramEventCredit, error) {
@@ -1362,6 +1363,8 @@ func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context,
 			a.id AS artist_id,
 			`+creativeSourceTitleSQL("artist", "a")+` AS artist_name,
 			a.slug AS artist_slug,
+			(SELECT file_id FROM artist_file WHERE artist_id = a.id
+			 ORDER BY sort_order ASC LIMIT 1) AS artist_image_file_id,
 			pec.member_id
 		`).
 		Joins("LEFT JOIN artist AS a ON a.id = pec.artist_id AND a.status = ?", managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()).
@@ -1371,12 +1374,20 @@ func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context,
 		return nil, errs.Internal(err)
 	}
 	memberIDs := make([]string, 0, len(rows))
+	imageFileIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
+		if row.ArtistImageFileID != nil {
+			imageFileIDs = append(imageFileIDs, *row.ArtistImageFileID)
+		}
 		if row.MemberID != nil {
 			memberIDs = append(memberIDs, *row.MemberID)
 		}
 	}
 	members, err := s.creditMembers.LoadPublicCreditMemberSummaries(ctx, memberIDs)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	images, err := s.assets.ResolveReadyAssetsForSourceFiles(ctx, imageFileIDs, "image")
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
@@ -1398,6 +1409,9 @@ func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context,
 				Id:   *row.ArtistID,
 				Name: name,
 				Slug: row.ArtistSlug,
+			}
+			if row.ArtistImageFileID != nil {
+				item.Artist.ImageAsset = images[*row.ArtistImageFileID]
 			}
 		}
 		if row.MemberID != nil {
