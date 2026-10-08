@@ -65,6 +65,21 @@ hostnames and signed paths can keep pointing to the delivery listener.
 Set `IMGPROXY_KEY` and `IMGPROXY_SALT` to the same hex secrets as imgproxy and
 `CDN_IMGPROXY_URL` to its address (default `http://127.0.0.1:8080`).
 
+### MCP menu discovery
+
+`menu_list` returns authorized Menu UUIDs, management names, and source locales,
+with bounded `limit`/`offset` pagination. `menu_locations_get` returns only the
+four menu assignments from Site Settings: header, secondary, footer, and avatar
+dropdown. Unassigned locations are `null`; menu names do not imply placement.
+Both tools retain their owning services' existing permissions. The location
+reader requires administrator Site Settings view permission and does not expose
+other site settings.
+
+Use the selected Menu UUID as `d` with `p=menu` in
+`document_open`, `document_read`, `document_catalog`, and `document_apply`.
+Read the source locale, current revisions, and stable menu item handles before
+editing. These discovery tools do not create menus or change site assignments.
+
 `CLOUDFLARE_CACHE_PURGE_ENABLED` defaults to `true`, requiring
 `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_API_TOKEN` for public asset deletion.
 Set it to `false` when CDN/media DNS records point directly to the origin
