@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -706,6 +707,10 @@ func (s *FileService) loadMultipartUploadPartRequest(
 	}
 	if fileID == "" || request.uploadID == "" {
 		http.Error(w, "Missing required parameters: fileId, uploadId", http.StatusBadRequest)
+		return request, false
+	}
+	if _, err := uuidutil.ParseCanonical(fileID, "fileId"); err != nil {
+		http.Error(w, "Invalid fileId (must be a canonical UUID)", http.StatusBadRequest)
 		return request, false
 	}
 	if requirePartNumber {

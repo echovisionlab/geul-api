@@ -107,6 +107,30 @@ func TestImageProxyFailureModes(t *testing.T) {
 	}
 }
 
+func TestImageProxyClassifiesUpstreamFailures(t *testing.T) {
+	for _, tc := range []struct {
+		upstream int
+		want     int
+		message  string
+	}{
+		{http.StatusNotFound, http.StatusNotFound, "Image not found"},
+		{http.StatusTooManyRequests, http.StatusTooManyRequests, "Image service rejected the request"},
+		{http.StatusInternalServerError, http.StatusBadGateway, "Image service unavailable"},
+		{http.StatusServiceUnavailable, http.StatusBadGateway, "Image service unavailable"},
+	} {
+		t.Run(strconv.Itoa(tc.upstream), func(t *testing.T) {
+			proxy := imageProxyWithTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.upstream, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("private upstream error"))}, nil
+			}))
+			rec := httptest.NewRecorder()
+			proxy.ServeHTTP(rec, imageRequest(http.MethodGet, "/asset/"+testAssetID+"/image.png?w=64", testResolvedImage(nil)))
+			if rec.Code != tc.want || strings.TrimSpace(rec.Body.String()) != tc.message {
+				t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestRouterRejectsInvalidPublicAssetOptions(t *testing.T) {
 	tests := []struct {
 		name        string

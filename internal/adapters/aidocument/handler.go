@@ -48,7 +48,7 @@ func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[m
 	}
 	metadata, err := s.application.Open(ctx, core.OpenRequest{Document: document, Locale: locale})
 	if err != nil {
-		return nil, err
+		return nil, documentApplicationError(err)
 	}
 	return connect.NewResponse(&managev1.OpenAIDocumentResponse{Metadata: metadataToProto(metadata)}), nil
 }
@@ -79,7 +79,7 @@ func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connec
 			}
 			return connect.NewResponse(&managev1.ApplyAIDocumentOperationsResponse{Result: &managev1.ApplyAIDocumentOperationsResponse_Rejected{Rejected: validation}}), nil
 		}
-		return nil, err
+		return nil, documentApplicationError(err)
 	}
 	accepted := &managev1.AIDocumentAcceptedMutation{DocumentRevision: string(result.DocumentRevision)}
 	if result.TargetRevision != nil {
@@ -193,6 +193,14 @@ func conflictCodeToProto(value core.ConflictCode) managev1.AIDocumentConflictCod
 
 func invalidArgument(err error) error {
 	return connect.NewError(connect.CodeInvalidArgument, err)
+}
+
+func documentApplicationError(err error) error {
+	var inputError *core.InputError
+	if errors.As(err, &inputError) && inputError != nil {
+		return invalidArgument(inputError)
+	}
+	return err
 }
 
 var _ managev1connect.AIDocumentServiceHandler = (*Service)(nil)

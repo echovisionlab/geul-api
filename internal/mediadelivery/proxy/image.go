@@ -71,7 +71,13 @@ func (p *ImageProxy) writeImgproxyResponse(
 			"contentType", resp.Header.Get("Content-Type"),
 			"body", strings.TrimSpace(string(errorBody)),
 		)
-		http.Error(w, "Image not found", resp.StatusCode)
+		status, message := resp.StatusCode, "Image service rejected the request"
+		if status == http.StatusNotFound {
+			message = "Image not found"
+		} else if status >= 500 {
+			status, message = http.StatusBadGateway, "Image service unavailable"
+		}
+		http.Error(w, message, status)
 		return
 	}
 

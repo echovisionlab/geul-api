@@ -90,14 +90,18 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if resp.StatusCode != http.StatusOK {
 		p.logUpstreamFailure(resp.StatusCode, queryHash)
-		http.Error(w, "Upstream error", resp.StatusCode)
+		status := resp.StatusCode
+		if status >= 500 {
+			status = http.StatusBadGateway
+		}
+		http.Error(w, "Upstream error", status)
 		return
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		p.logger.Error("failed to read response", "error", err, "query_hash", queryHash)
-		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		http.Error(w, "Failed to read upstream response", http.StatusBadGateway)
 		return
 	}
 

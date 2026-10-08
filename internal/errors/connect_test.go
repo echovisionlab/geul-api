@@ -1,11 +1,14 @@
 package errors
 
 import (
+	"context"
 	stderrors "errors"
+	"fmt"
 	"testing"
 
 	"connectrpc.com/connect"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestConnectErrorConstructors(t *testing.T) {
@@ -130,5 +133,60 @@ func TestWrapPreservesConnectErrorAndWrapsPlainErrors(t *testing.T) {
 	}
 	if got := wrapped.Unwrap(); got != plainErr {
 		t.Fatalf("unwrapped error = %v, want %v", got, plainErr)
+	}
+}
+
+func TestErrorWrappersPreserveClassifiedErrorsThroughNestedOperations(t *testing.T) {
+	for _, wrap := range []struct {
+		name string
+		fn   func(error) *connect.Error
+	}{{"Internal", Internal}, {"Wrap", Wrap}} {
+		for code := connect.CodeCanceled; code <= connect.CodeUnauthenticated; code++ {
+			t.Run(wrap.name+"/"+code.String(), func(t *testing.T) {
+				original := connect.NewError(code, stderrors.New("classified domain outcome"))
+				original.Meta().Set("Retry-After", "1")
+				detail, err := connect.NewErrorDetail(&intrav1.CollaborationConflictDetail{Reason: intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED})
+				if err != nil {
+					t.Fatal(err)
+				}
+				original.AddDetail(detail)
+				got := wrap.fn(fmt.Errorf("transaction context: %w", fmt.Errorf("domain context: %w", original)))
+				if got != original || got.Code() != code || len(got.Details()) != 1 || got.Meta().Get("Retry-After") != "1" {
+					t.Fatalf("classification/details lost: %v", got)
+				}
+			})
+		}
+		for _, tc := range []struct {
+			err  error
+			code connect.Code
+		}{{context.Canceled, connect.CodeCanceled}, {context.DeadlineExceeded, connect.CodeDeadlineExceeded}} {
+			got := wrap.fn(fmt.Errorf("database context: %w", tc.err))
+			if got.Code() != tc.code || !stderrors.Is(got, tc.err) {
+				t.Fatalf("context error misclassified: %v", got)
+			}
+		}
+	}
+}
+
+func TestErrorWrappersClassifyOnlyMalformedUUIDDatabaseErrors(t *testing.T) {
+	for _, tc := range []struct {
+		code, message string
+		want          connect.Code
+	}{
+		{"22P02", `invalid input syntax for type uuid: "private-input"`, connect.CodeInvalidArgument},
+		{"22P02", `invalid input syntax for type integer: "private-input"`, connect.CodeInternal},
+		{"08006", "database unavailable", connect.CodeInternal},
+		{"XX000", "invalid input syntax for type uuid", connect.CodeInternal},
+	} {
+		driverErr := &pgconn.PgError{Code: tc.code, Message: tc.message}
+		for _, wrap := range []func(error) *connect.Error{Wrap, Internal} {
+			got := wrap(fmt.Errorf("query context: %w", driverErr))
+			if got.Code() != tc.want {
+				t.Fatalf("%s misclassified: %v", tc.code, got)
+			}
+			if tc.want == connect.CodeInvalidArgument && got.Message() != "request contains an invalid UUID" {
+				t.Fatalf("UUID input leaked: %v", got)
+			}
+		}
 	}
 }

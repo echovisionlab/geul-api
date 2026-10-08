@@ -98,8 +98,8 @@ const readInputJSONSchema = `{
     "d":` + documentReferenceJSONSchema + `,
     "l":{"type":"string","minLength":1,"maxLength":35,"pattern":"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"},
     "m":{"enum":["outline","blocks","fields"]},
-    "b":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":160}},
-    "f":{"type":"array","maxItems":256,"items":{"oneOf":[
+    "b":{"type":"array","maxItems":256,"description":"Required and non-empty for blocks mode; omit in outline and fields modes.","items":{"type":"string","minLength":1,"maxLength":160}},
+    "f":{"type":"array","maxItems":256,"description":"Required and non-empty for fields mode; omit in outline and blocks modes.","items":{"oneOf":[
       {"type":"array","prefixItems":[{"type":"string"},{"type":"string"}],"items":false,"minItems":2,"maxItems":2},
       {"type":"array","prefixItems":[{"type":"string"},{"type":"string"},{"type":"string"},{"type":"string"}],"items":false,"minItems":4,"maxItems":4}
     ]}},
