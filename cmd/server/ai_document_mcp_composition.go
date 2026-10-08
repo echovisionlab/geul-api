@@ -18,9 +18,10 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "15"
+const mcpServerImplementationVersion = "16"
 
 const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist to find UUIDs. Pass d unchanged; never substitute slugs or URLs. " +
+	"Use menu_list to find Menu UUIDs and source locales, and menu_locations_get to identify the site's assigned menus. Names do not determine placement. Pass Menu UUIDs as d with p=menu to document_open/read/catalog/apply; use current revisions and stable item handles for edits. " +
 	"Read settings before focused management tools. Post/Page/Release unpublish returns to draft; administrator-managed archived Posts can also return to draft. Program Events archive. Track publication follows Release. Map Places/Themes have no publication state. " +
 	"Read release_relations_get or track_list before relation edits; preserve exact observed snapshots and supported order_intent. Resolve references through reference_search, label_list, event type/series lists, music genre/style/format lists, form_list, post_series_list, and map_theme_list/get. Theme snapshot updates require its read revision. " +
 	"Use program_event_media_list before media edits. Adding the same event/role/file upserts alt/caption; omitted values clear them. Use member_admin_list/get for audited administrator information and member_tag_list for tag names. " +
@@ -106,18 +107,20 @@ type contentMCPApplications struct {
 		mcpadapter.MemberAdminReader
 		mcpadapter.MemberTagReader
 	}
-	artists     mcpadapter.ArtistReferenceDiscovery
-	files       mcpadapter.FileReferenceDiscovery
-	eventTypes  mcpadapter.ProgramEventTypeReferenceDiscovery
-	eventSeries mcpadapter.ProgramEventSeriesReferenceDiscovery
-	labels      mcpadapter.LabelReferenceDiscovery
-	genres      mcpadapter.GenreReferenceDiscovery
-	styles      mcpadapter.StyleReferenceDiscovery
-	formats     mcpadapter.FormatReferenceDiscovery
-	forms       mcpadapter.FormReferenceDiscovery
-	postSeries  mcpadapter.PostSeriesReferenceDiscovery
-	tracks      mcpadapter.TrackManagementApplication
-	mapThemes   mcpadapter.MapThemeManagement
+	artists      mcpadapter.ArtistReferenceDiscovery
+	files        mcpadapter.FileReferenceDiscovery
+	eventTypes   mcpadapter.ProgramEventTypeReferenceDiscovery
+	eventSeries  mcpadapter.ProgramEventSeriesReferenceDiscovery
+	labels       mcpadapter.LabelReferenceDiscovery
+	genres       mcpadapter.GenreReferenceDiscovery
+	styles       mcpadapter.StyleReferenceDiscovery
+	formats      mcpadapter.FormatReferenceDiscovery
+	forms        mcpadapter.FormReferenceDiscovery
+	postSeries   mcpadapter.PostSeriesReferenceDiscovery
+	tracks       mcpadapter.TrackManagementApplication
+	mapThemes    mcpadapter.MapThemeManagement
+	menus        mcpadapter.MenuDiscovery
+	menuSettings mcpadapter.MenuLocationReader
 }
 
 func newAIDocumentMCPComposition(
@@ -210,6 +213,10 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP document discovery tools: %w", err)
 	}
+	menuTools, err := mcpadapter.NewMenuDiscoveryTools(references.menus, references.menuSettings)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP menu discovery tools: %w", err)
+	}
 	managementTools, err := mcpadapter.NewContentManagementTools(posts, works, pages)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP content management tools: %w", err)
@@ -299,7 +306,7 @@ func newAIDocumentMCPComposition(
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP File Manager tools: %w", err)
 	}
 	toolSet, err := mcpadapter.NewToolSet(
-		discoveryTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
+		discoveryTools, menuTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
 		managementTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
 		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools,
 		relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,

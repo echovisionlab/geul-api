@@ -105,7 +105,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "15", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "16", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -116,11 +116,31 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"not routine version changes",
 			"p=release",
 			"p=artist",
+			"menu_list",
+			"menu_locations_get",
 			"Use work_settings_get before updating Work metadata or clients",
 			"observed_policy.audience_segment_ids",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
+	})
+
+	t.Run("menu discovery is registered on the production MCP surface", func(t *testing.T) {
+		response := httptest.NewRecorder()
+		composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`))
+		require.Equal(t, http.StatusOK, response.Code)
+		var envelope struct {
+			Result struct {
+				Tools []mcpserver.Tool `json:"tools"`
+			} `json:"result"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
+		names := make([]string, 0, len(envelope.Result.Tools))
+		for _, tool := range envelope.Result.Tools {
+			names = append(names, tool.Name)
+		}
+		require.Contains(t, names, "menu_list")
+		require.Contains(t, names, "menu_locations_get")
 	})
 
 	registrations.emailLayout = aidocumentadapter.DomainRegistration{}
@@ -472,23 +492,25 @@ func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, st
 
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
-		categories:  &compositionCategoryReferences{},
-		tags:        &compositionTagReferences{},
-		clients:     &compositionClientReferences{},
-		mapPlaces:   &compositionMapPlaceReferences{},
-		members:     &compositionMemberReferences{},
-		artists:     &compositionArtistReferences{},
-		files:       &compositionFileReferences{},
-		eventTypes:  &compositionProgramEventTypeReferences{},
-		eventSeries: &compositionProgramEventSeriesReferences{},
-		labels:      &compositionLabelReferences{},
-		genres:      &compositionGenreReferences{},
-		styles:      &compositionStyleReferences{},
-		formats:     &compositionFormatReferences{},
-		forms:       &compositionFormReferences{},
-		postSeries:  &compositionPostSeriesReferences{},
-		tracks:      &compositionTrackReferences{},
-		mapThemes:   &compositionMapThemeReferences{},
+		categories:   &compositionCategoryReferences{},
+		tags:         &compositionTagReferences{},
+		clients:      &compositionClientReferences{},
+		mapPlaces:    &compositionMapPlaceReferences{},
+		members:      &compositionMemberReferences{},
+		artists:      &compositionArtistReferences{},
+		files:        &compositionFileReferences{},
+		eventTypes:   &compositionProgramEventTypeReferences{},
+		eventSeries:  &compositionProgramEventSeriesReferences{},
+		labels:       &compositionLabelReferences{},
+		genres:       &compositionGenreReferences{},
+		styles:       &compositionStyleReferences{},
+		formats:      &compositionFormatReferences{},
+		forms:        &compositionFormReferences{},
+		postSeries:   &compositionPostSeriesReferences{},
+		tracks:       &compositionTrackReferences{},
+		mapThemes:    &compositionMapThemeReferences{},
+		menus:        managev1connect.UnimplementedMenuServiceHandler{},
+		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
 	}
 }
 
