@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/echovisionlab/geul-api/compare/v1.5.2...v1.6.0) (2026-10-08)
+
+
+### Features
+
+* **mcp:** expose authorized menu discovery and site locations ([#98](https://github.com/echovisionlab/geul-api/issues/98)) ([e0ebccf](https://github.com/echovisionlab/geul-api/commit/e0ebccf8750f86b63609370eebd46bbee6e2d813))
+
 ## [1.5.2](https://github.com/echovisionlab/geul-api/compare/v1.5.1...v1.5.2) (2026-10-06)
 
 
