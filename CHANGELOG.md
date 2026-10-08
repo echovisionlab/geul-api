@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/echovisionlab/geul-api/compare/v1.6.0...v1.6.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* preserve actionable MCP and HTTP error classifications ([#100](https://github.com/echovisionlab/geul-api/issues/100)) ([bca0e4b](https://github.com/echovisionlab/geul-api/commit/bca0e4b7357260265f377e857d18cbea5c210e0d))
+
 ## [1.6.0](https://github.com/echovisionlab/geul-api/compare/v1.5.2...v1.6.0) (2026-10-08)
 
 
