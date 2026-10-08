@@ -190,6 +190,13 @@ type DomainPort interface {
 
 type Service struct{ port DomainPort }
 
+// InputError identifies invalid caller-supplied document conditions. Only
+// request validation and selector failures use this type; port and document
+// integrity failures remain internal errors.
+type InputError struct{ Message string }
+
+func (e *InputError) Error() string { return e.Message }
+
 func NewService(port DomainPort) (*Service, error) {
 	if port == nil {
 		return nil, errors.New("AI document domain port is required")
@@ -234,10 +241,10 @@ func (s *Service) Describe(ctx context.Context, request OpenRequest) (DescribeRe
 
 func (s *Service) loadDocument(ctx context.Context, request OpenRequest) (Document, error) {
 	if err := request.Document.validate(); err != nil {
-		return Document{}, err
+		return Document{}, &InputError{Message: err.Error()}
 	}
 	if err := validateLocale(request.Locale); err != nil {
-		return Document{}, err
+		return Document{}, &InputError{Message: err.Error()}
 	}
 	document, err := s.port.Load(ctx, request.Document, request.Locale)
 	if err != nil {
@@ -294,7 +301,7 @@ func cloneDiscoverySchema(schema *FieldSchema) *FieldSchema {
 
 func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, error) {
 	if err := validateReadRequest(request); err != nil {
-		return Projection{}, err
+		return Projection{}, &InputError{Message: err.Error()}
 	}
 	document, err := s.loadDocument(ctx, OpenRequest{Document: request.Document, Locale: request.Locale})
 	if err != nil {
@@ -303,7 +310,7 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 
 	nodes, err := selectNodes(document, request)
 	if err != nil {
-		return Projection{}, err
+		return Projection{}, &InputError{Message: err.Error()}
 	}
 	nodes = canonicalNodes(nodes)
 	offset := 0
@@ -347,14 +354,14 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 
 func (s *Service) Validate(ctx context.Context, request ApplyRequest) (ValidationResult, error) {
 	if err := request.validateEnvelope(); err != nil {
-		return ValidationResult{}, err
+		return ValidationResult{}, &InputError{Message: err.Error()}
 	}
 	return s.port.ValidateMutation(ctx, request)
 }
 
 func (s *Service) Apply(ctx context.Context, request ApplyRequest) (ApplyResult, error) {
 	if err := request.validateEnvelope(); err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{}, &InputError{Message: err.Error()}
 	}
 	result, err := s.port.ExecuteMutation(ctx, request)
 	if err != nil {

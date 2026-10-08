@@ -3,7 +3,9 @@ package aidocumentadapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -207,3 +209,18 @@ func mutationWithOperations(operations ...*managev1.AIDocumentOperation) *manage
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestApplicationInputErrorsBecomeInvalidArgumentWithoutPrivateContext(t *testing.T) {
+	inputErr := fmt.Errorf("private context: %w", &core.InputError{Message: "expected document revision must contain 1 to 256 characters"})
+	application := &fakeApplication{openErr: inputErr, applyErr: inputErr}
+	service, _ := NewService(application)
+	_, err := service.OpenAIDocument(t.Context(), connect.NewRequest(&managev1.OpenAIDocumentRequest{Document: protoDocument(), Locale: protoLocale("en")}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || strings.Contains(err.Error(), "private context") {
+		t.Fatalf("Open input error=%v", err)
+	}
+	operation := operationsToProto([]core.Operation{core.CreateTranslationOperation()})[0]
+	_, err = service.ApplyAIDocumentOperations(t.Context(), connect.NewRequest(&managev1.ApplyAIDocumentOperationsRequest{Mutation: mutationWithOperations(operation)}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || strings.Contains(err.Error(), "private context") {
+		t.Fatalf("Apply input error=%v", err)
+	}
+}

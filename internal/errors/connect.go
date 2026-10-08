@@ -2,8 +2,10 @@
 package errors
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 
 	"connectrpc.com/connect"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -299,9 +301,11 @@ func MaxCommentDepth(maxDepth int) *connect.Error {
 
 // --- Internal errors (500) ---
 
-// Internal returns a CodeInternal error wrapping the given error.
+// Internal preserves an already-classified error and otherwise returns
+// CodeInternal. Callers commonly pass errors from nested domain operations;
+// their client-error and dependency classifications must survive wrapping.
 func Internal(err error) *connect.Error {
-	return connect.NewError(connect.CodeInternal, err)
+	return Wrap(err)
 }
 
 // InternalMsg returns a CodeInternal error with a custom message.
@@ -310,11 +314,30 @@ func InternalMsg(msg string) *connect.Error {
 }
 
 // Wrap returns a Connect error with the appropriate code based on the error type.
-// If err is already a *connect.Error, it is returned as-is.
+// If err contains a *connect.Error, it is returned as-is, including its details.
+// Request cancellation and deadlines retain their transport classification.
 // Otherwise, it returns a CodeInternal error.
 func Wrap(err error) *connect.Error {
-	if connectErr, ok := err.(*connect.Error); ok {
+	var connectErr *connect.Error
+	if stderrors.As(err, &connectErr) && connectErr != nil {
 		return connectErr
+	}
+	if stderrors.Is(err, context.Canceled) {
+		return connect.NewError(connect.CodeCanceled, context.Canceled)
+	}
+	if stderrors.Is(err, context.DeadlineExceeded) {
+		return connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)
+	}
+	// UUID columns cannot contain malformed stored UUIDs. This exact driver
+	// rejection therefore identifies an invalid UUID passed to a query, not a
+	// database outage. Other SQL failures retain their internal classification.
+	var sqlState interface {
+		error
+		SQLState() string
+	}
+	if stderrors.As(err, &sqlState) && sqlState.SQLState() == "22P02" &&
+		strings.Contains(sqlState.Error(), "invalid input syntax for type uuid") {
+		return InvalidArgumentMsg("request contains an invalid UUID")
 	}
 	return connect.NewError(connect.CodeInternal, err)
 }

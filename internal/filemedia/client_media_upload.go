@@ -222,14 +222,26 @@ func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string,
 
 func clientArtifactHTTPStatus(err error) int {
 	switch connect.CodeOf(err) {
-	case connect.CodeInvalidArgument:
+	case connect.CodeInvalidArgument, connect.CodeOutOfRange:
 		return http.StatusBadRequest
+	case connect.CodeUnauthenticated:
+		return http.StatusUnauthorized
 	case connect.CodeNotFound:
 		return http.StatusNotFound
 	case connect.CodePermissionDenied:
 		return http.StatusForbidden
-	case connect.CodeFailedPrecondition:
+	case connect.CodeFailedPrecondition, connect.CodeAlreadyExists, connect.CodeAborted:
 		return http.StatusConflict
+	case connect.CodeResourceExhausted:
+		return http.StatusTooManyRequests
+	case connect.CodeUnavailable:
+		return http.StatusServiceUnavailable
+	case connect.CodeDeadlineExceeded:
+		return http.StatusGatewayTimeout
+	case connect.CodeCanceled:
+		return 499
+	case connect.CodeUnimplemented:
+		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
 	}

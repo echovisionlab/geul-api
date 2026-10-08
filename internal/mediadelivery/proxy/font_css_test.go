@@ -181,9 +181,15 @@ func TestFontCSSProxyFailureModes(t *testing.T) {
 		{"upstream error", "https://fonts.example", roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("slow down"))}, nil
 		}), http.StatusTooManyRequests},
+		{"upstream server error", "https://fonts.example", roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("private upstream error"))}, nil
+		}), http.StatusBadGateway},
+		{"upstream unavailable", "https://fonts.example", roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("private upstream error"))}, nil
+		}), http.StatusBadGateway},
 		{"read error", "https://fonts.example", roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: &errorReadCloser{err: io.ErrUnexpectedEOF}}, nil
-		}), http.StatusInternalServerError},
+		}), http.StatusBadGateway},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,6 +203,9 @@ func TestFontCSSProxyFailureModes(t *testing.T) {
 			proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fonts/css2?family=Inter", nil))
 			if rec.Code != tt.want {
 				t.Fatalf("status=%d want=%d body=%q", rec.Code, tt.want, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "private upstream error") {
+				t.Fatalf("upstream error leaked: %q", rec.Body.String())
 			}
 		})
 	}
