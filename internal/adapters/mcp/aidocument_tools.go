@@ -72,7 +72,7 @@ var documentTools = []mcpserver.Tool{
 	},
 	{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
-		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release has no summary field. " +
+		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, Terms of Service or Privacy Policy, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release and legal policies have no summary field. Legal policy titles can be edited in every lifecycle with the required source or translation permissions; editing sends no notice email. " +
 			"For Program Event, clear_summary removes the source summary; use an empty summary string for an existing target locale's explicit empty value. " +
 			"Read the document first and pass its exact current revisions. Passing an empty category_ids or tag_ids array removes every item in that relation." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentMetadataUpdateInputJSONSchema), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema),
@@ -350,6 +350,9 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcps
 	}
 	if input.Profile == core.DomainRelease && (input.Summary != nil || input.ClearSummary) {
 		return executionError(errors.New("Release documents have no summary field"))
+	}
+	if (input.Profile == core.DomainTerms || input.Profile == core.DomainPrivacy) && (input.Summary != nil || input.ClearSummary) {
+		return executionError(fmt.Errorf("%s documents have no summary field", input.Profile))
 	}
 	if input.Profile != core.DomainPost && (input.CategoryIDs != nil || input.TagIDs != nil) {
 		return executionError(errors.New("category_ids and tag_ids are supported only for Post documents"))

@@ -862,16 +862,17 @@ func TestLegalDeliveryTemplateAndLayoutLifecycleGuardsIntegration(t *testing.T) 
 			Id: draft.Msg.Id, ExpectedRevision: draft.Msg.Revision,
 		}),
 	)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.NoError(t, err)
 	requireRelationWhereCount(
 		t,
 		db,
 		"privacy_history",
 		"id = ?",
-		1,
+		0,
 		draft.Msg.Id,
 	)
-	requireRelationWhereCount(t, db, "privacy_history", "id = ? AND source_locale = 'en'", 1, draft.Msg.Id)
+	requireRelationWhereCount(t, db, "privacy_history", "id = ? AND source_locale = 'en'", 0, draft.Msg.Id)
+	requireRelationWhereCount(t, db, "email_delivery_run", "id IN ?", 2, []string{scheduledRun.ID, terminalRun.ID})
 }
 
 func TestPrivacyCancelRejectsSendingDeliveryRunIntegration(t *testing.T) {
@@ -1096,7 +1097,7 @@ func TestPrivacyActivationDoesNotMutateStartedUpdateRunIntegration(t *testing.T)
 	}
 }
 
-func TestTermsDeliveryHistoryBlocksDraftDeleteIntegration(t *testing.T) {
+func TestTermsDeliveryHistorySurvivesDraftDeleteIntegration(t *testing.T) {
 	db := newLegalIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
@@ -1139,16 +1140,17 @@ func TestTermsDeliveryHistoryBlocksDraftDeleteIntegration(t *testing.T) {
 			Id: draft.Msg.Id, ExpectedRevision: draft.Msg.Revision,
 		}),
 	)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.NoError(t, err)
 	requireRelationWhereCount(
 		t,
 		db,
 		"terms_history",
 		"id = ?",
-		1,
+		0,
 		draft.Msg.Id,
 	)
-	requireRelationWhereCount(t, db, "terms_history", "id = ? AND source_locale = 'en'", 1, draft.Msg.Id)
+	requireRelationWhereCount(t, db, "terms_history", "id = ? AND source_locale = 'en'", 0, draft.Msg.Id)
+	requireRelationWhereCount(t, db, "email_delivery_run", "terms_id = ?", 1, draft.Msg.Id)
 }
 
 func seedLegalDeliveryTemplateIntegration(

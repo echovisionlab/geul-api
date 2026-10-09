@@ -203,7 +203,7 @@ func (s internalLegalDocumentService) applyDocumentMutation(
 					Batch:                    batch,
 					Now:                      now,
 					Fence: legalCollaborationDocumentFence(
-						s.checkpoints, s.kind, entityID, request.GetContributorMemberIds(), &batch, false,
+						s.checkpoints, s.kind, entityID, request.GetContributorMemberIds(), &batch,
 					),
 				},
 			)
@@ -249,7 +249,7 @@ func (s internalLegalDocumentService) applyDocumentMutation(
 		var applyErr error
 		result, applyErr = s.contentBlocks.ApplyBatch(
 			ctx, tx, batch, legalCollaborationDocumentFence(
-				s.checkpoints, s.kind, entityID, request.GetContributorMemberIds(), &batch, false,
+				s.checkpoints, s.kind, entityID, request.GetContributorMemberIds(), &batch,
 			),
 		)
 		if applyErr != nil {
@@ -402,7 +402,7 @@ func (s internalLegalDocumentService) updateDocumentMetadata(
 					},
 					SetTitle: true, Title: input.Title, Now: now,
 					Fence: legalCollaborationDocumentFence(
-						s.checkpoints, s.kind, input.EntityID, input.Contributors, nil, false,
+						s.checkpoints, s.kind, input.EntityID, input.Contributors, nil,
 					),
 				},
 			)
@@ -431,7 +431,7 @@ func (s internalLegalDocumentService) updateDocumentMetadata(
 			tx,
 			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
 			legalCollaborationDocumentFence(
-				s.checkpoints, s.kind, input.EntityID, input.Contributors, nil, true,
+				s.checkpoints, s.kind, input.EntityID, input.Contributors, nil,
 			),
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 				if sourceLocale != input.Locale {

@@ -155,6 +155,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			adminCtx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 			admin := auth.GetUser(adminCtx)
 			require.NotNil(t, admin)
+			adminSessionID := insertArchivedLegalIntegrationSession(t, db, admin.IdentityID.String())
 			store := newLegalLifecycleContentBlockStore(t, spiceDB)
 
 			authorID := integrationTestUUID()
@@ -256,12 +257,33 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			require.NotNil(t, targetDocument.TargetRevision)
 			require.Zero(t, legalExactLocaleBlockCountIntegration(t, targetDocument, "ko"))
 
-			for _, immutableStatus := range []string{testCase.scheduled, testCase.active} {
-				require.NoError(t, db.Table(testCase.table).Where("id = ?", id).Update("status", immutableStatus).Error)
+			for statusIndex, editableStatus := range []string{testCase.scheduled, testCase.active} {
+				require.NoError(t, db.Table(testCase.table).Where("id = ?", id).Update("status", editableStatus).Error)
 				_, err = testCase.get(authorCtx, db, id, store, spiceDB)
 				require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-				_, err := testCase.apply(adminCtx, db, id, legalArchivedParagraphMutationBatch(revision, admin.MemberID.String()), store, spiceDB)
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+				currentRevision, err := testCase.load(adminCtx, db, id, adminSessionID, store, spiceDB)
+				require.NoError(t, err)
+				batch := legalArchivedParagraphMutationBatch(currentRevision, admin.MemberID.String())
+				batch.BaseMutations[0].GetUpsert().Node.Placement.Index = uint32(statusIndex + 2)
+				nextRevision, err := testCase.apply(adminCtx, db, id, batch, store, spiceDB)
+				require.NoError(t, err, "authorized source editing is permitted in every lifecycle")
+				require.NotEqual(t, currentRevision, nextRevision)
+				nextRevision, err = testCase.metadata(adminCtx, db, id, nextRevision, "Updated "+editableStatus, []string{admin.MemberID.String()}, store, spiceDB)
+				require.NoError(t, err)
+				require.NotEqual(t, currentRevision, nextRevision)
+				aiResult, err := documentAPI.ExecuteAIDocumentMutation(
+					adminCtx, testCase.name, id, "en", legaldomain.AIDocumentExecutionApply,
+					func(state legaldomain.AIDocument) (legaldomain.AIDocumentMutation, error) {
+						return legaldomain.AIDocumentMutation{
+							EntityType: testCase.name, EntityID: id, Locale: "en",
+							ExpectedRevision: nextRevision, SetTitle: true, Title: ptrString("MCP " + editableStatus),
+							ContributorMemberID: admin.MemberID.String(),
+						}, nil
+					},
+				)
+				require.NoError(t, err, "MCP source editing permits scheduled and active policies")
+				require.True(t, aiResult.Changed)
+				requireRelationWhereCount(t, db, "email_delivery_run", testCase.name+"_id = ?", 0, id)
 			}
 		})
 	}

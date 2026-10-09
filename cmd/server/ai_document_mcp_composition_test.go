@@ -63,6 +63,10 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		aidocument.DomainPostSeries,
 	}, actual)
 
+	policyOwner := &compositionLegalPolicyApplication{}
+	references := compositionContentApplications()
+	references.terms = policyOwner
+	references.privacy = policyOwner
 	composition, err := newAIDocumentMCPComposition(
 		registrations,
 		&compositionPostApplication{},
@@ -71,7 +75,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionProgramEventApplication{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
-		compositionContentApplications(),
+		references,
 		managev1connect.UnimplementedTranslationServiceHandler{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
@@ -105,7 +109,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "16", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "17", envelope.Result.ServerInfo.Version)
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -120,6 +124,9 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"menu_locations_get",
 			"Use work_settings_get before updating Work metadata or clients",
 			"observed_policy.audience_segment_ids",
+			"policy_create creates an empty draft without email",
+			"policy_schedule and policy_activate_now start notice email delivery",
+			"policy_delete allows every lifecycle and retains delivery history",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
@@ -141,6 +148,29 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		}
 		require.Contains(t, names, "menu_list")
 		require.Contains(t, names, "menu_locations_get")
+		for _, name := range []string{"policy_list", "policy_get", "policy_create", "policy_schedule", "policy_schedule_cancel", "policy_activate_now", "policy_delete"} {
+			require.Contains(t, names, name)
+		}
+	})
+
+	t.Run("legal policy creation dispatches with authenticated context", func(t *testing.T) {
+		for _, kind := range []string{"terms", "privacy"} {
+			response := httptest.NewRecorder()
+			composition.mcpHandler.ServeHTTP(response, compositionMCPJSONRequest("", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"policy_create","arguments":{"document_type":"`+kind+`","title":"New policy"}}}`))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var envelope struct {
+				Result mcpserver.ToolResult `json:"result"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
+			require.False(t, envelope.Result.IsError, response.Body.String())
+			require.Equal(t, kind, envelope.Result.StructuredContent["document_type"])
+			require.Equal(t, "draft", envelope.Result.StructuredContent["status"])
+			require.Equal(t, "New policy", policyOwner.title)
+			require.Equal(t, kind, policyOwner.kind)
+			require.NotNil(t, policyOwner.principal)
+			require.Equal(t, compositionIdentityID, policyOwner.principal.IdentityID.String())
+			require.Equal(t, compositionMemberID, policyOwner.principal.MemberID.String())
+		}
 	})
 
 	registrations.emailLayout = aidocumentadapter.DomainRegistration{}
@@ -492,6 +522,8 @@ func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, st
 
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
+		terms:        managev1connect.UnimplementedTermsServiceHandler{},
+		privacy:      managev1connect.UnimplementedPrivacyServiceHandler{},
 		categories:   &compositionCategoryReferences{},
 		tags:         &compositionTagReferences{},
 		clients:      &compositionClientReferences{},
@@ -807,4 +839,27 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 			require.Equal(t, compositionMemberID, principal.MemberID.String())
 		})
 	}
+}
+
+// The HTTP composition must preserve the authenticated caller when dispatching
+// lifecycle commands to the owning Legal services.
+type compositionLegalPolicyApplication struct {
+	managev1connect.UnimplementedTermsServiceHandler
+	managev1connect.UnimplementedPrivacyServiceHandler
+	principal *auth.UserInfo
+	title     string
+	kind      string
+}
+
+func (application *compositionLegalPolicyApplication) CreateTermsVersion(ctx context.Context, request *connect.Request[managev1.CreateTermsVersionRequest]) (*connect.Response[managev1.Terms], error) {
+	application.principal = auth.GetUser(ctx)
+	application.title = request.Msg.GetTitle()
+	application.kind = "terms"
+	return connect.NewResponse(&managev1.Terms{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.TermsStatus_TERMS_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
+}
+func (application *compositionLegalPolicyApplication) CreatePrivacyVersion(ctx context.Context, request *connect.Request[managev1.CreatePrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error) {
+	application.principal = auth.GetUser(ctx)
+	application.title = request.Msg.GetTitle()
+	application.kind = "privacy"
+	return connect.NewResponse(&managev1.Privacy{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
 }

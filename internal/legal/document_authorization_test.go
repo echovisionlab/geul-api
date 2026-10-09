@@ -10,27 +10,11 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
 type legalPermissionCheck struct {
 	decision policyv1.AuthorizationDecision
-}
-
-func TestLegalBatchSourceLifecycleClassificationPreservesTargetEditing(t *testing.T) {
-	t.Parallel()
-
-	require.False(t, legalBatchTouchesSource(nil, "en"))
-	require.False(t, legalBatchTouchesSource(&contentblock.Batch{
-		LocaleGroups: []contentblock.LocaleMutationGroup{{Locale: "ko"}},
-	}, "en"))
-	require.True(t, legalBatchTouchesSource(&contentblock.Batch{
-		LocaleGroups: []contentblock.LocaleMutationGroup{{Locale: "en"}},
-	}, "en"))
-	require.True(t, legalBatchTouchesSource(&contentblock.Batch{
-		Deletes: []uuid.UUID{uuid.MustParse("33333333-3333-4333-8333-333333333333")},
-	}, "en"))
 }
 
 func TestLegalTargetLocalesExcludeSourceAndDuplicates(t *testing.T) {
