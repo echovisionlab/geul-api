@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/echovisionlab/geul-api/compare/v1.7.0...v1.7.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* preserve translation inline authority and finish legal OG work ([#104](https://github.com/echovisionlab/geul-api/issues/104)) ([46e76a6](https://github.com/echovisionlab/geul-api/commit/46e76a64a59f2a232022368e3197015b8926df82))
+
 ## [1.7.0](https://github.com/echovisionlab/geul-api/compare/v1.6.1...v1.7.0) (2026-10-09)
 
 
