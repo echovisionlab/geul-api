@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/echovisionlab/geul-api/compare/v1.6.1...v1.7.0) (2026-10-09)
+
+
+### Features
+
+* **mcp:** support legal policy CRUD across every lifecycle ([#102](https://github.com/echovisionlab/geul-api/issues/102)) ([0448e26](https://github.com/echovisionlab/geul-api/commit/0448e2689b480fce8ed6862fd77b6f2a9a0fae22))
+
 ## [1.6.1](https://github.com/echovisionlab/geul-api/compare/v1.6.0...v1.6.1) (2026-10-08)
 
 
