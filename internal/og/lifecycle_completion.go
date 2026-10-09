@@ -107,10 +107,12 @@ func (s *Lifecycle) finalizeNewOgGenerationCompletion(
 	}
 	if err := s.bindCompletedOgAsset(ctx, tx, generation, target, asset, now); err != nil {
 		if errors.Is(err, ErrTranslationTargetMissing) {
-			if err := markOgGenerationSuperseded(tx, generation, nil, now); err != nil {
-				return model.OgGenerationStatusSuperseded, err
-			}
-			return model.OgGenerationStatusSuperseded, refreshOgRunStatus(tx, generation.RunID, now)
+			// No replacement exists when a locale was removed. Superseded
+			// requires a real successor; finish this rejected completion as
+			// failed so its lease cannot keep retrying an invalid DB transition.
+			return model.OgGenerationStatusFailed, markOgGenerationFailed(
+				tx, generation, FailureCodeCompletionRejected, now,
+			)
 		}
 		return model.OgGenerationStatusReady, err
 	}
