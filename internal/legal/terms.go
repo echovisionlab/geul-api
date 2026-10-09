@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -231,7 +230,10 @@ func (s *TermsService) CreateTermsVersion(
 		contentDocumentID := created.Document.ID.String()
 		if err := tx.Raw(`
 			INSERT INTO terms_history (title, content, status, version, created_at, updated_at, content_document_id, source_locale)
-			VALUES (?, '', ?, (SELECT COALESCE(MAX(version), 0) + 1 FROM terms_history), ?, ?, ?, ?)
+			VALUES (?, '', ?, (SELECT GREATEST(
+                COALESCE((SELECT MAX(version) FROM terms_history), 0),
+                COALESCE((SELECT MAX(source_terms_version) FROM email_delivery_run WHERE terms_id IS NOT NULL), 0)
+            ) + 1), ?, ?, ?, ?)
 			RETURNING id, version, title, content, status, created_at, updated_at, content_document_id
 		`, title, managev1.TermsStatus_TERMS_STATUS_DRAFT.String(), now, now, contentDocumentID, sourceLocale).Scan(&terms).Error; err != nil {
 			return err
@@ -612,6 +614,9 @@ func (s *TermsService) DeleteTerms(
 ) (*connect.Response[managev1.DeleteResponse], error) {
 	var terms model.Terms
 	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
+		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -619,16 +624,12 @@ func (s *TermsService) DeleteTerms(
 			}
 			return err
 		}
-		policy, err := legalDocumentPolicyForType("terms")
-		if err != nil {
-			return err
-		}
 		if err := requireActiveLegalPrincipal(ctx, tx, "delete", false); err != nil {
 			return err
 		}
 		if err := requireLegalPermission(
 			ctx, s.spiceDB, "terms", terms.ID,
-			legalMutationAction(policy, terms.Status, legalActionDelete),
+			legalActionDelete,
 		); err != nil {
 			return err
 		}
@@ -637,19 +638,12 @@ func (s *TermsService) DeleteTerms(
 		); err != nil {
 			return err
 		}
-		if terms.Status != managev1.TermsStatus_TERMS_STATUS_DRAFT.String() {
-			return errs.FailedPrecondition("can only delete draft terms")
-		}
-		var runCount int64
-		if err := tx.Model(&model.CampaignDeliveryRun{}).
-			Where("terms_id = ?", terms.ID).
-			Count(&runCount).Error; err != nil {
+		currentBefore, err := s.legalOG.CurrentForRoute(ctx, tx, "terms")
+		if err != nil {
 			return err
 		}
-		if runCount > 0 {
-			return errs.FailedPrecondition(
-				"terms delivery history must be preserved",
-			)
+		if err := cancelLegalNoticeDeliveryForPolicyDeletion(ctx, tx, "terms", terms.ID); err != nil {
+			return err
 		}
 		if terms.ContentDocumentID == nil {
 			return errs.FailedPrecondition("terms content document has not been populated")
@@ -669,11 +663,9 @@ func (s *TermsService) DeleteTerms(
 			return err
 		}
 		if err := tx.Delete(&terms).Error; err != nil {
-			if dberrors.IsForeignKeyViolation(err) {
-				return errs.FailedPrecondition(
-					"terms delivery history or another durable reference exists",
-				)
-			}
+			return err
+		}
+		if err := refreshLegalRouteAfterPolicyDeletion(ctx, tx, s.legalOG, "terms", terms.ID, currentBefore); err != nil {
 			return err
 		}
 		if err := appendLegalPolicyIdentityAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditLegalPolicyDeleted, "terms", terms.ID, terms.Version); err != nil {

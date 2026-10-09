@@ -102,23 +102,14 @@ func legalCollaborationDocumentFence(
 	entityID string,
 	contributors []string,
 	batch *contentblock.Batch,
-	sourceMetadata bool,
 ) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		root, err := loadLegalContentDocumentRoot(ctx, tx, kind, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		policy, err := legalDocumentPolicyForType(kind)
-		if err != nil {
-			return contentblock.DomainContext{}, err
-		}
 		if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
 			return contentblock.DomainContext{}, errs.FailedPrecondition(kind + " content document changed; reload before saving")
-		}
-		if (sourceMetadata || legalBatchTouchesSource(batch, root.SourceLocale)) &&
-			root.Status != policy.draftStatus && root.Status != policy.archivedStatus {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("scheduled or active legal source documents are read-only")
 		}
 		if err := checkpoints.RequireCurrentContributors(
 			ctx,
@@ -179,24 +170,9 @@ func legalTargetLocales(sourceLocale string, batch *contentblock.Batch) []string
 	return locales
 }
 
-func legalBatchTouchesSource(batch *contentblock.Batch, sourceLocale string) bool {
-	if batch == nil {
-		return false
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return true
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale == sourceLocale {
-			return true
-		}
-	}
-	return false
-}
-
 // legalTranslationJobApplyDocumentFence permits an already-accepted
 // TranslationJob to finish against any still-existing policy root. Current
-// lifecycle and administrator rules continue to govern new requests and direct
+// administrator permissions continue to govern new requests and direct
 // edits; completion reuses the authority accepted at request time.
 func legalTranslationJobApplyDocumentFence(kind, entityID string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {

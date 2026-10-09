@@ -815,6 +815,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		releaseService,
 		artistService,
 		contentMCPApplications{
+			terms:        termsService,
+			privacy:      privacyService,
 			categories:   categoryService,
 			tags:         tagService,
 			clients:      clientService,

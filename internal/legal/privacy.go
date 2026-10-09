@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -234,7 +233,10 @@ func (s *PrivacyService) CreatePrivacyVersion(
 		contentDocumentID := created.Document.ID.String()
 		if err := tx.Raw(`
 			INSERT INTO privacy_history (title, content, status, version, created_at, updated_at, content_document_id, source_locale)
-			VALUES (?, '', ?, (SELECT COALESCE(MAX(version), 0) + 1 FROM privacy_history), ?, ?, ?, ?)
+			VALUES (?, '', ?, (SELECT GREATEST(
+                COALESCE((SELECT MAX(version) FROM privacy_history), 0),
+                COALESCE((SELECT MAX(source_privacy_version) FROM email_delivery_run WHERE privacy_id IS NOT NULL), 0)
+            ) + 1), ?, ?, ?, ?)
 			RETURNING id, version, title, content, status, created_at, updated_at, content_document_id
 		`, title, managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT.String(), now, now, contentDocumentID, sourceLocale).Scan(&privacy).Error; err != nil {
 			return err
@@ -613,6 +615,9 @@ func (s *PrivacyService) DeletePrivacy(
 ) (*connect.Response[managev1.DeleteResponse], error) {
 	var privacy model.Privacy
 	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
+		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -620,16 +625,12 @@ func (s *PrivacyService) DeletePrivacy(
 			}
 			return err
 		}
-		policy, err := legalDocumentPolicyForType("privacy")
-		if err != nil {
-			return err
-		}
 		if err := requireActiveLegalPrincipal(ctx, tx, "delete", false); err != nil {
 			return err
 		}
 		if err := requireLegalPermission(
 			ctx, s.spiceDB, "privacy", privacy.ID,
-			legalMutationAction(policy, privacy.Status, legalActionDelete),
+			legalActionDelete,
 		); err != nil {
 			return err
 		}
@@ -638,19 +639,12 @@ func (s *PrivacyService) DeletePrivacy(
 		); err != nil {
 			return err
 		}
-		if privacy.Status != managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT.String() {
-			return errs.FailedPrecondition("can only delete draft privacy policies")
-		}
-		var runCount int64
-		if err := tx.Model(&model.CampaignDeliveryRun{}).
-			Where("privacy_id = ?", privacy.ID).
-			Count(&runCount).Error; err != nil {
+		currentBefore, err := s.legalOG.CurrentForRoute(ctx, tx, "privacy")
+		if err != nil {
 			return err
 		}
-		if runCount > 0 {
-			return errs.FailedPrecondition(
-				"privacy delivery history must be preserved",
-			)
+		if err := cancelLegalNoticeDeliveryForPolicyDeletion(ctx, tx, "privacy", privacy.ID); err != nil {
+			return err
 		}
 		if privacy.ContentDocumentID == nil {
 			return errs.FailedPrecondition("privacy content document has not been populated")
@@ -670,11 +664,9 @@ func (s *PrivacyService) DeletePrivacy(
 			return err
 		}
 		if err := tx.Delete(&privacy).Error; err != nil {
-			if dberrors.IsForeignKeyViolation(err) {
-				return errs.FailedPrecondition(
-					"privacy delivery history or another durable reference exists",
-				)
-			}
+			return err
+		}
+		if err := refreshLegalRouteAfterPolicyDeletion(ctx, tx, s.legalOG, "privacy", privacy.ID, currentBefore); err != nil {
 			return err
 		}
 		if err := appendLegalPolicyIdentityAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditLegalPolicyDeleted, "privacy", privacy.ID, privacy.Version); err != nil {

@@ -135,18 +135,11 @@ func (s *AIDocumentService) compileAndApplyAIDocumentMutationWithDB(
 	requestSavedOG bool,
 	allowAuthoritativeTargetReplacement bool,
 ) (legalAIDocumentApplyResult, error) {
-	policy, err := legalDocumentPolicyForType(entityType)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, err
-	}
 	state, sourceLocale, err := s.loadAIDocumentAfterAuthorization(
 		ctx, tx, root, entityType, entityID, locale, memberID,
 	)
 	if err != nil {
 		return legalAIDocumentApplyResult{}, err
-	}
-	if locale == sourceLocale && root.Status != policy.draftStatus && root.Status != policy.archivedStatus {
-		return legalAIDocumentApplyResult{}, errs.FailedPrecondition("scheduled or active legal source documents are read-only")
 	}
 	mutation, err := compiler(state)
 	if err != nil {

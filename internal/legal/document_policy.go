@@ -221,9 +221,6 @@ func RequireLockedSourceLocaleEdit(
 		}
 		return errs.Internal(err)
 	}
-	if row.Status != policy.draftStatus && row.Status != policy.archivedStatus {
-		return errs.FailedPrecondition("scheduled or active legal source documents are read-only")
-	}
 	if err := requireActiveLegalPrincipal(ctx, tx, "edit", false); err != nil {
 		return err
 	}
