@@ -409,11 +409,19 @@ func (p *Projection) Complete(
 		return og.ErrTranslationTargetMissing
 	}
 	var matched int64
-	query := tx.WithContext(ctx).
-		Table(target.EntityType+"_translation").
-		Where("entity_id = ? AND locale = ?", current.ID, *locale)
+	// The source locale is stored on the history root, not in its target
+	// translation table. Either durable locale owner may complete this route.
+	query := tx.WithContext(ctx).Table(target.EntityType+"_history").
+		Where("id = ? AND source_locale = ?", current.ID, *locale)
 	if err := query.Count(&matched).Error; err != nil {
 		return err
+	}
+	if matched == 0 {
+		if err := tx.WithContext(ctx).Table(target.EntityType+"_translation").
+			Where("entity_id = ? AND locale = ?", current.ID, *locale).
+			Count(&matched).Error; err != nil {
+			return err
+		}
 	}
 	if matched != 1 {
 		return og.ErrTranslationTargetMissing

@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestBuildProviderTargetRichTextBatchKeepsOnlyCurrentCompatibleSourceUnits(t *testing.T) {
@@ -217,6 +219,11 @@ func TestBuildProviderTargetRichTextBatchPreservesUnrelatedTargetTableUnit(t *te
 			)}},
 		},
 	}
+	targetCells := document.LocaleOverlays[1].Blocks[0].GetTable().GetContent().Rows[0].Cells
+	for _, cell := range targetCells {
+		cell.Content = append(cell.Content, &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Link{Link: &contentv1.RichTextLink{Href: "https://example.test/kept", Content: []*contentv1.RichTextStyledText{{Text: "kept link"}}}}})
+	}
+	unrelatedBefore := proto.Clone(targetCells[1])
 	replace, err := contentblock.ReplaceFromRichTextProto(documentID, revision, document)
 	require.NoError(t, err)
 	snapshot := contentblock.Snapshot{
@@ -243,6 +250,8 @@ func TestBuildProviderTargetRichTextBatchPreservesUnrelatedTargetTableUnit(t *te
 	require.Contains(t, data, "새 번역")
 	require.Contains(t, data, "기존 번역")
 	require.NotContains(t, data, "source unrelated")
+	require.Contains(t, data, "kept link")
+	require.True(t, proto.Equal(unrelatedBefore, targetCells[1]))
 }
 
 func TestBuildProviderTargetRichTextBatchIgnoresRequestedTableCellDeletedBeforeApply(t *testing.T) {
@@ -371,4 +380,41 @@ func providerTargetInline(text string) []*contentv1.RichTextInline {
 	return []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{
 		Text: &contentv1.RichTextStyledText{Text: text},
 	}}}
+}
+
+func TestProviderTargetReplacesOldInlineStructure(t *testing.T) {
+	t.Parallel()
+	for _, profile := range []contentv1.RichTextProfile{contentv1.RichTextProfile_RICH_TEXT_PROFILE_POLICY, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST} {
+		t.Run(profile.String(), func(t *testing.T) {
+			id, revision, blockID := uuid.New(), uuid.New(), uuid.New()
+			oldTarget := providerTargetParagraph(blockID, "old prefix")
+			oldTarget.GetParagraph().Content = append(oldTarget.GetParagraph().Content, &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Link{Link: &contentv1.RichTextLink{Href: "https://example.test/old", Content: []*contentv1.RichTextStyledText{{Text: "old link"}}}}})
+			document := &contentv1.RichTextDocument{BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Profile: profile, SourceLocale: "en", Base: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{providerTargetBaseNode(blockID, 0)}}, LocaleOverlays: []*contentv1.RichTextLocaleOverlay{{Locale: "en", Blocks: []*contentv1.RichTextBlockLocale{providerTargetParagraph(blockID, "new source")}}, {Locale: "fr", Blocks: []*contentv1.RichTextBlockLocale{oldTarget}}}}
+			replacement, err := contentblock.ReplaceFromRichTextProto(id, revision, document)
+			require.NoError(t, err)
+			profileName, err := contentv1.RichTextProfileStorageName(profile)
+			require.NoError(t, err)
+			snapshot := contentblock.Snapshot{Document: contentblock.Document{ID: id, Profile: profileName, Revision: revision}, SourceLocale: "en", Blocks: replacement.Blocks, LocaleOverlays: replacement.LocaleOverlays}
+			sourceDocument, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "en")
+			require.NoError(t, err)
+			source := &SourceDocument{ContentBlockDocument: sourceDocument, ContentDocumentRevision: revision.String()}
+			plan, err := BuildRichTextExtractionPlan(&model.TranslationJob{EntityType: "terms", EntityID: uuid.NewString(), SourceLocale: "en", TargetLocale: "fr"}, source, RichTextDocumentFields{})
+			require.NoError(t, err)
+			results := map[string]UnitResult{}
+			for _, unit := range plan.Units {
+				results[unit.UnitID] = UnitResult{UnitID: unit.UnitID, TranslatedText: "nouveau", OriginalData: unit.OriginalData, TargetInline: []XLIFFInline{unit.SourceInline[0]}}
+				result := results[unit.UnitID]
+				result.TargetInline[0].Children = []XLIFFInline{{Kind: XLIFFInlineText, Text: "nouveau"}}
+				results[unit.UnitID] = result
+			}
+			candidate, err := BuildRichTextCandidate(plan, source, results)
+			require.NoError(t, err)
+			require.NoError(t, candidate.SetProviderUnitPatch(plan, results))
+			batch, err := BuildProviderTargetRichTextBatch(snapshot, profile, "fr", candidate)
+			require.NoError(t, err)
+			require.Contains(t, string(batch.LocaleGroups[0].Upserts[0].LocalizedData), "nouveau")
+			require.NotContains(t, string(batch.LocaleGroups[0].Upserts[0].LocalizedData), "old link")
+			require.True(t, proto.Equal(oldTarget, document.LocaleOverlays[1].Blocks[0]))
+		})
+	}
 }

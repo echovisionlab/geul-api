@@ -52,16 +52,17 @@ func TestProjectionBindsCanonicalLocalizedLegalRoutesIntegration(t *testing.T) {
 				SHA256: digest, Disposition: "inline", Status: model.PublicAssetStatusReady,
 				ReadyAt: &now, CreatedAt: now, UpdatedAt: now,
 			}).Error)
-			locale := "ko"
-			require.NoError(t, NewProjection().Complete(t.Context(), db, og.Target{
-				EntityType: testCase.kind, EntityID: RouteID(testCase.kind), Locale: &locale, Kind: "locale",
-			}, assetID, now, "https://cdn.example.com"))
-			var binding model.PublicAssetBinding
-			require.NoError(t, db.First(&binding,
-				"owner_type = ? AND owner_id = ? AND binding_key = ?",
-				testCase.kind, RouteID(testCase.kind), "og:ko",
-			).Error)
-			require.Equal(t, assetID, binding.AssetID)
+			for _, locale := range []string{"en", "ko"} {
+				require.NoError(t, NewProjection().Complete(t.Context(), db, og.Target{
+					EntityType: testCase.kind, EntityID: RouteID(testCase.kind), Locale: &locale, Kind: "locale",
+				}, assetID, now, "https://cdn.example.com"))
+				var binding model.PublicAssetBinding
+				require.NoError(t, db.First(&binding,
+					"owner_type = ? AND owner_id = ? AND binding_key = ?",
+					testCase.kind, RouteID(testCase.kind), "og:"+locale,
+				).Error)
+				require.Equal(t, assetID, binding.AssetID)
+			}
 		})
 	}
 }

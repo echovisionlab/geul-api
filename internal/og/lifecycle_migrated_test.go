@@ -1,6 +1,7 @@
 package og_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -18,6 +19,34 @@ import (
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
+
+type missingLocaleProjection struct{ migratedProjection }
+
+func (missingLocaleProjection) Complete(context.Context, *gorm.DB, og.Target, string, time.Time, string) error {
+	return og.ErrTranslationTargetMissing
+}
+
+func TestOgCompletionMissingLocaleFinishesWithoutSupersedingItself(t *testing.T) {
+	db := newServiceUnitDB(t)
+	setupOgLifecycleUnitTables(t, db)
+	// Match the production invariant that previously turned this case into 500.
+	require.NoError(t, db.Exec(`CREATE TRIGGER require_og_successor BEFORE UPDATE ON og_generation
+		WHEN NEW.status = 'superseded' AND (NEW.superseded_by_id IS NULL OR NEW.superseded_by_id = NEW.id)
+		BEGIN SELECT RAISE(ABORT, 'superseded requires successor'); END`).Error)
+	now := time.Now().UTC()
+	leaseToken, locale := uuid.NewString(), "fr"
+	generation := seedProcessingOgGeneration(t, db, managev1.OgEntityType_OG_ENTITY_TYPE_POST, uuid.NewString(), &locale, leaseToken, now.Add(time.Hour), now.Add(time.Minute))
+	status, _, err := og.NewLifecycle(db, "https://cdn.example.com", missingLocaleProjection{}).
+		Complete(t.Context(), generation.ID, leaseToken, validOgWriteResult(generation.ID))
+	require.NoError(t, err)
+	require.Equal(t, model.OgGenerationStatusFailed, status)
+	var stored model.OgGeneration
+	require.NoError(t, db.First(&stored, "id = ?", generation.ID).Error)
+	require.Equal(t, og.FailureCodeCompletionRejected, ptrStringValue(stored.LastErrorCode))
+	require.Nil(t, stored.LeaseToken)
+	require.Nil(t, stored.SupersededByID)
+	require.NotNil(t, stored.CompletedAt)
+}
 
 func TestOgGenerationClaimExposesActiveLeaseAndReclaimsOnlyAfterExpiry(t *testing.T) {
 	db := newServiceUnitDB(t)

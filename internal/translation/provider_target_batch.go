@@ -238,16 +238,8 @@ func buildProviderPatchedRichTextBlock(
 			return nil, err
 		}
 		targetUnits = filterProviderUnitsByCurrentBase(targetUnits, currentBase)
-		targetResults := make(map[string]UnitResult, len(targetUnits))
 		for _, unit := range targetUnits {
 			allowedUnitIDs[unit.UnitID] = struct{}{}
-			targetResults[unit.UnitID] = UnitResult{
-				UnitID: unit.UnitID, TranslatedText: unit.SourceText,
-				OriginalData: unit.OriginalData, TargetInline: unit.SourceInline,
-			}
-		}
-		if err := ApplyRichTextResults(block, prefix, targetResults); err != nil {
-			return nil, err
 		}
 	}
 	prefix, ok := richTextUnitPrefix(requested[0].UnitID)
@@ -262,6 +254,39 @@ func buildProviderPatchedRichTextBlock(
 	}
 	if err := ApplyRichTextResults(block, prefix, requestedResults); err != nil {
 		return nil, err
+	}
+	// Existing target runs belong to their own inline authority. Replaying
+	// their paired codes against a changed source rejects valid old styles
+	// and links, even when the provider is about to replace the entire field.
+	// Apply requested fields against current source authority, then preserve
+	// only unrelated target fields without interpreting their inline codes.
+	if target != nil {
+		targetSegments := make(map[string][]*contentv1.RichTextInline)
+		for _, segment := range richTextSemanticSegments(target) {
+			targetSegments[richTextUnitID(prefix, segment.path)] = segment.content
+		}
+		for _, segment := range richTextSemanticSegments(block) {
+			id := richTextUnitID(prefix, segment.path)
+			if _, selected := requestedResults[id]; selected {
+				continue
+			}
+			if content, exists := targetSegments[id]; exists {
+				segment.replace(cloneRichTextInlineSlice(content))
+			}
+		}
+		targetStrings := make(map[string]string)
+		walkRichTextTranslationStrings(target.ProtoReflect(), nil, func(path []string, value string) {
+			targetStrings[richTextUnitID(prefix, path)] = value
+		})
+		walkMutableRichTextTranslationStrings(block.ProtoReflect(), nil, func(path []string, message protoreflect.Message, field protoreflect.FieldDescriptor) {
+			id := richTextUnitID(prefix, path)
+			if _, selected := requestedResults[id]; selected {
+				return
+			}
+			if value, exists := targetStrings[id]; exists {
+				message.Set(field, protoreflect.ValueOfString(value))
+			}
+		})
 	}
 	clearUnselectedRichTextSemanticSegments(block, prefix, allowedUnitIDs)
 	clearUnselectedRichTextTranslationStrings(block, prefix, allowedUnitIDs)
