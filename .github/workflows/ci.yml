@@ -63,6 +63,10 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
+          # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
+          # environment-backed auth in the repository .npmrc.
+          registry-url: https://npm.pkg.github.com
+          scope: '@echovisionlab'
 
       - name: Build and test media tools
         env:
