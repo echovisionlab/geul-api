@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/patauth"
 	patdomain "github.com/echovisionlab/geul-api/internal/member/pat"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -212,6 +215,93 @@ func TestNewPersonalAccessTokenRepositoryRejectsNilDatabase(t *testing.T) {
 	}
 }
 
+func TestAuthenticationRequiresCurrentActiveMember(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change string
+	}{
+		{"inactive identity", `UPDATE kratos.identities SET state = 'inactive' WHERE id = 'identity-1'`},
+		{"banned identity", `UPDATE kratos.identities SET metadata_admin = '{"banned":true}' WHERE id = 'identity-1'`},
+		{"deleted Member", `UPDATE member SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'member-1'`},
+		{"missing Member", `DELETE FROM member WHERE id = 'member-1'`},
+		{"missing identity", `DELETE FROM kratos.identities WHERE id = 'identity-1'`},
+		{"unlinked identity", `UPDATE member SET account_identity_id = NULL WHERE id = 'member-1'`},
+		{"different identity link", `UPDATE member SET account_identity_id = 'identity-2' WHERE id = 'member-1'`},
+		{"mismatched external id", `UPDATE kratos.identities SET external_id = 'member-2' WHERE id = 'identity-1'`},
+		{"incomplete onboarding", `UPDATE member SET onboarded = FALSE WHERE id = 'member-1'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newPATRepositoryTestDB(t)
+			repository := mustPATRepository(t, db)
+			clock := &mutableClock{now: time.Now().UTC()}
+			service, err := patdomain.NewService(repository, clock, bytes.NewReader(bytes.Repeat([]byte{0x42}, 48)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			issued, err := service.Create(t.Context(), "member-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Authenticate(t.Context(), issued.Secret.Reveal()); err != nil {
+				t.Fatalf("active owner rejected: %v", err)
+			}
+			if err := db.Exec(tc.change).Error; err != nil {
+				t.Fatal(err)
+			}
+			clock.now = clock.now.Add(time.Minute)
+			if _, err := service.Authenticate(t.Context(), issued.Secret.Reveal()); !errors.Is(err, patdomain.ErrInvalidToken) {
+				t.Fatalf("inactive owner authentication error %v", err)
+			}
+			originalUse := clock.now.Add(-time.Minute)
+			assertLastUsedAt(t, db, issued.Metadata.ID, &originalUse)
+		})
+	}
+}
+
+func TestOathkeeperUsesCurrentPATServiceAfterRegenerationAndDeletion(t *testing.T) {
+	t.Parallel()
+	db := newPATRepositoryTestDB(t)
+	repository := mustPATRepository(t, db)
+	clock := &mutableClock{now: time.Now().UTC()}
+	service, err := patdomain.NewService(repository, clock, bytes.NewReader(append(bytes.Repeat([]byte{1}, 48), bytes.Repeat([]byte{2}, 32)...)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := service.Create(t.Context(), "member-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "internal-service-secret"
+	handler, err := patauth.NewOathkeeper(secret, "X-Internal-Service", service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(token string, want int) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, patauth.OathkeeperPath, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Internal-Service", secret)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("status %d want %d", w.Code, want)
+		}
+	}
+	check(issued.Secret.Reveal(), 200)
+	clock.now = clock.now.Add(time.Minute)
+	regenerated, err := service.Regenerate(t.Context(), "member-1", issued.Metadata.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(issued.Secret.Reveal(), 401)
+	check(regenerated.Secret.Reveal(), 200)
+	if err := service.Delete(t.Context(), "member-1", issued.Metadata.ID); err != nil {
+		t.Fatal(err)
+	}
+	check(regenerated.Secret.Reveal(), 401)
+}
+
 type mutableClock struct{ now time.Time }
 
 func (clock *mutableClock) Now() time.Time { return clock.now }
@@ -224,6 +314,23 @@ func newPATRepositoryTestDB(t *testing.T) *gorm.DB {
 	})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	for _, statement := range []string{
+		`ATTACH DATABASE ':memory:' AS kratos`,
+		`CREATE TABLE kratos.identities (id TEXT PRIMARY KEY, external_id TEXT, state TEXT, metadata_admin TEXT)`,
+		`CREATE TABLE member (id TEXT PRIMARY KEY, account_identity_id TEXT, deleted_at DATETIME, onboarded BOOLEAN)`,
+		`INSERT INTO kratos.identities VALUES ('identity-1', 'member-1', 'active', '{}'), ('identity-2', 'member-2', 'active', '{}')`,
+		`INSERT INTO member VALUES ('member-1', 'identity-1', NULL, TRUE), ('member-2', 'identity-2', NULL, TRUE)`,
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("create active Member fixture: %v", err)
+		}
 	}
 	if err := db.Exec(`CREATE TABLE member_personal_access_token (
         selector TEXT PRIMARY KEY,

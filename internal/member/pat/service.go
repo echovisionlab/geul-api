@@ -52,6 +52,8 @@ type Repository interface {
 	ListByMember(context.Context, MemberID) ([]StoredToken, error)
 	FindByID(context.Context, TokenID) (StoredToken, error)
 	ReplaceVerifier(context.Context, MemberID, TokenID, Verifier, time.Time) (StoredToken, error)
+	// TouchLastUsedAt requires the same current verifier and an active linked
+	// Member/Identity; otherwise it returns ErrTokenNotFound.
 	TouchLastUsedAt(context.Context, MemberID, TokenID, Verifier, time.Time) error
 	Delete(context.Context, MemberID, TokenID) error
 }
@@ -158,7 +160,9 @@ func (service *Service) Delete(ctx context.Context, memberID MemberID, tokenID T
 	return nil
 }
 
-// Authenticate validates a PAT for a supported non-MCP API boundary.
+// Authenticate validates a current PAT and its active owner for a supported
+// non-MCP API boundary. PATs currently have no expiry field; regeneration and
+// deletion invalidate credentials. No authentication decision is cached.
 func (service *Service) Authenticate(ctx context.Context, rawToken string) (Principal, error) {
 	tokenID, candidate, err := parseToken(rawToken)
 	if err != nil {

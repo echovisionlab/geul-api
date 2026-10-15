@@ -183,6 +183,7 @@ func TestMCPPrivateHTTPServerExposesOnlyExactRoutes(t *testing.T) {
 	})
 	server, err := newMCPPrivateHTTPServer(mcpPrivateHandlers{
 		authorAdmission: admissionHandler,
+		oathkeeperPAT:   http.NotFoundHandler(),
 	}, &config.Config{
 		MCPPrivatePort:      8001,
 		HTTPReadTimeoutSec:  10,
@@ -213,7 +214,10 @@ func TestMCPPrivateHTTPServerExposesOnlyExactRoutes(t *testing.T) {
 	require.Error(t, err)
 	_, err = newMCPPrivateHTTPServer(mcpPrivateHandlers{
 		authorAdmission: admissionHandler,
+		oathkeeperPAT:   http.NotFoundHandler(),
 	}, nil)
+	require.Error(t, err)
+	_, err = newMCPPrivateHTTPServer(mcpPrivateHandlers{authorAdmission: admissionHandler}, &config.Config{})
 	require.Error(t, err)
 }
 

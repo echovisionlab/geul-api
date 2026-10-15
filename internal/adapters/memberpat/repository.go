@@ -120,6 +120,19 @@ func (repository *PersonalAccessTokenRepository) TouchLastUsedAt(
 			string(memberID),
 			verifier.Bytes(),
 		).
+		// Check the live Member/Identity link in the same statement as the
+		// current verifier. A deleted, banned, inactive or unlinked owner must
+		// not authenticate even while its PAT row still exists.
+		Where(`EXISTS (
+			SELECT 1 FROM member AS m
+			JOIN kratos.identities AS i ON i.id = m.account_identity_id
+			  AND i.external_id = CAST(m.id AS TEXT)
+			WHERE m.id = member_personal_access_token.member_id
+			  AND m.deleted_at IS NULL
+			  AND m.onboarded = TRUE
+			  AND i.state = 'active'
+			  AND COALESCE(CAST(i.metadata_admin ->> 'banned' AS TEXT), 'false') IN ('false', '0')
+		)`).
 		UpdateColumn(
 			"last_used_at",
 			gorm.Expr(
