@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"strings"
 	"time"
 
@@ -211,7 +213,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackEmailTemplateAIDocumentValidation
 		}
-		return nil
+		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_EMAIL_TEMPLATE, mutation.TemplateID, mutation.Locale, output.DocumentRevision, output.TargetRevision, output.Changed, mutation.DeleteTranslation, mutation.ContributorMember.String())
 	})
 	if errors.Is(err, errRollbackEmailTemplateAIDocumentValidation) {
 		return output, nil

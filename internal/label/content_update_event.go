@@ -2,22 +2,25 @@ package label
 
 import (
 	"context"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
 
-func publishLabelContentUpdated(ctx context.Context, publisher AsyncPublisher, event *managev1.ContentUpdatedEvent) {
-	if publisher == nil || event == nil {
-		return
-	}
-	if err := publisher.NotifyProtobuf(ctx, eventpkg.SignalContentUpdated, event); err != nil {
-		slog.Warn("publish Label content update signal", "error", err, "label_id", event.EntityId)
-	}
+// publishLabelContentUpdated schedules content.updated in the caller's
+// mutation transaction so the signal commits or rolls back with the data.
+func publishLabelContentUpdated(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher AsyncPublisher,
+	event *managev1.ContentUpdatedEvent,
+) error {
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
 func buildLabelMediaMutationContentUpdatedEvent(labelID string) *managev1.ContentUpdatedEvent {

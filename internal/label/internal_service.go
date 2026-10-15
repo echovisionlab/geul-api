@@ -204,22 +204,27 @@ func (s *InternalLabelService) ApplyLabelBlockBatch(
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.applyLabelBlockBatch(ctx, req.Msg.LabelId, locale, req.Msg.ExpectedTargetRevision, req.Msg.Batch, req.Msg.AffectedLocaleValues)
+	result, err := s.applyLabelBlockBatch(
+		ctx, req.Msg.LabelId, locale, req.Msg.ExpectedTargetRevision, req.Msg.Batch, req.Msg.AffectedLocaleValues,
+		func(tx *gorm.DB, result labelBlockApplyResult) error {
+			if !result.Content.Changed {
+				return nil
+			}
+			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
+				req.Msg.LabelId,
+				[]string{"content"},
+				result.Content.DocumentRevision.String(),
+				req.Msg.Batch.GetContributorMemberIds(),
+				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				locale,
+				result.LocaleExists,
+				result.TargetRevision,
+				locale == result.SourceLocale,
+			))
+		},
+	)
 	if err != nil {
 		return nil, err
-	}
-	if result.Content.Changed {
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelContentUpdatedEvent(
-			req.Msg.LabelId,
-			[]string{"content"},
-			result.Content.DocumentRevision.String(),
-			req.Msg.Batch.GetContributorMemberIds(),
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			result.LocaleExists,
-			result.TargetRevision,
-			locale == result.SourceLocale,
-		))
 	}
 	return connect.NewResponse(&intrav1.ApplyLabelBlockBatchResponse{
 		DocumentRevision: result.Content.DocumentRevision.String(), Changed: result.Content.Changed,
@@ -240,22 +245,27 @@ func (s *InternalLabelService) UpdateLabelLocaleMetadata(
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.updateLabelLocaleTitle(ctx, req.Msg.LabelId, locale, req.Msg.Title, req.Msg.ExpectedRevision, req.Msg.ExpectedTargetRevision, req.Msg.ContributorMemberIds)
+	result, err := s.updateLabelLocaleTitle(
+		ctx, req.Msg.LabelId, locale, req.Msg.Title, req.Msg.ExpectedRevision, req.Msg.ExpectedTargetRevision, req.Msg.ContributorMemberIds,
+		func(tx *gorm.DB, result labelTitleUpdateResult) error {
+			if !result.Advance.Changed {
+				return nil
+			}
+			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
+				req.Msg.LabelId,
+				[]string{"title"},
+				result.Advance.DocumentRevision.String(),
+				req.Msg.ContributorMemberIds,
+				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				locale,
+				true,
+				nil,
+				true,
+			))
+		},
+	)
 	if err != nil {
 		return nil, err
-	}
-	if result.Advance.Changed {
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelContentUpdatedEvent(
-			req.Msg.LabelId,
-			[]string{"title"},
-			result.Advance.DocumentRevision.String(),
-			req.Msg.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			true,
-			nil,
-			true,
-		))
 	}
 	return connect.NewResponse(&intrav1.UpdateLabelLocaleMetadataResponse{
 		DocumentRevision: result.Advance.DocumentRevision.String(), Changed: result.Advance.Changed,

@@ -5,6 +5,8 @@ package post_test
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"google.golang.org/protobuf/proto"
 	"sort"
 	"testing"
 	"time"
@@ -84,6 +86,18 @@ func TestPostTargetLocaleCollaborationCASAndSourceSeedIntegration(t *testing.T) 
 	require.Nil(t, missingKO.Msg.TargetRevision)
 	require.Equal(t, sourceWrite.Msg.DocumentRevision, missingKO.Msg.DocumentRevision)
 	require.Equal(t, "ko", missingKO.Msg.Document.Locale)
+	editorUser := *auth.GetUser(ctx)
+	editorUser.SessionID = auth.SessionID(adminSessionID)
+	editorCtx := auth.WithUser(ctx, &editorUser)
+	for locale, bootstrap := range map[string]*intrav1.LoadPostBlockDocumentResponse{"en": sourceLoaded.Msg, "ko": missingKO.Msg} {
+		firstPaint, readErr := service.GetPostEditorDocument(editorCtx, connect.NewRequest(&managev1.GetPostEditorDocumentRequest{PostId: created.Msg.Id, Locale: locale}))
+		require.NoError(t, readErr)
+		require.True(t, proto.Equal(bootstrap.Document, firstPaint.Msg.Document))
+		require.Equal(t, bootstrap.DocumentRevision, firstPaint.Msg.DocumentRevision)
+		require.Equal(t, bootstrap.TargetRevision, firstPaint.Msg.TargetRevision)
+		require.Equal(t, bootstrap.LocaleExists, firstPaint.Msg.LocaleExists)
+		require.True(t, firstPaint.Msg.Editable)
+	}
 
 	_, err = internal.ApplyPostBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyPostBlockBatchRequest{
 		PostId: created.Msg.Id, Locale: "ko",
@@ -109,6 +123,13 @@ func TestPostTargetLocaleCollaborationCASAndSourceSeedIntegration(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, koLoaded.Msg.LocaleExists)
 	require.NotNil(t, koLoaded.Msg.TargetRevision)
+	firstPaintKO, readErr := service.GetPostEditorDocument(editorCtx, connect.NewRequest(&managev1.GetPostEditorDocumentRequest{PostId: created.Msg.Id, Locale: "ko"}))
+	require.NoError(t, readErr)
+	require.True(t, proto.Equal(koLoaded.Msg.Document, firstPaintKO.Msg.Document))
+	require.Equal(t, koLoaded.Msg.TargetRevision, firstPaintKO.Msg.TargetRevision)
+	require.Equal(t, koLoaded.Msg.DocumentRevision, firstPaintKO.Msg.DocumentRevision)
+	require.True(t, firstPaintKO.Msg.LocaleExists)
+
 	koRevisionBeforeEdit := *koLoaded.Msg.TargetRevision
 	koEdit, err := internal.ApplyPostBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyPostBlockBatchRequest{
 		PostId: created.Msg.Id, Locale: "ko", ExpectedTargetRevision: koLoaded.Msg.TargetRevision,

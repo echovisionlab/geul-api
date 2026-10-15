@@ -32,3 +32,7 @@ func (e *StaleRevisionError) Is(target error) bool {
 func staleRevision(current uuid.UUID) error {
 	return &StaleRevisionError{CurrentRevision: current}
 }
+
+func (e *StaleRevisionError) CollaborationRevisions() (string, string, *bool) {
+	return e.CurrentRevision.String(), "", nil
+}

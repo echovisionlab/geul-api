@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"testing"
 	"time"
@@ -283,4 +284,13 @@ func requirePublicAssetDeletePending(t *testing.T, db *gorm.DB, assetID string) 
 	var asset model.PublicAsset
 	require.NoError(t, db.Select("id", "status").Take(&asset, "id = ?", assetID).Error)
 	require.Equal(t, model.PublicAssetStatusDeletePending, asset.Status)
+}
+
+func (publisher noopArtistAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

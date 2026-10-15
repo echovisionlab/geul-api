@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	"strings"
 	"time"
 
@@ -444,11 +445,16 @@ func normalizeReleaseContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
+	var targetConflict *translation.TargetRevisionConflict
+	if errors.As(err, &targetConflict) {
+		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
+	}
+
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return errs.NotFoundMsg("release content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.FailedPrecondition("release content revision changed; reload before saving")
+		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "release content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):

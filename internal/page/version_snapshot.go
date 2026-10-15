@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -99,6 +100,7 @@ func DecodeVersionContentSnapshot(encoded json.RawMessage) (VersionContentSnapsh
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(wire.Document, document); err != nil {
 		return VersionContentSnapshot{}, fmt.Errorf("decode Page version typed document: %w", err)
 	}
+	document.BlockCatalogFingerprint = contentblock.UpgradeVersionSnapshotCatalogFingerprint(document.GetBlockCatalogFingerprint())
 	snapshot := VersionContentSnapshot{
 		SchemaVersion: wire.SchemaVersion,
 		SourceLocale:  wire.SourceLocale,

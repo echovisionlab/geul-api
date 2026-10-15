@@ -3,17 +3,16 @@ package work
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -22,9 +21,11 @@ import (
 
 // AsyncPublisher is the transport-neutral capability used for coalescible
 // Work content-update signals.
+// content.updated is scheduled only through the transactional signal method.
 type AsyncPublisher interface {
 	EnqueueProtobuf(context.Context, string, string, proto.Message) error
 	NotifyProtobuf(context.Context, string, proto.Message) error
+	contentsignal.Publisher
 }
 
 // CollaborationPermissionChecker is the fully-consistent ReBAC read used by
@@ -112,13 +113,13 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 	return nil
 }
 
-func publishWorkContentUpdated(ctx context.Context, publisher AsyncPublisher, event *managev1.ContentUpdatedEvent) error {
-	if publisher == nil || event == nil {
-		return nil
-	}
-	if err := publisher.NotifyProtobuf(ctx, eventpkg.SignalContentUpdated, event); err != nil {
-		slog.Warn("Failed to publish Work content updated event", "error", err, "workId", event.EntityId)
-		return err
-	}
-	return nil
+// publishWorkContentUpdated schedules content.updated in the caller's
+// mutation transaction so the signal commits or rolls back with the data.
+func publishWorkContentUpdated(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher AsyncPublisher,
+	event *managev1.ContentUpdatedEvent,
+) error {
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }

@@ -11,6 +11,7 @@ import (
 
 func TestLoadConfigWithDefaults(t *testing.T) {
 	setRequiredConfigEnv(t)
+	require.NoError(t, os.Unsetenv("INTERNAL_SERVICE_HEADER_NAME"))
 	require.NoError(t, os.Unsetenv("CLOUDFLARE_CACHE_PURGE_ENABLED"))
 	t.Setenv("INSTANCE_ID", "")
 

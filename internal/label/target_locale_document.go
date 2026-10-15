@@ -197,7 +197,7 @@ func applyLabelTargetLocaleMutation(
 	if err := translation.ValidateTargetRevisionWrite(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.UseCurrentTargetRevision,
 	); err != nil {
-		return labelTargetLocaleMutationResult{}, err
+		return labelTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !input.AllowCreate {
 		return labelTargetLocaleMutationResult{}, errs.FailedPrecondition("Label target locale must be explicitly created before collaboration")
@@ -296,7 +296,7 @@ func deleteLabelTargetLocale(
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{DocumentRevision: state.Snapshot.Document.Revision}, nil

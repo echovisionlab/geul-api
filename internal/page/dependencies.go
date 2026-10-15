@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -14,9 +15,11 @@ import (
 )
 
 // AsyncPublisher is the transport capability used by Page mutations.
+// content.updated is scheduled only through the transactional signal method.
 type AsyncPublisher interface {
 	EnqueueProtobuf(context.Context, string, string, proto.Message) error
 	NotifyProtobuf(context.Context, string, proto.Message) error
+	contentsignal.Publisher
 }
 
 // FileDeleter removes Page-owned File bindings during Page deletion.

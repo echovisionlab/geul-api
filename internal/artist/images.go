@@ -84,7 +84,7 @@ func (s *ArtistService) SetArtistImages(
 		return nil, errs.Required("expected_revision")
 	}
 
-	images, ogRunID, changed, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, fileIDs, &req.Msg.ExpectedRevision)
+	images, ogRunID, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, fileIDs, &req.Msg.ExpectedRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -92,9 +92,6 @@ func (s *ArtistService) SetArtistImages(
 	artist := &managev1.Artist{}
 	applyManageArtistImages(artist, images)
 	responseImages = append(responseImages, artist.Images...)
-	if changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManageMediaMutationContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST, req.Msg.ArtistId, "media.images"))
-	}
 	return connect.NewResponse(&managev1.SetArtistImagesResponse{
 		Images:            responseImages,
 		Revision:          artistImageRevision(images),
@@ -124,9 +121,8 @@ func (s *ArtistService) replaceArtistImages(
 	artistID string,
 	fileIDs []string,
 	expectedRevision *string,
-) ([]ArtistImageProjection, *string, bool, error) {
+) ([]ArtistImageProjection, *string, error) {
 	var ogRunID *string
-	changed := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockEditableArtistImages(ctx, tx, s.spiceDB, artistID); err != nil {
 			return err
@@ -141,7 +137,6 @@ func (s *ArtistService) replaceArtistImages(
 		if sameArtistImageFileIDs(current, fileIDs) {
 			return nil
 		}
-		changed = true
 		primaryChanged := artistPrimaryImageID(current) != firstString(fileIDs)
 		if err := s.runtime.ReplaceArtistImageBindings(ctx, tx, artistID, fileIDs); err != nil {
 			return err
@@ -149,31 +144,34 @@ func (s *ArtistService) replaceArtistImages(
 		if err := s.appendArtistGalleryAudit(ctx, tx, artistID, fileIDs); err != nil {
 			return err
 		}
-		if !primaryChanged {
-			return nil
+		if primaryChanged {
+			runID, requestErr := s.runtime.RequestCurrentWithDB(
+				ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST,
+				artistID, "", false, "artist_primary_image_updated",
+			)
+			if requestErr != nil {
+				return requestErr
+			}
+			if runID != "" {
+				ogRunID = &runID
+			}
 		}
-		runID, requestErr := s.runtime.RequestCurrentWithDB(
-			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST,
-			artistID, "", false, "artist_primary_image_updated",
-		)
-		if requestErr != nil {
-			return requestErr
-		}
-		if runID != "" {
-			ogRunID = &runID
-		}
-		return nil
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageMediaMutationContentUpdatedEvent(
+			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST,
+			artistID,
+			"media.images",
+		))
 	}); err != nil {
-		return nil, nil, false, err
+		return nil, nil, err
 	}
 	images, err := loadArtistImages(ctx, s.runtime, s.db, artistID)
 	if err != nil {
-		return nil, nil, false, errs.Internal(err)
+		return nil, nil, errs.Internal(err)
 	}
 	sort.SliceStable(images, func(i, j int) bool {
 		return images[i].SortOrder < images[j].SortOrder
 	})
-	return images, ogRunID, changed, nil
+	return images, ogRunID, nil
 }
 
 func sameArtistImageFileIDs(images []ArtistImageProjection, fileIDs []string) bool {

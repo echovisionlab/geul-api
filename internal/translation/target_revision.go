@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -22,8 +23,9 @@ type TargetRevisionFacts struct {
 // TargetRevisionConflict reports a failed missing-row or exact opaque token
 // comparison. CurrentRevision is empty only when the locale row is absent.
 type TargetRevisionConflict struct {
-	CurrentRevision string
-	CurrentExists   bool
+	CurrentRevision         string
+	CurrentDocumentRevision string
+	CurrentExists           bool
 }
 
 func (e *TargetRevisionConflict) Error() string {
@@ -119,4 +121,17 @@ func writeRevisionPart(write func([]byte) (int, error), value string) {
 	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
 	_, _ = write(length[:])
 	_, _ = write([]byte(value))
+}
+
+func (e *TargetRevisionConflict) CollaborationRevisions() (string, string, *bool) {
+	return e.CurrentDocumentRevision, e.CurrentRevision, &e.CurrentExists
+}
+
+// WithDocumentRevision retains the shared CAS observed under the domain lock.
+func WithDocumentRevision(err error, revision string) error {
+	var conflict *TargetRevisionConflict
+	if errors.As(err, &conflict) {
+		conflict.CurrentDocumentRevision = revision
+	}
+	return err
 }

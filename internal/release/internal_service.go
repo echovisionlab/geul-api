@@ -43,7 +43,7 @@ func WithInternalReleaseCheckpoints(checkpoints persistencecheckpoint.Contributo
 }
 
 // WithInternalReleaseAIDocumentPublisher reuses Release's existing product
-// signal publisher for post-commit DCDP collaboration notifications.
+// transactional publisher for durable DCDP collaboration notifications.
 func WithInternalReleaseAIDocumentPublisher(publisher AsyncPublisher) InternalReleaseServiceOption {
 	return func(service *InternalReleaseService) { service.asyncPublisher = publisher }
 }

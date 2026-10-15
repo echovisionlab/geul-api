@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	"sort"
 	"strings"
 	"time"
@@ -418,11 +419,16 @@ func normalizeCampaignEmailContentBlockError(entityType string, err error) error
 	if entityType != campaignContentEntity {
 		return errs.Internal(fmt.Errorf("unsupported Campaign content entity %q: %w", entityType, err))
 	}
+	var targetConflict *translation.TargetRevisionConflict
+	if errors.As(err, &targetConflict) {
+		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
+	}
+
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return errs.NotFoundMsg("campaign content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.FailedPrecondition("campaign content revision changed; reload before saving")
+		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "campaign content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):

@@ -307,23 +307,19 @@ func (s *PostService) RestorePostVersion(
 				return err
 			}
 		}
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(
+				ctx,
+				tx,
+				s.auditWriter,
+				sharedtelemetry.AuditPostUpdated,
+				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+					return sharedtelemetry.NewPostVersionRestoreAuditRecord(metadata, version.PostID, version.ID)
+				},
+			); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditPostUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPostVersionRestoreAuditRecord(metadata, version.PostID, version.ID)
-			},
-		)
-	})
-	if err != nil {
-		return nil, normalizePostContentBlockError(err)
-	}
-	if changed {
 		fields := make([]string, 0, 4)
 		if blocksChanged {
 			fields = append(fields, "content")
@@ -337,7 +333,7 @@ func (s *PostService) RestorePostVersion(
 		if sourceLocaleSwitched {
 			fields = append(fields, "sourceLocale")
 		}
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
 			version.PostID,
 			fields,
 			finalSnapshot.Document.Revision.String(),
@@ -348,6 +344,9 @@ func (s *PostService) RestorePostVersion(
 			nil,
 			true,
 		))
+	})
+	if err != nil {
+		return nil, normalizePostContentBlockError(err)
 	}
 	var post model.Post
 	if err := s.db.WithContext(ctx).

@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -199,6 +200,9 @@ func (s *FileService) UpdateFileDownloadPolicy(
 		); auditErr != nil {
 			return auditErr
 		}
+		if signalErr := s.publishFileDownloadPolicyChanged(ctx, tx, locked); signalErr != nil {
+			return signalErr
+		}
 		locked.Audience = nextAudience
 		relation = locked
 		policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
@@ -208,6 +212,43 @@ func (s *FileService) UpdateFileDownloadPolicy(
 		return nil, err
 	}
 	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{Policy: policy}), nil
+}
+
+// Policy is attachment metadata. Track policies belong to their Release, not
+// to a Track room. PublishInTransaction retains the owner's current document
+// revision and stamps the browser origin; no document or locale state advances.
+func (s *FileService) publishFileDownloadPolicyChanged(ctx context.Context, tx *gorm.DB, relation fileDownloadPolicyRelation) error {
+	event, err := fileDownloadPolicyChangedEvent(relation)
+	if err != nil {
+		return err
+	}
+	publisher, ok := s.asyncPublisher.(contentsignal.Publisher)
+	if !ok {
+		return contentsignal.ErrPublisherRequired
+	}
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
+}
+
+func fileDownloadPolicyChangedEvent(relation fileDownloadPolicyRelation) (*managev1.ContentUpdatedEvent, error) {
+	entityTypes := map[string]managev1.ContentEntityType{
+		"post":          managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST,
+		"page":          managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
+		"work":          managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
+		"program_event": managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PROGRAM_EVENT,
+		"release":       managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE,
+	}
+	entityType, ok := entityTypes[relation.ResourceType]
+	if !ok || relation.ResourceID == "" {
+		return nil, fmt.Errorf("unsupported File download policy signal owner %s", relation.ResourceType)
+	}
+	return &managev1.ContentUpdatedEvent{
+		EntityType: entityType, EntityId: relation.ResourceID,
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
+		DocumentStateChanged: false, TimestampMs: time.Now().UnixMilli(),
+		ChangedFields: []*managev1.ContentUpdatedField{{
+			Path: "file_download_policy", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION,
+		}},
+	}, nil
 }
 
 func mergeObservedFileDownloadPolicy(

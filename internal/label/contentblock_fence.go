@@ -156,14 +156,14 @@ func normalizeLabelContentBlockError(err error) error {
 	case errors.As(err, &targetConflict):
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Label target locale changed since it was loaded; reload before saving",
+			"Label target locale changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return errs.NotFoundMsg("label content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Label document changed since it was loaded; reload before saving",
+			"Label document changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")

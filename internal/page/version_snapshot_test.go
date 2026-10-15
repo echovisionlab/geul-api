@@ -64,6 +64,16 @@ func TestVersionContentSnapshotUsesTypedDocumentEnvelope(t *testing.T) {
 	assert.Equal(t, "en", decoded.Document.GetLocaleOverlay().GetLocale())
 }
 
+func TestVersionContentSnapshotUpgradesReleasedCatalogBeforeValidation(t *testing.T) {
+	encoded := requireVersionContentSnapshot(t, "en", nil, nil)
+	legacy := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e"))
+	decoded, err := DecodeVersionContentSnapshot(legacy)
+	require.NoError(t, err)
+	require.Equal(t, contentv1.ContentBlockCatalogFingerprint, decoded.Document.GetBlockCatalogFingerprint())
+	require.Equal(t, "en", decoded.SourceLocale)
+	require.Empty(t, decoded.Document.GetBase().GetNodes())
+}
+
 func TestVersionContentSnapshotCanonicalizesJSONBRoundTripForCheckpointDedupe(t *testing.T) {
 	t.Parallel()
 

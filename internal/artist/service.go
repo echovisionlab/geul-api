@@ -670,7 +670,10 @@ func (s *ArtistService) PublishArtist(
 			return err
 		}
 		transitioned = true
-		return s.appendArtistLifecycleAudit(ctx, tx, artist.ID, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStatePublished)
+		if err := s.appendArtistLifecycleAudit(ctx, tx, artist.ID, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStatePublished); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageStateTransitionContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST, artist.ID, []string{"state.status", "state.published_at"}))
 	}); err != nil {
 		return nil, err
 	}
@@ -679,9 +682,6 @@ func (s *ArtistService) PublishArtist(
 		artist.Status = managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()
 		artist.PublishedAt = &now
 		artist.UpdatedAt = &now
-	}
-	if transitioned {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManageStateTransitionContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST, artist.ID, []string{"state.status", "state.published_at"}))
 	}
 	return connect.NewResponse(&managev1.ArtistLifecycleMutationResponse{
 		Id: artist.ID, Changed: transitioned,
@@ -719,7 +719,10 @@ func (s *ArtistService) UnpublishArtist(
 			return err
 		}
 		transitioned = true
-		return s.appendArtistLifecycleAudit(ctx, tx, artist.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft)
+		if err := s.appendArtistLifecycleAudit(ctx, tx, artist.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageStateTransitionContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST, artist.ID, []string{"state.status"}))
 	}); err != nil {
 		return nil, err
 	}
@@ -727,9 +730,6 @@ func (s *ArtistService) UnpublishArtist(
 	if transitioned {
 		artist.Status = managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String()
 		artist.UpdatedAt = &now
-	}
-	if transitioned {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManageStateTransitionContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST, artist.ID, []string{"state.status"}))
 	}
 	return connect.NewResponse(&managev1.ArtistLifecycleMutationResponse{
 		Id: artist.ID, Changed: transitioned,

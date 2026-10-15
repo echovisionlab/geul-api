@@ -52,20 +52,17 @@ func (s *ReleaseService) SetReleaseArtists(
 			return err
 		}
 
-		return s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"artists"})
+		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"artists"}); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
+			req.Msg.ReleaseId,
+			[]string{"relations.artists"},
+		))
 	})
 	if err != nil {
 		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
 	}
-
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.artists"},
-		),
-	)
 
 	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
@@ -108,21 +105,18 @@ func (s *ReleaseService) SetReleaseLabels(
 			return err
 		}
 
-		return s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"labels"})
+		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"labels"}); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
+			req.Msg.ReleaseId,
+			[]string{"relations.labels"},
+		))
 	})
 
 	if err != nil {
 		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
 	}
-
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.labels"},
-		),
-	)
 
 	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
@@ -198,21 +192,18 @@ func (s *ReleaseService) SetReleaseFormats(
 			return err
 		}
 
-		return s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"formats"})
+		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"formats"}); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
+			req.Msg.ReleaseId,
+			[]string{"relations.formats"},
+		))
 	})
 
 	if err != nil {
 		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
 	}
-
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.formats"},
-		),
-	)
 
 	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
@@ -272,21 +263,18 @@ func (s *ReleaseService) SetReleaseCredits(
 			return err
 		}
 
-		return s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"credits"})
+		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"credits"}); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
+			req.Msg.ReleaseId,
+			[]string{"relations.credits"},
+		))
 	})
 
 	if err != nil {
 		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
 	}
-
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.credits"},
-		),
-	)
 
 	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }

@@ -60,7 +60,7 @@ func (s *InternalFormService) SaveDocument(
 			return err
 		}
 		if root.DocumentRevision != expectedDocumentRevision.String() {
-			return formDocumentRevisionChangedConflict()
+			return formDocumentRevisionChangedConflict(root.DocumentRevision)
 		}
 		contributorMemberID, err := canonicalFormCollaborationContributor(r.ContributorMemberIds)
 		if err != nil {
@@ -97,7 +97,7 @@ func (s *InternalFormService) SaveDocument(
 			if err := translation.ValidateExpectedTargetRevision(
 				r.ExpectedTargetRevision, currentTargetRevision, true,
 			); err != nil {
-				return err
+				return translation.WithDocumentRevision(err, root.DocumentRevision)
 			}
 			source, sourceExists, err := loadFormAIDocumentLocale(
 				ctx, tx, r.FormId, root.SourceLocale, false,
@@ -212,10 +212,14 @@ func (s *InternalFormService) SaveDocument(
 	}), nil
 }
 
-func formDocumentRevisionChangedConflict() error {
+func formDocumentRevisionChangedConflict(revisions ...string) error {
+	current := ""
+	if len(revisions) > 0 {
+		current = revisions[0]
+	}
 	return errs.CollaborationConflict(
 		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-		"Form Content Document revision changed",
+		"Form Content Document revision changed", errs.CollaborationState{Document: current},
 	)
 }
 
@@ -224,11 +228,11 @@ func normalizeFormDocumentSaveError(err error) error {
 	if errors.As(err, &targetConflict) {
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			targetConflict.Error(),
+			targetConflict.Error(), err,
 		)
 	}
 	if dberrors.IsSerializationFailure(err) {
-		return formDocumentRevisionChangedConflict()
+		return connect.NewError(connect.CodeAborted, err)
 	}
 	return err
 }

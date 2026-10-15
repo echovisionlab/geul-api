@@ -4,6 +4,8 @@ package public
 
 import (
 	"context"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +108,8 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 		publicIntegrationSpiceDB,
 		programeventadapter.NewCreditMemberSummaries(db, "https://cdn.example.com"),
 		eventdomain.WithProgramEventContentBlockStore(contentBlocks),
+		// Production wires the PostgreSQL publisher; content.updated is required in-transaction.
+		eventdomain.WithProgramEventAsyncPublisher(publicProgramEventSignals{}),
 	)
 	startsAt := time.Now().UTC().Add(6 * time.Hour)
 	eventResp, err := eventSvc.CreateProgramEvent(adminCtx, connect.NewRequest(&managev1.CreateProgramEventRequest{
@@ -148,7 +152,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 
 	internalEventSvc := eventdomain.NewInternalProgramEventService(
 		db,
-		nil,
+		publicProgramEventSignals{},
 		eventdomain.WithInternalProgramEventSpiceDB(publicIntegrationSpiceDB),
 		eventdomain.WithInternalProgramEventContentBlockStore(contentBlocks),
 		eventdomain.WithInternalProgramEventMediaHydrator(manageFileGateway),
@@ -671,4 +675,15 @@ func publicProgramEventAdminCtx(memberID string, identityID string) context.Cont
 
 func publicInt32Ptr(value int32) *int32 {
 	return &value
+}
+
+// publicProgramEventSignals accepts content.updated and other signals; this suite asserts reads only.
+type publicProgramEventSignals struct{}
+
+func (publicProgramEventSignals) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
+	return nil
+}
+
+func (publicProgramEventSignals) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
+	return nil
 }

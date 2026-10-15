@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
@@ -42,6 +43,9 @@ func (asyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Mes
 	return nil
 }
 func (asyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error { return nil }
+func (asyncPublisher) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
+	return nil
+}
 
 type shareLinks struct{}
 

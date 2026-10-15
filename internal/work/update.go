@@ -42,9 +42,6 @@ func (s *WorkService) UpdateWork(
 	if err != nil {
 		return nil, mapWorkUpdateError(err)
 	}
-	if changed {
-		publishWorkContentUpdated(ctx, s.asyncPublisher, buildManageWorkContentUpdatedEvent(req.Msg))
-	}
 	metadata, err := structpb.NewStruct(work.Metadata)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -285,7 +282,10 @@ func (s *WorkService) applyWorkUpdatePlan(
 				return err
 			}
 		}
-		return nil
+		if !changed {
+			return nil
+		}
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildManageWorkContentUpdatedEvent(request))
 	})
 	return changed, err
 }

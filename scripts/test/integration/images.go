@@ -25,7 +25,7 @@ func requireLocalDockerImage(ctx context.Context, image, want string) error {
 	command := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("required local integration image %s is unavailable: %w: %s", image, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("required local integration image %s is unavailable; pull or build it before running the suite (use --postgres-image, --minio-image, or GEUL_TEST_KRATOS_IMAGE for overrides): %w: %s", image, err, strings.TrimSpace(string(output)))
 	}
 	return validateLocalDockerImagePlatform(image, string(output), want)
 }

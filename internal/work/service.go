@@ -778,9 +778,21 @@ func (s *WorkService) PublishWork(
 			return err
 		}
 		lifecycleChanged = true
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewWorkLifecycleAuditRecord(metadata, work.ID, previous, sharedtelemetry.AuditStatePublished)
-		})
+		}); err != nil {
+			return err
+		}
+		return publishWorkContentUpdated(
+			ctx,
+			tx,
+			s.asyncPublisher,
+			buildManageStateTransitionContentUpdatedEvent(
+				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
+				work.ID,
+				changedFields,
+			),
+		)
 	}); err != nil {
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
@@ -794,17 +806,6 @@ func (s *WorkService) PublishWork(
 		if publishedAtChanged {
 			work.PublishedAt = &mutationNow
 		}
-	}
-	if lifecycleChanged {
-		publishWorkContentUpdated(
-			ctx,
-			s.asyncPublisher,
-			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				work.ID,
-				changedFields,
-			),
-		)
 	}
 	return connect.NewResponse(&managev1.WorkLifecycleMutationResponse{
 		Id: work.ID, Changed: lifecycleChanged,
@@ -846,9 +847,21 @@ func (s *WorkService) UnpublishWork(
 			return err
 		}
 		lifecycleChanged = true
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewWorkLifecycleAuditRecord(metadata, work.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft)
-		})
+		}); err != nil {
+			return err
+		}
+		return publishWorkContentUpdated(
+			ctx,
+			tx,
+			s.asyncPublisher,
+			buildManageStateTransitionContentUpdatedEvent(
+				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
+				work.ID,
+				[]string{"state.status"},
+			),
+		)
 	}); err != nil {
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
@@ -859,17 +872,6 @@ func (s *WorkService) UnpublishWork(
 	if lifecycleChanged {
 		work.Status = managev1.WorkStatus_WORK_STATUS_DRAFT.String()
 		work.UpdatedAt = mutationNow
-	}
-	if lifecycleChanged {
-		publishWorkContentUpdated(
-			ctx,
-			s.asyncPublisher,
-			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				work.ID,
-				[]string{"state.status"},
-			),
-		)
 	}
 	return connect.NewResponse(&managev1.WorkLifecycleMutationResponse{
 		Id: work.ID, Changed: lifecycleChanged,
@@ -897,7 +899,6 @@ func (s *WorkService) SetWorkFeaturedImage(
 	}
 	var imageAsset *commonv1.AssetRef
 	var ogRunID *string
-	changed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.Work
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -924,7 +925,6 @@ func (s *WorkService) SetWorkFeaturedImage(
 		}).Error; err != nil {
 			return err
 		}
-		changed = true
 		imageRef, err := s.runtime.BindReadyAssetForSourceFile(
 			ctx, tx, file.ID, "work", req.Msg.WorkId, "featured_image", "image",
 		)
@@ -942,20 +942,14 @@ func (s *WorkService) SetWorkFeaturedImage(
 		if runID != "" {
 			ogRunID = &runID
 		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewWorkFeaturedImageAuditRecord(metadata, req.Msg.WorkId, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
-		})
-	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("file", req.Msg.FileId)
+		}); err != nil {
+			return err
 		}
-		return nil, err
-	}
-
-	if changed {
-		publishWorkContentUpdated(
+		return publishWorkContentUpdated(
 			ctx,
+			tx,
 			s.asyncPublisher,
 			buildManageMediaMutationContentUpdatedEvent(
 				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
@@ -963,6 +957,12 @@ func (s *WorkService) SetWorkFeaturedImage(
 				"media.featured_image",
 			),
 		)
+	})
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errs.NotFound("file", req.Msg.FileId)
+		}
+		return nil, err
 	}
 
 	return connect.NewResponse(&managev1.SetWorkFeaturedImageResponse{
@@ -976,7 +976,6 @@ func (s *WorkService) DeleteWorkFeaturedImage(
 	req *connect.Request[managev1.DeleteWorkFeaturedImageRequest],
 ) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var ogRunID *string
-	changed := false
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current struct {
@@ -1008,7 +1007,6 @@ func (s *WorkService) DeleteWorkFeaturedImage(
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		changed = true
 		if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "work", req.Msg.WorkId, "featured_image"); err != nil {
 			return err
 		}
@@ -1022,20 +1020,14 @@ func (s *WorkService) DeleteWorkFeaturedImage(
 		if runID != "" {
 			ogRunID = &runID
 		}
-		return s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewWorkFeaturedImageAuditRecord(metadata, req.Msg.WorkId, *current.FeaturedImageFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-		})
-	})
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
+		}); err != nil {
+			return err
 		}
-		return nil, err
-	}
-
-	if changed {
-		publishWorkContentUpdated(
+		return publishWorkContentUpdated(
 			ctx,
+			tx,
 			s.asyncPublisher,
 			buildManageMediaMutationContentUpdatedEvent(
 				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
@@ -1043,6 +1035,12 @@ func (s *WorkService) DeleteWorkFeaturedImage(
 				"media.featured_image",
 			),
 		)
+	})
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, errs.NotFound("work", req.Msg.WorkId)
+		}
+		return nil, err
 	}
 
 	return connect.NewResponse(&managev1.OgAssetDeleteResponse{

@@ -626,3 +626,12 @@ func LocalizedDocumentText(document *contentv1.LocalizedRichTextDocument) string
 	}
 	return paragraph.Content[0].GetText().GetText()
 }
+
+func (publisher artistLabelAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
+}

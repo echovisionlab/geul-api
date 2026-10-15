@@ -334,21 +334,11 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackLabelAIDocumentValidation
 		}
-		return nil
-	})
-	if errors.Is(err, errRollbackLabelAIDocumentValidation) {
-		return output, nil
-	}
-	if err != nil {
-		var compilerErr *labelAIDocumentCompilerError
-		if errors.As(err, &compilerErr) {
-			return AIDocumentMutationResult{}, compilerErr.cause
+		if !output.Content.Changed {
+			return nil
 		}
-		return AIDocumentMutationResult{}, err
-	}
-	if mode == AIDocumentExecutionApply && output.Content.Changed {
 		localeExists := input.Locale == input.ExpectedSource || output.TargetRevision != nil
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelContentUpdatedEvent(
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
 			input.LabelID,
 			[]string{"content"},
 			output.Content.DocumentRevision.String(),
@@ -359,6 +349,16 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 			output.TargetRevision,
 			input.Locale == input.ExpectedSource,
 		))
+	})
+	if errors.Is(err, errRollbackLabelAIDocumentValidation) {
+		return output, nil
+	}
+	if err != nil {
+		var compilerErr *labelAIDocumentCompilerError
+		if errors.As(err, &compilerErr) {
+			return AIDocumentMutationResult{}, compilerErr.cause
+		}
+		return AIDocumentMutationResult{}, err
 	}
 	return output, nil
 }

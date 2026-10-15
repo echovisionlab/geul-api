@@ -1,15 +1,40 @@
 package work
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestWorkVersionCheckpointRestoresTheKnownPreviousCatalog(t *testing.T) {
+	encoded, err := EncodeVersionContentSnapshot("en", nil, nil, &contentv1.LocalizedRichTextDocument{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
+		Locale:                  "en", Base: &contentv1.RichTextBlockGraph{},
+		LocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "en"},
+	})
+	require.NoError(t, err)
+	legacy := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e"))
+	_, decoded, err := DecodeVersionContentSnapshot(legacy)
+	require.NoError(t, err)
+	require.Equal(t, contentv1.ContentBlockCatalogFingerprint, decoded.GetBlockCatalogFingerprint())
+	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
+	require.NoError(t, err)
+
+	unknown := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("stale-catalog"))
+	_, decoded, err = DecodeVersionContentSnapshot(unknown)
+	require.NoError(t, err)
+	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
+	require.ErrorContains(t, err, "fingerprint")
+}
 
 func TestWorkVersionProtoFormatting(t *testing.T) {
 	createdAt := time.Unix(1_700_000_000, 0).UTC()

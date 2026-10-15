@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -138,7 +137,6 @@ func EnqueueProtobuf(
 
 func (p *Publisher) NotifyProtobuf(ctx context.Context, signal string, message proto.Message) error {
 	if message != nil &&
-		!(signal == eventpkg.SignalContentUpdated && aidocument.InteractivePostCommitCompletionOwnsSignal(ctx)) &&
 		(p == nil || p.db == nil) {
 		return fmt.Errorf("PostgreSQL publisher is required")
 	}
@@ -172,9 +170,6 @@ func (p *Publisher) notifyProtobufWithExecutor(
 	}
 	if message == nil {
 		return fmt.Errorf("protobuf message is required")
-	}
-	if signal == eventpkg.SignalContentUpdated && aidocument.InteractivePostCommitCompletionOwnsSignal(ctx) {
-		return nil
 	}
 	body, err := (proto.MarshalOptions{Deterministic: true}).Marshal(message)
 	if err != nil {
@@ -222,6 +217,18 @@ func notifyWithExecutor(
 	}
 	if len(payload) > 7900 {
 		return fmt.Errorf("signal %s payload exceeds PostgreSQL NOTIFY limit", signal)
+	}
+	if signal == eventpkg.SignalContentUpdated {
+		// A pool would commit send and NOTIFY separately. Require the owning transaction.
+		if _, ok := executor.(interface {
+			Commit() error
+			Rollback() error
+		}); !ok {
+			return fmt.Errorf("content.updated requires the owning transaction")
+		}
+		if _, err := (eventpkg.PGMQ{}).Enqueue(ctx, executor, eventpkg.QueueContentUpdatedOutbox, envelope, InjectTraceContext(ctx), 0); err != nil {
+			return fmt.Errorf("enqueue content.updated: %w", err)
+		}
 	}
 	if _, err := executor.ExecContext(ctx, "SELECT pg_notify($1, $2)", signal, string(payload)); err != nil {
 		return fmt.Errorf("notify %s: %w", signal, err)

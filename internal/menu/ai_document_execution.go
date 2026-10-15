@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"strings"
 	"time"
 
@@ -311,7 +313,7 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackMenuAIDocumentValidation
 		}
-		return nil
+		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_MENU, command.MenuID, command.Locale, result.DocumentRevision, result.TargetRevision, result.Changed, compiled.deleteTranslation, contentsignal.InteractiveMemberID(ctx))
 	})
 	if errors.Is(err, errRollbackMenuAIDocumentValidation) {
 		return result, nil

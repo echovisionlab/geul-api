@@ -2,14 +2,15 @@ package post
 
 import (
 	"context"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/lib/pq"
+	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
 
 type contentUpdatedFieldSpec struct {
@@ -34,15 +35,15 @@ var postContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
 	"sourceLocale":        {path: "settings.source_locale", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 }
 
-func publishContentUpdatedEvent(ctx context.Context, publisher AsyncPublisher, event *managev1.ContentUpdatedEvent) error {
-	if publisher == nil || event == nil {
-		return nil
-	}
-	if err := publisher.NotifyProtobuf(ctx, eventpkg.SignalContentUpdated, event); err != nil {
-		slog.Warn("Failed to publish Post content updated event", "error", err, "postId", event.EntityId)
-		return err
-	}
-	return nil
+// publishContentUpdatedEvent schedules content.updated in the caller's
+// mutation transaction so the signal commits or rolls back with the data.
+func publishContentUpdatedEvent(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher AsyncPublisher,
+	event *managev1.ContentUpdatedEvent,
+) error {
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
 func buildPostBlockContentUpdatedEvent(

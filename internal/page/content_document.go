@@ -243,7 +243,7 @@ func normalizePageContentBlockError(err error) error {
 	if errors.As(err, &targetConflict) {
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Page target translation changed since it was loaded; reload before saving",
+			"Page target translation changed since it was loaded; reload before saving", err,
 		)
 	}
 	switch {
@@ -252,7 +252,7 @@ func normalizePageContentBlockError(err error) error {
 	case errors.Is(err, contentblock.ErrStaleRevision):
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Page document changed since it was loaded; reload before saving",
+			"Page document changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")

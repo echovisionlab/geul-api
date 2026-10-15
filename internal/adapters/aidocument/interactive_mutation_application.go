@@ -7,13 +7,12 @@ import (
 	"log/slog"
 	"time"
 
-	"google.golang.org/protobuf/proto"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 // InteractiveMutationApplicationPort is the full core capability shared by
@@ -28,7 +27,7 @@ type InteractiveMutationApplicationPort interface {
 // InteractiveMutationSignalPublisher emits the one exact fallback fence when
 // a committed mutation could not be relayed to Collab.
 type InteractiveMutationSignalPublisher interface {
-	NotifyProtobuf(context.Context, string, proto.Message) error
+	contentsignal.Publisher
 }
 
 // InteractiveMutationApplication decorates only interactive MCP/editor AI
@@ -53,7 +52,7 @@ func NewInteractiveMutationApplication(
 		return nil, errors.New("interactive AI document relay is required")
 	}
 	if interfaceNil(publisher) {
-		return nil, errors.New("interactive AI document fallback publisher is required")
+		return nil, errors.New("interactive AI document transactional publisher is required")
 	}
 	if origin != intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_MCP &&
 		origin != intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_IN_EDITOR_AI {
@@ -97,7 +96,7 @@ func (application *InteractiveMutationApplication) Apply(
 		return core.ApplyResult{}, err
 	}
 	result, err := application.application.Apply(
-		core.WithInteractivePostCommitCompletion(ctx),
+		contentsignal.WithInteractivePublisher(ctx, application.publisher),
 		request,
 	)
 	if err != nil || !result.Changed {
@@ -116,25 +115,8 @@ func (application *InteractiveMutationApplication) Apply(
 		return result, nil
 	}
 
-	event, eventErr := interactiveMutationFallbackEvent(request, result, memberID)
-	if eventErr == nil {
-		eventErr = application.publisher.NotifyProtobuf(
-			core.WithInteractiveFallbackSignal(postCommitCtx),
-			eventpkg.SignalContentUpdated,
-			event,
-		)
-	}
-	if eventErr != nil {
-		slog.ErrorContext(
-			postCommitCtx,
-			"Interactive AI document relay and fallback signal failed",
-			"domain", request.Profile,
-			"entity_id", request.Document,
-			"locale", request.Locale,
-			"relay_error", relayErr,
-			"fallback_error", eventErr,
-		)
-	}
+	slog.WarnContext(postCommitCtx, "Interactive AI document relay failed; transactional content event retained", "relay_error", relayErr)
+
 	return result, nil
 }
 

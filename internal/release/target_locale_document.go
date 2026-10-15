@@ -119,7 +119,7 @@ func deriveReleaseTargetRevision(documentRevision string, metadata releaseLocale
 func normalizeReleaseTargetWriterError(err error) error {
 	var conflict *translation.TargetRevisionConflict
 	if errors.As(err, &conflict) {
-		return errs.FailedPrecondition("Release target revision changed; reload before saving")
+		return normalizeReleaseContentBlockError(err)
 	}
 	return normalizeReleaseContentBlockError(err)
 }
@@ -226,7 +226,7 @@ func applyReleaseTargetLocaleMutation(
 	if err := translation.ValidateTargetRevisionWrite(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
 	); err != nil {
-		return releaseTargetLocaleMutationResult{}, err
+		return releaseTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !input.AllowCreate {
 		return releaseTargetLocaleMutationResult{}, errs.FailedPrecondition(
@@ -422,7 +422,7 @@ func deleteReleaseTargetLocale(
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{DocumentRevision: state.Snapshot.Document.Revision}, nil

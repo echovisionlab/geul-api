@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -97,6 +98,7 @@ func DecodeVersionContentSnapshot(data []byte) (VersionContentSnapshot, *content
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(envelope.Document, document); err != nil {
 		return VersionContentSnapshot{}, nil, fmt.Errorf("decode Work version typed document: %w", err)
 	}
+	document.BlockCatalogFingerprint = contentblock.UpgradeVersionSnapshotCatalogFingerprint(document.GetBlockCatalogFingerprint())
 	if document.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK {
 		return VersionContentSnapshot{}, nil, fmt.Errorf("work version document profile must be Work")
 	}

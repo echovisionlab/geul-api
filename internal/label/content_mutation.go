@@ -23,7 +23,10 @@ type labelBlockApplyResult struct {
 	LocaleExists   bool
 }
 
-func (s *InternalLabelService) applyLabelBlockBatch(ctx context.Context, id, locale string, expectedTargetRevision *string, input *contentv1.RichTextBlockMutationBatch, affectedLocaleValues []*managev1.AIDocumentFieldTarget) (labelBlockApplyResult, error) {
+// applyLabelBlockBatch applies a collaboration batch. afterWrite runs in the
+// mutation transaction after every write so dependent effects, such as the
+// content.updated signal, commit or roll back with the data.
+func (s *InternalLabelService) applyLabelBlockBatch(ctx context.Context, id, locale string, expectedTargetRevision *string, input *contentv1.RichTextBlockMutationBatch, affectedLocaleValues []*managev1.AIDocumentFieldTarget, afterWrite func(*gorm.DB, labelBlockApplyResult) error) (labelBlockApplyResult, error) {
 	if s.contentBlocks == nil {
 		return labelBlockApplyResult{}, errs.Internal(errors.New("label content Block store is not configured"))
 	}
@@ -39,7 +42,7 @@ func (s *InternalLabelService) applyLabelBlockBatch(ctx context.Context, id, loc
 		return labelBlockApplyResult{}, err
 	}
 	var out labelBlockApplyResult
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		if err := s.translation.RequireDocumentContributors(ctx, tx, input.GetContributorMemberIds()); err != nil {
 			return err
 		}
@@ -123,6 +126,12 @@ func (s *InternalLabelService) applyLabelBlockBatch(ctx context.Context, id, loc
 		}
 		_, err = s.runtime.RequestCurrentWithDB(ctx, tx, id, "label_source_document_saved")
 		return err
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil || afterWrite == nil {
+			return err
+		}
+		return afterWrite(tx, out)
 	})
 	return out, err
 }
@@ -196,7 +205,10 @@ type labelTitleUpdateResult struct {
 	ChangedLocales []string
 }
 
-func (s *InternalLabelService) updateLabelLocaleTitle(ctx context.Context, id, locale string, title *string, revision string, expectedTargetRevision *string, contributors []string) (labelTitleUpdateResult, error) {
+// updateLabelLocaleTitle updates the source title. afterWrite runs in the
+// mutation transaction after every write so dependent effects, such as the
+// content.updated signal, commit or roll back with the data.
+func (s *InternalLabelService) updateLabelLocaleTitle(ctx context.Context, id, locale string, title *string, revision string, expectedTargetRevision *string, contributors []string, afterWrite func(*gorm.DB, labelTitleUpdateResult) error) (labelTitleUpdateResult, error) {
 	if s.contentBlocks == nil {
 		return labelTitleUpdateResult{}, errs.Internal(errors.New("label content Block store is not configured"))
 	}
@@ -214,7 +226,7 @@ func (s *InternalLabelService) updateLabelLocaleTitle(ctx context.Context, id, l
 	name := strings.TrimSpace(*title)
 	var out labelTitleUpdateResult
 	var sourceLocale string
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		if err := s.translation.RequireDocumentContributors(ctx, tx, contributors); err != nil {
 			return err
 		}
@@ -260,6 +272,12 @@ func (s *InternalLabelService) updateLabelLocaleTitle(ctx context.Context, id, l
 		}
 		_, err = s.runtime.RequestCurrentWithDB(ctx, tx, id, "label_source_title_saved")
 		return err
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil || afterWrite == nil {
+			return err
+		}
+		return afterWrite(tx, out)
 	})
 	return out, err
 }

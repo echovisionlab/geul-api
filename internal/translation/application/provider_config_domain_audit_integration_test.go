@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
@@ -24,6 +25,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -378,9 +380,11 @@ func (*translationProviderPublisherStub) PublishTranslationLifecycle(
 	return nil
 }
 
-func (*translationProviderPublisherStub) PublishContentUpdated(
+func (*translationProviderPublisherStub) NotifyProtobufWithExecutor(
 	context.Context,
-	*managev1.ContentUpdatedEvent,
+	eventpkg.DBTX,
+	string,
+	proto.Message,
 ) error {
 	return nil
 }

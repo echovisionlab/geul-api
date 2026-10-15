@@ -54,11 +54,16 @@ func (publisher *appliedContentUpdatePublisher) PublishTranslationLifecycle(
 	return publisher.lifecycleErr
 }
 
-func (publisher *appliedContentUpdatePublisher) PublishContentUpdatedWithExecutor(
+func (publisher *appliedContentUpdatePublisher) NotifyProtobufWithExecutor(
 	_ context.Context,
 	executor eventpkg.DBTX,
-	event *managev1.ContentUpdatedEvent,
+	signal string,
+	message proto.Message,
 ) error {
+	event, ok := message.(*managev1.ContentUpdatedEvent)
+	if signal != eventpkg.SignalContentUpdated || !ok {
+		return errors.New("unexpected transactional signal")
+	}
 	publisher.executor = executor
 	publisher.events = append(publisher.events, event)
 	return publisher.err

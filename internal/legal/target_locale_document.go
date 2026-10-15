@@ -252,7 +252,7 @@ func applyLegalTargetLocaleMutation(
 	if err := translation.ValidateTargetRevisionWrite(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteExistingTarget,
 	); err != nil {
-		return legalTargetLocaleMutationResult{}, err
+		return legalTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !input.AllowCreate {
 		return legalTargetLocaleMutationResult{}, errs.FailedPrecondition(
@@ -393,7 +393,7 @@ func deleteLegalTargetLocale(
 	if err := translation.ValidateTargetRevisionWrite(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteExistingTarget,
 	); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{

@@ -124,7 +124,7 @@ func (s *InternalProgramEventService) LoadProgramEventBlockDocument(
 		)
 		return err
 	}); err != nil {
-		return nil, err
+		return nil, normalizeProgramEventContentBlockError(err)
 	}
 	document, err := materializeProgramEventExactLocaleDocument(localeState, locale)
 	if err != nil {
@@ -236,19 +236,17 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 				return applyErr
 			}
 			result, targetRevision = output.Result, output.TargetRevision
-			if result.Changed {
-				return appendProgramEventMemberLocaleContentAudit(
-					ctx, tx, s.auditWriter, originMemberID, req.Msg.EventId, locale,
-					programEventTargetLocaleContentOperation(false, false, true),
-				)
+			if !result.Changed {
+				return nil
 			}
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-		if result.Changed {
+			if err := appendProgramEventMemberLocaleContentAudit(
+				ctx, tx, s.auditWriter, originMemberID, req.Msg.EventId, locale,
+				programEventTargetLocaleContentOperation(false, false, true),
+			); err != nil {
+				return err
+			}
 			targetRevisionValue := targetRevision
-			publishContentUpdatedEvent(ctx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
 				req.Msg.EventId,
 				[]string{"content"},
 				result.DocumentRevision.String(),
@@ -258,6 +256,8 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 				&targetRevisionValue,
 				false,
 			))
+		}); err != nil {
+			return nil, normalizeProgramEventContentBlockError(err)
 		}
 		return connect.NewResponse(&intrav1.ApplyProgramEventBlockBatchResponse{
 			DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
@@ -287,15 +287,13 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 			Update("updated_at", now).Error; err != nil {
 			return err
 		}
-		return appendProgramEventMemberLocaleContentAudit(
+		if err := appendProgramEventMemberLocaleContentAudit(
 			ctx, tx, s.auditWriter, originMemberID, req.Msg.EventId, locale,
 			sharedtelemetry.AuditItemOperationUpdated,
-		)
-	}); err != nil {
-		return nil, err
-	}
-	if result.Changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
+		); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
 			req.Msg.EventId,
 			[]string{"content"},
 			result.DocumentRevision.String(),
@@ -305,6 +303,8 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 			nil,
 			true,
 		))
+	}); err != nil {
+		return nil, normalizeProgramEventContentBlockError(err)
 	}
 	return connect.NewResponse(&intrav1.ApplyProgramEventBlockBatchResponse{
 		DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
@@ -392,27 +392,28 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 			if applyErr != nil {
 				return applyErr
 			}
-			if output.Result.Changed {
-				return appendProgramEventMemberLocaleContentAudit(
-					ctx, tx, s.auditWriter, originMemberID, req.Msg.EventId, locale,
-					programEventTargetLocaleContentOperation(false, false, true),
-				)
+			if !output.Result.Changed {
+				return nil
 			}
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-		if output.Result.Changed {
-			publishContentUpdatedEvent(ctx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
+			if err := appendProgramEventMemberLocaleContentAudit(
+				ctx, tx, s.auditWriter, originMemberID, req.Msg.EventId, locale,
+				programEventTargetLocaleContentOperation(false, false, true),
+			); err != nil {
+				return err
+			}
+			targetRevisionValue := output.TargetRevision
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
 				req.Msg.EventId,
 				[]string{"summary"},
 				output.Result.DocumentRevision.String(),
 				[]string{originMemberID},
 				locale,
 				true,
-				&output.TargetRevision,
+				&targetRevisionValue,
 				false,
 			))
+		}); err != nil {
+			return nil, normalizeProgramEventContentBlockError(err)
 		}
 		return connect.NewResponse(&intrav1.UpdateProgramEventLocaleMetadataResponse{
 			DocumentRevision: output.Result.DocumentRevision.String(), Changed: output.Result.Changed,
@@ -456,14 +457,12 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 		if !advanced.Changed {
 			return nil
 		}
-		return appendProgramEventMemberLocaleContentAudit(
+		if err := appendProgramEventMemberLocaleContentAudit(
 			ctx, tx, s.auditWriter, originMemberID, req.Msg.EventId, locale,
 			sharedtelemetry.AuditItemOperationUpdated,
-		)
-	}); err != nil {
-		return nil, err
-	}
-	if advanced.Changed {
+		); err != nil {
+			return err
+		}
 		paths := make([]string, 0, 2)
 		if patchTitle {
 			paths = append(paths, "title")
@@ -471,7 +470,7 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 		if patchSummary {
 			paths = append(paths, "summary")
 		}
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
 			req.Msg.EventId,
 			paths,
 			advanced.DocumentRevision.String(),
@@ -481,6 +480,8 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 			nil,
 			true,
 		))
+	}); err != nil {
+		return nil, normalizeProgramEventContentBlockError(err)
 	}
 	return connect.NewResponse(&intrav1.UpdateProgramEventLocaleMetadataResponse{
 		DocumentRevision: advanced.DocumentRevision.String(), Changed: advanced.Changed,

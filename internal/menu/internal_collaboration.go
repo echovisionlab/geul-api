@@ -128,7 +128,7 @@ func (s *InternalMenuService) SaveDocument(
 		if previous.DocumentRevision != r.ExpectedDocumentRevision {
 			return errs.CollaborationConflict(
 				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-				"Menu document changed; reload before saving",
+				"Menu document changed; reload before saving", errs.CollaborationState{Document: previous.DocumentRevision},
 			)
 		}
 		if locale != previous.SourceLocale {
@@ -138,7 +138,7 @@ func (s *InternalMenuService) SaveDocument(
 			if !equalMenuRevision(previous.TargetRevision, r.ExpectedTargetRevision) {
 				return errs.CollaborationConflict(
 					intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-					"Menu target changed; reload before saving",
+					"Menu target changed; reload before saving", errs.CollaborationState{Document: previous.DocumentRevision, Target: *previous.TargetRevision, TargetExists: &previous.LocaleExists},
 				)
 			}
 		} else if r.ExpectedTargetRevision != nil {

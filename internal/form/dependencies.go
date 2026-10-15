@@ -6,6 +6,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -16,7 +17,8 @@ import (
 // AsyncPublisher is the command and signal surface used by Form translation planning.
 type AsyncPublisher interface {
 	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	NotifyProtobuf(context.Context, string, proto.Message) error
+	// content.updated is scheduled only in the owning mutation transaction.
+	contentsignal.Publisher
 }
 
 // Assets owns Form integration with File attachment and public asset bindings.

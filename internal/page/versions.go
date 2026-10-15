@@ -265,25 +265,19 @@ func (s *PageService) RestorePageVersion(
 		if err != nil {
 			return err
 		}
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(
+				ctx,
+				tx,
+				s.auditWriter,
+				sharedtelemetry.AuditPageUpdated,
+				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+					return sharedtelemetry.NewPageVersionRestoreAuditRecord(metadata, version.PageID, version.ID)
+				},
+			); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditPageUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPageVersionRestoreAuditRecord(metadata, version.PageID, version.ID)
-			},
-		)
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-	if restoredChanged {
 		changedFields := make([]string, 0, 3)
 		if titleChanged {
 			changedFields = append(changedFields, "title")
@@ -307,7 +301,12 @@ func (s *PageService) RestorePageVersion(
 			contributorMemberIDs,
 			&contentUpdatedLocaleState{locale: versionSnapshot.SourceLocale, exists: true},
 		)
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, event)
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, event)
+	}); err != nil {
+		if connect.CodeOf(err) != connect.CodeUnknown {
+			return nil, err
+		}
+		return nil, errs.Internal(err)
 	}
 	var page model.Page
 	if err := s.db.WithContext(ctx).First(&page, "id = ?", version.PageID).Error; err != nil {

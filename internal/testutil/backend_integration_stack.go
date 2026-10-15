@@ -841,6 +841,8 @@ func runBackendIntegrationKratos(
 
 func startBackendIntegrationMinIO(ctx context.Context) (endpoint, mediaBucket, cacheBucket string, cleanup func() error, err error) {
 	ctr, err := testcontainers.Run(ctx, MinIOIntegrationImage(),
+		// Alternate images may run as non-root and omit a shell.
+		testcontainers.WithTmpfs(map[string]string{"/data": "rw,mode=1777"}),
 		testcontainers.WithExposedPorts("9000/tcp"),
 		testcontainers.WithEnv(map[string]string{
 			"MINIO_ROOT_USER":     "minioadmin",
@@ -849,7 +851,7 @@ func startBackendIntegrationMinIO(ctx context.Context) (endpoint, mediaBucket, c
 		testcontainers.WithCmd("server", "/data"),
 		testcontainers.WithWaitStrategy(
 			wait.ForAll(
-				wait.ForListeningPort("9000/tcp"),
+				wait.ForListeningPort("9000/tcp").SkipInternalCheck(),
 				wait.ForHTTP("/minio/health/live").WithPort("9000/tcp"),
 			).WithDeadline(2*time.Minute),
 		),

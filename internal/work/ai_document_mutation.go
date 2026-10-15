@@ -3,6 +3,8 @@ package work
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -124,7 +126,9 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackWorkAIDocumentValidation
 		}
-		return nil
+		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
+			mutation.WorkID, mutation.Locale, result.Content.DocumentRevision.String(), result.TargetRevision,
+			result.Content.Changed, mutation.DeleteTranslation, mutation.ContributorMemberID)
 	})
 	if errors.Is(err, errRollbackWorkAIDocumentValidation) {
 		return result, nil

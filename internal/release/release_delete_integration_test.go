@@ -301,3 +301,12 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	require.Nil(t, managedRelease.Msg.ArtworkAsset)
 	require.Nil(t, managedRelease.Msg.OgAsset)
 }
+
+func (publisher noopReleaseDeleteAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
+}

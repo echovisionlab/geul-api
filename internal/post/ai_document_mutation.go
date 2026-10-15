@@ -189,7 +189,7 @@ func (s *PostService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackPostAIDocumentValidation
 		}
-		return nil
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, postAIDocumentUpdatedEvent(mutation, result.Result, effects))
 	})
 	if errors.Is(err, errRollbackPostAIDocumentValidation) {
 		return result, nil
@@ -216,9 +216,6 @@ func (s *PostService) ExecuteAIDocumentMutation(
 		default:
 			return AIDocumentMutationResult{}, normalizePostContentBlockError(err)
 		}
-	}
-	if mode == AIDocumentExecutionApply {
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, postAIDocumentUpdatedEvent(mutation, result.Result, effects))
 	}
 	return result, nil
 }

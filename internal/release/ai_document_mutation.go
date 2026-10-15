@@ -103,7 +103,10 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackReleaseAIDocumentValidation
 		}
-		return nil
+		if !output.Changed {
+			return nil
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, releaseAIDocumentContentUpdatedEvent(input, output, input.ContributorMemberID.String()))
 	})
 	if errors.Is(err, errRollbackReleaseAIDocumentValidation) {
 		return output, nil
@@ -125,9 +128,6 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 		default:
 			return AIDocumentMutationResult{}, mapReleaseAIDocumentMutationError(err)
 		}
-	}
-	if mode == AIDocumentExecutionApply && output.Changed {
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, releaseAIDocumentContentUpdatedEvent(input, output, input.ContributorMemberID.String()))
 	}
 	return output, nil
 }

@@ -1,7 +1,9 @@
-.PHONY: deps tidy test test-integration test-integration-db test-integration-runner test-integration-required build run clean
+.PHONY: deps tidy test test-integration test-integration-db test-integration-package test-integration-runner test-integration-required build run clean
 
 INTEGRATION_SCHEMA_ROOT ?= ../geul-schema
 INTEGRATION_POSTGRES_IMAGE ?= registry.dsub.io/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f
+# The pinned minio/minio digest is no longer pullable from Docker Hub; see README for the override.
+INTEGRATION_MINIO_IMAGE ?= cgr.dev/chainguard/minio:latest
 
 # Download dependencies.
 deps:
@@ -19,7 +21,8 @@ test:
 test-integration: media-build
 	GOWORK=off go run -tags=integration ./scripts/test/integration \
 		--schema-root "$(INTEGRATION_SCHEMA_ROOT)" \
-		--postgres-image "$(INTEGRATION_POSTGRES_IMAGE)"
+		--postgres-image "$(INTEGRATION_POSTGRES_IMAGE)" \
+		--minio-image "$(INTEGRATION_MINIO_IMAGE)"
 
 
 # Run only the database band.
@@ -27,7 +30,17 @@ test-integration-db:
 	GOWORK=off go run -tags=integration ./scripts/test/integration \
 		--band db \
 		--schema-root "$(INTEGRATION_SCHEMA_ROOT)" \
-		--postgres-image "$(INTEGRATION_POSTGRES_IMAGE)"
+		--postgres-image "$(INTEGRATION_POSTGRES_IMAGE)" \
+		--minio-image "$(INTEGRATION_MINIO_IMAGE)"
+
+# Run one cataloged integration package (fastest loop while working on it):
+#   make test-integration-package PKG=./internal/post [RUN='^TestName$$']
+test-integration-package:
+	GOWORK=off go run -tags=integration ./scripts/test/integration \
+		--package "$(PKG)" $(if $(RUN),--run '$(RUN)',) \
+		--schema-root "$(INTEGRATION_SCHEMA_ROOT)" \
+		--postgres-image "$(INTEGRATION_POSTGRES_IMAGE)" \
+		--minio-image "$(INTEGRATION_MINIO_IMAGE)"
 
 test-integration-runner:
 	GOWORK=off go test -count=1 -tags=integration ./scripts/test/integration

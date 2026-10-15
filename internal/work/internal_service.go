@@ -245,7 +245,7 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 	var output workBlockApplyResult
 	var sourceLocale string
 	now := time.Now().UTC()
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		domain, fenceErr := internalWorkContentFence(
 			s.checkpoints, req.Msg.Batch.ContributorMemberIds,
 		)(ctx, tx, documentID)
@@ -307,13 +307,12 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 			)
 		}
 		return nil
-	})
-	if err != nil {
-		return nil, normalizeWorkContentBlockError(err)
 	}
-
-	if output.Content.Changed {
-		publishWorkContentUpdated(ctx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil || !output.Content.Changed {
+			return err
+		}
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
 			req.Msg.WorkId,
 			false,
 			false,
@@ -326,6 +325,9 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 			output.TargetRevision,
 			locale == sourceLocale,
 		))
+	})
+	if err != nil {
+		return nil, normalizeWorkContentBlockError(err)
 	}
 	return connect.NewResponse(&intrav1.ApplyWorkBlockBatchResponse{
 		DocumentRevision: output.Content.DocumentRevision.String(), Changed: output.Content.Changed,
@@ -374,7 +376,7 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 	var plan workLocaleMetadataMutationPlan
 	var sourceLocale string
 	now := time.Now().UTC()
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		domain, fenceErr := internalWorkContentFence(
 			s.checkpoints, req.Msg.ContributorMemberIds,
 		)(ctx, tx, documentID)
@@ -472,21 +474,23 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 			ctx, tx, s.auditWriter, contributorMemberID, req.Msg.WorkId, plan.Locale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		)
-	})
-	if err != nil {
-		return nil, normalizeWorkContentBlockError(err)
 	}
-
-	changed := output.Advance.Changed || output.Target.Changed
-	documentRevision := output.Advance.DocumentRevision.String()
-	sourceChanged := output.Advance.TranslationSourceChanged
-	changedLocales := []string{plan.Locale}
-	if plan.Locale != sourceLocale {
-		documentRevision = output.Target.DocumentRevision.String()
-		sourceChanged = false
+	resultState := func() (bool, string, bool) {
+		if plan.Locale != sourceLocale {
+			return output.Advance.Changed || output.Target.Changed, output.Target.DocumentRevision.String(), false
+		}
+		return output.Advance.Changed || output.Target.Changed,
+			output.Advance.DocumentRevision.String(), output.Advance.TranslationSourceChanged
 	}
-	if changed {
-		publishWorkContentUpdated(ctx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil {
+			return err
+		}
+		changed, documentRevision, _ := resultState()
+		if !changed {
+			return nil
+		}
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
 			req.Msg.WorkId,
 			output.Mutation.TitleChanged,
 			output.Mutation.SummaryChanged,
@@ -499,7 +503,13 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 			output.TargetRevision,
 			plan.Locale == sourceLocale,
 		))
+	})
+	if err != nil {
+		return nil, normalizeWorkContentBlockError(err)
 	}
+
+	changed, documentRevision, sourceChanged := resultState()
+	changedLocales := []string{plan.Locale}
 	return connect.NewResponse(&intrav1.UpdateWorkLocaleMetadataResponse{
 		DocumentRevision: documentRevision, Changed: changed,
 		SourceChanged: sourceChanged, ChangedLocales: changedLocales,

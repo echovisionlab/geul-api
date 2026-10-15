@@ -283,12 +283,12 @@ func normalizeLegalCollaborationContentBlockError(kind string, err error) error 
 	case errors.As(err, &targetConflict):
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			kind+" target locale changed since it was loaded; reload before saving",
+			kind+" target locale changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrStaleRevision):
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			kind+" document changed since it was loaded; reload before saving",
+			kind+" document changed since it was loaded; reload before saving", err,
 		)
 	default:
 		return normalizeLegalContentBlockError(kind, err)
@@ -319,7 +319,7 @@ func verifyLegalExpectedRevisionWithDB(
 		return normalizeLegalContentBlockError(kind, err)
 	}
 	if revision != expected {
-		return normalizeLegalContentBlockError(kind, contentblock.ErrStaleRevision)
+		return normalizeLegalContentBlockError(kind, &contentblock.StaleRevisionError{CurrentRevision: revision})
 	}
 	return nil
 }

@@ -3,14 +3,16 @@ package programevent
 import (
 	"context"
 	"errors"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
 )
 
 func TestProgramEventAIDocumentExactSeamFailsClosedWithoutDependencies(t *testing.T) {
@@ -132,8 +134,11 @@ func TestProgramEventAIDocumentContentSignalCoversSourceAndTargetChanges(t *test
 			}
 			if message.GetEntityType() != managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PROGRAM_EVENT ||
 				message.GetEntityId() != eventID ||
-				message.GetSource() != managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB {
+				message.GetSource() != managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI {
 				t.Fatalf("unexpected signal identity: %+v", message)
+			}
+			if err := contentsignal.Validate(message); err != nil {
+				t.Fatalf("AI document signal violates the content.updated contract: %v", err)
 			}
 			if len(message.GetChangedFields()) != 1 || message.GetChangedFields()[0].GetPath() != "document.content" {
 				t.Fatalf("unexpected changed fields: %+v", message.GetChangedFields())
@@ -195,54 +200,63 @@ func TestProgramEventAIDocumentContentSignalCarriesExactLocaleTuple(t *testing.T
 	}
 }
 
-func TestProgramEventAIDocumentCompletionUsesPostCommitPublisherSemantics(t *testing.T) {
+func TestProgramEventAIDocumentContentSignalRequiresOwningTransaction(t *testing.T) {
 	t.Parallel()
-	publisher := &programEventAIDocumentTestPublisher{err: errors.New("signal unavailable")}
-	service := &ProgramEventService{asyncPublisher: publisher}
+	publisher := &programEventAIDocumentTestPublisher{}
 	command := AIDocumentCommand{
 		EventID:              "00000000-0000-4000-8000-000000000001",
 		RequestedLocale:      "en",
 		ObservedSourceLocale: "en",
 		ContributorMemberID:  uuid.MustParse("00000000-0000-4000-8000-000000000002"),
 	}
-	expected := AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003", Changed: true}
-	result, err := service.completeAIDocumentApply(context.Background(), command, expected, nil)
-	if err != nil || result != expected {
-		t.Fatalf("committed result = %+v, %v", result, err)
-	}
-	if publisher.calls != 1 || publisher.signal != event.SignalContentUpdated || publisher.message == nil {
-		t.Fatalf("unexpected publish call: signal=%q message=%T", publisher.signal, publisher.message)
-	}
+	changed := buildProgramEventAIDocumentContentUpdatedEvent(
+		command,
+		AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003", Changed: true},
+	)
+	require.NotNil(t, changed)
+	require.Error(t, publishContentUpdatedEvent(context.Background(), nil, publisher, changed))
+	require.Error(t, publishContentUpdatedEvent(context.Background(), &gorm.DB{}, publisher, changed))
+	require.Zero(t, publisher.calls, "content.updated escaped the owning transaction")
+
+	noop := buildProgramEventAIDocumentContentUpdatedEvent(
+		command,
+		AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003"},
+	)
+	require.Nil(t, noop)
+	require.NoError(t, publishContentUpdatedEvent(context.Background(), nil, publisher, noop))
+	require.Zero(t, publisher.calls)
 }
 
-func TestProgramEventAIDocumentCompletionSkipsNoOpConflictAndRollback(t *testing.T) {
+func TestProgramEventContentSignalsSatisfyContract(t *testing.T) {
 	t.Parallel()
-	command := AIDocumentCommand{
-		EventID:             "00000000-0000-4000-8000-000000000001",
-		ContributorMemberID: uuid.MustParse("00000000-0000-4000-8000-000000000002"),
-	}
-	for _, test := range []struct {
-		name      string
-		result    AIDocumentResult
-		commitErr error
-	}{
-		{name: "semantic no-op", result: AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003"}},
-		{name: "revision conflict", commitErr: &AIDocumentConflict{CurrentDocumentRevision: "00000000-0000-4000-8000-000000000004"}},
-		{name: "validation rollback", result: AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003", Changed: true}, commitErr: errRollbackAIDocumentValidation},
-		{name: "transaction rollback", result: AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003", Changed: true}, commitErr: errors.New("transaction failed")},
+	eventID := "00000000-0000-4000-8000-000000000001"
+	contributor := uuid.MustParse("00000000-0000-4000-8000-000000000002")
+	documentRevision := "00000000-0000-4000-8000-000000000003"
+	targetRevision := "target-revision"
+	deleted := buildProgramEventAIDocumentContentUpdatedEvent(
+		AIDocumentCommand{
+			EventID: eventID, RequestedLocale: "ko", ObservedSourceLocale: "en",
+			ObservedLocaleExists: true, DeleteTranslation: true, ContributorMemberID: contributor,
+		},
+		AIDocumentResult{DocumentRevision: documentRevision, TargetRevision: &targetRevision, Changed: true},
+	)
+	require.NotNil(t, deleted, "translation deletion must signal content.updated")
+	require.NoError(t, contentsignal.Validate(deleted))
+	require.False(t, deleted.GetLocaleExists())
+	require.Nil(t, deleted.TargetRevision)
+	require.Equal(t, documentRevision, deleted.GetDocumentRevision())
+
+	for _, collab := range []*managev1.ContentUpdatedEvent{
+		buildProgramEventBlockContentUpdatedEvent(
+			eventID, []string{"content"}, documentRevision, []string{contributor.String()}, "en", true, nil, true,
+		),
+		buildProgramEventBlockContentUpdatedEvent(
+			eventID, []string{"summary"}, documentRevision, []string{contributor.String()}, "ko", true, &targetRevision, false,
+		),
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			publisher := &programEventAIDocumentTestPublisher{}
-			service := &ProgramEventService{asyncPublisher: publisher}
-			_, err := service.completeAIDocumentApply(context.Background(), command, test.result, test.commitErr)
-			if !errors.Is(err, test.commitErr) {
-				t.Fatalf("completion error = %v, want %v", err, test.commitErr)
-			}
-			if publisher.calls != 0 || publisher.message != nil {
-				t.Fatalf("negative outcome published signal=%q message=%T", publisher.signal, publisher.message)
-			}
-		})
+		require.NotNil(t, collab)
+		require.Equal(t, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, collab.GetSource())
+		require.NoError(t, contentsignal.Validate(collab))
 	}
 }
 
@@ -289,4 +303,13 @@ func TestProgramEventMetadataContentSignalIncludesMetadataAndCombinedBody(t *tes
 	require.Equal(t, "document.content", signal.GetChangedFields()[2].GetPath())
 	result.Changed = false
 	require.Nil(t, buildProgramEventAIDocumentContentUpdatedEvent(command, result))
+}
+
+func (publisher *programEventAIDocumentTestPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

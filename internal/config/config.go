@@ -20,7 +20,7 @@ type Config struct {
 	MCPPrivatePort        int         `envconfig:"MCP_PRIVATE_PORT" default:"8001"`
 
 	AuthHeaderName            string `envconfig:"AUTH_HEADER_NAME" required:"true"`
-	InternalServiceHeaderName string `envconfig:"INTERNAL_SERVICE_HEADER_NAME" required:"true"`
+	InternalServiceHeaderName string `envconfig:"INTERNAL_SERVICE_HEADER_NAME" default:"X-Internal-Service"`
 
 	DatabaseDSN       string   `envconfig:"DATABASE_DSN" required:"true"`
 	DatabaseMaxOpen   int      `envconfig:"DATABASE_MAX_OPEN_CONNECTIONS" default:"20"`

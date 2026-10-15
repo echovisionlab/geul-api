@@ -120,13 +120,13 @@ func TestInteractiveMutationApplicationRelaySuccessSuppressesFallback(t *testing
 
 	require.NoError(t, err)
 	require.True(t, result.Changed)
-	require.True(t, core.InteractivePostCommitCompletionOwnsSignal(application.applyCtx))
+	require.False(t, core.InteractivePostCommitCompletionOwnsSignal(application.applyCtx))
 	require.Len(t, relayClient.requests, 1)
 	require.Equal(t, intrav1.InteractiveAIDocumentMutationOrigin_INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_MCP, relayClient.requests[0].GetOrigin())
 	require.Empty(t, publisher.messages)
 }
 
-func TestInteractiveMutationApplicationRelayFailurePublishesOneExactFallback(t *testing.T) {
+func TestInteractiveMutationApplicationRelayFailureDoesNotPublishAfterCommit(t *testing.T) {
 	t.Parallel()
 	targetBefore := core.Revision("target-before")
 	targetAfter := core.Revision("target-after")
@@ -150,19 +150,7 @@ func TestInteractiveMutationApplicationRelayFailurePublishesOneExactFallback(t *
 	require.NoError(t, err, "post-commit delivery failure must not make the caller retry the committed mutation")
 	require.Equal(t, result, accepted)
 	require.Len(t, relayClient.requests, 1)
-	require.Equal(t, []string{eventpkg.SignalContentUpdated}, publisher.signals)
-	require.False(t, core.InteractivePostCommitCompletionOwnsSignal(publisher.contexts[0]))
-	event, ok := publisher.messages[0].(*managev1.ContentUpdatedEvent)
-	require.True(t, ok)
-	require.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_CAMPAIGN, event.GetEntityType())
-	require.Equal(t, request.Document, core.DocumentReference(event.GetEntityId()))
-	require.Equal(t, "en", event.GetLocale())
-	require.True(t, event.GetLocaleExists())
-	require.NotNil(t, event.LocaleExists)
-	require.Equal(t, "document-before", event.GetDocumentRevision())
-	require.Equal(t, "target-after", event.GetTargetRevision())
-	require.False(t, event.GetDocumentStateChanged())
-	require.Equal(t, []string{"22222222-2222-4222-8222-222222222222"}, event.GetContributorMemberIds())
+	require.Empty(t, publisher.messages, "the owning transaction already enqueued the event")
 }
 
 func TestInteractiveMutationApplicationFallbackDistinguishesSourceAndTargetDeletion(t *testing.T) {
@@ -215,7 +203,9 @@ func TestInteractiveMutationApplicationFallbackDistinguishesSourceAndTargetDelet
 
 			_, err := decorated.Apply(interactiveMemberContext(), test.request)
 			require.NoError(t, err)
-			event := publisher.messages[0].(*managev1.ContentUpdatedEvent)
+			require.Empty(t, publisher.messages)
+			event, eventErr := interactiveMutationFallbackEvent(test.request, test.result, "22222222-2222-4222-8222-222222222222")
+			require.NoError(t, eventErr)
 			require.Equal(t, test.wantLocaleExists, event.GetLocaleExists())
 			require.Equal(t, test.wantDocumentChanged, event.GetDocumentStateChanged())
 			require.Equal(t, test.wantTargetRevision, event.GetTargetRevision())
@@ -288,3 +278,7 @@ func TestInteractiveMutationFallbackCatalogCoversEverySupportedDomain(t *testing
 var _ InteractiveMutationApplicationPort = (*interactiveApplicationStub)(nil)
 var _ InteractiveMutationSignalPublisher = (*interactiveFallbackPublisher)(nil)
 var _ InteractiveMutationRelayClient = (*recordingInteractiveMutationRelayClient)(nil)
+
+func (publisher *interactiveFallbackPublisher) NotifyProtobufWithExecutor(ctx context.Context, _ eventpkg.DBTX, signal string, message proto.Message) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
+}

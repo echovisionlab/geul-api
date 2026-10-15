@@ -356,3 +356,12 @@ func (releaseFailingAuditAppender) AppendDomainAuditInTransaction(
 }
 
 func stringPtr(value string) *string { return &value }
+
+func (publisher noopAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
+}

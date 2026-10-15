@@ -59,7 +59,7 @@ jobs:
           make media-test
 
       - name: Test
-        run: go test ./...
+        run: make test
 
       - name: Verify media authorization contract
         run: |
@@ -71,4 +71,4 @@ jobs:
         run: go vet ./...
 
       - name: Build
-        run: go build ./cmd/server
+        run: make build

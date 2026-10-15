@@ -4,16 +4,19 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
 
-// AsyncPublisher is the signal surface used after Artist mutations.
+// AsyncPublisher is the signal surface used by Artist mutations.
+// content.updated is scheduled only through the transactional signal method.
 type AsyncPublisher interface {
 	EnqueueProtobuf(context.Context, string, string, proto.Message) error
 	NotifyProtobuf(context.Context, string, proto.Message) error
+	contentsignal.Publisher
 }
 
 // FileDeleter removes an Artist-owned File after the domain transaction commits.

@@ -2,11 +2,12 @@ package release
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
 
 type releaseContentUpdatedFieldSpec struct {
@@ -37,15 +38,15 @@ var releaseContentUpdatedFieldSpecs = map[string]releaseContentUpdatedFieldSpec{
 	"artworkUrl":      {path: "media.artwork", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_MEDIA},
 }
 
-func publishContentUpdatedEvent(ctx context.Context, publisher AsyncPublisher, event *managev1.ContentUpdatedEvent) error {
-	if publisher == nil || event == nil {
-		return nil
-	}
-	err := publishSignalProto(ctx, publisher, eventpkg.SignalContentUpdated, event)
-	if err != nil {
-		slog.Warn("Failed to publish Release content updated event", "error", err, "releaseId", event.EntityId)
-	}
-	return err
+// publishContentUpdatedEvent schedules content.updated in the caller's
+// mutation transaction so the signal commits or rolls back with the data.
+func publishContentUpdatedEvent(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher AsyncPublisher,
+	event *managev1.ContentUpdatedEvent,
+) error {
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
 func buildManageReleaseContentUpdatedEvent(request *managev1.UpdateReleaseRequest) *managev1.ContentUpdatedEvent {

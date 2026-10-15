@@ -56,20 +56,17 @@ func setReleaseReferenceSet[T interface{}](
 			Update("updated_at", time.Now()).Error; err != nil {
 			return err
 		}
-		return service.appendReleaseMetadataAudit(ctx, tx, releaseID, []string{relation})
+		if err := service.appendReleaseMetadataAudit(ctx, tx, releaseID, []string{relation}); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, service.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
+			releaseID,
+			[]string{"relations." + relation},
+		))
 	})
 	if err != nil {
 		return nil, classifyReleaseMutationError(err, releaseID)
 	}
-
-	publishContentUpdatedEvent(
-		ctx,
-		service.asyncPublisher,
-		buildReleaseRelationMutationContentUpdatedEvent(
-			releaseID,
-			[]string{"relations." + relation},
-		),
-	)
 	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
 

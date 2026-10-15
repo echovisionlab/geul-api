@@ -416,12 +416,9 @@ func (s *PageService) UpdatePage(
 	if err != nil {
 		return nil, err
 	}
-	changed, err := s.applyPageUpdate(ctx, &page, update)
+	changed, err := s.applyPageUpdate(ctx, &page, update, buildManagePageContentUpdatedEvent(req.Msg))
 	if err != nil {
 		return nil, normalizePageUpdateError(err)
-	}
-	if changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManagePageContentUpdatedEvent(req.Msg))
 	}
 	accessPolicy, err := pageaccess.Decode(page.AccessPolicy)
 	if err != nil {
@@ -607,22 +604,16 @@ func (s *PageService) PublishPage(
 			page.PublishedAt = &now
 		}
 		lifecycleChanged = true
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageLifecycleAuditRecord(metadata, page.ID, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStatePublished)
+			}); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageLifecycleAuditRecord(metadata, page.ID, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStatePublished)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if lifecycleChanged {
-		publishContentUpdatedEvent(
+		return publishContentUpdatedEvent(
 			ctx,
+			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
 				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
@@ -630,6 +621,11 @@ func (s *PageService) PublishPage(
 				[]string{"state.status", "state.published_at"},
 			),
 		)
+	}); err != nil {
+		if connect.CodeOf(err) != connect.CodeUnknown {
+			return nil, err
+		}
+		return nil, errs.Internal(err)
 	}
 
 	response := &managev1.PageLifecycleMutationResponse{
@@ -672,22 +668,16 @@ func (s *PageService) UnpublishPage(
 		page.Status = model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String())
 		page.UpdatedAt = now
 		lifecycleChanged = true
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageLifecycleAuditRecord(metadata, page.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft)
+			}); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageLifecycleAuditRecord(metadata, page.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft)
-		})
-	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if lifecycleChanged {
-		publishContentUpdatedEvent(
+		return publishContentUpdatedEvent(
 			ctx,
+			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
 				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
@@ -695,6 +685,11 @@ func (s *PageService) UnpublishPage(
 				[]string{"state.status"},
 			),
 		)
+	}); err != nil {
+		if connect.CodeOf(err) != connect.CodeUnknown {
+			return nil, err
+		}
+		return nil, errs.Internal(err)
 	}
 
 	response := &managev1.PageLifecycleMutationResponse{

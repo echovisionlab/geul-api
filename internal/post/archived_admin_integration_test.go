@@ -116,6 +116,25 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	}))
 	require.NoError(t, err)
 	require.NotNil(t, adminBootstrap.Msg.Document)
+	for _, actor := range []struct {
+		ctx      context.Context
+		session  string
+		editable bool
+	}{
+		{authorCtx, authorSessionID, false}, {adminCtx, adminSessionID, true},
+	} {
+		user := *auth.GetUser(actor.ctx)
+		user.SessionID = auth.SessionID(actor.session)
+		firstPaint, readErr := service.GetPostEditorDocument(auth.WithUser(actor.ctx, &user), connect.NewRequest(&managev1.GetPostEditorDocumentRequest{PostId: created.Msg.Id, Locale: "en"}))
+		require.NoError(t, readErr)
+		require.Equal(t, actor.editable, firstPaint.Msg.Editable)
+		require.Equal(t, authorBootstrap.Msg.DocumentRevision, firstPaint.Msg.DocumentRevision)
+	}
+	collaboratorSession := testutil.InsertPostIntegrationSession(t, db, collaboratorID)
+	collaborator := *auth.GetUser(collaboratorCtx)
+	collaborator.SessionID = auth.SessionID(collaboratorSession)
+	_, deniedErr := service.GetPostEditorDocument(auth.WithUser(collaboratorCtx, &collaborator), connect.NewRequest(&managev1.GetPostEditorDocumentRequest{PostId: created.Msg.Id, Locale: "en"}))
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(deniedErr))
 
 	authorBatch := archivedPostParagraphMutationBatch(authorPost.Msg.Revision, testutil.PostIntegrationMemberID(authorID))
 	_, err = internal.ApplyPostBlockBatch(context.Background(), connect.NewRequest(&intrav1.ApplyPostBlockBatchRequest{

@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -114,14 +113,6 @@ func (stubTranslationJobPublisher) PublishTranslationGenerate(
 func (stubTranslationJobPublisher) PublishTranslationLifecycle(
 	context.Context,
 	*managev1.TranslationLifecycleEvent,
-) error {
-	return nil
-}
-
-func (stubTranslationJobPublisher) PublishContentUpdatedWithExecutor(
-	context.Context,
-	eventpkg.DBTX,
-	*managev1.ContentUpdatedEvent,
 ) error {
 	return nil
 }

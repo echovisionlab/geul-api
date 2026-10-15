@@ -1,15 +1,37 @@
 package post
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestPostVersionCheckpointRestoresTheKnownPreviousCatalog(t *testing.T) {
+	document := testPostVersionLocalizedDocument()
+	document.BlockCatalogFingerprint = contentv1.ContentBlockCatalogFingerprint
+	encoded, _, err := marshalPostVersionContentSnapshot(document, "en", nil, nil)
+	require.NoError(t, err)
+	legacy := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e"))
+	_, decoded, err := unmarshalPostVersionContentSnapshot(legacy)
+	require.NoError(t, err)
+	require.Equal(t, contentv1.ContentBlockCatalogFingerprint, decoded.GetBlockCatalogFingerprint())
+	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
+	require.NoError(t, err)
+
+	unknown := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("stale-catalog"))
+	_, decoded, err = unmarshalPostVersionContentSnapshot(unknown)
+	require.NoError(t, err)
+	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
+	require.ErrorContains(t, err, "fingerprint")
+}
 
 func TestPostVersionProtoFormatting(t *testing.T) {
 	createdAt := time.Unix(1_700_000_000, 0).UTC()

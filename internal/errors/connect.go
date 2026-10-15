@@ -268,9 +268,25 @@ func FailedPrecondition(msg string) *connect.Error {
 // CollaborationConflict returns a failed-precondition error with a stable
 // machine-readable conflict reason. Consumers must branch on the detail rather
 // than diagnostic text or conflicting values.
-func CollaborationConflict(reason intrav1.CollaborationConflictReason, msg string) *connect.Error {
+func CollaborationConflict(reason intrav1.CollaborationConflictReason, msg string, causes ...error) *connect.Error {
 	err := FailedPrecondition(msg)
-	detail, detailErr := connect.NewErrorDetail(&intrav1.CollaborationConflictDetail{Reason: reason})
+	state := &intrav1.CollaborationConflictDetail{Reason: reason}
+	for _, cause := range causes {
+		var revisions interface {
+			CollaborationRevisions() (string, string, *bool)
+		}
+		if stderrors.As(cause, &revisions) {
+			document, target, exists := revisions.CollaborationRevisions()
+			if document != "" {
+				state.CurrentDocumentRevision = &document
+			}
+			if target != "" {
+				state.CurrentTargetRevision = &target
+			}
+			state.CurrentTargetExists = exists
+		}
+	}
+	detail, detailErr := connect.NewErrorDetail(state)
 	if detailErr != nil {
 		return Internal(detailErr)
 	}
@@ -340,4 +356,16 @@ func Wrap(err error) *connect.Error {
 		return InvalidArgumentMsg("request contains an invalid UUID")
 	}
 	return connect.NewError(connect.CodeInternal, err)
+}
+
+// CollaborationState preserves revisions read under the owning resource lock.
+type CollaborationState struct {
+	Document     string
+	Target       string
+	TargetExists *bool
+}
+
+func (s CollaborationState) Error() string { return "collaboration state changed" }
+func (s CollaborationState) CollaborationRevisions() (string, string, *bool) {
+	return s.Document, s.Target, s.TargetExists
 }

@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -105,22 +104,6 @@ func (s *TranslationService) SetEntitySourceLocale(
 		Changed:          !result.unchanged,
 		SourceChanged:    !result.unchanged,
 		ChangedLocales:   result.changedLocales,
-	}
-	if result.unchanged {
-		return connect.NewResponse(response), nil
-	}
-	if event := buildTypedSourceLocaleUpdatedEvent(
-		entityType,
-		entityID,
-		result.documentRevision,
-	); event != nil {
-		if publishErr := s.publisher.PublishContentUpdated(ctx, event); publishErr != nil {
-			slog.Warn("Failed to publish source locale content updated event",
-				"error", publishErr,
-				"entityType", entityType,
-				"entityId", entityID,
-			)
-		}
 	}
 	return connect.NewResponse(response), nil
 }

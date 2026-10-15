@@ -4,9 +4,12 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"google.golang.org/protobuf/proto"
 )
 
 type stubTranslationServicePublisher struct {
@@ -46,10 +49,16 @@ func (s *stubTranslationServicePublisher) PublishTranslationLifecycle(
 	return nil
 }
 
-func (s *stubTranslationServicePublisher) PublishContentUpdated(
+func (s *stubTranslationServicePublisher) NotifyProtobufWithExecutor(
 	_ context.Context,
-	event *managev1.ContentUpdatedEvent,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
 ) error {
+	event, ok := message.(*managev1.ContentUpdatedEvent)
+	if signal != eventpkg.SignalContentUpdated || !ok {
+		return fmt.Errorf("unexpected transactional signal %q", signal)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.contentErr != nil {

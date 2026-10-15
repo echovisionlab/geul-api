@@ -8,10 +8,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/og"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +30,8 @@ type translationJobPublisher interface {
 	asyncPublisher
 	PublishTranslationGenerate(ctx context.Context, job *managev1.TranslationGenerateEvent) error
 	PublishTranslationLifecycle(ctx context.Context, event *managev1.TranslationLifecycleEvent) error
-	PublishContentUpdatedWithExecutor(context.Context, eventpkg.DBTX, *managev1.ContentUpdatedEvent) error
+	// content.updated is scheduled only in the owning apply transaction.
+	contentsignal.Publisher
 }
 
 type TranslationJobManager struct {

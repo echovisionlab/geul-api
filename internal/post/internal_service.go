@@ -243,7 +243,7 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 	var result contentblock.Result
 	var targetResult postTargetLocaleMutationResult
 	var sourceLocale string
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		domain, fenceErr := postCollaborationDocumentFence(
 			s.spiceDB, req.Msg.PostId, req.Msg.Batch.ContributorMemberIds,
 		)(ctx, tx, documentID)
@@ -320,17 +320,19 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 			)
 		}
 		return nil
-	})
-	if err != nil {
-		return nil, normalizePostContentBlockError(err)
 	}
-	changed := result.Changed || targetResult.Changed
-	documentRevision := result.DocumentRevision.String()
-	if locale != sourceLocale {
-		documentRevision = targetResult.DocumentRevision
-	}
-	if changed {
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil {
+			return err
+		}
+		if !result.Changed && !targetResult.Changed {
+			return nil
+		}
+		documentRevision := result.DocumentRevision.String()
+		if locale != sourceLocale {
+			documentRevision = targetResult.DocumentRevision
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
 			req.Msg.PostId,
 			[]string{"content"},
 			documentRevision,
@@ -341,6 +343,14 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
 			locale == sourceLocale,
 		))
+	})
+	if err != nil {
+		return nil, normalizePostContentBlockError(err)
+	}
+	changed := result.Changed || targetResult.Changed
+	documentRevision := result.DocumentRevision.String()
+	if locale != sourceLocale {
+		documentRevision = targetResult.DocumentRevision
 	}
 	response := &intrav1.ApplyPostBlockBatchResponse{
 		DocumentRevision: documentRevision, Changed: changed,
@@ -388,7 +398,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 	var sourceLocale string
 	var sourceMetadataChanged bool
 	var titleChanged bool
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		domain, fenceErr := postCollaborationDocumentFence(
 			s.spiceDB, req.Msg.PostId, req.Msg.ContributorMemberIds,
 		)(ctx, tx, documentID)
@@ -494,16 +504,18 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 			ctx, tx, s.auditWriter, contributorMemberID, req.Msg.PostId, locale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		)
-	})
-	if err != nil {
-		return nil, normalizePostContentBlockError(err)
 	}
-	changed := result.Changed || targetResult.Changed
-	documentRevision := result.DocumentRevision.String()
-	if locale != sourceLocale {
-		documentRevision = targetResult.DocumentRevision
-	}
-	if changed {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil {
+			return err
+		}
+		if !result.Changed && !targetResult.Changed {
+			return nil
+		}
+		documentRevision := result.DocumentRevision.String()
+		if locale != sourceLocale {
+			documentRevision = targetResult.DocumentRevision
+		}
 		fields := make([]string, 0, 2)
 		if req.Msg.TitleChange != nil {
 			fields = append(fields, "title")
@@ -511,7 +523,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 		if req.Msg.SummaryChange != nil {
 			fields = append(fields, "summary")
 		}
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
 			req.Msg.PostId,
 			fields,
 			documentRevision,
@@ -522,6 +534,14 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
 			locale == sourceLocale,
 		))
+	})
+	if err != nil {
+		return nil, normalizePostContentBlockError(err)
+	}
+	changed := result.Changed || targetResult.Changed
+	documentRevision := result.DocumentRevision.String()
+	if locale != sourceLocale {
+		documentRevision = targetResult.DocumentRevision
 	}
 	response := &intrav1.UpdatePostLocaleMetadataResponse{
 		DocumentRevision: documentRevision, Changed: changed,
@@ -674,7 +694,7 @@ func (s *InternalPostService) CreatePostVersionCheckpoint(
 			return loadErr
 		}
 		if snapshot.Document.Revision != expectedRevision {
-			return contentblock.ErrStaleRevision
+			return &contentblock.StaleRevisionError{CurrentRevision: snapshot.Document.Revision}
 		}
 		if locale != domain.SourceLocale {
 			return nil

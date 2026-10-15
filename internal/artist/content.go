@@ -198,6 +198,7 @@ func updateCreativeLocaleTitle(
 	ogEntityType managev1.OgEntityType,
 	translationRuntime Translation,
 	checkpoints persistencecheckpoint.ContributorFence,
+	afterWrite func(*gorm.DB, creativeLocaleTitleUpdateResult) error,
 ) (creativeLocaleTitleUpdateResult, error) {
 	if store == nil {
 		return creativeLocaleTitleUpdateResult{}, errs.Internal(errors.New("content Block store is not configured"))
@@ -273,13 +274,19 @@ func updateCreativeLocaleTitle(
 			output.ChangedLocales = []string{locale}
 		}
 		if advanced.TranslationSourceChanged {
-			_, err = runtime.RequestCurrentWithDB(
+			if _, err := runtime.RequestCurrentWithDB(
 				ctx, tx, ogEntityType, entityID, "", false,
 				entityType+"_source_title_saved",
-			)
-			return err
+			); err != nil {
+				return err
+			}
 		}
-		return nil
+		if afterWrite == nil {
+			return nil
+		}
+		// afterWrite runs in the mutation transaction so dependent effects,
+		// such as the content.updated signal, commit or roll back with it.
+		return afterWrite(tx, output)
 	})
 	if err != nil {
 		return creativeLocaleTitleUpdateResult{}, err
