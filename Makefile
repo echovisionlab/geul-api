@@ -1,7 +1,7 @@
 .PHONY: deps tidy test test-integration test-integration-db test-integration-package test-integration-runner test-integration-required build run clean
 
 INTEGRATION_SCHEMA_ROOT ?= ../geul-schema
-INTEGRATION_POSTGRES_IMAGE ?= registry.dsub.io/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f
+INTEGRATION_POSTGRES_IMAGE ?= registry.rawsector.com/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f
 # The pinned minio/minio digest is no longer pullable from Docker Hub; see README for the override.
 INTEGRATION_MINIO_IMAGE ?= cgr.dev/chainguard/minio:latest
 

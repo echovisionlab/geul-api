@@ -21,6 +21,9 @@ jobs:
     name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GOPRIVATE: github.com/echovisionlab/*
+      GIT_CONFIG_GLOBAL: ${{ runner.temp }}/geul-private-deps.gitconfig
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,6 +35,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: Configure private Go dependencies
+        env:
+          TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+        run: |
+          : "${TOKEN:?Set the PRIVATE_DEPS_TOKEN organization secret}"
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Download modules
         run: go mod download
@@ -54,6 +64,8 @@ jobs:
           node-version: '24.21.0'
 
       - name: Build and test media tools
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
         run: |
           npm install --global pnpm@12.9.1
           make media-test
@@ -72,3 +84,7 @@ jobs:
 
       - name: Build
         run: make build
+
+      - name: Remove private Git credentials
+        if: ${{ always() }}
+        run: rm -f "$GIT_CONFIG_GLOBAL"
