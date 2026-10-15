@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 	"time"
 
@@ -514,10 +515,17 @@ func (s *ProgramEventService) toProtoProgramEvent(
 	if err != nil {
 		return nil, errs.Internal(fmt.Errorf("materialize Program Event typed document: %w", err))
 	}
+	var variables sitevariable.Context
+	if contentblock.HasSiteVariables(document) {
+		variables, err = sitevariable.LoadRuntime(ctx, s.db)
+		if err != nil {
+			return nil, errs.Internal(err)
+		}
+	}
 	projection, err := contentblock.MaterializeLocalizedRichTextDocument(
 		ctx,
 		document,
-		&programEventPublicFileRenderResolver{db: s.db, assets: s.assets},
+		&programEventPublicFileRenderResolver{db: s.db, assets: s.assets}, variables,
 	)
 	if err != nil {
 		return nil, errs.Internal(fmt.Errorf("render Program Event typed document: %w", err))

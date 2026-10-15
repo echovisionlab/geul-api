@@ -140,10 +140,7 @@ func (s *EmailCourierService) SendEmail(
 		req.Msg.TemplateData,
 	)
 	if err != nil {
-		slog.Warn("Rejected identity courier email with invalid issuance provenance",
-			"template_type", req.Msg.TemplateType,
-			"reason", "invalid_issuance_provenance",
-		)
+		LogDeliveryFailure(ctx, "mail.courier.invalid_issuance_provenance", &managev1.SendEmailEvent{Recipient: req.Msg.Recipient, TemplateType: req.Msg.TemplateType, TemplateData: templateData, Locale: &targetLocale}, err, "reason", "invalid_issuance_provenance")
 		return nil, errs.PermissionDenied("authentication issuance provenance is invalid")
 	}
 
@@ -165,7 +162,7 @@ func (s *EmailCourierService) SendEmail(
 	if templateType == email.EventLoginCode.String() {
 		allowed, reason, err := s.authLoginAllowed(ctx, identityID, req.Msg.Recipient)
 		if err != nil {
-			slog.Error("Failed to validate login-code request", "reason", "identity_lookup_failed", "identity_id", identityID)
+			LogDeliveryFailure(ctx, "mail.courier.identity_lookup_failed", job, err, "reason", "identity_lookup_failed")
 			return nil, errs.Internal(err)
 		}
 		if !allowed {
@@ -206,10 +203,7 @@ func (s *EmailCourierService) SendEmail(
 
 	err = s.publisher.PublishAuthEmail(ctx, job)
 	if err != nil {
-		slog.Error("Failed to publish authentication email",
-			"template_type", req.Msg.TemplateType,
-			"reason", "queue_publish_failed",
-		)
+		LogDeliveryFailure(ctx, "mail.courier.queue_publish_failed", job, err, "reason", "queue_publish_failed")
 		return nil, errs.Internal(err)
 	}
 

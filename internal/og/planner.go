@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"sort"
 	"strings"
 	"time"
@@ -128,8 +129,12 @@ func (p *Planner) requestBulkWithDB(
 			Disposition: "inline", Status: model.PublicAssetStatusAllocated, CreatedAt: now, UpdatedAt: now,
 		}
 		target := targets[item.targetKey]
+		resolvedTitle, err := sitevariable.ResolvePublicText(ctx, tx, item.request.Title)
+		if err != nil {
+			return err
+		}
 		snapshotJSON, err := json.Marshal(ogEntitySnapshot{
-			EntityType: item.entityType, EntityID: item.entityID, Title: item.request.Title,
+			EntityType: item.entityType, EntityID: item.entityID, Title: resolvedTitle,
 			Locale:        item.locale,
 			FeaturedImage: featuredAssets[stringValue(item.request.FeaturedImageFileID)],
 			Output:        ogOutputSnapshot{AssetID: assetID, ObjectKey: objectKey, Extension: "webp", MimeType: "image/webp"},

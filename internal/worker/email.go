@@ -31,19 +31,23 @@ func (h *Handlers) handleEmailDelivery(
 		h.mailMetrics,
 	)
 	result, err := application.Deliver(ctx, job)
-	return emailDeliveryQueueResult(result, err)
+	return emailDeliveryQueueResult(ctx, job, result, err)
 }
 
 // emailDeliveryQueueResult maps application outcomes into the queue's
 // retryable and terminal error contract.
 func emailDeliveryQueueResult(
+	ctx context.Context,
+	job *managev1.SendEmailEvent,
 	result emaildelivery.DeliveryResult,
 	deliveryErr error,
 ) (emaildelivery.DeliveryOutcome, error) {
 	if deliveryErr != nil {
+		emaildelivery.LogDeliveryFailure(ctx, "mail.worker.delivery_failed", job, deliveryErr)
 		return "", deliveryErr
 	}
 	if result.Err != nil {
+		emaildelivery.LogDeliveryFailure(ctx, "mail.worker.provider_failed", job, result.Err, "error_type", result.ErrorType)
 		if result.Retryable {
 			return "", retryableEmailDeliveryError(result.ErrorType)
 		}

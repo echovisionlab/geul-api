@@ -8,9 +8,10 @@ import (
 )
 
 func TestVersionSnapshotCatalogUpgradeAllowsOnlyTheKnownAdditivePair(t *testing.T) {
-	require.Equal(t, collectionSizeCatalogFingerprint, contentv1.ContentBlockCatalogFingerprint)
-	require.Equal(t, collectionSizeCatalogFingerprint, UpgradeVersionSnapshotCatalogFingerprint(previousCollectionCatalogFingerprint))
-	for _, fingerprint := range []string{"", "stale-catalog", "de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16f", collectionSizeCatalogFingerprint} {
+	require.Equal(t, siteVariableCatalogFingerprint, contentv1.ContentBlockCatalogFingerprint)
+	require.Equal(t, siteVariableCatalogFingerprint, UpgradeVersionSnapshotCatalogFingerprint(previousCollectionCatalogFingerprint))
+	require.Equal(t, siteVariableCatalogFingerprint, UpgradeVersionSnapshotCatalogFingerprint(collectionSizeCatalogFingerprint))
+	for _, fingerprint := range []string{"", "stale-catalog", "de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16f", siteVariableCatalogFingerprint} {
 		require.Equal(t, fingerprint, UpgradeVersionSnapshotCatalogFingerprint(fingerprint))
 	}
 }

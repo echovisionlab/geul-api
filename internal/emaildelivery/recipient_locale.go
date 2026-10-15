@@ -6,6 +6,7 @@ import (
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
@@ -42,7 +43,11 @@ func lookupEmailUserLocale(ctx context.Context, db *gorm.DB, recipient string) s
 		Where("ki.state = 'active' AND m.deleted_at IS NULL AND m.primary_email = ?", recipient).
 		Limit(1).
 		Scan(&row).Error
-	if err != nil || row.PreferredLocale == nil {
+	if err != nil {
+		LogDeliveryFailure(ctx, "mail.delivery.locale_lookup_failed", &managev1.SendEmailEvent{Recipient: recipient}, err)
+		return ""
+	}
+	if row.PreferredLocale == nil {
 		return ""
 	}
 	return resolveEmailRecipientLocale(*row.PreferredLocale)

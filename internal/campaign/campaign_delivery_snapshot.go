@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 
 	"gorm.io/gorm"
@@ -89,7 +90,7 @@ func campaignRenderSnapshot(
 		if err != nil {
 			return CampaignDeliverySnapshot{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 		}
-		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localizedDocument, nil)
+		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localizedDocument, nil, sitevariable.TemplateContext())
 		if err != nil {
 			return CampaignDeliverySnapshot{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 		}

@@ -144,7 +144,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			output.Write(tokenizer.Raw())
 		case html.TextToken:
 			text := string(tokenizer.Text())
-			eligible := excludedDepth == 0 && layoutTextIsTranslatable(text)
+			eligible := excludedDepth == 0 && (layoutTextIsTranslatable(text) || (pending != nil && pending.Kind == layoutTextMarker))
 			if !eligible {
 				if err := flushEmptyText(); err != nil {
 					return "", err
@@ -310,7 +310,7 @@ func ExtractLayoutContentUnits(content string) ([]LayoutContentUnit, error) {
 			stack = popLayoutHTMLElementStack(stack, token.Data)
 		case html.TextToken:
 			text := string(tokenizer.Text())
-			eligible := excludedDepth == 0 && layoutTextIsTranslatable(text)
+			eligible := excludedDepth == 0 && (layoutTextIsTranslatable(text) || (pending != nil && pending.Kind == layoutTextMarker))
 			if eligible {
 				if pending == nil || pending.Kind != layoutTextMarker {
 					return nil, errors.New("Email Layout text is missing its durable unit marker")
@@ -343,7 +343,7 @@ func layoutTranslatableAttributesForMarker(token html.Token, preserveEmpty bool)
 			continue
 		}
 		value := strings.TrimSpace(attribute.Val)
-		if (!preserveEmpty && value == "") || translation.IsPurePlaceholderText(value) {
+		if !preserveEmpty && (value == "" || translation.IsPurePlaceholderText(value)) {
 			continue
 		}
 		values = append(values, layoutAttributeValue{Name: name, Value: attribute.Val})

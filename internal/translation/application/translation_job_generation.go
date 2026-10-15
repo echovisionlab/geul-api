@@ -183,7 +183,7 @@ func (m *TranslationJobManager) generateValidatedResumableDocument(
 			if response == nil {
 				return nil, pinTranslationProviderDocumentError(errTranslationProviderResponseInvalid)
 			}
-			validation := translation.ValidateResponse(request.Document, *response)
+			validation := translation.ValidateResponse(request.Document, *response, request.Profile.ProtectedTerms...)
 			if !validation.Passed {
 				return nil, pinTranslationProviderDocumentError(errTranslationProviderResponseInvalid)
 			}
@@ -290,7 +290,7 @@ func (m *TranslationJobManager) generateValidatedTranslationRequest(
 				return nil, errTranslationProviderResponseInvalid
 			}
 
-			hardValidation := translation.ValidateResponse(request.Document, *response)
+			hardValidation := translation.ValidateResponse(request.Document, *response, request.Profile.ProtectedTerms...)
 			if !hardValidation.Passed {
 				return nil, errTranslationProviderResponseInvalid
 			}

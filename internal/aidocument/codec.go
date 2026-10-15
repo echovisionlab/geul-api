@@ -219,6 +219,11 @@ func (i InlineItem) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	switch i.Kind {
+	case InlineKindSiteVariable:
+		if i.Linked {
+			return json.Marshal([]any{i.Kind, i.Text, true})
+		}
+		return json.Marshal([]any{i.Kind, i.Text})
 	case InlineKindText, InlineKindMath, InlineKindPlaceholder:
 		return json.Marshal([]any{i.Kind, i.Text})
 	case InlineKindBold, InlineKindItalic, InlineKindUnderline, InlineKindStrike, InlineKindCode:
@@ -261,6 +266,17 @@ func (i *InlineItem) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	switch i.Kind {
+	case InlineKindSiteVariable:
+		if len(parts) == 3 {
+			if err := decode(3, &i.Text, &i.Linked); err != nil {
+				return err
+			}
+			if !i.Linked {
+				return errors.New("siteVariable third item must be true")
+			}
+		} else if err := decode(2, &i.Text); err != nil {
+			return err
+		}
 	case InlineKindText, InlineKindMath, InlineKindPlaceholder:
 		if err := decode(2, &i.Text); err != nil {
 			return err

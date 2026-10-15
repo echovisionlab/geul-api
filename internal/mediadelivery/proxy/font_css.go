@@ -53,8 +53,8 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache key based on schema version and query hash (includes family,
-	// display, etc.). The version also bypasses CSS with unversioned font URLs.
+	// Cached CSS embeds absolute URLs. Scope the artifact to the current public
+	// base as well as the query so a domain change cannot reuse old-host CSS.
 	queryHash := p.hashQuery(query)
 	cacheKey := "font-css/" + fontCSSCacheVersion + "/" + queryHash + ".css"
 
@@ -106,7 +106,7 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	css := googleFontURL.ReplaceAllStringFunc(string(body), func(fontURL string) string {
-		fontURL = strings.Replace(fontURL, "https://fonts.gstatic.com", p.cfg.CDNPublicURL+"/fonts", 1)
+		fontURL = strings.Replace(fontURL, "https://fonts.gstatic.com", strings.TrimRight(p.cfg.CDNPublicURL, "/")+"/fonts", 1)
 		fontURL, fragment, hasFragment := strings.Cut(fontURL, "#")
 		separator := "?"
 		if strings.Contains(fontURL, "?") {
@@ -142,7 +142,7 @@ func (p *FontCSSProxy) logUpstreamFailure(status int, queryHash string) {
 }
 
 func (p *FontCSSProxy) hashQuery(query string) string {
-	h := sha256.Sum256([]byte(query))
+	h := sha256.Sum256([]byte(strings.TrimRight(p.cfg.CDNPublicURL, "/") + "\n" + query))
 	return hex.EncodeToString(h[:16]) // 32 chars
 }
 

@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -264,7 +266,8 @@ func TestFontCSSProxyServesCachedCSSAndRejectsBadRequests(t *testing.T) {
 	t.Parallel()
 
 	query := "family=Inter"
-	cacheKey := "cache/font-css/" + fontCSSCacheVersion + "/" + (&FontCSSProxy{}).hashQuery(query) + ".css"
+	// The key depends only on the public CDN base, which does not depend on the fake servers.
+	cacheKey := "cache/font-css/" + fontCSSCacheVersion + "/" + (&FontCSSProxy{cfg: fontCSSProxyConfig("", "")}).hashQuery(query) + ".css"
 	s3 := newProxyFakeMinioServer(t, map[string]proxyFakeS3Object{
 		cacheKey: {body: "cached-css", contentType: "text/css"},
 	})
@@ -329,5 +332,32 @@ func fontCSSProxyConfig(s3URL string, upstreamURL string) *config.Config {
 		FontCacheMaxAge:   3600,
 		CDNPublicURL:      "https://cdn.example",
 		AllowedOrigins:    []string{"https://app.example"},
+	}
+}
+
+func TestFontCSSCacheChangesWithConfiguredPublicBase(t *testing.T) {
+	// Seed the exact pre-fix v3 key used in production: query only, no public base.
+	legacyHash := sha256.Sum256([]byte("family=Inter"))
+	legacyKey := "font-css/v3/" + hex.EncodeToString(legacyHash[:16]) + ".css"
+	cache := &fontCSSMemoryCache{objects: map[string][]byte{legacyKey: []byte(`url(https://legacy.example/fonts/s/font.woff2)`)}}
+	calls := 0
+	for _, base := range []string{"https://old.example", "https://current.example/assets/", "https://current.example/assets/"} {
+		cfg := fontCSSProxyConfig("http://cache.invalid", "https://fonts.example")
+		cfg.CDNPublicURL = base
+		proxy := NewFontCSSProxy(cfg, nil)
+		proxy.storage, proxy.runBackground = cache, runSynchronously
+		proxy.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`@font-face{src:url("https://fonts.gstatic.com/s/font.woff2?x=1#f")}`))}, nil
+		})}
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, httptest.NewRequest("GET", "/fonts/css2?family=Inter", nil))
+		want := strings.TrimRight(base, "/") + "/fonts/s/font.woff2?x=1&v=3#f"
+		if response.Code != 200 || !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("base=%s status=%d css=%s", base, response.Code, response.Body.String())
+		}
+	}
+	if calls != 2 || cache.getKeys[0] == cache.getKeys[1] || cache.getKeys[1] != cache.getKeys[2] {
+		t.Fatalf("calls=%d keys=%v", calls, cache.getKeys)
 	}
 }

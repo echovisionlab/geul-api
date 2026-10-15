@@ -3,6 +3,7 @@ package emailauthoring
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func ApplyTemplateTranslationCandidate(
 		if loadErr != nil {
 			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, loadErr)
 		}
-		projection, materializeErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil)
+		projection, materializeErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil, sitevariable.TemplateContext())
 		if materializeErr != nil {
 			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, materializeErr)
 		}
@@ -188,7 +189,7 @@ func ApplyTemplateTranslationCandidate(
 	if err != nil {
 		return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 	}
-	materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil)
+	materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 	if err != nil {
 		return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 	}
@@ -241,7 +242,7 @@ func projectEmailTemplateMaterializedContent(
 		if err != nil {
 			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 		}
-		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil)
+		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil, sitevariable.TemplateContext())
 		if err != nil {
 			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 
 	"github.com/google/uuid"
@@ -209,7 +210,7 @@ func applyCampaignEmailTypedTranslationCandidateWithDB(
 	if err != nil {
 		return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 	}
-	materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil)
+	materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 	if err != nil {
 		return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
@@ -426,6 +427,13 @@ func (s *PageService) buildPageResponse(
 	}
 
 	applyLocalizedPageFields(protoPage, localization)
+	if protoPage.Summary != nil && localization.IsOriginal {
+		resolved, resolveErr := sitevariable.ResolvePublicText(ctx, s.db, *protoPage.Summary)
+		if resolveErr != nil {
+			return nil, errs.Internal(resolveErr)
+		}
+		protoPage.Summary = &resolved
+	}
 
 	if s.media == nil {
 		return nil, errs.InternalMsg("Page media resolver is not configured")

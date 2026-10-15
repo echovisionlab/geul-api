@@ -31,6 +31,9 @@ func ValidateLayoutHTMLContent(content string) []LayoutValidationIssue {
 	}
 
 	var issues []LayoutValidationIssue
+	if err := ValidateSiteVariableHrefs(content); err != nil {
+		issues = append(issues, LayoutValidationIssue{Code: "INVALID_SITE_VARIABLE_HREF", Message: err.Error()})
+	}
 	contentPlaceholderCount := strings.Count(content, "{{content}}")
 	switch {
 	case contentPlaceholderCount == 0:

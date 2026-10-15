@@ -3,6 +3,7 @@ package campaign
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 
 	"gorm.io/gorm"
@@ -91,7 +92,7 @@ func ResolveLocalizedCampaign(
 		documentID,
 		sourceLocale,
 		selectedLocale,
-		nil,
+		nil, sitevariable.TemplateContext(),
 	)
 	if err != nil {
 		return campaign, selectedLocale, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)

@@ -375,7 +375,7 @@ func TestGenerateValidatedTranslationRejectsPlaceholderMismatchWithoutRepair(t *
 	t.Parallel()
 
 	request := translationJobProviderRequest(
-		translation.XLIFFUnit{ID: "block:1:text:0", Source: "Hello {{name}}"},
+		translation.XLIFFUnit{ID: "block:1:text:0", Source: "Hello {{site.title}}"},
 	)
 	session := &scriptedTranslationGeneratorSession{
 		initialResponses: []*translation.ProviderResponse{translationJobProviderResponse(

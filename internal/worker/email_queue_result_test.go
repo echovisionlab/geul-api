@@ -1,7 +1,11 @@
 package worker
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/email"
+	"log/slog"
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
@@ -57,7 +61,7 @@ func TestEmailDeliveryQueueResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outcome, err := emailDeliveryQueueResult(tt.result, tt.deliveryErr)
+			outcome, err := emailDeliveryQueueResult(t.Context(), nil, tt.result, tt.deliveryErr)
 			require.Equal(t, tt.wantOutcome, outcome)
 			if tt.wantError == "" {
 				require.NoError(t, err)
@@ -69,4 +73,25 @@ func TestEmailDeliveryQueueResult(t *testing.T) {
 			require.Equal(t, tt.wantTerminalClass, terminalClass)
 		})
 	}
+}
+
+func TestEmailQueueRetryLogsOriginalCauseAndRenderContext(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	locale := "ko"
+	job := &managev1.SendEmailEvent{TemplateType: "template:welcome", Locale: &locale, Recipient: "private@example.test"}
+	result := emaildelivery.DeliveryResult{Retryable: true, ErrorType: "rate_limited", Err: &email.RenderError{LayoutID: "layout-1", Locale: locale, Err: errors.New("provider quota exhausted for private@example.test")}}
+	_, err := emailDeliveryQueueResult(t.Context(), job, result, nil)
+	require.EqualError(t, err, "mail delivery retry requested: rate_limited")
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+	require.Equal(t, "ERROR", entry["level"])
+	require.Equal(t, "mail.worker.provider_failed", entry["event"])
+	require.Contains(t, entry["error"], "provider quota exhausted")
+	require.Equal(t, "template:welcome", entry["template_type"])
+	require.Equal(t, "ko", entry["locale"])
+	require.Equal(t, "layout-1", entry["layout_id"])
+	require.NotContains(t, output.String(), job.Recipient)
 }

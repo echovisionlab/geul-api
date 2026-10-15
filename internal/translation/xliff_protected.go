@@ -28,7 +28,13 @@ func ProtectXLIFFTerms(document *XLIFFDocument, terms []string) error {
 	if document == nil {
 		return nil
 	}
-	terms = NormalizeProtectedTerms(terms)
+	exactTerms := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if strings.TrimSpace(term) != "" {
+			exactTerms = append(exactTerms, term)
+		}
+	}
+	terms = exactTerms
 	sort.SliceStable(terms, func(i, j int) bool {
 		if len(terms[i]) == len(terms[j]) {
 			return terms[i] < terms[j]
@@ -41,7 +47,7 @@ func ProtectXLIFFTerms(document *XLIFFDocument, terms []string) error {
 	for groupIndex := range document.File.Groups {
 		for unitIndex := range document.File.Groups[groupIndex].TranslationUnit {
 			unit := &document.File.Groups[groupIndex].TranslationUnit[unitIndex]
-			normalized, err := normalizeXLIFFUnitInline(*unit)
+			normalized, err := normalizeXLIFFUnitInline(*unit, isEmailTemplateFile(document.File.ID))
 			if err != nil {
 				return err
 			}
@@ -54,10 +60,17 @@ func ProtectXLIFFTerms(document *XLIFFDocument, terms []string) error {
 			textRanges := make([]xliffTextRange, 0)
 			offset := 0
 			collectXLIFFTextRanges(normalized.SourceInline, dataValues, &offset, &textRanges)
+			textOccurrences := occurrences[:0]
 			for _, occurrence := range occurrences {
-				if !protectedOccurrenceCoveredByText(occurrence, textRanges) {
-					return fmt.Errorf("protected term occurrence cannot be represented by XLIFF text parts")
+				// Existing template/atom placeholders already protect their literal data.
+				if protectedOccurrenceCoveredByText(occurrence, textRanges) {
+					textOccurrences = append(textOccurrences, occurrence)
 				}
+			}
+			occurrences = textOccurrences
+			if len(occurrences) == 0 {
+				*unit = normalized
+				continue
 			}
 			usedCodeIDs := make(map[string]struct{})
 			collectXLIFFInlineCodeIDs(normalized.SourceInline, usedCodeIDs)
