@@ -10,7 +10,7 @@ import (
 )
 
 func TestEmailHrefMigrationRendersAndPreservesMailtoParameters(t *testing.T) {
-	data := map[string]string{"site.title": "Rawsector", "site.url": "https://www.rawsector.com"}
+	data := map[string]string{"site.title": "rawsector", "site.url": "https://www.rawsector.com"}
 	for _, name := range []string{"legal", "privacy", "support"} {
 		data["contact."+name+"Email"] = name + "@settings.example"
 		for _, fixture := range []struct{ href, want, rendered string }{

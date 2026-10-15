@@ -1,9 +1,9 @@
 package mcp
 
-const fileManagerFileReferenceJSONSchema = `{"allOf":[` + uuidJSONSchema + `],"description":"Rawsector File UUID returned by file_upload or file_list."}`
+const fileManagerFileReferenceJSONSchema = `{"allOf":[` + uuidJSONSchema + `],"description":"rawsector File UUID returned by file_upload or file_list."}`
 const fileManagerFolderReferenceJSONSchema = `{"allOf":[` + uuidJSONSchema + `],"description":"File Manager folder UUID returned by file_list or file_folder_create."}`
 const fileManagerNullableIDJSONSchema = `{"anyOf":[` + uuidJSONSchema + `,{"type":"null"}],"description":"File Manager folder UUID returned by file_list or file_folder_create; omit or pass null for the virtual root."}`
-const fileManagerIDsJSONSchema = `{"type":"array","minItems":1,"maxItems":100,"description":"Rawsector File UUIDs returned by file_upload or file_list.","items":` + uuidJSONSchema + `}`
+const fileManagerIDsJSONSchema = `{"type":"array","minItems":1,"maxItems":100,"description":"rawsector File UUIDs returned by file_upload or file_list.","items":` + uuidJSONSchema + `}`
 const fileManagerNameJSONSchema = `{"type":"string","minLength":1,"maxLength":255}`
 const fileManagerIDsInputJSONSchema = `{
  "type":"object","additionalProperties":false,"required":["file_ids"],

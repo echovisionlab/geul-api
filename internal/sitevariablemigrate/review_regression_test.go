@@ -105,7 +105,7 @@ func expectEmailInventory(mock sqlmock.Sqlmock, rows []string) {
 func expectEmailSettings(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`SELECT .* FROM "site_settings"`).
 		WillReturnRows(sqlmock.NewRows([]string{"site_title", "company_name", "legal_email", "support_email", "privacy_email"}).
-			AddRow("Rawsector", "Company", "legal@rawsector.com", "support@rawsector.com", "privacy@rawsector.com"))
+			AddRow("rawsector", "Company", "legal@rawsector.com", "support@rawsector.com", "privacy@rawsector.com"))
 }
 
 func TestEmailApplyValidatesInsideTransactionAndSkipsInvalidOwner(t *testing.T) {

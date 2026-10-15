@@ -31,8 +31,8 @@ func TestEmailSnapshotExpandsSettingsOnceAcrossBodyAndLayout(t *testing.T) {
 		"layout_source_locale": "en",
 		"layout_translations":  structured.Values{structured.Fields{"locale": "en", "html_content": "<header>{{site.title}}</header>{{content}}"}},
 	}
-	rendered, err := RenderCampaignSnapshotForLocale(snapshot, "en", map[string]string{"site.title": "Rawsector", "site.companyName": "{{site.title}}"})
+	rendered, err := RenderCampaignSnapshotForLocale(snapshot, "en", map[string]string{"site.title": "rawsector", "site.companyName": "{{site.title}}"})
 	require.NoError(t, err)
-	require.Equal(t, "Rawsector", rendered.Subject)
-	require.Equal(t, "<header>Rawsector</header><p>{{site.title}}</p>", rendered.HTML)
+	require.Equal(t, "rawsector", rendered.Subject)
+	require.Equal(t, "<header>rawsector</header><p>{{site.title}}</p>", rendered.HTML)
 }
