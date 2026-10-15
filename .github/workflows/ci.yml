@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 30
     env:
       GOPRIVATE: github.com/echovisionlab/*
-      GIT_CONFIG_GLOBAL: ${{ runner.temp }}/geul-private-deps.gitconfig
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,8 +39,10 @@ jobs:
         env:
           TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
         run: |
-          : "${TOKEN:?Set the PRIVATE_DEPS_TOKEN organization secret}"
-          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          : "${TOKEN:?Set the PRIVATE_DEPS_TOKEN repository secret}"
+          config="$RUNNER_TEMP/geul-private-deps.gitconfig"
+          git config --file "$config" url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GIT_CONFIG_GLOBAL=$config" >> "$GITHUB_ENV"
 
       - name: Download modules
         run: go mod download
