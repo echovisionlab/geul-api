@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -40,7 +41,8 @@ var translationJobSortConfig = queryutil.SortConfig{
 type translationServicePublisher interface {
 	PublishTranslationGenerate(ctx context.Context, job *managev1.TranslationGenerateEvent) error
 	PublishTranslationLifecycle(ctx context.Context, event *managev1.TranslationLifecycleEvent) error
-	PublishContentUpdated(ctx context.Context, event *managev1.ContentUpdatedEvent) error
+	// content.updated is scheduled only in the owning mutation transaction.
+	contentsignal.Publisher
 }
 
 type transactionalTranslationServicePublisher interface {

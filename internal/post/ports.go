@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -24,9 +25,11 @@ type FileService interface {
 }
 
 // AsyncPublisher is the transport surface required by Post domain events.
+// content.updated is scheduled only through the transactional signal method.
 type AsyncPublisher interface {
 	EnqueueProtobuf(context.Context, string, string, proto.Message) error
 	NotifyProtobuf(context.Context, string, proto.Message) error
+	contentsignal.Publisher
 }
 
 type CollaborationPermissionChecker interface {

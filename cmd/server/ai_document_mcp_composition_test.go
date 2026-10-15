@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -862,4 +863,13 @@ func (application *compositionLegalPolicyApplication) CreatePrivacyVersion(ctx c
 	application.title = request.Msg.GetTitle()
 	application.kind = "privacy"
 	return connect.NewResponse(&managev1.Privacy{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
+}
+
+func (publisher *compositionSignalPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

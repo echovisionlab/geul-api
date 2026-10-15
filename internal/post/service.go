@@ -385,16 +385,15 @@ func (s *PostService) UpdatePost(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		changed, err = s.updatePostWithDB(ctx, tx, &post, update)
-		return err
+		if err != nil || !changed {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
 	}); err != nil {
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
 		return nil, errs.Internal(err)
-	}
-
-	if changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
 	}
 	return connect.NewResponse(&managev1.UpdatePostResponse{
 		Id:                    post.ID,

@@ -221,7 +221,7 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 	var result contentblock.Result
 	var targetRevision *string
 	var sourcePath bool
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		baseFence := pageCollaborationDocumentFence(s.spiceDB, req.Msg.PageId, policyv1.Page.Edit, req.Msg.Batch.ContributorMemberIds)
 		domain, fenceErr := baseFence(ctx, tx, documentID)
 		if fenceErr != nil {
@@ -270,13 +270,12 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			ctx, tx, s.auditWriter, contributorMemberID, req.Msg.PageId, locale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		)
-	})
-	if err != nil {
-		return nil, normalizePageContentBlockError(err)
 	}
-
-	if result.Changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildPageContentUpdatedEvent(
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil || !result.Changed {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPageContentUpdatedEvent(
 			req.Msg.PageId,
 			[]string{"content"},
 			result.DocumentRevision.String(),
@@ -287,6 +286,9 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			targetRevision,
 			sourcePath,
 		))
+	})
+	if err != nil {
+		return nil, normalizePageContentBlockError(err)
 	}
 	return connect.NewResponse(&intrav1.ApplyPageBlockBatchResponse{
 		DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
@@ -400,7 +402,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	var targetRevision *string
 	var targetPath bool
 	var mutation pageLocaleMetadataMutationResult
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		baseFence := pageCollaborationDocumentFence(s.spiceDB, req.Msg.PageId, policyv1.Page.Edit, req.Msg.ContributorMemberIds)
 		domain, fenceErr := baseFence(ctx, tx, documentID)
 		if fenceErr != nil {
@@ -499,22 +501,21 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 			ctx, tx, s.auditWriter, contributorMemberID, req.Msg.PageId, locale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		)
-	})
-	if err != nil {
-		return nil, normalizePageContentBlockError(err)
 	}
-
-	changed := advance.Changed
-	var changedLocales []string
-	documentRevision := advance.DocumentRevision.String()
-	sourceChanged := advance.TranslationSourceChanged
-	if targetPath {
-		changed = targetResult.Changed
-		documentRevision = targetResult.DocumentRevision.String()
-		sourceChanged = false
+	resultState := func() (bool, string, bool) {
+		if targetPath {
+			return targetResult.Changed, targetResult.DocumentRevision.String(), false
+		}
+		return advance.Changed, advance.DocumentRevision.String(), advance.TranslationSourceChanged
 	}
-	if changed {
-		changedLocales = []string{locale}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil {
+			return err
+		}
+		changed, documentRevision, _ := resultState()
+		if !changed {
+			return nil
+		}
 		fields := make([]string, 0, 2)
 		if req.Msg.Title != nil {
 			fields = append(fields, "title")
@@ -522,7 +523,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 		if req.Msg.SummaryChange != nil {
 			fields = append(fields, "summary")
 		}
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildPageContentUpdatedEvent(
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPageContentUpdatedEvent(
 			req.Msg.PageId,
 			fields,
 			documentRevision,
@@ -533,6 +534,15 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 			targetRevision,
 			!targetPath,
 		))
+	})
+	if err != nil {
+		return nil, normalizePageContentBlockError(err)
+	}
+
+	changed, documentRevision, sourceChanged := resultState()
+	var changedLocales []string
+	if changed {
+		changedLocales = []string{locale}
 	}
 	return connect.NewResponse(&intrav1.UpdatePageLocaleMetadataResponse{
 		DocumentRevision: documentRevision, Changed: changed, SourceChanged: sourceChanged,
@@ -669,16 +679,10 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 				return applyPageDocumentLayoutMetadata(ctx, tx, req.Msg.PageId, nextLayout, now, s.auditWriter)
 			},
 		)
-		if err != nil {
+		if err != nil || !advance.Changed {
 			return err
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, normalizePageContentBlockError(err)
-	}
-	if advance.Changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildContentUpdatedEvent(
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildContentUpdatedEvent(
 			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
 			req.Msg.PageId,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
@@ -688,6 +692,9 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 			req.Msg.ContributorMemberIds,
 			nil,
 		))
+	})
+	if err != nil {
+		return nil, normalizePageContentBlockError(err)
 	}
 	return connect.NewResponse(&intrav1.UpdatePageDocumentMetadataResponse{
 		DocumentRevision: advance.DocumentRevision.String(), Changed: advance.Changed,
@@ -737,7 +744,7 @@ func (s *InternalPageService) CreatePageVersionCheckpoint(
 			return loadErr
 		}
 		if snapshot.Document.Revision != expectedRevision {
-			return contentblock.ErrStaleRevision
+			return &contentblock.StaleRevisionError{CurrentRevision: snapshot.Document.Revision}
 		}
 		revision = snapshot.Document.Revision.String()
 		metadata, metadataErr := loadRequiredPageSourceLocaleMetadata(ctx, tx, req.Msg.PageId)

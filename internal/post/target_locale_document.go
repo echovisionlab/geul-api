@@ -230,7 +230,7 @@ func applyPostTargetLocaleMutation(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil,
 		input.UseCurrentTargetRevision,
 	); err != nil {
-		return postTargetLocaleMutationResult{}, err
+		return postTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !input.AllowCreate {
 		return postTargetLocaleMutationResult{}, errs.FailedPrecondition(
@@ -421,7 +421,7 @@ func deletePostTargetLocale(
 	if err := translation.ValidateExpectedTargetRevision(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil,
 	); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{

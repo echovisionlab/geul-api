@@ -697,7 +697,13 @@ func (s *ReleaseService) PublishRelease(
 			return err
 		}
 		transitioned = true
-		return s.appendReleaseLifecycleAudit(ctx, tx, release.ID, releaseAuditState(locked.Status), sharedtelemetry.AuditStatePublished)
+		if err := s.appendReleaseLifecycleAudit(ctx, tx, release.ID, releaseAuditState(locked.Status), sharedtelemetry.AuditStatePublished); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseStateTransitionContentUpdatedEvent(
+			release.ID,
+			[]string{"state.status", "state.published_at"},
+		))
 	}); err != nil {
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
@@ -710,14 +716,6 @@ func (s *ReleaseService) PublishRelease(
 		release.PublishedAt = &now
 		release.UpdatedAt = now
 	}
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseStateTransitionContentUpdatedEvent(
-			release.ID,
-			[]string{"state.status", "state.published_at"},
-		),
-	)
 	return connect.NewResponse(&managev1.ReleaseLifecycleMutationResponse{
 		Id: release.ID, Changed: transitioned,
 		Status:      managev1.ReleaseStatus(managev1.ReleaseStatus_value[release.Status]),
@@ -755,7 +753,13 @@ func (s *ReleaseService) UnpublishRelease(
 			return err
 		}
 		transitioned = true
-		return s.appendReleaseLifecycleAudit(ctx, tx, release.ID, releaseAuditState(locked.Status), sharedtelemetry.AuditStateDraft)
+		if err := s.appendReleaseLifecycleAudit(ctx, tx, release.ID, releaseAuditState(locked.Status), sharedtelemetry.AuditStateDraft); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseStateTransitionContentUpdatedEvent(
+			release.ID,
+			[]string{"state.status"},
+		))
 	}); err != nil {
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
@@ -767,14 +771,6 @@ func (s *ReleaseService) UnpublishRelease(
 		release.Status = managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String()
 		release.UpdatedAt = now
 	}
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseStateTransitionContentUpdatedEvent(
-			release.ID,
-			[]string{"state.status"},
-		),
-	)
 	return connect.NewResponse(&managev1.ReleaseLifecycleMutationResponse{
 		Id: release.ID, Changed: transitioned,
 		Status:      managev1.ReleaseStatus(managev1.ReleaseStatus_value[release.Status]),

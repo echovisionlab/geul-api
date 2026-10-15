@@ -30,7 +30,10 @@ func (s *ReleaseService) UpdateRelease(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		changed, release, err = s.updateReleaseWithDB(ctx, tx, req.Msg, updates)
-		return err
+		if err != nil || !changed {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageReleaseContentUpdatedEvent(req.Msg))
 	}); err != nil {
 		if dberrors.IsUniqueViolation(err) {
 			return nil, errs.SlugAlreadyExists("release", "slug")
@@ -38,9 +41,6 @@ func (s *ReleaseService) UpdateRelease(
 		return nil, classifyReleaseMutationError(err, req.Msg.Id)
 	}
 
-	if changed {
-		publishContentUpdatedEvent(ctx, s.asyncPublisher, buildManageReleaseContentUpdatedEvent(req.Msg))
-	}
 	response := &managev1.UpdateReleaseResponse{
 		Id:        release.ID,
 		Changed:   changed,

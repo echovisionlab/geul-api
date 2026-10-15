@@ -71,8 +71,7 @@ func artistSourceRoomFence(artistID string, locale string) contentblock.DomainFe
 			return contentblock.DomainContext{}, err
 		}
 		if domain.SourceLocale != locale {
-			return contentblock.DomainContext{}, errs.CollaborationConflict(
-				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_LOCALE_OWNERSHIP_CHANGED,
+			return contentblock.DomainContext{}, contentblock.LocaleOwnershipConflict(ctx, tx, documentID,
 				"Artist source locale changed since the room was loaded; reload before saving",
 			)
 		}
@@ -303,7 +302,7 @@ func applyArtistTargetLocaleBatchAuthority(
 	if err := translation.ValidateTargetRevisionWrite(
 		expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, useCurrentTargetRevision,
 	); err != nil {
-		return contentblock.Result{}, "", err
+		return contentblock.Result{}, "", translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !allowCreate {
 		return contentblock.Result{}, "", errs.FailedPrecondition("Artist target locale must be explicitly created before collaboration")
@@ -398,7 +397,7 @@ func updateArtistTargetLocaleTitle(
 		return contentblock.Result{}, "", &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, "", err
+		return contentblock.Result{}, "", translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	normalizedTitle := strings.TrimSpace(*title)
 	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
@@ -474,7 +473,7 @@ func deleteArtistTargetLocale(
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: expectedRevision,

@@ -2,24 +2,25 @@ package programevent
 
 import (
 	"context"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
 
-func publishContentUpdatedEvent(ctx context.Context, publisher AsyncPublisher, event *managev1.ContentUpdatedEvent) error {
-	if publisher == nil || event == nil {
-		return nil
-	}
-	err := publisher.NotifyProtobuf(ctx, eventpkg.SignalContentUpdated, event)
-	if err != nil {
-		slog.Warn("Failed to publish Program Event content update", "event_id", event.EntityId, "error", err)
-	}
-	return err
+// publishContentUpdatedEvent schedules content.updated in the caller's
+// mutation transaction so the signal commits or rolls back with the data.
+func publishContentUpdatedEvent(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher AsyncPublisher,
+	event *managev1.ContentUpdatedEvent,
+) error {
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
 func buildProgramEventBlockContentUpdatedEvent(
@@ -59,8 +60,10 @@ func buildProgramEventBlockContentUpdatedEvent(
 	if strings.TrimSpace(locale) == "" {
 		return nil
 	}
-	if !localeExists && targetRevision != nil {
-		return nil
+	if !localeExists {
+		// A deleted locale has no target revision; the resulting document
+		// revision is the authority for the deletion.
+		targetRevision = nil
 	}
 	normalizedContributors := make([]string, 0, len(contributors))
 	unique := make(map[string]struct{}, len(contributors))
@@ -113,7 +116,7 @@ func buildProgramEventAIDocumentContentUpdatedEvent(
 		len(command.Batch.Reorders) != 0 || len(command.Batch.LocaleGroups) != 0 {
 		fields = append(fields, "content")
 	}
-	return buildProgramEventBlockContentUpdatedEvent(
+	event := buildProgramEventBlockContentUpdatedEvent(
 		command.EventID,
 		fields,
 		result.DocumentRevision,
@@ -123,4 +126,8 @@ func buildProgramEventAIDocumentContentUpdatedEvent(
 		result.TargetRevision,
 		command.RequestedLocale == command.ObservedSourceLocale,
 	)
+	if event != nil {
+		event.Source = managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI
+	}
+	return event
 }

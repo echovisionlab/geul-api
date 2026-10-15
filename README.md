@@ -7,15 +7,16 @@ Geul API is a Go service for content, media, identity, and MCP operations.
 Requires Go 1.27.1, Node 24.21.0, pnpm 12.9.1, FFmpeg/FFprobe, ImageMagick,
 and the runtime values described by
 `internal/config.Config`. The trust boundary is configured explicitly with
-`AUTH_HEADER_NAME` and `INTERNAL_SERVICE_HEADER_NAME`; invalid or missing
-names fail startup closed. `SESSION_COOKIE_NAME` is the companion Identity/Ory
+`AUTH_HEADER_NAME` and `INTERNAL_SERVICE_HEADER_NAME`. The internal header
+default is `X-Internal-Service`, matching editor-collab. Invalid header names
+and a missing auth header fail startup closed. `SESSION_COOKIE_NAME` is the companion Identity/Ory
 session-cookie contract.
 
 ```sh
 go mod download
 make media-build
-go test ./...
-go build ./cmd/server
+make test
+make build
 ```
 
 Build the production image locally:
@@ -27,6 +28,10 @@ docker build -t registry.dsub.io/echovisionlab/geul-api:0.1.0 .
 The API uses the public Go modules
 `github.com/echovisionlab/geul-event-contracts` and
 `github.com/echovisionlab/geul-telemetry`.
+
+Collection blocks support the shared `itemSize` enum (`s`, `m`, `l`, default
+`m`), released in contracts v0.6.0. See
+[the coordinated launch steps](docs/collaboration-durable-launch.md).
 
 Page source-room batches may mutate shared block structure and explicit source
 locale values. Deleting a shared block removes its descendant blocks and their
@@ -205,10 +210,8 @@ Existing native system tests are available locally for changes to the relevant
 service boundary. For a focused regression, pass its package and test name:
 
 ```sh
-GOWORK=off go run -tags=integration ./scripts/test/integration \
-  --schema-root ../geul-schema \
-  --package ./internal/page \
-  --run '^TestPageAIDocumentLayoutExactMutationIntegration$'
+make test-integration-package PKG=./internal/page \
+  RUN='^TestPageAIDocumentLayoutExactMutationIntegration$$'
 ```
 
 The native runner currently requires pinned runtime images, the sibling
@@ -219,6 +222,33 @@ Prepare the matching Kratos image with
 or select one with `GEUL_TEST_KRATOS_IMAGE`. Stock Kratos lacks the required
 settings inventory. The runner does not pull images automatically. These
 system tests are not a second full-stack CI gate for every API change.
+
+The runner resolves test assets from the API module root, including when built
+with `-trimpath`. SpiceDB uses the canonical sibling
+`../geul-identity/config/spicedb/schema.generated.zed`; no copy under API's
+`infra/` is needed. Prepare the matching Identity checkout and its generated
+artifacts before running. The runner checks the reviewed schema, Identity
+configs, `geul-editor-collab`, `geul-common`, `geul-event-contracts`, and
+`geul-telemetry` checkouts and all selected local images before starting containers.
+The `db` band needs only `schema.sql` and its PostgreSQL image.
+
+The default pinned `minio/minio` digest is no longer pullable from Docker Hub.
+For local integration tests, pre-pull an alternative and select it explicitly:
+
+```sh
+docker pull cgr.dev/chainguard/minio:latest
+GOWORK=off go run -tags=integration ./scripts/test/integration \
+  --band ory --schema-root ../geul-schema \
+  --postgres-image registry.dsub.io/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f \
+  --minio-image cgr.dev/chainguard/minio:latest
+```
+
+`--minio-image` overrides `GEUL_INTEGRATION_MINIO_IMAGE` for both the shared
+backend and child test processes. MinIO readiness does not require a shell in
+the image, and its disposable `/data` mount supports non-root images. This
+local override does not change the production image pin. Pre-pull or build the
+other required images for the Docker daemon's native architecture as well;
+missing-image diagnostics identify the exact image.
 
 ## License
 

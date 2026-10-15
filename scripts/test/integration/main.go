@@ -92,6 +92,16 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
+	if err := requireSuiteAssets(repoRoot, options.SchemaRoot, bands); err != nil {
+		return err
+	}
+	images := []string{options.PostgresImage}
+	if integrationBandsNeedBackend(bands) {
+		images = append(images, requiredSuiteBackendImages()...)
+	}
+	if err := requireLocalDockerImages(ctx, images); err != nil {
+		return err
+	}
 	postgres, err := startSuitePostgres(ctx, options)
 	if err != nil {
 		return err

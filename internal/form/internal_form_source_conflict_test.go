@@ -32,11 +32,6 @@ func TestFormDocumentRevisionErrorsCarryTypedCollaborationConflicts(t *testing.T
 			err:    normalizeFormDocumentSaveError(&translation.TargetRevisionConflict{}),
 			reason: intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
 		},
-		{
-			name:   "postgres serialization failure",
-			err:    normalizeFormDocumentSaveError(fmt.Errorf("save form document: %w", &pgconn.PgError{Code: "40001"})),
-			reason: intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-		},
 	}
 
 	for _, testCase := range testCases {
@@ -75,5 +70,12 @@ func TestNormalizeFormDocumentSaveErrorPreservesUnrelatedErrors(t *testing.T) {
 	want = fmt.Errorf("save form document: %w", &pgconn.PgError{Code: "40P01"})
 	if got := normalizeFormDocumentSaveError(want); got != want {
 		t.Fatalf("deadlock error = %v, want original error", got)
+	}
+}
+
+func TestFormSerializationFailureIsRetryableWithoutInventedRevision(t *testing.T) {
+	err := normalizeFormDocumentSaveError(fmt.Errorf("save: %w", &pgconn.PgError{Code: "40001"}))
+	if connect.CodeOf(err) != connect.CodeAborted {
+		t.Fatalf("got %v", err)
 	}
 }

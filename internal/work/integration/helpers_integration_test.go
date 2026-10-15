@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"slices"
 	"testing"
@@ -292,4 +293,13 @@ type referenceNoopFileDeleter struct{}
 func (referenceNoopFileDeleter) DeleteFileByID(context.Context, string) error { return nil }
 func (referenceNoopFileDeleter) ReconcilePublishedEntityAssets(context.Context, managev1.TranscodeEntityType, string) error {
 	return nil
+}
+
+func (publisher noopAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

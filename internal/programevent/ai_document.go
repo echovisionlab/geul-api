@@ -323,7 +323,12 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackAIDocumentValidation
 		}
-		return nil
+		if !result.Changed {
+			return nil
+		}
+		return publishContentUpdatedEvent(
+			ctx, tx, s.asyncPublisher, buildProgramEventAIDocumentContentUpdatedEvent(command, result),
+		)
 	})
 	if errors.Is(err, errRollbackAIDocumentValidation) {
 		return result, nil
@@ -354,9 +359,6 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 		default:
 			return AIDocumentResult{}, normalizeProgramEventContentBlockError(err)
 		}
-	}
-	if mode == AIDocumentExecutionApply {
-		return s.completeAIDocumentApply(ctx, command, result, nil)
 	}
 	return result, nil
 }
@@ -403,25 +405,6 @@ func programEventOptionalStringEqual(left, right *string) bool {
 		return left == nil && right == nil
 	}
 	return *left == *right
-}
-
-// completeAIDocumentApply is deliberately outside the transaction callback:
-// validation rollbacks and failed/CAS-conflicted transactions cannot reach the
-// coalescible runtime signal. Publisher failure follows the existing Program
-// Event contract and does not turn a committed mutation into a client error.
-func (s *ProgramEventService) completeAIDocumentApply(
-	ctx context.Context,
-	command AIDocumentCommand,
-	result AIDocumentResult,
-	commitErr error,
-) (AIDocumentResult, error) {
-	if commitErr != nil {
-		return AIDocumentResult{}, commitErr
-	}
-	if result.Changed {
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildProgramEventAIDocumentContentUpdatedEvent(command, result))
-	}
-	return result, nil
 }
 
 func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransaction(

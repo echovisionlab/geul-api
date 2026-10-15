@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -24,7 +25,8 @@ import (
 // AsyncPublisher is the command and signal surface used by Program Event.
 type AsyncPublisher interface {
 	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	NotifyProtobuf(context.Context, string, proto.Message) error
+	// content.updated is scheduled only in the owning mutation transaction.
+	contentsignal.Publisher
 }
 
 // FileDeleter owns deletion of Files referenced by Program Event lifecycle cleanup.

@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,3 +225,12 @@ func seedPublicWorkShareLink(t *testing.T, db *gorm.DB, workID string) string {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func (publisher publicReferenceAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
+}

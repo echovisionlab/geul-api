@@ -45,19 +45,10 @@ type signalResult int64
 func (result signalResult) LastInsertId() (int64, error) { return int64(result), nil }
 func (result signalResult) RowsAffected() (int64, error) { return int64(result), nil }
 
-func TestProviderContentUpdatedUsesCallerTransactionWithoutInteractiveSuppression(t *testing.T) {
+func TestProviderContentUpdatedRejectsNonTransactionalExecutor(t *testing.T) {
 	t.Parallel()
-
 	executor := &recordingSignalExecutor{}
-	publisher := &Publisher{}
-	err := publisher.PublishContentUpdatedWithExecutor(
-		context.Background(),
-		executor,
-		&managev1.ContentUpdatedEvent{},
-	)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT pg_notify($1, $2)", executor.query)
-	require.Len(t, executor.args, 2)
-	require.Equal(t, "content.updated", executor.args[0])
-	require.NotEmpty(t, executor.args[1])
+	err := (&Publisher{}).PublishContentUpdatedWithExecutor(context.Background(), executor, &managev1.ContentUpdatedEvent{})
+	require.ErrorContains(t, err, "owning transaction")
+	require.Empty(t, executor.query)
 }

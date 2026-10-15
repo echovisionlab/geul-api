@@ -3,6 +3,7 @@
 package filemedia
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -54,8 +55,9 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 		Where("id = ?", archivedSegmentID).
 		Update("archived_at", time.Now().UTC()).Error)
 
+	signals := &policySignalPublisher{}
 	svc := &FileService{
-		db: db, spiceDB: stack.SpiceDBClient,
+		db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: signals,
 	}
 	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
 	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
@@ -75,6 +77,32 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	))
 	require.NoError(t, err)
 	require.Empty(t, restrictedWithoutSegments.Msg.GetPolicy().GetAudienceSegments())
+	require.Len(t, signals.events, 1)
+	require.Equal(t, postID, signals.events[0].GetEntityId())
+	require.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST, signals.events[0].GetEntityType())
+	require.False(t, signals.events[0].GetDocumentStateChanged())
+	require.NotEmpty(t, signals.events[0].GetDocumentRevision())
+	// A retry that changes nothing must not publish another invalidation.
+	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
+		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID,
+		BlockId: managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
+		Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
+		ObservedPolicy: observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED),
+	}))
+	require.NoError(t, err)
+	require.Len(t, signals.events, 1)
+	signals.err = errors.New("content signal unavailable")
+	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
+		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID,
+		BlockId: managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
+		Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
+		ObservedPolicy: observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED),
+	}))
+	require.ErrorContains(t, err, "content signal unavailable")
+	var persistedAudience string
+	require.NoError(t, db.Table("content_block_attachment").Where("block_id = ?", blockID).Pluck("download_audience", &persistedAudience).Error)
+	require.Equal(t, "restricted", persistedAudience)
+	signals.err = nil
 
 	restricted, err := svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
@@ -160,7 +188,7 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", currentPostID)
 	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, currentPostID, manager.IdentityID)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient}
+	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}}
 	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
 	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
 	response, err := svc.UpdateFileDownloadPolicy(
@@ -259,7 +287,7 @@ func newManageFileDownloadPolicyUnitDB(t *testing.T) *gorm.DB {
 			entity_id TEXT NOT NULL,
 			created_at DATETIME
 		);
-		CREATE TABLE content_document (id TEXT PRIMARY KEY);
+		CREATE TABLE content_document (id TEXT PRIMARY KEY, revision TEXT NOT NULL DEFAULT 'current-document-revision');
 		CREATE TABLE post (id TEXT PRIMARY KEY, content_document_id TEXT, status TEXT NOT NULL DEFAULT 'draft');
 		CREATE TABLE content_block (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, kind TEXT NOT NULL);
 		CREATE TABLE content_block_attachment (

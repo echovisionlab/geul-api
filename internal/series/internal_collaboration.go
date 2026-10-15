@@ -123,7 +123,7 @@ func (s *InternalPostSeriesService) SaveDocument(
 		if state.contentRevision != expectedRevision {
 			return errs.CollaborationConflict(
 				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-				"Post Series document changed; reload before saving",
+				"Post Series document changed; reload before saving", errs.CollaborationState{Document: state.contentRevision.String()},
 			)
 		}
 		if err := s.checkpoints.RequireCurrentContributors(
@@ -172,7 +172,7 @@ func (s *InternalPostSeriesService) SaveDocument(
 			); err != nil {
 				return errs.CollaborationConflict(
 					intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-					"Post Series target changed; reload before saving",
+					"Post Series target changed; reload before saving", translation.WithDocumentRevision(err, state.contentRevision.String()),
 				)
 			}
 			updatedAt := current.UpdatedAt

@@ -4,6 +4,7 @@ package post_test
 
 import (
 	"context"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 	"time"
 
@@ -261,4 +262,13 @@ func postAuditStringPointer(t *testing.T, value *string) string {
 	t.Helper()
 	require.NotNil(t, value)
 	return *value
+}
+
+func (publisher postAuditAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

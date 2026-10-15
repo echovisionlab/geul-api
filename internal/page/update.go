@@ -68,7 +68,14 @@ func (s *PageService) preparePageUpdate(
 	return update, nil
 }
 
-func (s *PageService) applyPageUpdate(ctx context.Context, page *model.Page, update pageUpdate) (bool, error) {
+// applyPageUpdate commits the Page configuration change and, when it changed,
+// schedules event in the same transaction.
+func (s *PageService) applyPageUpdate(
+	ctx context.Context,
+	page *model.Page,
+	update pageUpdate,
+	event *managev1.ContentUpdatedEvent,
+) (bool, error) {
 	changed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		lockedPage, err := lockPageMenuTargetStateForUpdate(ctx, tx, page.ID)
@@ -125,12 +132,14 @@ func (s *PageService) applyPageUpdate(ctx context.Context, page *model.Page, upd
 			return err
 		}
 		changed = true
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageConfigurationAuditRecord(metadata, page.ID, changedFields)
+			}); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageConfigurationAuditRecord(metadata, page.ID, changedFields)
-		})
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, event)
 	})
 	return changed, err
 }

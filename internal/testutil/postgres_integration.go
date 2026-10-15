@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -801,82 +800,4 @@ func appIntegrationAssetRootPath(root string) string {
 		return filepath.Clean(root)
 	}
 	return appIntegrationRepoPath(filepath.Join("..", "..", root))
-}
-
-func appIntegrationRepoPath(relativePath string) string {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("runtime caller unavailable")
-	}
-	if suffix, ok := legacyMonorepoRelativePath(relativePath); ok {
-		root := appIntegrationModuleRoot(filename)
-		if suffix == "" {
-			return filepath.Clean(root)
-		}
-		if splitPath, ok := splitRepoPathForLegacySuffix(root, suffix); ok {
-			if _, err := os.Stat(splitPath); err == nil {
-				return splitPath
-			}
-		}
-		return filepath.Clean(filepath.Join(root, filepath.FromSlash(suffix)))
-	}
-	return filepath.Clean(filepath.Join(filepath.Dir(filename), relativePath))
-}
-
-func splitRepoPathForLegacySuffix(moduleRoot, suffix string) (string, bool) {
-	mappings := []struct {
-		legacy string
-		split  string
-	}{
-		{legacy: "apps/collab", split: "geul-editor-collab"},
-		{legacy: "apps/web", split: "geul-web"},
-		{legacy: "infra/kratos", split: "geul-identity/config/kratos"},
-		{legacy: "infra/oathkeeper", split: "geul-identity/config/oathkeeper"},
-		{legacy: "infra/spicedb", split: "geul-identity/config/spicedb"},
-	}
-	for _, mapping := range mappings {
-		if suffix != mapping.legacy && !strings.HasPrefix(suffix, mapping.legacy+"/") {
-			continue
-		}
-		remainder := strings.TrimPrefix(strings.TrimPrefix(suffix, mapping.legacy), "/")
-		fallback := filepath.Clean(filepath.Join(moduleRoot, "..", mapping.split, filepath.FromSlash(remainder)))
-		for workspaceRoot := filepath.Dir(moduleRoot); ; workspaceRoot = filepath.Dir(workspaceRoot) {
-			candidate := filepath.Clean(filepath.Join(workspaceRoot, mapping.split, filepath.FromSlash(remainder)))
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, true
-			}
-			parent := filepath.Dir(workspaceRoot)
-			if parent == workspaceRoot {
-				break
-			}
-		}
-		return fallback, true
-	}
-	return "", false
-}
-
-func legacyMonorepoRelativePath(relativePath string) (string, bool) {
-	const prefix = "../../../../"
-	slashPath := filepath.ToSlash(relativePath)
-	if slashPath == "../../../.." {
-		return "", true
-	}
-	if strings.HasPrefix(slashPath, prefix) {
-		return strings.TrimPrefix(slashPath, prefix), true
-	}
-	return "", false
-}
-
-func appIntegrationModuleRoot(filename string) string {
-	dir := filepath.Dir(filename)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		next := filepath.Dir(dir)
-		if next == dir {
-			return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
-		}
-		dir = next
-	}
 }

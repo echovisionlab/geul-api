@@ -91,9 +91,10 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	fileSvc := &FileService{
-		db:          db,
-		spiceDB:     stack.SpiceDBClient,
-		auditWriter: apitelemetry.NewDurableWriter(db),
+		db:             db,
+		spiceDB:        stack.SpiceDBClient,
+		auditWriter:    apitelemetry.NewDurableWriter(db),
+		asyncPublisher: &policySignalPublisher{},
 	}
 	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(fileSvc)
 	WithAudienceAccess(newIntegrationAudienceAccess())(fileSvc)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"strings"
 	"time"
 
@@ -511,6 +513,13 @@ func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
 	); err != nil {
 		return legalAIDocumentApplyResult{}, err
 	}
+	entity := managev1.ContentEntityType_CONTENT_ENTITY_TYPE_TERMS
+	if mutation.EntityType == "privacy" {
+		entity = managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PRIVACY
+	}
+	if err := contentsignal.PublishInteractive(ctx, tx, entity, mutation.EntityID, mutation.Locale, output.Content.DocumentRevision.String(), output.TargetRevision, output.Content.Changed, mutation.Translation == AITranslationDelete, mutation.ContributorMemberID); err != nil {
+		return legalAIDocumentApplyResult{}, err
+	}
 	if !requestSavedOG {
 		return output, nil
 	}
@@ -523,6 +532,7 @@ func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
 	); err != nil {
 		return legalAIDocumentApplyResult{}, err
 	}
+
 	return output, nil
 }
 

@@ -95,7 +95,13 @@ func (s *ReleaseService) SetReleaseArtwork(
 		if err := s.og.CancelAndRelease(ctx, tx, req.Msg.ReleaseId); err != nil {
 			return err
 		}
-		return s.appendReleaseArtworkAudit(ctx, tx, req.Msg.ReleaseId, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
+		if err := s.appendReleaseArtworkAudit(ctx, tx, req.Msg.ReleaseId, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseMediaMutationContentUpdatedEvent(
+			release.ID,
+			"media.artwork",
+		))
 	})
 
 	if err != nil {
@@ -104,15 +110,6 @@ func (s *ReleaseService) SetReleaseArtwork(
 		}
 		return nil, errs.Internal(err)
 	}
-
-	publishContentUpdatedEvent(
-		ctx,
-		s.asyncPublisher,
-		buildReleaseMediaMutationContentUpdatedEvent(
-			release.ID,
-			"media.artwork",
-		),
-	)
 
 	return connect.NewResponse(&managev1.SetReleaseArtworkResponse{
 		ArtworkAsset: artworkAsset,
@@ -138,7 +135,6 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 	}
 
 	// Use transaction to ensure atomicity and prevent race conditions
-	deleted := false
 	var removedFileID string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -156,7 +152,6 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 			return err
 		}
 		removedFileID = existing.FileID
-		deleted = true
 		// Delete the release_file record
 		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).
 			Delete(&model.ReleaseFile{}).Error; err != nil {
@@ -176,7 +171,13 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 		if err := s.og.CancelAndRelease(ctx, tx, req.Msg.ReleaseId); err != nil {
 			return err
 		}
-		return s.appendReleaseArtworkAudit(ctx, tx, req.Msg.ReleaseId, removedFileID, sharedtelemetry.AuditCollectionOperationRemoved)
+		if err := s.appendReleaseArtworkAudit(ctx, tx, req.Msg.ReleaseId, removedFileID, sharedtelemetry.AuditCollectionOperationRemoved); err != nil {
+			return err
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseMediaMutationContentUpdatedEvent(
+			release.ID,
+			"media.artwork",
+		))
 	})
 
 	if err != nil {
@@ -184,17 +185,6 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 			return nil, err
 		}
 		return nil, errs.Internal(err)
-	}
-
-	if deleted {
-		publishContentUpdatedEvent(
-			ctx,
-			s.asyncPublisher,
-			buildReleaseMediaMutationContentUpdatedEvent(
-				release.ID,
-				"media.artwork",
-			),
-		)
 	}
 
 	return connect.NewResponse(&managev1.OgAssetDeleteResponse{

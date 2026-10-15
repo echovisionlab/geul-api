@@ -18,21 +18,9 @@ func (s *ArtistService) SetArtistImage(
 	if err != nil {
 		return nil, err
 	}
-	images, ogRunID, changed, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, fileIDs, nil)
+	images, ogRunID, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, fileIDs, nil)
 	if err != nil {
 		return nil, err
-	}
-
-	if changed {
-		publishContentUpdatedEvent(
-			ctx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST,
-				req.Msg.ArtistId,
-				"media.images",
-			),
-		)
 	}
 	var imageAsset *commonv1.AssetRef
 	if len(images) > 0 {
@@ -48,22 +36,10 @@ func (s *ArtistService) DeleteArtistImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteArtistImageRequest],
 ) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
-	_, ogRunID, changed, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, nil, nil)
+	_, ogRunID, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	if changed {
-		publishContentUpdatedEvent(
-			ctx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST,
-				req.Msg.ArtistId,
-				"media.images",
-			),
-		)
-	}
-
 	return connect.NewResponse(&managev1.OgAssetDeleteResponse{
 		Success: true, OgGenerationRunId: ogRunID,
 	}), nil

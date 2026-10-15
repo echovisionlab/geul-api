@@ -362,7 +362,9 @@ func overlayCanonicalEmailLayoutSourcesForList(
 	for i := range layouts {
 		projection, ok := byID[layouts[i].ID]
 		if !ok {
-			return errs.NotFound("email layout source translation", layouts[i].ID)
+			// A listed layout without its canonical source row is corrupt data, not a missing
+			// resource: fail closed as Internal instead of leaking NotFound for the whole list.
+			return fmt.Errorf("email layout %s has no canonical source translation", layouts[i].ID)
 		}
 		layouts[i].HTMLContent = projection.ContentHTML
 	}

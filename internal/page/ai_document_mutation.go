@@ -88,7 +88,6 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	var result contentblock.Result
 	var targetRevision *string
 	var currentRevision string
-	var acceptedMutation AIDocumentMutation
 	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, "UPDATE")
 		if err != nil {
@@ -119,7 +118,6 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		if err := validateCompiledPageAIDocumentMutation(state, mutation); err != nil {
 			return err
 		}
-		acceptedMutation = mutation
 		domain := contentblock.DomainContext{
 			SourceLocale: state.SourceLocale,
 		}
@@ -140,25 +138,25 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackPageAIDocumentValidation
 		}
-		return nil
+		if !result.Changed {
+			return nil
+		}
+		return publishContentUpdatedEvent(ctx, tx, s.internal.asyncPublisher, buildPageContentUpdatedEvent(
+			mutation.PageID,
+			pageAIDocumentContentUpdatedFields(mutation),
+			result.DocumentRevision.String(),
+			[]string{mutation.ContributorMemberID},
+			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+			mutation.Locale,
+			!mutation.DeleteTranslation,
+			targetRevision,
+			mutation.Locale == mutation.ObservedSourceLocale,
+		))
 	})
 	if errors.Is(err, errRollbackPageAIDocumentValidation) {
 		return AIDocumentMutationResult{DocumentRevision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}, nil
 	}
 	if err == nil {
-		if mode == AIDocumentExecutionApply && result.Changed {
-			publishContentUpdatedEvent(ctx, s.internal.asyncPublisher, buildPageContentUpdatedEvent(
-				acceptedMutation.PageID,
-				pageAIDocumentContentUpdatedFields(acceptedMutation),
-				result.DocumentRevision.String(),
-				[]string{acceptedMutation.ContributorMemberID},
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-				acceptedMutation.Locale,
-				!acceptedMutation.DeleteTranslation,
-				targetRevision,
-				acceptedMutation.Locale == acceptedMutation.ObservedSourceLocale,
-			))
-		}
 		return AIDocumentMutationResult{DocumentRevision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}, nil
 	}
 	var compilerErr *pageAIDocumentCompilerError

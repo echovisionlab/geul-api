@@ -222,7 +222,7 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 	var result contentblock.Result
 	var targetRevision string
 	var sourceLocale string
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	mutate := func(tx *gorm.DB) error {
 		domain, fenceErr := internalCreativeContentFence(artistContentEntity, req.Msg.ArtistId)(ctx, tx, documentID)
 		if fenceErr != nil {
 			return fenceErr
@@ -288,16 +288,19 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 			)
 		}
 		return err
-	})
-	if err != nil {
-		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
 	}
-	if result.Changed {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := mutate(tx); err != nil {
+			return err
+		}
+		if !result.Changed {
+			return nil
+		}
 		var eventTargetRevision *string
 		if locale != sourceLocale {
 			eventTargetRevision = &targetRevision
 		}
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildArtistContentUpdatedEvent(
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistContentUpdatedEvent(
 			req.Msg.ArtistId,
 			[]string{"content"},
 			result.DocumentRevision.String(),
@@ -308,6 +311,9 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 			eventTargetRevision,
 			locale == sourceLocale,
 		))
+	})
+	if err != nil {
+		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
 	}
 	response := &intrav1.ApplyArtistBlockBatchResponse{Locale: locale}
 	if locale == sourceLocale {
@@ -360,13 +366,10 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 				expectedRevision, req.Msg.ExpectedTargetRevision, req.Msg.Title, time.Now().UTC(),
 				internalCreativeContentFence(artistContentEntity, req.Msg.ArtistId),
 			)
-			return err
-		})
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		if result.Changed {
-			_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildArtistContentUpdatedEvent(
+			if err != nil || !result.Changed {
+				return err
+			}
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistContentUpdatedEvent(
 				req.Msg.ArtistId,
 				[]string{"title"},
 				result.DocumentRevision.String(),
@@ -377,6 +380,9 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 				&targetRevision,
 				false,
 			))
+		})
+		if updateErr != nil {
+			return nil, updateErr
 		}
 		return connect.NewResponse(&intrav1.UpdateArtistLocaleMetadataResponse{
 			DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
@@ -401,22 +407,25 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 		managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST,
 		s.translation,
 		s.checkpoints,
+		func(tx *gorm.DB, result creativeLocaleTitleUpdateResult) error {
+			if !result.Advance.Changed {
+				return nil
+			}
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistContentUpdatedEvent(
+				req.Msg.ArtistId,
+				[]string{"title"},
+				result.Advance.DocumentRevision.String(),
+				req.Msg.ContributorMemberIds,
+				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				locale,
+				true,
+				nil,
+				true,
+			))
+		},
 	)
 	if err != nil {
 		return nil, err
-	}
-	if result.Advance.Changed {
-		_ = publishContentUpdatedEvent(ctx, s.asyncPublisher, buildArtistContentUpdatedEvent(
-			req.Msg.ArtistId,
-			[]string{"title"},
-			result.Advance.DocumentRevision.String(),
-			req.Msg.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			true,
-			nil,
-			true,
-		))
 	}
 	return connect.NewResponse(&intrav1.UpdateArtistLocaleMetadataResponse{
 		DocumentRevision: result.Advance.DocumentRevision.String(), Changed: result.Advance.Changed,

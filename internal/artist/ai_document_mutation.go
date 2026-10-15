@@ -115,7 +115,15 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackArtistAIDocumentValidation
 		}
-		return nil
+		if !output.Changed {
+			return nil
+		}
+		return publishContentUpdatedEvent(
+			ctx,
+			tx,
+			s.asyncPublisher,
+			artistAIDocumentContentUpdatedEvent(input, output, input.ContributorMemberID.String()),
+		)
 	})
 	if errors.Is(err, errRollbackArtistAIDocumentValidation) {
 		return output, nil
@@ -133,13 +141,6 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 			}
 		}
 		return AIDocumentMutationResult{}, err
-	}
-	if mode == AIDocumentExecutionApply && output.Changed {
-		_ = publishContentUpdatedEvent(
-			ctx,
-			s.asyncPublisher,
-			artistAIDocumentContentUpdatedEvent(input, output, input.ContributorMemberID.String()),
-		)
 	}
 	return output, nil
 }

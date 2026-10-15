@@ -776,7 +776,7 @@ func (s *LabelService) PublishLabel(
 		if err := s.appendLabelLifecycleAudit(ctx, tx, label.ID, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStatePublished); err != nil {
 			return err
 		}
-		return nil
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelStateTransitionContentUpdatedEvent(label.ID))
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.Id)
@@ -787,9 +787,6 @@ func (s *LabelService) PublishLabel(
 		label.Status = managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()
 		label.PublishedAt = &now
 		label.UpdatedAt = now
-	}
-	if transitioned {
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelStateTransitionContentUpdatedEvent(label.ID))
 	}
 	return connect.NewResponse(&managev1.LabelLifecycleMutationResponse{
 		Id: label.ID, Changed: transitioned,
@@ -826,7 +823,7 @@ func (s *LabelService) UnpublishLabel(
 		if err := s.appendLabelLifecycleAudit(ctx, tx, label.ID, sharedtelemetry.AuditStatePublished, sharedtelemetry.AuditStateDraft); err != nil {
 			return err
 		}
-		return nil
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelStateTransitionContentUpdatedEvent(label.ID))
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.Id)
@@ -836,9 +833,6 @@ func (s *LabelService) UnpublishLabel(
 	if transitioned {
 		label.Status = managev1.LabelStatus_LABEL_STATUS_DRAFT.String()
 		label.UpdatedAt = now
-	}
-	if transitioned {
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelStateTransitionContentUpdatedEvent(label.ID))
 	}
 	return connect.NewResponse(&managev1.LabelLifecycleMutationResponse{
 		Id: label.ID, Changed: transitioned,

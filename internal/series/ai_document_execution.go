@@ -3,6 +3,8 @@ package series
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -212,7 +214,7 @@ func (s *AIDocumentService) executeMutation(
 		if mode == postSeriesAIExecutionValidate {
 			return errRollbackPostSeriesAIValidation
 		}
-		return nil
+		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST_SERIES, seriesID, string(request.Locale), string(result.DocumentRevision), postSeriesSignalTarget(result.TargetRevision), result.Changed, len(command.Operations) == 1 && command.Operations[0].Kind == core.OperationDeleteTranslation, contentsignal.InteractiveMemberID(ctx))
 	})
 	if errors.Is(err, errRollbackPostSeriesAIValidation) {
 		return validation, result, nil
@@ -320,4 +322,12 @@ func postSeriesAIDocumentAction(operations []core.Operation) seriesAction {
 		}
 	}
 	return action
+}
+
+func postSeriesSignalTarget(target *core.Revision) *string {
+	if target == nil {
+		return nil
+	}
+	value := string(*target)
+	return &value
 }

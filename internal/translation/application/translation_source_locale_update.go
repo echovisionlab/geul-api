@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -98,7 +99,17 @@ func (s *TranslationService) applySourceLocaleSwitch(
 		if err := s.domains.RequireDocumentContributors(ctx, tx, []string{state.contributorMemberID}); err != nil {
 			return err
 		}
-		return s.performSourceLocaleSwitch(ctx, tx, &state, authority)
+		if err := s.performSourceLocaleSwitch(ctx, tx, &state, authority); err != nil {
+			return err
+		}
+		if state.result.unchanged {
+			return nil
+		}
+		return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildTypedSourceLocaleUpdatedEvent(
+			state.entityType,
+			state.entityID,
+			state.result.documentRevision,
+		))
 	})
 	return state.result, err
 }

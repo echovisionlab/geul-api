@@ -53,6 +53,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
@@ -173,7 +174,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	accessLogInterceptor := telemetry.NewAccessLogInterceptor(telemetryWriter)
 	tracingInterceptor := telemetry.NewTracingInterceptor()
 	handlerOpts := []connect.HandlerOption{
-		connect.WithInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor),
+		connect.WithInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor, auth.ExpectedMemberInterceptor(), contentsignal.ClientOriginInterceptor()),
 		jsonCodec,
 	}
 	// Internal handlers do not use browser/session auth. Each registration below

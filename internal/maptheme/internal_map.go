@@ -3,6 +3,7 @@ package maptheme
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"maps"
 	"time"
 
@@ -260,7 +261,7 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 			return loadErr
 		}
 		if current.EditVersion != revision {
-			return errMapThemeRevisionConflict
+			return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving", errs.CollaborationState{Document: fmt.Sprint(current.EditVersion)})
 		}
 		if err := s.requireLockedMapThemeContributorsEdit(ctx, tx, themeID, req.Msg.ContributorMemberIds); err != nil {
 			return err
@@ -284,7 +285,7 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 				}
 				return loadErr
 			}
-			return errMapThemeRevisionConflict
+			return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving", errs.CollaborationState{Document: fmt.Sprint(current.EditVersion)})
 		}
 		if err := s.appendContentUpdatedAudit(ctx, tx, themeID, req.Msg.ContributorMemberIds[0]); err != nil {
 			return err
@@ -299,7 +300,7 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 		case stderrors.Is(err, errMapThemeRevisionConflict):
 			return nil, errs.CollaborationConflict(
 				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-				"map theme changed; reload before saving",
+				"map theme changed; reload before saving", err,
 			)
 		case connect.CodeOf(err) != connect.CodeUnknown:
 			return nil, err

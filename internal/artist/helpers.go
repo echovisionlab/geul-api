@@ -2,15 +2,14 @@ package artist
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -117,15 +116,15 @@ func buildManageMediaMutationContentUpdatedEvent(entityType managev1.ContentEnti
 	return buildContentUpdatedEvent(entityType, entityID, []*managev1.ContentUpdatedField{{Path: path, Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_MEDIA}})
 }
 
-func publishContentUpdatedEvent(ctx context.Context, publisher AsyncPublisher, event *managev1.ContentUpdatedEvent) error {
-	if publisher == nil || event == nil {
-		return nil
-	}
-	err := publisher.NotifyProtobuf(ctx, eventpkg.SignalContentUpdated, event)
-	if err != nil {
-		slog.Warn("Failed to publish content updated event", "error", err, "entityType", event.EntityType.String(), "entityId", event.EntityId)
-	}
-	return err
+// publishContentUpdatedEvent schedules content.updated in the caller's
+// mutation transaction so the signal commits or rolls back with the data.
+func publishContentUpdatedEvent(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher AsyncPublisher,
+	event *managev1.ContentUpdatedEvent,
+) error {
+	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
 func LabelSourceTitleSQL(alias string) string {

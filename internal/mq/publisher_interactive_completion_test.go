@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPublisherSuppressesOnlyMarkedDirectInteractiveContentSignal(t *testing.T) {
+func TestPublisherNeverSuppressesInteractiveContentSignal(t *testing.T) {
 	t.Parallel()
 	publisher := &Publisher{}
 	event := &managev1.ContentUpdatedEvent{}
@@ -20,7 +20,7 @@ func TestPublisherSuppressesOnlyMarkedDirectInteractiveContentSignal(t *testing.
 		eventpkg.SignalContentUpdated,
 		event,
 	)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "PostgreSQL publisher is required")
 
 	err = publisher.NotifyProtobuf(
 		aidocument.WithInteractiveFallbackSignal(aidocument.WithInteractivePostCommitCompletion(context.Background())),

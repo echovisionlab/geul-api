@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"reflect"
 	"strings"
 	"time"
@@ -12,12 +11,12 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -127,7 +126,12 @@ func (s *InternalFormService) ExecuteAIDocumentMutation(
 		if mode == AIDocumentExecutionValidate {
 			return errRollbackFormAIDocumentValidation
 		}
-		return nil
+		if !changed {
+			return nil
+		}
+		return contentsignal.PublishInTransaction(
+			ctx, tx, s.asyncPublisher, formAIDocumentContentUpdatedEvent(input, output),
+		)
 	})
 	if errors.Is(err, errRollbackFormAIDocumentValidation) {
 		return output, nil
@@ -138,11 +142,6 @@ func (s *InternalFormService) ExecuteAIDocumentMutation(
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
 		return AIDocumentMutationResult{}, err
-	}
-	if mode == AIDocumentExecutionApply && output.Changed && s.asyncPublisher != nil {
-		if publishErr := s.asyncPublisher.NotifyProtobuf(ctx, eventpkg.SignalContentUpdated, formAIDocumentContentUpdatedEvent(input, output)); publishErr != nil {
-			slog.Warn("Failed to publish Form AI document content update", "form_id", input.FormID, "error", publishErr)
-		}
 	}
 	return output, nil
 }

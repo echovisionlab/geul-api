@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"gorm.io/gorm"
 )
 
@@ -30,14 +30,7 @@ func (m *TranslationJobManager) publishAppliedTranslationContentUpdated(
 	if m == nil || m.publisher == nil {
 		return fmt.Errorf("translation content updated publisher is required")
 	}
-	if tx == nil || tx.Statement == nil || tx.Statement.ConnPool == nil {
-		return fmt.Errorf("translation apply transaction is required")
-	}
-	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-	if !ok {
-		return fmt.Errorf("translation apply transaction cannot publish PostgreSQL signals")
-	}
-	if err := m.publisher.PublishContentUpdatedWithExecutor(ctx, executor, event); err != nil {
+	if err := contentsignal.PublishInTransaction(ctx, tx, m.publisher, event); err != nil {
 		return fmt.Errorf("publish applied translation content update: %w", err)
 	}
 	return nil

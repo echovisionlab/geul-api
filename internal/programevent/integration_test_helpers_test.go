@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"testing"
 	"time"
@@ -241,4 +242,13 @@ func (*capturingAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Me
 
 func (*capturingAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
 	return nil
+}
+
+func (publisher *capturingAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

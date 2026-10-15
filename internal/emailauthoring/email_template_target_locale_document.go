@@ -241,7 +241,7 @@ func applyEmailTemplateTargetMutation(
 	if err := translation.ValidateTargetRevisionWrite(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
 	); err != nil {
-		return emailTemplateTargetMutationResult{}, err
+		return emailTemplateTargetMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !input.AllowCreate {
 		return emailTemplateTargetMutationResult{}, errs.FailedPrecondition(
@@ -361,7 +361,7 @@ func deleteEmailTemplateTargetLocale(
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,

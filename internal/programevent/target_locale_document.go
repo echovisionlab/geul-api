@@ -264,7 +264,7 @@ func applyProgramEventTargetMutation(
 	if err := translation.ValidateTargetRevisionWrite(
 		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
 	); err != nil {
-		return programEventTargetMutationResult{}, err
+		return programEventTargetMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if state.TargetMetadata == nil && !input.AllowCreate {
 		return programEventTargetMutationResult{}, errs.FailedPrecondition(
@@ -375,7 +375,7 @@ func deleteProgramEventTargetLocale(
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, err
+		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,

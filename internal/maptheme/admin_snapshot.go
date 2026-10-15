@@ -3,6 +3,7 @@ package maptheme
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -49,7 +50,7 @@ func (s *MapThemeService) UpdateMapThemeSnapshot(ctx context.Context, themeID st
 			return err
 		}
 		if current.EditVersion != expectedRevision {
-			return errMapThemeRevisionConflict
+			return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving", errs.CollaborationState{Document: fmt.Sprint(current.EditVersion)})
 		}
 		// Compare the persisted float32 scale, rather than the caller's float64
 		// spelling, so an identical roundtrip is a genuine no-op.
@@ -67,7 +68,7 @@ func (s *MapThemeService) UpdateMapThemeSnapshot(ctx context.Context, themeID st
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return errMapThemeRevisionConflict
+			return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving", errs.CollaborationState{Document: fmt.Sprint(current.EditVersion)})
 		}
 		if s.auditWriter != nil {
 			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMapThemeUpdated,

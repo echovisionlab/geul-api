@@ -81,7 +81,7 @@ func (s *InternalEmailLayoutService) SaveDocument(
 		if authority.DocumentRevision != expectedDocumentRevision {
 			return errs.CollaborationConflict(
 				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-				"Email Layout Content Document changed; reload before saving",
+				"Email Layout Content Document changed; reload before saving", errs.CollaborationState{Document: authority.DocumentRevision.String()},
 			)
 		}
 		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.references, authority.LayoutID); err != nil {
@@ -220,7 +220,7 @@ func (s *InternalEmailLayoutService) saveTargetDocument(
 	); err != nil {
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Email Layout source or exact target changed since it was loaded; reload before saving",
+			"Email Layout source or exact target changed since it was loaded; reload before saving", translation.WithDocumentRevision(err, authority.DocumentRevision.String()),
 		)
 	}
 	contentHTML, contentText, err := compileEmailLayoutTargetValues(

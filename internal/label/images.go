@@ -94,7 +94,6 @@ func (s *LabelService) SetLabelImage(
 
 	var label model.Label
 	var ogRunID *string
-	changed := false
 
 	// Use transaction to ensure atomicity
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -129,7 +128,6 @@ func (s *LabelService) SetLabelImage(
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		changed = true
 
 		bindingKey := "logo:light"
 		if logoColumn == "logo_dark_file_id" {
@@ -148,7 +146,10 @@ func (s *LabelService) SetLabelImage(
 		if err != nil {
 			return err
 		}
-		return s.appendLabelLogoAudit(ctx, tx, label.ID, labelAuditLogoSlot(logoColumn), sharedtelemetry.AuditCollectionOperationAdded, req.Msg.FileId)
+		if err := s.appendLabelLogoAudit(ctx, tx, label.ID, labelAuditLogoSlot(logoColumn), sharedtelemetry.AuditCollectionOperationAdded, req.Msg.FileId); err != nil {
+			return err
+		}
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelMediaMutationContentUpdatedEvent(label.ID))
 	})
 
 	if err != nil {
@@ -166,10 +167,6 @@ func (s *LabelService) SetLabelImage(
 	if err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
 		return nil, err
 	}
-	if changed {
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelMediaMutationContentUpdatedEvent(label.ID))
-	}
-
 	return connect.NewResponse(&managev1.SetLabelImageResponse{
 		ImageLightAsset:   imageAssets.Light,
 		ImageDarkAsset:    imageAssets.Dark,
@@ -188,7 +185,6 @@ func (s *LabelService) DeleteLabelImage(
 	}
 
 	var ogRunID *string
-	changed := false
 
 	// Use transaction to ensure atomicity
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -209,7 +205,6 @@ func (s *LabelService) DeleteLabelImage(
 		if oldFileID == nil {
 			return nil
 		}
-		changed = true
 
 		// 2. Clear the selected logo slot.
 		if err := tx.Model(&label).Updates(structured.Fields{
@@ -235,7 +230,10 @@ func (s *LabelService) DeleteLabelImage(
 		if err != nil {
 			return err
 		}
-		return s.appendLabelLogoAudit(ctx, tx, label.ID, labelAuditLogoSlot(logoColumn), sharedtelemetry.AuditCollectionOperationRemoved, *oldFileID)
+		if err := s.appendLabelLogoAudit(ctx, tx, label.ID, labelAuditLogoSlot(logoColumn), sharedtelemetry.AuditCollectionOperationRemoved, *oldFileID); err != nil {
+			return err
+		}
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelMediaMutationContentUpdatedEvent(req.Msg.LabelId))
 	})
 
 	if err != nil {
@@ -246,10 +244,6 @@ func (s *LabelService) DeleteLabelImage(
 			return nil, err
 		}
 		return nil, errs.Internal(err)
-	}
-
-	if changed {
-		publishLabelContentUpdated(ctx, s.asyncPublisher, buildLabelMediaMutationContentUpdatedEvent(req.Msg.LabelId))
 	}
 
 	return connect.NewResponse(&managev1.OgAssetDeleteResponse{

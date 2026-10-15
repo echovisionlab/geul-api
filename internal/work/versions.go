@@ -275,27 +275,19 @@ func (s *WorkService) RestoreWorkVersion(
 		); ogErr != nil {
 			return ogErr
 		}
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if auditErr := domainaudit.AppendRequest(
+				ctx,
+				tx,
+				s.auditWriter,
+				sharedtelemetry.AuditWorkUpdated,
+				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+					return sharedtelemetry.NewWorkVersionRestoreAuditRecord(metadata, version.WorkID, version.ID)
+				},
+			); auditErr != nil {
+				return auditErr
+			}
 		}
-		return domainaudit.AppendRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditWorkUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewWorkVersionRestoreAuditRecord(metadata, version.WorkID, version.ID)
-			},
-		)
-	})
-	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
-		return nil, normalizeWorkContentBlockError(err)
-	}
-
-	if restoredChanged {
 		event := buildWorkSourceContentUpdatedEvent(
 			version.WorkID,
 			titleChanged,
@@ -328,7 +320,13 @@ func (s *WorkService) RestoreWorkVersion(
 				})
 			}
 		}
-		publishWorkContentUpdated(ctx, s.asyncPublisher, event)
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, event)
+	})
+	if err != nil {
+		if connect.CodeOf(err) != connect.CodeUnknown {
+			return nil, err
+		}
+		return nil, normalizeWorkContentBlockError(err)
 	}
 
 	work, err := s.loadRestoredWork(ctx, version.WorkID)

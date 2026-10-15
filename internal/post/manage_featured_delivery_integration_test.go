@@ -4,6 +4,7 @@ package post_test
 
 import (
 	"context"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -217,4 +218,13 @@ func (postFeaturedTranscoderPublisher) PublishTranscodeVideo(context.Context, *m
 }
 func (postFeaturedTranscoderPublisher) PublishWaveformCancel(context.Context, *managev1.WaveformCancelEvent) error {
 	return nil
+}
+
+func (publisher postFeaturedAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

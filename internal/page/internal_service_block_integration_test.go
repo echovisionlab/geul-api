@@ -4,6 +4,7 @@ package page
 
 import (
 	"context"
+	"google.golang.org/protobuf/proto"
 	"slices"
 	"testing"
 	"time"
@@ -41,6 +42,8 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
 		spiceDB,
 		WithPageContentBlockStore(store),
+		// Production wires the same media hydrator into the editor-document read and room bootstrap.
+		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 	)
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
@@ -73,6 +76,14 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	require.Equal(t, "en", loaded.Msg.SourceMetadata.GetLocale())
 	require.Nil(t, loaded.Msg.TargetRevision)
 	require.Empty(t, loaded.Msg.PresentLocaleValues)
+	editorUser := *auth.GetUser(ctx)
+	editorUser.SessionID = auth.SessionID(sessionID)
+	firstPaint, readErr := pageService.GetPageEditorDocument(auth.WithUser(ctx, &editorUser), connect.NewRequest(&managev1.GetPageEditorDocumentRequest{PageId: created.Msg.Id, Locale: "en"}))
+	require.NoError(t, readErr)
+	require.True(t, proto.Equal(loaded.Msg.Document, firstPaint.Msg.Document))
+	require.Equal(t, loaded.Msg.DocumentRevision, firstPaint.Msg.DocumentRevision)
+	require.Equal(t, loaded.Msg.DocumentLayout, firstPaint.Msg.DocumentLayout)
+	require.True(t, firstPaint.Msg.Editable)
 
 	columnsID := integrationTestUUID()
 	columnAID := integrationTestUUID()
@@ -145,6 +156,13 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.True(t, targetRoom.Msg.LocaleExists)
+	targetFirstPaint, targetReadErr := pageService.GetPageEditorDocument(auth.WithUser(ctx, &editorUser), connect.NewRequest(&managev1.GetPageEditorDocumentRequest{PageId: created.Msg.Id, Locale: "ko"}))
+	require.NoError(t, targetReadErr)
+	require.True(t, proto.Equal(targetRoom.Msg.Document, targetFirstPaint.Msg.Document))
+	require.Equal(t, targetRoom.Msg.DocumentRevision, targetFirstPaint.Msg.DocumentRevision)
+	require.Equal(t, targetRoom.Msg.TargetRevision, targetFirstPaint.Msg.TargetRevision)
+	require.True(t, targetFirstPaint.Msg.LocaleExists)
+
 	require.Equal(t, *targetRevision, targetRoom.Msg.GetTargetRevision())
 	require.Equal(t, "Source paragraph", pageParagraphText(t, targetRoom.Msg.Document, richSectionID, paragraphID))
 	require.Empty(t, targetRoom.Msg.PresentLocaleValues, "source fallback must not become target presence")
@@ -391,6 +409,8 @@ func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
 		spiceDB,
 		WithPageContentBlockStore(store),
+		// Production wires the same media hydrator into the editor-document read and room bootstrap.
+		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 	)
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Metadata Page"}))

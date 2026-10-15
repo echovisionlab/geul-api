@@ -23,7 +23,6 @@ func (s *PageService) SetPageFeaturedImage(
 	req *connect.Request[managev1.SetPageFeaturedImageRequest],
 ) (*connect.Response[managev1.SetPageFeaturedImageResponse], error) {
 	var ogRunID *string
-	changed := false
 
 	// Use transaction with row-level lock to prevent race conditions
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -61,7 +60,6 @@ func (s *PageService) SetPageFeaturedImage(
 		}).Error; err != nil {
 			return errs.Internal(err)
 		}
-		changed = true
 
 		runID, err := s.runtime.RequestCurrentWithDB(
 			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
@@ -73,12 +71,23 @@ func (s *PageService) SetPageFeaturedImage(
 		if runID != "" {
 			ogRunID = &runID
 		}
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, page.ID, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
+			}); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, page.ID, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
-		})
+		return publishContentUpdatedEvent(
+			ctx,
+			tx,
+			s.asyncPublisher,
+			buildManageMediaMutationContentUpdatedEvent(
+				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
+				req.Msg.PageId,
+				"media.featured_image",
+			),
+		)
 	})
 
 	if err != nil {
@@ -92,18 +101,6 @@ func (s *PageService) SetPageFeaturedImage(
 	if err != nil {
 		return nil, err
 	}
-	if changed {
-		publishContentUpdatedEvent(
-			ctx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-				req.Msg.PageId,
-				"media.featured_image",
-			),
-		)
-	}
-
 	return connect.NewResponse(&managev1.SetPageFeaturedImageResponse{
 		ImageDelivery: featuredDeliveries[req.Msg.PageId], OgGenerationRunId: ogRunID,
 	}), nil
@@ -116,7 +113,6 @@ func (s *PageService) DeletePageFeaturedImage(
 ) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var oldFileID *string
 	var ogRunID *string
-	changed := false
 
 	// Use transaction with row-level lock to prevent race conditions
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -144,7 +140,6 @@ func (s *PageService) DeletePageFeaturedImage(
 		}).Error; err != nil {
 			return errs.Internal(err)
 		}
-		changed = true
 		if err := s.runtime.ReleasePublicAssetBindings(
 			ctx, tx, "page", req.Msg.PageId, "featured_image",
 		); err != nil {
@@ -161,20 +156,16 @@ func (s *PageService) DeletePageFeaturedImage(
 		if runID != "" {
 			ogRunID = &runID
 		}
-		if s.auditWriter == nil {
-			return nil
+		if s.auditWriter != nil {
+			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, page.ID, *oldFileID, sharedtelemetry.AuditCollectionOperationRemoved)
+			}); err != nil {
+				return err
+			}
 		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, page.ID, *oldFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-		})
-	})
-
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		publishContentUpdatedEvent(
+		return publishContentUpdatedEvent(
 			ctx,
+			tx,
 			s.asyncPublisher,
 			buildManageMediaMutationContentUpdatedEvent(
 				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
@@ -182,8 +173,11 @@ func (s *PageService) DeletePageFeaturedImage(
 				"media.featured_image",
 			),
 		)
-	}
+	})
 
+	if err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(&managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: ogRunID}), nil
 }
 

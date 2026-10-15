@@ -82,8 +82,7 @@ func workSourceRoomFence(locale string, base contentblock.DomainFence) contentbl
 			return contentblock.DomainContext{}, err
 		}
 		if domain.SourceLocale != locale {
-			return contentblock.DomainContext{}, errs.CollaborationConflict(
-				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_LOCALE_OWNERSHIP_CHANGED,
+			return contentblock.DomainContext{}, contentblock.LocaleOwnershipConflict(ctx, tx, documentID,
 				"Work source locale changed since the room was loaded; reload before saving",
 			)
 		}
@@ -266,7 +265,7 @@ func applyWorkTargetLocaleBatch(
 	if err := translation.ValidateTargetRevisionWrite(
 		expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, useCurrentTargetRevision,
 	); err != nil {
-		return contentblock.Result{}, nil, err
+		return contentblock.Result{}, nil, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
 	}
 	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(batch.LocaleGroups) != 0) {
 		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "Work translation deletion must be exclusive")

@@ -4,6 +4,7 @@ package post_test
 
 import (
 	"context"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"sync"
 	"testing"
 	"time"
@@ -326,4 +327,13 @@ func (capture *postConfigurationEventCapture) count() int {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	return capture.notifications
+}
+
+func (publisher *postConfigurationEventCapture) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }

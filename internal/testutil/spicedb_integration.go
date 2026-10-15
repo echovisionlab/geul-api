@@ -128,7 +128,7 @@ func newIntegrationSpiceDBRawClient(endpoint, token string) (*authzed.Client, er
 }
 
 func writeIntegrationSpiceDBSchema(ctx context.Context, client *authzed.Client) error {
-	schemaPath := appIntegrationRepoPath("../../../../infra/spicedb/schema.generated.zed")
+	schemaPath := AppIntegrationSpiceDBSchemaPath(appIntegrationRepoPath("../.."))
 	schema, err := os.ReadFile(schemaPath)
 	if err != nil {
 		return fmt.Errorf("read generated SpiceDB schema %s: %w", schemaPath, err)
@@ -235,7 +235,7 @@ func deleteIntegrationSpiceDBDefinitionRelationships(
 }
 
 func integrationSpiceDBDefinitionNames() ([]string, error) {
-	schemaPath := appIntegrationRepoPath("../../../../infra/spicedb/schema.generated.zed")
+	schemaPath := AppIntegrationSpiceDBSchemaPath(appIntegrationRepoPath("../.."))
 	schema, err := os.ReadFile(schemaPath)
 	if err != nil {
 		return nil, fmt.Errorf("read generated SpiceDB schema %s: %w", schemaPath, err)

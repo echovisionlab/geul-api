@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"path/filepath"
 	"strings"
@@ -331,4 +332,13 @@ func readyPublicAssetURLForFileFixture(
 	)
 	require.NoError(t, err)
 	return ref.GetUrl()
+}
+
+func (publisher publicReferenceAsyncPublisher) NotifyProtobufWithExecutor(
+	ctx context.Context,
+	_ eventpkg.DBTX,
+	signal string,
+	message proto.Message,
+) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
 }
