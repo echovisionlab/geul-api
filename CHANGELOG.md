@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/echovisionlab/geul-api/compare/v1.7.1...v1.8.0) (2026-10-15)
+
+
+### Features
+
+* **collaboration:** durable collaboration API ([#109](https://github.com/echovisionlab/geul-api/issues/109)) ([bd95a9a](https://github.com/echovisionlab/geul-api/commit/bd95a9a15a24ba70ddafb616b774b5617fa412a5))
+
 ## [1.7.1](https://github.com/echovisionlab/geul-api/compare/v1.7.0...v1.7.1) (2026-10-09)
 
 
