@@ -17,6 +17,7 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
@@ -110,7 +111,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			} `json:"result"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &envelope))
-		require.Equal(t, "17", envelope.Result.ServerInfo.Version)
+		require.Equal(t, "18", envelope.Result.ServerInfo.Version)
+		require.NotContains(t, envelope.Result.Instructions, "DSUB")
 		for _, guardrail := range []string{
 			"sync_required result with isError=false and applied=false",
 			"discard previous pages and restart without a cursor",
@@ -128,6 +130,8 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 			"policy_create creates an empty draft without email",
 			"policy_schedule and policy_activate_now start notice email delivery",
 			"policy_delete allows every lifecycle and retains delivery history",
+			"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update",
+			"sender changes keep credentials",
 		} {
 			require.Contains(t, envelope.Result.Instructions, guardrail)
 		}
@@ -287,6 +291,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		"program_event_publish", "program_event_archive", "program_event_delete",
 		"program_event_type_list", "program_event_series_list", "label_list",
 		"member_admin_list", "member_admin_get",
+		"site_settings_get", "site_settings_update", "mail_adapter_list", "mail_adapter_sender_update",
 		"release_create", "release_settings_get", "release_settings_update", "release_publish", "release_unpublish", "release_delete",
 		"release_artwork_set", "release_artwork_remove", "release_slug_check",
 		"release_relations_get", "release_artists_set", "release_labels_set", "release_categories_set", "release_genres_set", "release_styles_set", "release_formats_set", "release_credits_set",
@@ -544,6 +549,8 @@ func compositionContentApplications() contentMCPApplications {
 		mapThemes:    &compositionMapThemeReferences{},
 		menus:        managev1connect.UnimplementedMenuServiceHandler{},
 		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
+		siteSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
+		mailAdapters: &emaildelivery.MailAdapterService{},
 	}
 }
 

@@ -240,8 +240,8 @@ a Post or Page association. Its top-level `file` field uses OpenAI's
 [`openai/fileParams` contract](https://developers.openai.com/plugins/reference#_meta-fields-on-tool-descriptor):
 `download_url`, opaque ChatGPT `file_id`, and optional `file_name`/`mime_type`.
 The server streams the download through the existing File authority, validates
-the actual bytes, and returns a DSUB File UUID. The ChatGPT file ID is never a
-DSUB File selector. Keep the same UUID `correlation_id` when retrying an upload.
+the actual bytes, and returns a File UUID. The ChatGPT file ID is never a
+File selector. Keep the same UUID `correlation_id` when retrying an upload.
 Use `kind=general` for library storage or a supported media kind for its existing
 processing flow. The signed source URL is not returned to the model.
 
@@ -279,6 +279,19 @@ including live authorization and personal-data access auditing. Their compact
 account projection excludes provider identifiers and authentication credentials.
 It includes the avatar asset ID; `member_tag_list` resolves its tag IDs without
 returning individual Member data.
+
+`site_settings_get` reads administrator settings and source File bindings;
+`site_settings_update` sends only supplied keys to the same atomic
+`SiteSettingService.SetManySettings` operation as the admin UI, retaining its
+validation, fresh administrator permission check, attachment handling and audit.
+`mail_adapter_list` returns safe sender/provider metadata without access keys,
+passwords, usernames or tokens. `mail_adapter_sender_update` changes sender
+name/address and optionally activation/priority through the existing Mail Adapter
+update transaction, fresh admin permission, audit and cache invalidation.
+Credentials are preserved server-side under the row lock and never accepted or
+returned by these tools. Sender changes retain admin provider verification and
+may send a verification email to the sender address.
+
 `document_catalog` reads an authorized document's supported kinds, typed fields,
 relations, and File ownership; domain defaults and constraints remain with the
 owning compiler.
