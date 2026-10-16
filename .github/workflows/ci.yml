@@ -69,7 +69,7 @@ jobs:
       # Process-lifecycle tests execute a temporary Node fixture. They do not
       # depend on the media workers or their installed packages.
       - name: Set up Node for process tests
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
 
@@ -103,7 +103,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up media tools
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
           # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
