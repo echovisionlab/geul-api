@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -341,7 +343,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 	}
 	if cleanupOutputID != "" && s.fileDeleter != nil {
 		if err := s.fileDeleter.DeleteFileByID(ctx, cleanupOutputID); err != nil {
-			slog.Warn("Failed to delete superseded mesh optimization output", "file_id", cleanupOutputID, "error", err)
+			slog.Error("Failed to delete superseded mesh optimization output", "file_id", cleanupOutputID, failurecause.Attr(err))
 		}
 	}
 	return &MeshOptimizationGenerateResult{Candidate: candidate, CacheHit: cacheHit, Enqueued: enqueued}, nil
@@ -429,7 +431,17 @@ func (s *MeshOptimizationService) DiscardCandidate(ctx context.Context, candidat
 func (s *MeshOptimizationService) HandleProgress(
 	ctx context.Context,
 	event *managev1.MeshOptimizationProgressEvent,
-) (*model.MeshOptimizationCandidate, error) {
+) (_ *model.MeshOptimizationCandidate, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleProgress", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
+		}
+	}()
 	if event == nil {
 		return nil, errs.Required("event")
 	}
@@ -452,7 +464,17 @@ func (s *MeshOptimizationService) HandleProgress(
 func (s *MeshOptimizationService) HandleComplete(
 	ctx context.Context,
 	event *managev1.MeshOptimizationCompleteEvent,
-) (*model.MeshOptimizationCandidate, error) {
+) (_ *model.MeshOptimizationCandidate, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleComplete", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
+		}
+	}()
 	completion, candidate, err := s.prepareMeshOptimizationCompletion(ctx, event)
 	if err != nil {
 		return nil, err
@@ -663,7 +685,17 @@ func meshOptimizationCompletionUpdates(
 	return updates, model.MeshOptimizationCandidateStatusCancelled
 }
 
-func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *managev1.MeshOptimizationFailEvent) (*model.MeshOptimizationCandidate, error) {
+func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *managev1.MeshOptimizationFailEvent) (_ *model.MeshOptimizationCandidate, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleFailed", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
+		}
+	}()
 	if event == nil {
 		return nil, errs.Required("event")
 	}
@@ -686,6 +718,11 @@ func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *manag
 	if errText == "" {
 		errText = event.GetReason().String()
 	}
+	level := slog.LevelError
+	if event.GetReason() == managev1.MeshOptimizationFailureReason_MESH_OPTIMIZATION_FAILURE_REASON_REJECTED {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "Mesh optimization processing failed", failurecause.Attr(fmt.Errorf("%s", errText)), "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId(), "candidate_id", candidate.ID, "source_file_id", candidate.SourceFileID, "reason", event.GetReason().String())
 	if err := s.db.WithContext(ctx).
 		Model(&model.MeshOptimizationCandidate{}).
 		Where("id = ?", candidate.ID).
@@ -1041,10 +1078,12 @@ func (s *MeshOptimizationService) ensureUserCanEditResource(ctx context.Context,
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 	if err != nil {
+		slog.WarnContext(ctx, "ensureUserCanEditResource: AuthenticationRequired", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	ok, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "ensureUserCanEditResource: DependencyUnavailable", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !ok {

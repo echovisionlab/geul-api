@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -28,6 +29,9 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 	unonboardedQueued, unonboardedErr := account.EnqueueExpiredUnonboardedMembers(
 		ctx, h.db, identityPublisher, h.memberDeletion, now, account.UnonboardedMemberCleanupBatchSize,
 	)
+	if unonboardedErr != nil {
+		slog.ErrorContext(ctx, "Expired unonboarded Member deletion dispatch failed", "failure_cause", failurecause.Message(unonboardedErr))
+	}
 	if unonboardedQueued > 0 {
 		slog.Info("Queued expired unonboarded Member hard deletions", "count", unonboardedQueued)
 	}
@@ -55,10 +59,10 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 	for _, req := range requests {
 		if err := account.DispatchScheduledUserDeletion(ctx, h.db, deletionPublisher, h.spicedbClient, h.memberDeletion, req.ID, now); err != nil {
 			if stderrors.Is(err, account.ErrLastActiveAdminDeletion) {
-				slog.Warn("Scheduled member deletion blocked", "member_id", req.MemberID, "identity_id", req.IdentityID, "reason", "last_active_admin")
+				slog.Warn("Scheduled member deletion blocked", "member_id", req.MemberID, "identity_id", req.IdentityID, "reason", "last_active_admin", "failure_cause", failurecause.Message(err))
 				continue
 			}
-			slog.Warn("Member deletion command publish failed", "member_id", req.MemberID, "identity_id", req.IdentityID, "error", err)
+			slog.ErrorContext(ctx, "Member deletion command publish failed", "member_id", req.MemberID, "identity_id", req.IdentityID, "failure_cause", failurecause.Message(err))
 			continue
 		}
 

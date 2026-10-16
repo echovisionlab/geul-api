@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -278,6 +280,9 @@ func loadPageAIDocumentRoot(ctx context.Context, tx *gorm.DB, pageID, lock strin
 	}
 	documentID, err := uuid.Parse(*root.ContentDocumentID)
 	if err != nil || documentID == uuid.Nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "parse_content_document_id", "outcome", "failed", failurecause.Attr(err))
+		}
 		return model.Page{}, uuid.Nil, errs.InternalMsg("Page content document ID is invalid")
 	}
 	return root, documentID, nil
@@ -381,6 +386,9 @@ func pageAINullableString(value sql.NullString) *string {
 func pageAIContributorIDs(memberID string) []uuid.UUID {
 	parsed, err := uuid.Parse(memberID)
 	if err != nil || parsed == uuid.Nil {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.pageAIContributorIDs", "outcome", "failed", failurecause.Attr(err))
+		}
 		return nil
 	}
 	return []uuid.UUID{parsed}

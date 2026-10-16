@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -78,6 +80,7 @@ func (s *MenuService) compileAIDocument(
 	result := compiledMenuAIDocument{snapshot: working}
 	graph, err := newMenuAIDocumentGraph(working.ID, working.Items)
 	if err != nil {
+		slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 		return result, []AIDocumentIssue{{Operation: -1, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID, Message: err.Error()}}
 	}
 	isSource := working.Locale == working.SourceLocale
@@ -155,6 +158,7 @@ func (s *MenuService) compileAIDocument(
 			}
 			changed, fieldErr := applyMenuAIDocumentSourceField(item, operation)
 			if fieldErr != nil {
+				slog.Warn("Menu field compilation failed", "domain", "menu", "operation", "compile_ai_document_field", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(fieldErr))
 				return result, issue("item:"+operation.ItemID+"/"+operation.Field, fieldErr.Error())
 			}
 			if changed {
@@ -165,6 +169,7 @@ func (s *MenuService) compileAIDocument(
 				return result, targetIssue("item:"+operation.ItemID, "only the source locale may insert Menu items")
 			}
 			if err := graph.insert(operation.ItemID, operation.ParentID, operation.AfterID); err != nil {
+				slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 				return result, issue("item:"+operation.ItemID, err.Error())
 			}
 			result.changed, result.sourceChanged = true, true
@@ -173,6 +178,7 @@ func (s *MenuService) compileAIDocument(
 				return result, targetIssue("item:"+operation.ItemID, "only the source locale may delete Menu items")
 			}
 			if err := graph.delete(operation.ItemID); err != nil {
+				slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 				return result, issue("item:"+operation.ItemID, err.Error())
 			}
 			result.changed, result.sourceChanged = true, true
@@ -182,6 +188,7 @@ func (s *MenuService) compileAIDocument(
 			}
 			changed, err := graph.move(operation.ItemID, operation.ParentID, operation.AfterID)
 			if err != nil {
+				slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 				return result, issue("item:"+operation.ItemID, err.Error())
 			}
 			if changed {
@@ -211,25 +218,30 @@ func (s *MenuService) compileAIDocument(
 
 	working.Items, err = graph.build()
 	if err != nil {
+		slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 		return result, []AIDocumentIssue{{Operation: -1, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID, Message: err.Error()}}
 	}
 	result.snapshot = working
 	if result.sourceChanged {
 		validationOperation := lastMenuAIDocumentMutationIndex(operations)
 		if err := s.validateMenuName(working.Name); err != nil {
+			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 			return result, []AIDocumentIssue{{Operation: validationOperation, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID + "/name", Message: err.Error()}}
 		}
 		if err := validateAIDocumentItemConfiguration(working.Items); err != nil {
+			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 			return result, []AIDocumentIssue{{Operation: validationOperation, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID + "/items", Message: err.Error()}}
 		}
 		validationItems := aiDocumentItemsToModel(working.Items)
 		fillMissingMenuLabelsForStructuralValidation(validationItems)
 		if err := s.validateMenuItems(s.modelItemsToProto(validationItems), 0); err != nil {
+			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 			return result, []AIDocumentIssue{{Operation: validationOperation, Code: AIDocumentIssueInvalidOperation, Handle: "menu:" + working.ID + "/items", Message: err.Error()}}
 		}
 	}
 	if result.sourceValuesChanged || result.targetChanged {
 		if err := validateAIDocumentLocaleLabels(working.Labels); err != nil {
+			slog.Warn("Menu document compilation failed", "domain", "menu", "operation", "compile_ai_document", "outcome", "failed", "menu_id", working.ID, failurecause.Attr(err))
 			return result, []AIDocumentIssue{{
 				Operation: lastMenuAIDocumentMutationIndex(operations),
 				Code:      AIDocumentIssueInvalidOperation,

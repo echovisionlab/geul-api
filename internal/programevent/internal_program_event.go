@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -78,7 +80,18 @@ func NewInternalProgramEventService(db *gorm.DB, asyncPublisher AsyncPublisher, 
 func (s *InternalProgramEventService) LoadProgramEventBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadProgramEventBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadProgramEventBlockDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadProgramEventBlockDocumentResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "LoadProgramEventBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}
@@ -156,7 +169,18 @@ func (s *InternalProgramEventService) LoadProgramEventBlockDocument(
 func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyProgramEventBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyProgramEventBlockBatchResponse], error) {
+) (_ *connect.Response[intrav1.ApplyProgramEventBlockBatchResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ApplyProgramEventBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}
@@ -193,6 +217,7 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 	for index := range batch.LocaleGroups {
 		normalized, normalizeErr := normalizeProgramEventDocumentLocale(batch.LocaleGroups[index].Locale)
 		if normalizeErr != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "ApplyProgramEventBlockBatch", failurecause.Attr(normalizeErr))
 			return nil, errs.InvalidArgument("locale", "unsupported Block locale")
 		}
 		if normalized != locale {
@@ -317,7 +342,18 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateProgramEventLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdateProgramEventLocaleMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdateProgramEventLocaleMetadataResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}
@@ -361,6 +397,7 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 		for index, raw := range req.Msg.ContributorMemberIds {
 			contributors[index], err = uuidutil.ParseCanonical(raw, "contributor_member_ids")
 			if err != nil {
+				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventLocaleMetadata", failurecause.Attr(err))
 				return nil, errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
 			}
 		}

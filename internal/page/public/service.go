@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -115,6 +117,8 @@ func resolvePageLocalizedMetadataSelection(
 		ctx, db, pageLocalizationSpec, pageID, selection.SourceLocale, settings,
 	); availableErr == nil {
 		selection.AvailableLocales = filterPageAvailableLocales(available, selection.SourceLocale, documentLocales)
+	} else {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "page_id", pageID)
 	}
 	return selection, nil
 }
@@ -181,7 +185,19 @@ func NewPageService(
 func (s *PageService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPageRequest],
-) (*connect.Response[openv1.GetPageResponse], error) {
+) (_ *connect.Response[openv1.GetPageResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
+	}()
+
 	slug := req.Msg.Slug
 	shareToken := req.Msg.ShareToken
 	sharePassword := ""
@@ -256,6 +272,7 @@ func (s *PageService) buildPageResponse(
 	}
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, s.db)
 	if settingsErr != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
 		settings = translation.DefaultRuntimeSettings()
 	}
 

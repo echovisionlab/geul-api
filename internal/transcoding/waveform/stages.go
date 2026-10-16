@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -64,7 +65,7 @@ func (p *Processor) createWorkDir(event *apiv1.WaveformGenerateEvent, startedAt 
 
 func (p *Processor) cleanupWorkDir(eventID string) {
 	if err := p.workDirs.CleanupJobWorkDir("waveform-" + eventID); err != nil {
-		slog.Warn("Failed to cleanup waveform work dir", "job_id", eventID, "error", err)
+		slog.Error("Failed to cleanup waveform work dir", "job_id", eventID, failurecause.Attr(err))
 	}
 }
 
@@ -180,6 +181,7 @@ func (p *Processor) failUnlessCancelled(
 	cause error,
 ) error {
 	if p.isCancelled(jobCtx, cause) {
+		slog.WarnContext(jobCtx, "Waveform generation cancelled", failurecause.Attr(cause), "job_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
 		return nil
 	}
 	return p.publishFail(publishCtx, event, startedAt, cause)

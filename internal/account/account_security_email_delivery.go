@@ -3,11 +3,13 @@ package account
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -52,11 +54,20 @@ func PublishAccountSecurityEventEmail(
 	if target.MemberID != memberID {
 		return fmt.Errorf("active Identity is not linked to an onboarded Member")
 	}
-	return email.PublishCommand(ctx, publisher, &managev1.SendEmailEvent{
+	job := &managev1.SendEmailEvent{
 		Recipient:        accountEmail.Email,
 		TemplateType:     eventKey.String(),
 		TemplateData:     templateData,
 		ReferenceId:      &referenceID,
 		RecipientContext: email.AccountSelectedPrimaryEmailContext(identityID),
-	}, messageID)
+	}
+	err = email.PublishCommand(ctx, publisher, job, messageID)
+	if err != nil {
+		privateValues := []string{job.Recipient}
+		for _, value := range job.TemplateData {
+			privateValues = append(privateValues, value)
+		}
+		slog.ErrorContext(ctx, "Account security email publish failed", "template_type", job.TemplateType, "command_id", messageID, failurecause.Attr(err, privateValues...))
+	}
+	return err
 }

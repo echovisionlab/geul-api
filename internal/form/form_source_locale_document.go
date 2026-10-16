@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
 )
@@ -203,6 +205,7 @@ func PrepareSourceLocaleSwitch(
 		return errs.FailedPrecondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("Form source locale document is invalid")
 	}
 	requested, requestedExists, err := loadFormAIDocumentLocale(
@@ -213,12 +216,14 @@ func PrepareSourceLocaleSwitch(
 	}
 	if requestedExists {
 		if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 			return errs.FailedPrecondition("Form requested source locale document is invalid")
 		}
 		return nil
 	}
 	emptySchema, err := formAIDocumentEmptyTargetSchema(source.Schema)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("Form source locale document is invalid")
 	}
 	writeTime := now.UTC()

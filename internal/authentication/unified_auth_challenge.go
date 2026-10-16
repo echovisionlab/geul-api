@@ -3,12 +3,16 @@ package authentication
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -21,14 +25,21 @@ func (h *UnifiedAuthHandler) handleInitialLoginCodeChallenge(
 ) {
 	_, exists, err := h.identityFinder.FindIdentityByCredentialIdentifier(request.Context(), identifier)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "find_login_identity", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err, privateBody))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 	blocked := false
 	if !exists {
 		blocked, err = h.registrationEmailReuseBlocked(request.Context(), identifier)
 		if err != nil {
-			writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+			slog.ErrorContext(request.Context(), "Operation failed", "reason", "check_registration_reuse", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+			writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 			return
 		}
 	}
@@ -48,23 +59,24 @@ func (h *UnifiedAuthHandler) handleBlockedRegistrationCode(
 		registrationEmail = identifier
 	}
 	if registrationEmail == "" {
-		writeKratosProxyError(w, http.StatusBadRequest, "authentication code request is invalid", 0)
+		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 		return true
 	}
 	blocked, err := h.registrationEmailReuseBlocked(request.Context(), registrationEmail)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "check_registration_reuse", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return true
 	}
 	if !blocked {
 		return false
 	}
 	if strings.TrimSpace(code) == "" {
-		h.copyUndeliveredCodeChallenge(w, flowResponse, flow, registrationEmail)
+		h.copyUndeliveredCodeChallenge(request.Context(), w, flowResponse, flow, registrationEmail)
 		return true
 	}
 	markAuthenticationFacadeBlock(request.Context(), sharedtelemetry.AuthenticationBlockRequestInvalid)
-	h.copyUndeliveredInvalidCode(w, flowResponse, flow, registrationEmail)
+	h.copyUndeliveredInvalidCode(request.Context(), w, flowResponse, flow, registrationEmail)
 	return true
 }
 
@@ -104,16 +116,20 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 		true,
 	)
 	if registrationResponse.StatusCode != http.StatusOK {
-		h.copyResponse(w, registrationResponse)
+		h.copyResponse(request.Context(), w, registrationResponse)
 		return
 	}
 	registrationFlow, err := decodeUnifiedAuthFlow(registrationResponse.Body)
 	if err != nil || registrationFlow.ID == "" {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		if err == nil {
+			err = errors.New("registration flow ID is missing")
+		}
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "decode_registration_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 	if registrationBlocked {
-		h.copyUndeliveredCodeChallenge(w, registrationResponse, registrationFlow, identifier)
+		h.copyUndeliveredCodeChallenge(request.Context(), w, registrationResponse, registrationFlow, identifier)
 		return
 	}
 
@@ -127,7 +143,8 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 	} else {
 		payload, err = buildRegistrationCodePayload(originalBody, contentType, registrationFlow, true)
 		if err != nil {
-			writeKratosProxyError(w, http.StatusBadRequest, "authentication code request is invalid", 0)
+			slog.WarnContext(request.Context(), "Operation failed", "reason", "build_registration_payload", "status_code", http.StatusBadRequest, failurecause.Attr(err))
+			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 			return
 		}
 		contentType = "application/json"
@@ -156,7 +173,7 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 	for _, cookie := range mergeUnifiedAuthSetCookies(registrationResponse.Header, capture.Header) {
 		responseHeader.Add("Set-Cookie", cookie)
 	}
-	h.copyResponse(w, bufferedKratosResponse{
+	h.copyResponse(request.Context(), w, bufferedKratosResponse{
 		StatusCode: capture.StatusCode,
 		Header:     responseHeader,
 		Body:       capture.Body,
@@ -168,24 +185,27 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 // registration flow and CSRF cookie remain the authority for later requests;
 // every resend or completion attempt is checked against the hold again.
 func (h *UnifiedAuthHandler) copyUndeliveredCodeChallenge(
+	ctx context.Context,
 	w http.ResponseWriter,
 	response bufferedKratosResponse,
 	flow unifiedAuthFlow,
 	identifier string,
 ) {
-	h.copyUndeliveredCodeFlow(w, response, flow, identifier, "info")
+	h.copyUndeliveredCodeFlow(ctx, w, response, flow, identifier, "info")
 }
 
 func (h *UnifiedAuthHandler) copyUndeliveredInvalidCode(
+	ctx context.Context,
 	w http.ResponseWriter,
 	response bufferedKratosResponse,
 	flow unifiedAuthFlow,
 	identifier string,
 ) {
-	h.copyUndeliveredCodeFlow(w, response, flow, identifier, "error")
+	h.copyUndeliveredCodeFlow(ctx, w, response, flow, identifier, "error")
 }
 
 func (h *UnifiedAuthHandler) copyUndeliveredCodeFlow(
+	ctx context.Context,
 	w http.ResponseWriter,
 	response bufferedKratosResponse,
 	flow unifiedAuthFlow,
@@ -194,12 +214,13 @@ func (h *UnifiedAuthHandler) copyUndeliveredCodeFlow(
 ) {
 	var payload unifiedAuthObject
 	if err := json.Unmarshal(response.Body, &payload); err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		slog.ErrorContext(ctx, "Operation failed", "reason", "decode_undelivered_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(ctx, w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 	ui, ok := payload["ui"].(unifiedAuthObject)
 	if !ok {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		writeKratosProxyError(ctx, w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 	ui["nodes"] = unifiedAuthValues{
@@ -215,14 +236,15 @@ func (h *UnifiedAuthHandler) copyUndeliveredCodeFlow(
 	payload["state"] = "sent_email"
 	body, err := json.Marshal(payload)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		slog.ErrorContext(ctx, "Operation failed", "reason", "encode_undelivered_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(ctx, w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 	response.StatusCode = http.StatusBadRequest
 	response.Body = body
 	response.Header = response.Header.Clone()
 	response.Header.Del("Location")
-	h.copyResponse(w, response)
+	h.copyResponse(ctx, w, response)
 }
 
 func mergeCookies(groups ...[]*http.Cookie) []*http.Cookie {

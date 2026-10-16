@@ -3,7 +3,9 @@ package public
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -174,7 +176,18 @@ func NewProgramEventTypeService(db *gorm.DB) *ProgramEventTypeService {
 func (s *ProgramEventService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetProgramEventRequest],
-) (*connect.Response[openv1.GetProgramEventResponse], error) {
+) (_ *connect.Response[openv1.GetProgramEventResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	slugOrID := strings.TrimSpace(req.Msg.Slug)
 	if slugOrID == "" {
 		return nil, errs.Required("slug")
@@ -253,7 +266,18 @@ func (s *ProgramEventService) Get(
 func (s *ProgramEventService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListProgramEventsRequest],
-) (*connect.Response[openv1.ListProgramEventsResponse], error) {
+) (_ *connect.Response[openv1.ListProgramEventsResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEvent{}).
 		Where("status IN ?", publicProgramEventStatuses())
@@ -294,6 +318,7 @@ func (s *ProgramEventService) List(
 	posterFilesByEvent, posterQueryErr := loadProgramEventPosterFileIDs(ctx, s.db, collectPublicProgramEventIDs(events))
 	posterAssetsByEvent := make(map[string]*commonv1.AssetRef, len(posterFilesByEvent))
 	if posterQueryErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_poster_file_ids", failurecause.Attr(posterQueryErr))
 		for i := range events {
 			posterAssetsByEvent[events[i].ID] = loadProgramEventPosterAsset(ctx, s.db, s.assets, events[i].ID)
 		}
@@ -308,6 +333,9 @@ func (s *ProgramEventService) List(
 			if resolveErr == nil {
 				assetsByFile = resolved
 			} else {
+				if resolveErr != nil {
+					slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolve_poster_assets", failurecause.Attr(resolveErr))
+				}
 				for _, fileID := range posterFileIDs {
 					assetsByFile[fileID] = s.assets.ResolveReadyAssetForSourceFile(ctx, fileID, "poster", "image")
 				}
@@ -389,7 +417,18 @@ func programEventTBAFirstOrder() string {
 func (s *ProgramEventSeriesService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetProgramEventSeriesRequest],
-) (*connect.Response[openv1.GetProgramEventSeriesResponse], error) {
+) (_ *connect.Response[openv1.GetProgramEventSeriesResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	slugOrID := strings.TrimSpace(req.Msg.Slug)
 	if slugOrID == "" {
 		return nil, errs.Required("slug")
@@ -420,7 +459,18 @@ func (s *ProgramEventSeriesService) Get(
 func (s *ProgramEventSeriesService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListProgramEventSeriesRequest],
-) (*connect.Response[openv1.ListProgramEventSeriesResponse], error) {
+) (_ *connect.Response[openv1.ListProgramEventSeriesResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventSeries{}).
 		Where("status = ?", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String())
@@ -455,7 +505,18 @@ func (s *ProgramEventSeriesService) List(
 func (s *ProgramEventTypeService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListProgramEventTypesRequest],
-) (*connect.Response[openv1.ListProgramEventTypesResponse], error) {
+) (_ *connect.Response[openv1.ListProgramEventTypesResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventType{}).
 		Where("status = ?", openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String())
@@ -961,6 +1022,7 @@ func resolveProgramEventLocalization(
 ) (publiccontent.Selection, error) {
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, db)
 	if settingsErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_localization_settings", failurecause.Attr(settingsErr), "event_id", eventID)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	sourceLocale = normalizeSourceLocaleWithDefault(sourceLocale, settings.DefaultLocale)
@@ -1006,6 +1068,10 @@ func resolveProgramEventLocalization(
 			}
 		}
 		selection.AvailableLocales = filtered
+	} else {
+		if availableErr != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_available_locales", failurecause.Attr(availableErr), "event_id", eventID)
+		}
 	}
 	return selection, nil
 }
@@ -1184,6 +1250,9 @@ func loadProgramEventPosterAsset(ctx context.Context, db *gorm.DB, assets Assets
 		 LIMIT 1`,
 		eventID,
 	).Scan(&file).Error; err != nil || strings.TrimSpace(file.FileID) == "" {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventPosterAsset", failurecause.Attr(err), "event_id", eventID)
+		}
 		return nil
 	}
 	return assets.ResolveReadyAssetForSourceFile(ctx, file.FileID, "poster", "image")

@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -317,6 +319,7 @@ func accountSummariesForMembers(ctx context.Context, db *gorm.DB, spicedb *auth.
 	result := make(map[string]*managev1.AccountSummary, len(memberIDs))
 	rows, err := loadAccountSummaryRows(ctx, db, memberIDs)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "accountSummariesForMembers", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	if len(rows) == 0 {
@@ -324,6 +327,7 @@ func accountSummariesForMembers(ctx context.Context, db *gorm.DB, spicedb *auth.
 	}
 	roles, err := globalRolesForAccountIdentities(ctx, spicedb)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "account_role_lookup_failed", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	for _, row := range rows {
@@ -347,6 +351,7 @@ func SummariesForMembers(ctx context.Context, db *gorm.DB, spicedb *auth.SpiceDB
 func accountSummaryForMember(ctx context.Context, db *gorm.DB, spicedb *auth.SpiceDBClient, memberID string) (*managev1.AccountSummary, error) {
 	rows, err := loadAccountSummaryRows(ctx, db, []string{memberID})
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "accountSummaryForMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	if len(rows) != 1 {
@@ -358,10 +363,12 @@ func accountSummaryForMember(ctx context.Context, db *gorm.DB, spicedb *auth.Spi
 	}
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(*row.IdentityID))
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "accountSummaryForMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	role, found, err := spicedb.ReadDirectGlobalRole(ctx, subject)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "account_role_lookup_failed", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !found {
@@ -397,6 +404,7 @@ func sessionSummaryForMember(ctx context.Context, db *gorm.DB, spicedb *auth.Spi
 		WHERE m.id = ?::uuid
 	`, memberID).Scan(&row)
 	if result.Error != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "sessionSummaryForMember", failurecause.Attr(result.Error))
 		return nil, errs.Internal(result.Error)
 	}
 	if result.RowsAffected != 1 {
@@ -406,10 +414,12 @@ func sessionSummaryForMember(ctx context.Context, db *gorm.DB, spicedb *auth.Spi
 	if row.IdentityID != nil {
 		subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(*row.IdentityID))
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "operation", "sessionSummaryForMember", failurecause.Attr(err))
 			return nil, errs.Internal(err)
 		}
 		resolved, found, err := spicedb.ReadDirectGlobalRole(ctx, subject)
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "reason", "account_role_lookup_failed", failurecause.Attr(err))
 			return nil, errs.DependencyUnavailable("SpiceDB")
 		}
 		if !found {

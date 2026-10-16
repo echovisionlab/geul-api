@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -81,7 +82,7 @@ func newMemberOnboardingMetrics() memberOnboardingMetrics {
 		otelmetric.WithDescription("Counts welcome command outcomes after a committed Member onboarding transition."),
 	)
 	if err != nil {
-		slog.Warn("Failed to create Member onboarding welcome counter", "error", err)
+		slog.Warn("Failed to create Member onboarding welcome counter", "failure_cause", failurecause.Message(err))
 		return memberOnboardingMetrics{}
 	}
 	return memberOnboardingMetrics{welcomePublishCounter: counter}
@@ -217,14 +218,17 @@ func (s *MemberService) isGlobalAuthor(ctx context.Context) (bool, error) {
 	}
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "isGlobalAuthor", failurecause.Attr(err))
 		return false, errs.Internal(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 		return false, errs.InvalidSession()
 	}
 	allowed, err := s.spicedb.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
 		return false, errs.DependencyUnavailable("SpiceDB")
 	}
 	return allowed, nil

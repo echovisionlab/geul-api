@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -59,6 +61,7 @@ func (s *AccountService) SetAccountRole(
 		if errors.As(err, &connectErr) {
 			return nil, connectErr
 		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "SetAccountRole", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	return s.accountSummaryForAdmin(ctx, req.Msg.MemberId)
@@ -100,6 +103,7 @@ func (s *AccountService) setAccountRoleWithIdentityMutation(
 		}
 		decision, err := auth.AuthorizationDecision(mutationCtx, adminCan)
 		if err != nil {
+			slog.WarnContext(mutationCtx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 			return errs.InvalidSession()
 		}
 		isAdmin, err := s.spicedb.Can(mutationCtx, decision)

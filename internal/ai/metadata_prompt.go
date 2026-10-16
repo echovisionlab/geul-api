@@ -3,10 +3,12 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -26,6 +28,9 @@ type metadataContextPayload struct {
 func buildMetadataResponseJSONSchema(userPrompt string) structured.Fields {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil || len(payload.Task.RequestedKeys) == 0 {
+		if err != nil {
+			slog.Error("Metadata response schema parsing failed", "domain", "ai", "event", "ai.metadata.schema_failed", failurecause.Attr(err, userPrompt))
+		}
 		return nil
 	}
 
@@ -74,6 +79,7 @@ func metadataAIUserPrompt(contextText, prompt string) string {
 func validateMetadataAIUserPrompt(userPrompt string) error {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil {
+		slog.Warn("Invalid metadata context", "domain", "ai", "event", "ai.metadata.context_rejected", "failure_cause", failurecause.Message(err, userPrompt))
 		return errs.InvalidArgument("context", "metadata-json requires a valid structured JSON payload")
 	}
 	if payload == nil || len(payload.Task.RequestedKeys) == 0 {

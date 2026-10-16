@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
 	"github.com/aws/smithy-go"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -117,6 +118,13 @@ func (a *SESAdapter) Send(ctx context.Context, email *Email) (*SendResult, error
 
 	output, err := a.client.SendEmail(ctx, input)
 	if err != nil {
+		private := []string{email.To, email.Subject, email.HTML, email.Text, a.from}
+		if sender, parseErr := mail.ParseAddress(a.from); parseErr == nil {
+			private = append(private, sender.Name)
+		}
+		if recipient, parseErr := mail.ParseAddress(email.To); parseErr == nil {
+			private = append(private, recipient.Name)
+		}
 		logAdapterLifecycle(
 			ctx,
 			slog.LevelError,
@@ -129,6 +137,7 @@ func (a *SESAdapter) Send(ctx context.Context, email *Email) (*SendResult, error
 			"failed",
 			"provider_request_failed",
 			"provider_error",
+			"failure_cause", failurecause.Message(err, private...),
 		)
 		return nil, classifySESDeliveryError(err)
 	}
@@ -139,7 +148,7 @@ func (a *SESAdapter) Send(ctx context.Context, email *Email) (*SendResult, error
 			false,
 			fmt.Errorf("SES SendEmail returned nil output"),
 		)
-		logAdapterLifecycle(ctx, slog.LevelError, "Email provider response was invalid", "mail.provider.failed", a.id, a.name, email, "", "failed", "missing_provider_response", "provider_response_invalid")
+		logAdapterLifecycle(ctx, slog.LevelError, "Email provider response was invalid", "mail.provider.failed", a.id, a.name, email, "", "failed", "missing_provider_response", "provider_response_invalid", failurecause.Attr(err))
 		return nil, err
 	}
 	if output.MessageId == nil {
@@ -148,7 +157,7 @@ func (a *SESAdapter) Send(ctx context.Context, email *Email) (*SendResult, error
 			false,
 			fmt.Errorf("SES SendEmail returned nil MessageId"),
 		)
-		logAdapterLifecycle(ctx, slog.LevelError, "Email provider response was invalid", "mail.provider.failed", a.id, a.name, email, "", "failed", "missing_provider_message_id", "provider_response_invalid")
+		logAdapterLifecycle(ctx, slog.LevelError, "Email provider response was invalid", "mail.provider.failed", a.id, a.name, email, "", "failed", "missing_provider_message_id", "provider_response_invalid", failurecause.Attr(err))
 		return nil, err
 	}
 	messageID := strings.TrimSpace(*output.MessageId)
@@ -158,7 +167,7 @@ func (a *SESAdapter) Send(ctx context.Context, email *Email) (*SendResult, error
 			false,
 			fmt.Errorf("SES SendEmail returned empty MessageId"),
 		)
-		logAdapterLifecycle(ctx, slog.LevelError, "Email provider response was invalid", "mail.provider.failed", a.id, a.name, email, "", "failed", "missing_provider_message_id", "provider_response_invalid")
+		logAdapterLifecycle(ctx, slog.LevelError, "Email provider response was invalid", "mail.provider.failed", a.id, a.name, email, "", "failed", "missing_provider_message_id", "provider_response_invalid", failurecause.Attr(err))
 		return nil, err
 	}
 	logAdapterLifecycle(

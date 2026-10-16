@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -174,6 +176,7 @@ func requireCampaignEmailDocumentLoad(
 	}
 	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		slog.WarnContext(ctx, "Collaboration principal rejected", "domain", "campaign", "event", "campaign.principal_rejected", "outcome", "blocked", failurecause.Attr(err, principal.GetSessionId()))
 		return errs.AuthenticationRequired()
 	}
 	if err != nil {
@@ -201,10 +204,12 @@ func requireCampaignEmailDocumentLoad(
 	authorizationCtx := auth.WithUser(ctx, resolved)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation rejected", "domain", "campaign", "event", "campaign.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(authorizationCtx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "campaign", "event", "campaign.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -282,6 +287,7 @@ func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string
 	}
 	normalized, err := normalizeCampaignDocumentLocale(sourceLocale)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "campaign", "event", "campaign.operation_failed", "operation", "load_source_locale", "outcome", "failed", failurecause.Attr(err))
 		return contentblock.DomainContext{}, errs.FailedPrecondition("Campaign translation source locale is invalid")
 	}
 	return contentblock.DomainContext{SourceLocale: normalized}, nil
@@ -422,17 +428,22 @@ func normalizeCampaignEmailContentBlockError(entityType string, err error) error
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
+		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
+		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.NotFoundMsg("campaign content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
+		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "campaign content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
+		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):
+		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "Campaign documents cannot contain File Blocks")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())

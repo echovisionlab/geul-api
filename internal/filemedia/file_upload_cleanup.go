@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -74,7 +75,7 @@ func (s *FileService) abortUploadSession(
 		if IsMissingMultipartUploadAbortError(abortErr) {
 			slog.Info("Upload session was already absent in object storage", "uploadId", session.UploadID, "fileId", session.FileID)
 		} else {
-			slog.Warn("Failed to abort upload session", "uploadId", session.UploadID, "fileId", session.FileID, "error", abortErr)
+			slog.ErrorContext(ctx, "Failed to abort upload session", "uploadId", session.UploadID, "fileId", session.FileID, failurecause.Attr(abortErr))
 			return fmt.Errorf("failed to abort upload session %s: %w", session.UploadID, abortErr)
 		}
 	}
@@ -203,7 +204,7 @@ func (s *FileService) publishTranscodeCancelIfSupported(
 	}
 	if publisher, ok := s.publisher.(transcodeCancelPublisher); ok {
 		if err := publisher.PublishTranscodeCancel(ctx, event); err != nil {
-			slog.Warn("Failed to publish editor file transcode cancel event", "error", err, "fileId", fileID)
+			slog.ErrorContext(ctx, "Failed to publish editor file transcode cancel event", failurecause.Attr(err), "fileId", fileID, "entityType", entityType.String(), "entityId", entityID, "reason", reason.String())
 		}
 	}
 	type transcodeJobCanceller interface {
@@ -211,7 +212,7 @@ func (s *FileService) publishTranscodeCancelIfSupported(
 	}
 	if canceller, ok := s.publisher.(transcodeJobCanceller); ok {
 		if err := canceller.MarkCancelled(ctx, fileID, reason); err != nil {
-			slog.Warn("Failed to mark editor file transcode job cancelled", "error", err, "fileId", fileID)
+			slog.ErrorContext(ctx, "Failed to mark editor file transcode job cancelled", failurecause.Attr(err), "fileId", fileID, "entityType", entityType.String(), "entityId", entityID, "reason", reason.String())
 		}
 	}
 }

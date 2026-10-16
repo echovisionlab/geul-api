@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 
@@ -135,7 +136,7 @@ func (h *Handlers) cleanupExpiredUploadSession(
 			// authoritative and must not be retained until the publisher recovers.
 			slog.Warn(
 				"Failed to publish expired file ingest lifecycle before cleanup",
-				"error", err,
+				"failure_cause", failurecause.Message(err),
 				"uploadId", session.UploadID,
 				"fileId", session.FileID,
 			)
@@ -188,6 +189,9 @@ func isExpiredFileIngestLifecyclePublishable(session expiredUploadSession) bool 
 		return false
 	}
 	_, err := expiredUploadProjectionIdentity(session, entityType)
+	if err != nil {
+		slog.Warn("Expired upload projection identity rejected", "upload_id", session.UploadID, "file_id", session.FileID, "upload_type", session.UploadType, "entity_type", entityType.String(), "failure_cause", failurecause.Message(err))
+	}
 	return err == nil
 }
 
@@ -218,7 +222,7 @@ func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session expired
 	if err := h.fileIngest.PublishFileIngest(ctx, event); err != nil {
 		slog.Warn(
 			"Failed to publish expired file ingest lifecycle",
-			"error", err,
+			"failure_cause", failurecause.Message(err),
 			"uploadType", session.UploadType,
 			"entityType", entityType.String(),
 			"entityId", entityID,
@@ -281,6 +285,7 @@ func expiredUploadProjectionIdentity(
 	if session.ExpectedCurrentFileID != nil {
 		value := strings.TrimSpace(*session.ExpectedCurrentFileID)
 		if _, err := uuid.Parse(value); err != nil {
+			slog.Warn("Invalid expired upload projection identity", "upload_id", session.UploadID, "file_id", session.FileID, "failure_cause", failurecause.Message(err))
 			return nil, fmt.Errorf("expected current file ID is invalid")
 		}
 		expectedCurrentFileID = &value

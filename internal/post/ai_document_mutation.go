@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -148,6 +150,7 @@ func (s *PostService) ExecuteAIDocumentMutation(
 		); err != nil {
 			switch connect.CodeOf(err) {
 			case connect.CodeUnauthenticated, connect.CodePermissionDenied:
+				slog.WarnContext(ctx, "Post AI document permission rejected", "domain", "post", "operation", "authorize_ai_document_mutation", "outcome", "failed", "post_id", postID, failurecause.Attr(err))
 				return errs.NotFound("post", postID)
 			default:
 				return err
@@ -205,10 +208,12 @@ func (s *PostService) ExecuteAIDocumentMutation(
 		case errors.As(err, &conflict):
 			return AIDocumentMutationResult{}, conflict
 		case errors.As(err, &stale):
+			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "map_ai_document_conflict", "outcome", "failed", failurecause.Attr(err))
 			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 				Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
 			}
 		case errors.As(err, &targetConflict):
+			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "map_ai_document_conflict", "outcome", "failed", failurecause.Attr(err))
 			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 				Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: mutation.ExpectedRevision.String(),
 				CurrentTargetRevision: postAIDocumentTargetConflictRevision(targetConflict),
@@ -226,6 +231,9 @@ func validateCompiledPostAIDocumentMutation(
 ) (uuid.UUID, error) {
 	documentID, err := uuid.Parse(state.ContentDocumentID)
 	if err != nil || documentID == uuid.Nil || documentID.String() != state.ContentDocumentID {
+		if err != nil {
+			slog.ErrorContext(context.Background(), "content operation failed", "domain", "post", "operation", "parse_content_document_id", "outcome", "failed", failurecause.Attr(err))
+		}
 		return uuid.Nil, errs.FailedPrecondition("Post content document identity is invalid")
 	}
 	if mutation.PostID != state.PostID || mutation.Locale != state.RequestedLocale ||

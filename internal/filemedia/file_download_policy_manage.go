@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -52,7 +54,17 @@ type fileDownloadPolicyRelation struct {
 func (s *FileService) GetFileDownloadPolicy(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFileDownloadPolicyRequest],
-) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
+) (_ *connect.Response[managev1.GetFileDownloadPolicyResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetFileDownloadPolicy", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	selector, err := validateFileDownloadPolicySelector(
 		req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath,
 	)
@@ -83,7 +95,17 @@ func (s *FileService) GetFileDownloadPolicy(
 func (s *FileService) UpdateFileDownloadPolicy(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFileDownloadPolicyRequest],
-) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
+) (_ *connect.Response[managev1.UpdateFileDownloadPolicyResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "UpdateFileDownloadPolicy", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	selector, err := validateFileDownloadPolicySelector(
 		req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath,
 	)
@@ -647,14 +669,17 @@ func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient)
 	}
 	can, err := policyv1.File.List()
 	if err != nil {
+		slog.WarnContext(ctx, "requireFileDownloadAuthor: AuthorRequired", failurecause.Attr(err))
 		return nil, errs.AuthorRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "requireFileDownloadAuthor: AuthenticationRequired", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "requireFileDownloadAuthor: DependencyUnavailable", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

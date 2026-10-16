@@ -16,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -36,7 +37,21 @@ type multipartUploadInitiation struct {
 func (s *FileService) InitiateMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.InitiateMultipartUploadRequest],
-) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
+) (_ *connect.Response[managev1.InitiateMultipartUploadResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			privateName := ""
+			if req != nil && req.Msg != nil {
+				privateName = req.Msg.GetFileName()
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "InitiateMultipartUpload", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	initiation, err := s.prepareMultipartUploadInitiation(ctx, req.Msg)
 	if err != nil {
 		return nil, err
@@ -337,7 +352,7 @@ func (s *FileService) abortMultipartUploadAfterInsertFailure(
 		Bucket: aws.String(s.s3Bucket), Key: aws.String(fileKey), UploadId: uploadID,
 	})
 	if err != nil {
-		slog.Warn("Failed to abort multipart upload after session insert failure", "error", err, "fileKey", fileKey)
+		slog.Error("Failed to abort multipart upload after session insert failure", failurecause.Attr(err), "fileKey", fileKey)
 	}
 }
 

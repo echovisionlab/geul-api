@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -129,7 +131,9 @@ func (g *aiTranslationGenerator) Translate(
 		return nil, err
 	}
 	defer func() {
-		_ = session.Close(ctx)
+		if logErr := session.Close(ctx); logErr != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(logErr), "request_id", req.RequestID)
+		}
 	}()
 
 	return session.Translate(ctx, req)
@@ -301,11 +305,13 @@ func parseTranslationProviderResponse(req ProviderRequest, text string) (*Provid
 	trimmed := extractJSONObject(text)
 	var envelope translationJSONEnvelope
 	if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
+		slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.decode_failed", "outcome", "failed", failurecause.Attr(err), "request_id", req.RequestID, "operation_id", req.OperationID)
 		return nil, fmt.Errorf("%w: invalid JSON envelope", ErrProviderResponseInvalid)
 	}
 
 	providerDocument, err := xliffProviderResponseFromAI(req.Document, envelope)
 	if err != nil {
+		slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.inline_failed", "outcome", "failed", failurecause.Attr(err), "request_id", req.RequestID, "operation_id", req.OperationID)
 		return nil, ErrProviderResponseInvalid
 	}
 	raw := ProviderResponse{Document: providerDocument}
@@ -396,6 +402,7 @@ func ValidateResponse(
 					parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q target is empty", unit.ID))
 				}
 				if err := validateXLIFFUnitInline(unit, true, isEmailTemplateFile(expected.File.ID)); err != nil {
+					slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.inline_validation_failed", "outcome", "failed", failurecause.Attr(err))
 					parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q inline structure changed", unit.ID))
 				}
 				if CountLineBreaks(expectedUnitTexts[unit.ID]) != CountLineBreaks(*unit.Target) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -115,7 +116,7 @@ func (application *InteractiveMutationApplication) Apply(
 		return result, nil
 	}
 
-	slog.WarnContext(postCommitCtx, "Interactive AI document relay failed; transactional content event retained", "relay_error", relayErr)
+	slog.WarnContext(postCommitCtx, "Interactive AI document relay failed; transactional content event retained", "failure_cause", failurecause.Message(relayErr), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
 
 	return result, nil
 }

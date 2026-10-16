@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -191,6 +193,7 @@ func applyTypedTranslationCandidateWithDB(
 	if _, err := uuidFromCanonicalString(
 		candidate.ContentDocumentRevision,
 	); err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "release_id", job.EntityID, "locale", job.TargetLocale)
 		return errTranslationSourceNoLongerCurrent
 	}
 	currentSnapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, currentSource.SourceLocale)
@@ -259,6 +262,9 @@ func applyTypedTranslationCandidateWithDB(
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == currentSource.SourceLocale {
 		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 		if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+			if parseErr != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(parseErr), "job_id", job.ID, "release_id", job.EntityID, "locale", job.TargetLocale)
+			}
 			return errs.InternalMsg("Release translation audit requires canonical requester Member")
 		}
 		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
@@ -276,6 +282,7 @@ func applyTypedTranslationCandidateWithDB(
 			},
 		)
 		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(applyErr), "job_id", job.ID, "release_id", job.EntityID, "locale", job.TargetLocale)
 			return errTranslationSourceNoLongerCurrent
 		}
 		if applyErr != nil {
@@ -302,6 +309,7 @@ func applyTypedTranslationCandidateWithDB(
 		Now: metadataInput.Now, Fence: internalReleaseContentFence(job.EntityID),
 	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "release_id", job.EntityID, "locale", job.TargetLocale)
 		return errTranslationSourceNoLongerCurrent
 	}
 	if err != nil {

@@ -3,10 +3,12 @@ package geoip
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"gorm.io/gorm"
 )
 
@@ -158,6 +160,10 @@ func (l *Lookup) queryDB(ctx context.Context, ip string) *Info {
 		LIMIT 1
 	`, ip).Scan(&result).Error
 
+	if err != nil {
+		cause := failurecause.Message(err)
+		slog.ErrorContext(ctx, "GeoIP lookup failed", "domain", "geoip", "event", "geoip.lookup_failed", "outcome", "failed", "failure_cause", cause)
+	}
 	if err != nil || result.CountryCode == "" {
 		return nil
 	}

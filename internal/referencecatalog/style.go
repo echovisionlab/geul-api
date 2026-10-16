@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -73,7 +75,19 @@ var styleCRUD = referenceCRUD[model.Style]{
 func (s *StyleService) ListStyles(
 	ctx context.Context,
 	req *connect.Request[managev1.ListStylesRequest],
-) (*connect.Response[managev1.ListStylesResponse], error) {
+) (_ *connect.Response[managev1.ListStylesResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListStyles", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	styles, total, page, err := styleCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -90,7 +104,19 @@ func (s *StyleService) ListStyles(
 func (s *StyleService) ListStylesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListStylesAdminRequest],
-) (*connect.Response[managev1.ListStylesAdminResponse], error) {
+) (_ *connect.Response[managev1.ListStylesAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListStylesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Style.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -122,7 +148,19 @@ func (s *StyleService) ListStylesAdmin(
 func (s *StyleService) CreateStyle(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateStyleRequest],
-) (*connect.Response[managev1.Style], error) {
+) (_ *connect.Response[managev1.Style], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateStyle", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Style.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -164,7 +202,19 @@ func (s *StyleService) CreateStyle(
 func (s *StyleService) UpdateStyle(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateStyleRequest],
-) (*connect.Response[managev1.Style], error) {
+) (_ *connect.Response[managev1.Style], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateStyle", "outcome", "failed", "style_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Style.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -200,7 +250,19 @@ func (s *StyleService) UpdateStyle(
 func (s *StyleService) DeleteStyle(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteStyleRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteStyle", "outcome", "failed", "style_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Style.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

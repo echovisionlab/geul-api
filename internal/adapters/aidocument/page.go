@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -436,6 +438,7 @@ func pageDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
+	slog.Warn("Page document operation rejected", failurecause.Attr(err), "operation_index", index)
 	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
 }
 

@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -164,7 +166,19 @@ func postAuditState(status model.PostStatus) sharedtelemetry.AuditState {
 func (s *PostService) GetPost(
 	ctx context.Context,
 	req *connect.Request[managev1.GetPostRequest],
-) (*connect.Response[managev1.Post], error) {
+) (_ *connect.Response[managev1.Post], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.GetPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).
 		Preload("Categories").
@@ -192,7 +206,19 @@ func (s *PostService) GetPost(
 func (s *PostService) ListPostsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPostsAdminRequest],
-) (*connect.Response[managev1.ListPostsAdminResponse], error) {
+) (_ *connect.Response[managev1.ListPostsAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if err := requirePostList(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -330,7 +356,19 @@ func (s *PostService) ListPostsAdmin(
 func (s *PostService) CreatePost(
 	ctx context.Context,
 	req *connect.Request[managev1.CreatePostRequest],
-) (*connect.Response[managev1.Post], error) {
+) (_ *connect.Response[managev1.Post], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreatePost", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()
@@ -368,7 +406,19 @@ func (s *PostService) CreatePost(
 func (s *PostService) UpdatePost(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdatePostRequest],
-) (*connect.Response[managev1.UpdatePostResponse], error) {
+) (_ *connect.Response[managev1.UpdatePostResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -475,6 +525,7 @@ func (s *PostService) updatePostWithDB(ctx context.Context, tx *gorm.DB, post *m
 	}
 	expectedRevision, err := uuidutil.ParseCanonical(update.expectedConfigurationRevision, "expected_configuration_revision")
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.updatePostWithDB", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.InvalidArgumentMsg("expected_configuration_revision must be a canonical UUID")
 	}
 	if expectedRevision.String() != post.ConfigurationRevision {
@@ -544,7 +595,19 @@ func optionalPostValueEqual(current, next any) bool {
 func (s *PostService) DeletePost(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePostRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeletePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Post content Block store is not configured")
 	}
@@ -575,6 +638,7 @@ func (s *PostService) DeletePost(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.DeletePost", "outcome", "failed", failurecause.Attr(err))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		deleteRelationships, restoreRelationships, err := postAuthorizationDeletionBatches(post.ID, snapshots)
@@ -642,7 +706,19 @@ func (s *PostService) DeletePost(
 func (s *PostService) PublishPost(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishPostRequest],
-) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.PublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
@@ -700,7 +776,19 @@ func (s *PostService) PublishPost(
 func (s *PostService) UnpublishPost(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishPostRequest],
-) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UnpublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
@@ -747,7 +835,19 @@ func (s *PostService) UnpublishPost(
 func (s *PostService) ArchivePost(
 	ctx context.Context,
 	req *connect.Request[managev1.ArchivePostRequest],
-) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ArchivePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
@@ -816,7 +916,19 @@ func (s *PostService) postLifecycleMutationResponse(
 func (s *PostService) SetPostFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetPostFeaturedImageRequest],
-) (*connect.Response[managev1.SetPostFeaturedImageResponse], error) {
+) (_ *connect.Response[managev1.SetPostFeaturedImageResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.SetPostFeaturedImage", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	// Verify post exists and check permission.
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
@@ -892,7 +1004,19 @@ func (s *PostService) SetPostFeaturedImage(
 func (s *PostService) DeletePostFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePostFeaturedImageRequest],
-) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
+) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeletePostFeaturedImage", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {

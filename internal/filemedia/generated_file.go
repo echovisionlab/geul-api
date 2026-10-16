@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -16,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -96,6 +98,7 @@ func (s *FileService) CreateGeneratedGeneralFile(
 		return download, nil
 	}
 
+	slog.ErrorContext(ctx, "Generated file commit failed; reconciling", failurecause.Attr(createErr), "file_id", fileID)
 	// A database commit error can be uncertain after the SpiceDB write. Re-read
 	// the authoritative File row before deciding whether the staged object is
 	// orphaned; never delete an object for a transaction that did commit.

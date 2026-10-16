@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	geoipdomain "github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -90,7 +91,7 @@ func (e *RefreshExecutor) ImportLatestIfOlderThan(
 	}
 	defer func() {
 		if err := archive.Close(); err != nil {
-			slog.Warn("Failed to remove temporary GeoIP archive", "error", err)
+			slog.Warn("Failed to remove temporary GeoIP archive", "failure_cause", failurecause.Message(err))
 		}
 	}()
 
@@ -356,6 +357,7 @@ func downloadGeoIPArchive(ctx context.Context, client httpDoer, downloadURL stri
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "Failed to download GeoIP database", "failure_cause", failurecause.Message(err))
 		// The request URL contains the MaxMind license key. Do not wrap transport
 		// errors because common HTTP clients include the full request URL.
 		return nil, fmt.Errorf("download GeoIP database: provider request failed")
@@ -374,11 +376,15 @@ func downloadGeoIPArchive(ctx context.Context, client httpDoer, downloadURL stri
 	archive := &geoIPArchive{file: tmp, path: tmp.Name()}
 	written, err := io.Copy(tmp, io.LimitReader(resp.Body, geoIPMaxArchiveBytes+1))
 	if err != nil {
-		_ = archive.Close()
+		if closeErr := archive.Close(); closeErr != nil {
+			slog.ErrorContext(ctx, "Failed to remove temporary GeoIP archive", "failure_cause", failurecause.Message(closeErr))
+		}
 		return nil, fmt.Errorf("write temporary GeoIP archive: %w", err)
 	}
 	if written > geoIPMaxArchiveBytes {
-		_ = archive.Close()
+		if closeErr := archive.Close(); closeErr != nil {
+			slog.ErrorContext(ctx, "Failed to remove temporary GeoIP archive", "failure_cause", failurecause.Message(closeErr))
+		}
 		return nil, fmt.Errorf("GeoIP database archive exceeds the download size limit")
 	}
 	archive.size = written

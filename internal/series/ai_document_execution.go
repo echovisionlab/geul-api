@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -34,7 +36,18 @@ func (s *AIDocumentService) Load(
 	ctx context.Context,
 	identity core.DocumentIdentity,
 	locale core.Locale,
-) (core.Document, error) {
+) (_ core.Document, terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "Load", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := validatePostSeriesAIDocumentIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
@@ -166,7 +179,27 @@ func (s *AIDocumentService) executeMutation(
 	ctx context.Context,
 	request core.ApplyRequest,
 	mode postSeriesAIExecutionMode,
-) (core.ValidationResult, core.ApplyResult, error) {
+) (_ core.ValidationResult, _ core.ApplyResult, terminalErr error) {
+	defer func() {
+		var conflict *core.ConflictError
+		var invalid *core.ValidationError
+		expected := errors.As(terminalErr, &conflict) || errors.As(terminalErr, &invalid)
+		if expected {
+			if terminalErr != nil {
+				slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "executeMutation", failurecause.Attr(terminalErr))
+			}
+		} else {
+			if terminalErr != nil {
+				level := slog.LevelWarn
+				switch connect.CodeOf(terminalErr) {
+				case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+					level = slog.LevelError
+				}
+				slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "executeMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+			}
+		}
+	}()
+
 	identity := request.Identity()
 	if err := validatePostSeriesAIDocumentIdentity(identity); err != nil {
 		return core.ValidationResult{}, core.ApplyResult{}, err
@@ -222,6 +255,7 @@ func (s *AIDocumentService) executeMutation(
 	if err != nil {
 		var invalid *postSeriesAIAdapterValidationError
 		if errors.As(err, &invalid) {
+			slog.WarnContext(ctx, "AI document validation rejected", "domain", "series", "operation", "executeMutation", "series_id", string(identity.Reference), "locale", string(request.Locale), failurecause.Attr(err))
 			if mode == postSeriesAIExecutionValidate {
 				return invalid.result, core.ApplyResult{}, nil
 			}

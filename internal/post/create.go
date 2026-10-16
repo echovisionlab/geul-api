@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -289,6 +291,7 @@ func (s *PostService) persistInitialPostDocument(
 
 func mapCreatePostError(err error, requestedSlug *string) error {
 	if strings.Contains(err.Error(), "duplicate key") {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 		return errs.SlugAlreadyExists("post", ptrStringValue(requestedSlug))
 	}
 	if connect.CodeOf(err) != connect.CodeUnknown {

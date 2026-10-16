@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
 	publicsitesettings "github.com/echovisionlab/geul-api/internal/sitesettings/public"
@@ -64,12 +66,12 @@ func (p *PublicProjection) Menus(
 		}
 		var items []model.MenuItem
 		if err := json.Unmarshal(menu.Items, &items); err != nil {
-			slog.Warn("failed to unmarshal menu items for manifest", "menu_id", menu.ID, "error", err)
+			slog.Warn("failed to unmarshal menu items for manifest", "menu_id", menu.ID, "failure_cause", failurecause.Message(err))
 			return nil, nil
 		}
 		localized, err := p.menus.Localize(ctx, p.db, menu.ID, items, acceptLanguage)
 		if err != nil {
-			slog.Warn("failed to project localized menu items for manifest", "menu_id", menu.ID, "error", err)
+			slog.Warn("failed to project localized menu items for manifest", "menu_id", menu.ID, "failure_cause", failurecause.Message(err))
 		} else {
 			items = localized
 		}
@@ -110,6 +112,11 @@ func selectedManifestMenuIDs(settings *model.SiteSettings) []string {
 func (p *PublicProjection) ReadySourceAsset(ctx context.Context, fileID, kind string) *commonv1.AssetRef {
 	asset, err := p.assets.ReadyRef(ctx, p.db, fileID, kind)
 	if err != nil {
+		level := slog.LevelError
+		if connect.CodeOf(err) == connect.CodeNotFound {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Failed to resolve Site Settings public asset", "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	return asset
@@ -118,6 +125,11 @@ func (p *PublicProjection) ReadySourceAsset(ctx context.Context, fileID, kind st
 func (p *PublicProjection) ReadyAsset(ctx context.Context, assetID string) *commonv1.AssetRef {
 	asset, err := p.assets.ReadyAsset(ctx, p.db, assetID)
 	if err != nil {
+		level := slog.LevelError
+		if connect.CodeOf(err) == connect.CodeNotFound {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Failed to resolve Site Settings public asset", "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	return asset

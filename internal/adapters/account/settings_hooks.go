@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/adapters/kratoswebhook"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type AfterSettingsRequest struct {
@@ -86,18 +87,22 @@ func (h *SettingsHooksHandler) AfterSettings(w http.ResponseWriter, r *http.Requ
 	})
 	if err != nil {
 		if errors.Is(err, account.ErrAccountSettingsHookInput) {
+			slog.WarnContext(r.Context(), "Account settings hook rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrAccountSettingsHookInput", "flow_id", req.FlowID)
 			http.Error(w, "Missing identity_id or flow_id", http.StatusBadRequest)
 			return
 		}
 		if errors.Is(err, account.ErrCanonicalEmailGuardFailed) {
+			slog.ErrorContext(r.Context(), "Failed to validate canonical account email", "failure_cause", failurecause.Message(err), "identity_id", req.IdentityID, "flow_id", req.FlowID)
 			kratoswebhook.WriteError(w, http.StatusInternalServerError, "Could not validate account settings.", "canonical_email_guard_failed")
 			return
 		}
 		if errors.Is(err, account.ErrCanonicalEmailChangeForbidden) {
+			slog.WarnContext(r.Context(), "Account settings hook rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrCanonicalEmailChangeForbidden", "flow_id", req.FlowID)
 			kratoswebhook.WriteError(w, http.StatusConflict, "Change email through the verification flow.", "canonical_email_change_forbidden")
 			return
 		}
 		if errors.Is(err, account.ErrAccountEmailChangeConflict) {
+			slog.WarnContext(r.Context(), "Account settings hook rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrAccountEmailChangeConflict", "flow_id", req.FlowID)
 			kratoswebhook.WriteError(
 				w,
 				http.StatusConflict,
@@ -107,6 +112,7 @@ func (h *SettingsHooksHandler) AfterSettings(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if errors.Is(err, account.ErrAccountEmailChangeInFlight) {
+			slog.WarnContext(r.Context(), "Account settings hook rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrAccountEmailChangeInFlight", "flow_id", req.FlowID)
 			kratoswebhook.WriteError(
 				w,
 				http.StatusConflict,
@@ -115,7 +121,7 @@ func (h *SettingsHooksHandler) AfterSettings(w http.ResponseWriter, r *http.Requ
 			)
 			return
 		}
-		slog.ErrorContext(r.Context(), "Failed to stage account email change", "error", err, "identity_id", req.IdentityID, "flow_id", req.FlowID)
+		slog.ErrorContext(r.Context(), "Failed to stage account email change", "failure_cause", failurecause.Message(err), "identity_id", req.IdentityID, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(w, http.StatusInternalServerError, "Could not stage the account email change.", "email_change_stage_failed")
 		return
 	}
@@ -140,10 +146,15 @@ func (h *SettingsHooksHandler) AfterVerification(w http.ResponseWriter, r *http.
 	})
 	if err != nil {
 		if errors.Is(err, account.ErrAccountSettingsHookInput) {
+			slog.WarnContext(r.Context(), "Account verification hook rejected request", "failure_cause", failurecause.Message(err), "flow_id", req.FlowID)
 			http.Error(w, "Missing identity_id or flow_id", http.StatusBadRequest)
 			return
 		}
-		slog.ErrorContext(r.Context(), "Failed to reconcile verified pending email", "error", err, "identity_id", req.IdentityID, "flow_id", req.FlowID)
+		level := slog.LevelError
+		if errors.Is(err, account.ErrAccountEmailChangeConflict) {
+			level = slog.LevelWarn
+		}
+		slog.Log(r.Context(), level, "Failed to reconcile verified pending email", "failure_cause", failurecause.Message(err), "identity_id", req.IdentityID, "flow_id", req.FlowID)
 		if errors.Is(err, account.ErrAccountEmailChangeConflict) {
 			kratoswebhook.WriteError(w, http.StatusConflict, "That email address is already linked to another account.", "email_change_conflict")
 			return
@@ -186,6 +197,7 @@ func (h *SettingsHooksHandler) completeSettingsCredentialMutation(
 	auditID := strings.TrimSpace(r.Header.Get("Ory-Webhook-Trigger-ID"))
 	input := credentialHookInput(req, kind, auditID)
 	if err := h.credentialHooks.Complete(r.Context(), input); err != nil {
+		slog.ErrorContext(r.Context(), "Failed to complete account credential change", "failure_cause", failurecause.Message(err), "flow_id", req.FlowID, "identity_id", req.IdentityID, "kind", string(kind))
 		kratoswebhook.WriteError(w, http.StatusInternalServerError, "Could not complete the sign-in method change.", "auth_method_completion_failed")
 		return
 	}
@@ -206,6 +218,11 @@ func (h *SettingsHooksHandler) validateSettingsCredentialMutation(
 	}
 	input := credentialHookInput(req, kind, "")
 	if err := h.credentialHooks.Validate(r.Context(), input); err != nil {
+		level := slog.LevelError
+		if errors.Is(err, account.ErrAccountCredentialUnrecoverable) || errors.Is(err, account.ErrMemberPrimaryEmailUnavailable) {
+			level = slog.LevelWarn
+		}
+		slog.Log(r.Context(), level, "Failed to validate account credential change", "flow_id", req.FlowID, "identity_id", req.IdentityID, "kind", string(kind), "failure_cause", failurecause.Message(err))
 		switch {
 		case errors.Is(err, account.ErrAccountCredentialUnrecoverable):
 			kratoswebhook.WriteError(w, http.StatusForbidden, "Keep email sign-in or another social sign-in method connected.", "recoverable_auth_method")

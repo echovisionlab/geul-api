@@ -1,14 +1,17 @@
 package referencecatalog
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const referenceValueMaxLength = 100
@@ -42,6 +45,8 @@ func classifyReferenceUniqueViolation(resource string, name string, slug string,
 	if !isUniqueViolation(err) {
 		return errs.Internal(err)
 	}
+
+	slog.WarnContext(context.Background(), "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err), "resource", resource)
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

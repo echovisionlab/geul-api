@@ -2,12 +2,14 @@ package public
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -36,7 +38,19 @@ func NewMapPlaceService(db *gorm.DB, assets AssetReader) *MapPlaceService {
 func (s *MapPlaceService) GetByIds(
 	ctx context.Context,
 	req *connect.Request[openv1.GetMapPlacesByIdsRequest],
-) (*connect.Response[openv1.GetMapPlacesByIdsResponse], error) {
+) (_ *connect.Response[openv1.GetMapPlacesByIdsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.GetMapPlacesByIds", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	ids := req.Msg.Ids
 	if len(ids) == 0 {
 		return connect.NewResponse(&openv1.GetMapPlacesByIdsResponse{

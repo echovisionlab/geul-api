@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/model"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
@@ -42,7 +44,12 @@ func NewDeletion(db *gorm.DB, authorization AuthorizationDeletion) *Deletion {
 func (h *Deletion) ValidatePending(
 	ctx context.Context,
 	event *managev1.FileDeleteEvent,
-) (bool, error) {
+) (_ bool, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Failed to validate pending file deletion", failurecause.Attr(resultErr), "file_id", event.GetFileId())
+		}
+	}()
 	var exists bool
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var file model.File
@@ -165,7 +172,12 @@ func validateExactFileMediaGenerationTargets(
 	return nil
 }
 
-func (h *Deletion) Finalize(ctx context.Context, event *managev1.FileDeleteEvent) error {
+func (h *Deletion) Finalize(ctx context.Context, event *managev1.FileDeleteEvent) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Failed to finalize file deletion", failurecause.Attr(resultErr), "file_id", event.GetFileId())
+		}
+	}()
 	return executeCompensatedTransaction(ctx, h.db, func(tx *gorm.DB, registerCompensation registerTransactionCompensation) error {
 		if err := authzmutation.LockTransaction(tx); err != nil {
 			return err

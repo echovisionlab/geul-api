@@ -2,7 +2,9 @@
 package query
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
@@ -225,6 +228,7 @@ func (c *FilterConfig) parseValue(def FieldDef, field, value string) (structured
 	case TypeID:
 		if def.IsFK || strings.HasSuffix(field, "_id") || field == "id" {
 			if _, err := uuid.Parse(value); err != nil {
+				slog.WarnContext(context.Background(), "content operation failed", "domain", "query", "operation", "query.parseValue", "outcome", "failed", failurecause.Attr(err))
 				return nil, errs.InvalidArgument(field, "invalid UUID format")
 			}
 		}
@@ -240,6 +244,8 @@ func (c *FilterConfig) parseValue(def FieldDef, field, value string) (structured
 		}
 		if f, err := strconv.ParseFloat(value, 64); err == nil {
 			return f, nil
+		} else {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "query", "operation", "parse_number_filter", "outcome", "failed", failurecause.Attr(err))
 		}
 		return nil, errs.InvalidArgument(field, "invalid number format")
 
@@ -249,6 +255,7 @@ func (c *FilterConfig) parseValue(def FieldDef, field, value string) (structured
 			// Try date-only format
 			t, err = time.Parse("2006-01-02", value)
 			if err != nil {
+				slog.WarnContext(context.Background(), "content operation failed", "domain", "query", "operation", "query.parseValue", "outcome", "failed", failurecause.Attr(err))
 				return nil, errs.InvalidArgument(field, "invalid date format (use RFC3339 or YYYY-MM-DD)")
 			}
 		}
@@ -257,6 +264,7 @@ func (c *FilterConfig) parseValue(def FieldDef, field, value string) (structured
 	case TypeBool:
 		b, err := strconv.ParseBool(value)
 		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "query", "operation", "query.parseValue", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.InvalidArgument(field, "invalid boolean (use true/false)")
 		}
 		return b, nil

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -40,17 +42,21 @@ func (s *GatewayAuthorizationService) AuthorizeGatewayAccess(
 	}
 	identityID, err := uuidutil.ParseCanonical(req.Msg.GetAccountIdentityId(), "account_identity_id")
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 		return nil, errs.InvalidSession()
 	}
 	sessionID, err := uuidutil.ParseCanonical(req.Msg.GetSessionId(), "session_id")
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 		return nil, errs.InvalidSession()
 	}
 	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, s.db, sessionID.String())
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		slog.WarnContext(ctx, "Operation failed", "reason", "gateway_session_invalid", failurecause.Attr(err))
 		return nil, errs.InvalidSession()
 	}
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("principal database")
 	}
 	if principal.IdentityID != auth.IdentityID(identityID.String()) || principal.Banned || !principal.Onboarded {
@@ -58,6 +64,7 @@ func (s *GatewayAuthorizationService) AuthorizeGatewayAccess(
 	}
 	can, ok, err := gatewayAuthorizationCan(req.Msg.GetRole())
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "AuthorizeGatewayAccess", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	if !ok {
@@ -66,10 +73,12 @@ func (s *GatewayAuthorizationService) AuthorizeGatewayAccess(
 	authorizationCtx := auth.WithUser(ctx, principal)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 		return nil, errs.InvalidSession()
 	}
 	authorized, err := s.spicedb.Can(authorizationCtx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !authorized {

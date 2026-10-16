@@ -94,7 +94,19 @@ func NewEmailCourierService(
 func (s *EmailCourierService) SendEmail(
 	ctx context.Context,
 	req *connect.Request[intrav1.SendEmailRequest],
-) (*connect.Response[intrav1.SendEmailResponse], error) {
+) (rpcResponse *connect.Response[intrav1.SendEmailResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "mail", "event", "mail.rpc_failed", "operation", "SendEmail", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), "failure_cause", requestFailureCause(rpcErr, req.Msg), "template_type", req.Msg.GetTemplateType())
+	}()
+
 	slog.Info("Received email request from Kratos",
 		"template_type", req.Msg.TemplateType,
 	)
@@ -140,7 +152,7 @@ func (s *EmailCourierService) SendEmail(
 		req.Msg.TemplateData,
 	)
 	if err != nil {
-		LogDeliveryFailure(ctx, "mail.courier.invalid_issuance_provenance", &managev1.SendEmailEvent{Recipient: req.Msg.Recipient, TemplateType: req.Msg.TemplateType, TemplateData: templateData, Locale: &targetLocale}, err, "reason", "invalid_issuance_provenance")
+		slog.WarnContext(ctx, "Authentication issuance provenance rejected", "domain", "mail", "event", "mail.courier.invalid_issuance_provenance", "outcome", "blocked", "template_type", req.Msg.TemplateType, "locale", targetLocale, "reason", "invalid_issuance_provenance", "failure_cause", requestFailureCause(err, req.Msg))
 		return nil, errs.PermissionDenied("authentication issuance provenance is invalid")
 	}
 
@@ -168,6 +180,7 @@ func (s *EmailCourierService) SendEmail(
 		if !allowed {
 			slog.Warn("Skipped login-code email before queue",
 				"identity_id", identityID,
+				"template_type", req.Msg.TemplateType,
 				"reason", reason,
 			)
 			return connect.NewResponse(&intrav1.SendEmailResponse{Queued: false}), nil

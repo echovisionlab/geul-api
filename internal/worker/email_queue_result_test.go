@@ -89,7 +89,7 @@ func TestEmailQueueRetryLogsOriginalCauseAndRenderContext(t *testing.T) {
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
 	require.Equal(t, "ERROR", entry["level"])
 	require.Equal(t, "mail.worker.provider_failed", entry["event"])
-	require.Contains(t, entry["error"], "provider quota exhausted")
+	require.Contains(t, entry["failure_cause"], "provider quota exhausted")
 	require.Equal(t, "template:welcome", entry["template_type"])
 	require.Equal(t, "ko", entry["locale"])
 	require.Equal(t, "layout-1", entry["layout_id"])

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -41,7 +42,7 @@ func newSpiceDBMetrics() spiceDBMetrics {
 		otelmetric.WithDescription("Counts final SpiceDB permission checks by bounded outcome."),
 	)
 	if err != nil {
-		slog.Warn("failed to create SpiceDB authorization check counter", "error", err)
+		slog.Warn("failed to create SpiceDB authorization check counter", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.checkCounter = checkCounter
 	}
@@ -51,7 +52,7 @@ func newSpiceDBMetrics() spiceDBMetrics {
 		otelmetric.WithDescription("Records final SpiceDB permission-check latency by bounded outcome."),
 	)
 	if err != nil {
-		slog.Warn("failed to create SpiceDB authorization check duration histogram", "error", err)
+		slog.Warn("failed to create SpiceDB authorization check duration histogram", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.checkDuration = checkDuration
 	}
@@ -61,7 +62,7 @@ func newSpiceDBMetrics() spiceDBMetrics {
 		otelmetric.WithDescription("Counts SpiceDB relationship mutations by bounded operation and outcome."),
 	)
 	if err != nil {
-		slog.Warn("failed to create SpiceDB authorization write counter", "error", err)
+		slog.Warn("failed to create SpiceDB authorization write counter", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.writeCounter = writeCounter
 	}
@@ -71,7 +72,7 @@ func newSpiceDBMetrics() spiceDBMetrics {
 		otelmetric.WithDescription("Records SpiceDB relationship-mutation latency by bounded operation and outcome."),
 	)
 	if err != nil {
-		slog.Warn("failed to create SpiceDB authorization write duration histogram", "error", err)
+		slog.Warn("failed to create SpiceDB authorization write duration histogram", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.writeDuration = writeDuration
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -163,7 +164,18 @@ func applyPublicWorkFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*go
 func (s *WorkService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetWorkRequest],
-) (*connect.Response[openv1.GetWorkResponse], error) {
+) (_ *connect.Response[openv1.GetWorkResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	return s.buildWorkResponse(ctx, req)
 }
 
@@ -171,7 +183,18 @@ func (s *WorkService) Get(
 func (s *WorkService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListWorksRequest],
-) (*connect.Response[openv1.ListWorksResponse], error) {
+) (_ *connect.Response[openv1.ListWorksResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var works []model.Work
 	var total int64
 
@@ -217,7 +240,7 @@ func (s *WorkService) List(
 		req.Header().Get("Accept-Language"),
 	)
 	if err != nil {
-		slog.Warn("failed to resolve work summary localizations", "error", err)
+		slog.ErrorContext(ctx, "failed to resolve work summary localizations", failurecause.Attr(err))
 	}
 
 	// Convert to proto summaries
@@ -241,7 +264,18 @@ func (s *WorkService) List(
 func (s *WorkService) ListMapFeatures(
 	ctx context.Context,
 	req *connect.Request[openv1.ListWorkMapFeaturesRequest],
-) (*connect.Response[openv1.ListWorkMapFeaturesResponse], error) {
+) (_ *connect.Response[openv1.ListWorkMapFeaturesResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListMapFeatures", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	viewport, err := normalizeWorkMapViewport(req.Msg.Viewport)
 	if err != nil {
 		return nil, err
@@ -464,6 +498,10 @@ func (s *WorkService) buildWorkResponse(
 		metadata, err := structpb.NewStruct(work.Metadata)
 		if err == nil {
 			protoWork.Metadata = metadata
+		} else {
+			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "convert_public_work_metadata", failurecause.Attr(err), "work_id", work.ID)
+			}
 		}
 	}
 
@@ -784,13 +822,15 @@ func (s *WorkService) loadWorkPublicRelationsSnapshot(
 	snapshot := workPublicRelationsSnapshot{}
 	// These two legacy projections intentionally suppress read errors. Isolate
 	// them with savepoints so a failed optional read does not poison the RR tx.
-	_ = tx.Transaction(func(savepoint *gorm.DB) error {
+	if err := tx.Transaction(func(savepoint *gorm.DB) error {
 		return savepoint.WithContext(ctx).
 			Where("work_id = ?", work.ID).
 			Order("sort_order ASC").
 			Order("id ASC").
 			Find(&snapshot.CreditGroups).Error
-	})
+	}); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "load_credit_groups", failurecause.Attr(err), "work_id", work.ID)
+	}
 
 	if err := tx.WithContext(ctx).
 		Where("work_id = ?", work.ID).
@@ -799,7 +839,7 @@ func (s *WorkService) loadWorkPublicRelationsSnapshot(
 		return workPublicRelationsSnapshot{}, errs.Internal(err)
 	}
 
-	_ = tx.Transaction(func(savepoint *gorm.DB) error {
+	if err := tx.Transaction(func(savepoint *gorm.DB) error {
 		return savepoint.WithContext(ctx).
 			Table("work_client wc").
 			Select("c.id, c.name, c.website, c.logo_light_file_id AS light_file_id, c.logo_dark_file_id AS dark_file_id").
@@ -807,7 +847,9 @@ func (s *WorkService) loadWorkPublicRelationsSnapshot(
 			Where("wc.work_id = ?", work.ID).
 			Order("wc.sort_order ASC").
 			Scan(&snapshot.Clients).Error
-	})
+	}); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "load_clients", failurecause.Attr(err), "work_id", work.ID)
+	}
 
 	return snapshot, nil
 }
@@ -866,6 +908,9 @@ func (s *WorkService) loadPublicCreditArtist(ctx context.Context, artistID strin
 		Select("artist.id, "+workdomain.ArtistSourceTitleSQL("artist")+" AS name, artist.slug").
 		Where("artist.id = ?", artistID).
 		Scan(&artist).Error; err != nil || artist.ID == "" {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadPublicCreditArtist", failurecause.Attr(err), "artist_id", artistID)
+		}
 		return nil
 	}
 	result := &openv1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug}

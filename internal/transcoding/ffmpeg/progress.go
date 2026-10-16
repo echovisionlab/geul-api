@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // ProgressCallback receives an FFmpeg progress percentage.
@@ -81,7 +83,7 @@ func listenFFmpegProgressWith(
 	// Create Unix socket listener
 	listener, err := listen("unix", sockPath)
 	if err != nil {
-		slog.Warn("Failed to create progress socket", "error", err)
+		slog.Warn("Failed to create progress socket", failurecause.Attr(err))
 		return
 	}
 	defer func() { _ = listener.Close() }()
@@ -103,7 +105,7 @@ func listenFFmpegProgressWith(
 		return
 	case result := <-acceptCh:
 		if result.err != nil {
-			slog.Warn("Failed to accept progress connection", "error", result.err)
+			slog.Warn("Failed to accept progress connection", failurecause.Attr(result.err))
 			return
 		}
 		conn = result.conn
@@ -139,7 +141,7 @@ func readFFmpegProgress(ctx context.Context, source io.Reader, totalDurationSec 
 	}
 
 	if err := scanner.Err(); err != nil && !strings.Contains(err.Error(), "use of closed") {
-		slog.Debug("Progress scanner error", "error", err)
+		slog.ErrorContext(ctx, "Progress scanner error", failurecause.Attr(err))
 	}
 }
 

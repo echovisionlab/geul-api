@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -80,7 +81,7 @@ func (s *FileService) rejectMultipartUploadPart(
 			http.Error(w, "Upload session is finalizing", http.StatusConflict)
 			return false
 		}
-		slog.Warn("Failed to abort rejected multipart upload", "error", err, "uploadId", session.UploadID)
+		slog.Error("Failed to abort rejected multipart upload", failurecause.Attr(err), "uploadId", session.UploadID)
 		http.Error(w, "Failed to abort rejected upload", http.StatusInternalServerError)
 		return false
 	}
@@ -229,9 +230,8 @@ func (s *FileService) uploadAndRecordMultipartPart(
 			})
 			if err != nil {
 				if updateErr := lockedService.recordRetryableMultipartPartFailure(ctx, session, time.Now()); updateErr != nil {
-					slog.Warn(
-						"Failed to preserve multipart upload session after retryable part failure",
-						"error", updateErr,
+					slog.Error("Failed to preserve multipart upload session after retryable part failure",
+						failurecause.Attr(updateErr),
 						"uploadId", session.UploadID,
 						"fileId", session.FileID,
 					)
@@ -326,11 +326,13 @@ func (s *FileService) validateRelayedMultipartUploadPart(
 		return false
 	}
 	if err := validateMultipartPartContentLength(request.session, request.partNumber, r.ContentLength); err != nil {
+		slog.WarnContext(r.Context(), "Upload part length rejected", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		writeMultipartPartFailure(w, progressEmitter, err.Error(), http.StatusBadRequest)
 		return false
 	}
 	claimed, err := s.claimMultipartUploadPartActivity(r.Context(), request.session.UploadID, request.session.FileID)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Failed to refresh upload session", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Failed to refresh upload session", http.StatusInternalServerError)
 		return false
 	}
@@ -382,13 +384,13 @@ func (s *FileService) uploadRelayedMultipartPart(
 		r.Context(), request.session, request.fileKey, request.partNumber, body, detectedMIME,
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
+		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return "", false
 	}
 	if err != nil {
-		slog.Error(
-			"Failed to upload relayed multipart part",
-			"error", err,
+		slog.Error("Failed to upload relayed multipart part",
+			failurecause.Attr(err),
 			"fileKey", request.fileKey,
 			"partNumber", request.partNumber,
 		)
@@ -427,6 +429,7 @@ func (s *FileService) prepareMultipartFirstPart(
 		return nil, "", false
 	}
 	if err := validateMultipartFirstPartGLB(prefix, request.session, detected); err != nil {
+		slog.WarnContext(r.Context(), "Upload GLB prefix rejected", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		s.rejectMultipartFirstPart(w, r, request.session, err.Error())
 		return nil, "", false
 	}
@@ -456,6 +459,9 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 	}
 	prefix, err := io.ReadAll(http.MaxBytesReader(w, r.Body, expectedPrefixSize))
 	if err != nil || int64(len(prefix)) != expectedPrefixSize {
+		if err != nil {
+			slog.WarnContext(r.Context(), "Failed to read upload prefix", failurecause.Attr(err), "uploadId", request.uploadID)
+		}
 		http.Error(w, "Failed to read upload prefix", http.StatusBadRequest)
 		return
 	}
@@ -474,6 +480,7 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := validateMultipartFirstPartGLB(prefix, request.session, detected); err != nil {
+		slog.WarnContext(r.Context(), "Upload GLB prefix rejected", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		s.rejectMultipartFirstPart(w, r, request.session, err.Error())
 		return
 	}
@@ -501,10 +508,12 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
+		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Failed to verify upload prefix", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Failed to verify upload prefix", http.StatusInternalServerError)
 		return
 	}
@@ -553,10 +562,12 @@ func (s *FileService) HandlePresignUploadPart(w http.ResponseWriter, r *http.Req
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
+		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Failed to prepare upload part", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Failed to prepare upload part", http.StatusInternalServerError)
 		return
 	}
@@ -574,6 +585,7 @@ func (s *FileService) HandlePresignUploadPart(w http.ResponseWriter, r *http.Req
 		func(options *s3.PresignOptions) { options.Expires = multipartPresignTTL },
 	)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Failed to sign upload part", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Failed to sign upload part", http.StatusInternalServerError)
 		return
 	}
@@ -633,15 +645,17 @@ func (s *FileService) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Req
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
+		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return
 	}
 	if errors.Is(err, errMultipartUploadedPartNotFound) {
+		slog.WarnContext(r.Context(), "Uploaded multipart part missing", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Uploaded part was not found in object storage", http.StatusConflict)
 		return
 	}
 	if err != nil {
-		slog.Error("Failed to confirm multipart upload part", "error", err, "uploadId", request.uploadID, "partNumber", request.partNumber)
+		slog.Error("Failed to confirm multipart upload part", failurecause.Attr(err), "uploadId", request.uploadID, "partNumber", request.partNumber)
 		http.Error(w, "Failed to confirm upload part", http.StatusInternalServerError)
 		return
 	}
@@ -731,11 +745,17 @@ func (s *FileService) loadMultipartUploadPartRequest(
 			status = http.StatusNotFound
 			message = "Upload session not found"
 		}
+		level := slog.LevelError
+		if status == http.StatusNotFound {
+			level = slog.LevelWarn
+		}
+		slog.Log(r.Context(), level, "Failed to load upload session", failurecause.Attr(err), "uploadId", request.uploadID)
 		http.Error(w, message, status)
 		return request, false
 	}
 	fileKey, err := uploadSessionObjectKey(request.session)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Invalid upload session target", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Invalid upload session target", http.StatusInternalServerError)
 		return request, false
 	}
@@ -749,13 +769,7 @@ func (s *FileService) validateMultipartUploadPartPermission(
 	request multipartUploadPartRequest,
 ) bool {
 	if err := s.checkPartUploadPermission(r.Context(), request.memberID, request.session); err != nil {
-		slog.Warn(
-			"Upload part permission denied",
-			"member_id", request.memberID,
-			"entityType", derefString(request.session.EntityType),
-			"entityID", request.session.EntityID,
-			"uploadType", request.session.UploadType,
-		)
+		slog.WarnContext(r.Context(), "Upload part permission denied", failurecause.Attr(err), "member_id", request.memberID, "uploadId", request.uploadID, "fileId", request.session.FileID, "entityType", derefString(request.session.EntityType), "entityID", request.session.EntityID, "uploadType", request.session.UploadType)
 		http.Error(w, "permission denied", http.StatusForbidden)
 		return false
 	}
@@ -778,6 +792,7 @@ func (s *FileService) multipartPartProgressEmitter(
 	)
 	if emitter != nil {
 		if err := s.bindUploadSessionIngestEmitter(emitter, request.session); err != nil {
+			slog.ErrorContext(ctx, "Failed to restore multipart progress emitter", failurecause.Attr(err), "uploadId", request.uploadID)
 			return nil
 		}
 	}
@@ -796,6 +811,7 @@ func (s *FileService) publishMultipartPartProgress(
 	if err := s.db.WithContext(ctx).Model(&model.UploadPart{}).
 		Where("upload_id = ?", request.session.UploadID).
 		Select("COALESCE(SUM(size), 0)").Scan(&uploadedBytes).Error; err != nil {
+		slog.ErrorContext(ctx, "Failed to load multipart progress", failurecause.Attr(err), "uploadId", request.uploadID)
 		return
 	}
 	progress := int32(0)
@@ -826,6 +842,6 @@ func (s *FileService) rejectMultipartFirstPart(
 func writeMultipartJSON(w http.ResponseWriter, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		slog.Warn("Failed to write multipart control response", "error", err)
+		slog.Warn("Failed to write multipart control response", failurecause.Attr(err))
 	}
 }

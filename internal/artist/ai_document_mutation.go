@@ -3,11 +3,14 @@ package artist
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -28,7 +31,26 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 	locale string,
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentMutationCompiler,
-) (AIDocumentMutationResult, error) {
+) (_ AIDocumentMutationResult, terminalErr error) {
+	defer func() {
+		var conflict *AIDocumentRevisionConflictError
+		expected := errors.As(terminalErr, &conflict)
+		if expected {
+			if terminalErr != nil {
+				slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr))
+			}
+		} else {
+			if terminalErr != nil {
+				level := slog.LevelWarn
+				switch connect.CodeOf(terminalErr) {
+				case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+					level = slog.LevelError
+				}
+				slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+			}
+		}
+	}()
+
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil || s.translation == nil || s.runtime == nil {
 		return AIDocumentMutationResult{}, errs.Internal(errors.New("artist AI document dependencies are not configured"))
 	}
@@ -40,6 +62,7 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 	}
 	canonicalArtistID, err := canonicalArtistUUID(artistID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
 		return AIDocumentMutationResult{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeArtistDocumentLocale(locale)
@@ -70,6 +93,7 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 		}
 		memberID, err := canonicalArtistUUID(principal.MemberID.String())
 		if err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
 			return errs.NotFound("artist", root.ID)
 		}
 		state, err := s.loadAIDocumentStateAfterAuthorization(
@@ -135,6 +159,7 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
 		if errors.As(err, &targetConflict) {
+			slog.WarnContext(ctx, "AI document revision conflict", "domain", "artist", "operation", "ExecuteAIDocumentMutation", "artist_id", artistID, "locale", locale, failurecause.Attr(err))
 			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 				Kind: AIDocumentTargetRevisionConflict, CurrentRevision: input.ExpectedRevision,
 				CurrentTargetRevision: artistTargetConflictRevision(targetConflict),
@@ -314,10 +339,12 @@ func requireArtistAIDocumentMutationAuthority(ctx context.Context, tx *gorm.DB, 
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistAIDocumentMutationAuthority", failurecause.Attr(err))
 		return false, errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistAIDocumentMutationAuthority", failurecause.Attr(err))
 		return false, errs.DependencyUnavailable("SpiceDB")
 	}
 	return allowed, nil

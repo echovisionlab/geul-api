@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
@@ -67,7 +68,7 @@ func newCancelSubscriber(
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Error("PostgreSQL signal listener stopped; reconnecting", "signal", signal, "ready", becameReady, "error", err)
+			slog.Error("PostgreSQL signal listener stopped; reconnecting", "signal", signal, "ready", becameReady, failurecause.Attr(err))
 			timer := time.NewTimer(time.Second)
 			select {
 			case <-ctx.Done():
@@ -87,17 +88,21 @@ func newCancelSubscriber(
 
 func handleCancelSignal(payload []byte, decode func([]byte) (string, error), handler func(string) bool) {
 	var envelope eventpkg.Envelope
-	if json.Unmarshal(payload, &envelope) != nil {
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		slog.WarnContext(context.Background(), "Invalid cancellation envelope", failurecause.Attr(err))
 		return
 	}
 	body, err := envelope.Payload()
 	if err != nil {
+		slog.WarnContext(context.Background(), "Invalid cancellation payload", failurecause.Attr(err), "message_id", envelope.MessageID, "command_id", envelope.CorrelationID)
 		return
 	}
 	id, err := decode(body)
-	if err == nil {
-		handler(id)
+	if err != nil {
+		slog.WarnContext(context.Background(), "Invalid cancellation command", failurecause.Attr(err), "message_id", envelope.MessageID, "command_id", envelope.CorrelationID)
+		return
 	}
+	handler(id)
 }
 
 // NewCancelSubscriber creates and starts a transcode cancellation subscriber.

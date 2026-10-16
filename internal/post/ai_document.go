@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -104,6 +106,7 @@ func (s *PostService) LoadAIDocumentState(
 
 func validatePostAIDocumentIdentity(postID, locale string) (string, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "post.validatePostAIDocumentIdentity", "outcome", "failed", failurecause.Attr(err))
 		return "", errs.InvalidArgument("post_id", "must be a canonical UUID")
 	}
 	normalizedLocale := localization.NormalizeExactSupportedLocale(locale)
@@ -148,6 +151,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 ) (AIDocumentState, error) {
 	documentID, err := uuidutil.ParseCanonical(*root.ContentDocumentID, "content_document_id")
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadAIDocumentStateAfterAuthorization", "outcome", "failed", failurecause.Attr(err))
 		return AIDocumentState{}, errs.FailedPrecondition("Post content document identity is invalid")
 	}
 	domain, err := loadPostContentDomainContext(ctx, tx, root.ID)

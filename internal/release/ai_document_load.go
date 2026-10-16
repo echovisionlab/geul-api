@@ -4,22 +4,37 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func (s *InternalReleaseService) LoadAIDocumentState(ctx context.Context, releaseID, locale string) (AIDocumentState, error) {
+func (s *InternalReleaseService) LoadAIDocumentState(ctx context.Context, releaseID, locale string) (_ AIDocumentState, terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentState{}, errs.Internal(errors.New("release AI document dependencies are not configured"))
 	}
 	id, err := uuidFromCanonicalString(releaseID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "LoadAIDocumentState", failurecause.Attr(err))
 		return AIDocumentState{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeReleaseDocumentLocale(locale)

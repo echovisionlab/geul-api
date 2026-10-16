@@ -3,6 +3,7 @@ package translationadapter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -161,6 +163,9 @@ func loadProviderLocaleFence(
 	documentRevision := strings.TrimSpace(row.DocumentRevision)
 	parsedRevision, err := uuid.Parse(documentRevision)
 	if err != nil || parsedRevision == uuid.Nil || parsedRevision.String() != documentRevision {
+		if err != nil {
+			slog.ErrorContext(ctx, "Stored translation document revision is invalid", failurecause.Attr(err), "entity_type", job.EntityType, "entity_id", job.EntityID, "locale", job.TargetLocale)
+		}
 		return providerLocaleFence{}, errs.FailedPrecondition(
 			"Content Document revision is not a canonical UUID",
 		)
@@ -424,6 +429,7 @@ func (r *DomainRegistry) RequireSourceLocaleEdit(
 
 func maskTranslationAuthorizationDenial(err error, entityType string, entityID string) error {
 	if connect.CodeOf(err) == connect.CodePermissionDenied {
+		slog.Warn("Translation access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
 		return errs.NotFound(entityType, entityID)
 	}
 	return err

@@ -3,9 +3,11 @@ package release
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -70,10 +72,12 @@ func requireReleaseGlobalAction(ctx context.Context, checker CollaborationPermis
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseGlobalAction", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseGlobalAction", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -113,14 +117,17 @@ func requireReleaseAction(
 	}
 	can, err := action.can(releaseID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseAction", failurecause.Attr(err))
 		return errs.NotFound("release", releaseID)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseAction", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "requireReleaseAction", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -144,14 +151,17 @@ func requireTrackAction(
 	}
 	can, err := action.can(trackID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireTrackAction", failurecause.Attr(err))
 		return errs.NotFound("track", trackID)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "requireTrackAction", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "requireTrackAction", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

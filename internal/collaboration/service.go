@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -73,6 +75,9 @@ func (s *Service) AuthorizeCollaboration(
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) ||
 		(principal != nil && (principal.Banned || !principal.Onboarded)) {
+		if err != nil {
+			slog.WarnContext(ctx, "Collaboration session rejected", "resource_type", req.Msg.Resource.GetType().String(), "failure_cause", failurecause.Message(err))
+		}
 		return authorizationDenied(
 			intrav1.CollaborationAuthorizationDenialReason_COLLABORATION_AUTHORIZATION_DENIAL_REASON_SESSION_INVALID,
 		), nil
@@ -90,6 +95,7 @@ func (s *Service) AuthorizeCollaboration(
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
+		slog.WarnContext(ctx, "Collaboration principal rejected", "resource_type", req.Msg.Resource.GetType().String(), "failure_cause", failurecause.Message(err))
 		return authorizationDenied(
 			intrav1.CollaborationAuthorizationDenialReason_COLLABORATION_AUTHORIZATION_DENIAL_REASON_SESSION_INVALID,
 		), nil

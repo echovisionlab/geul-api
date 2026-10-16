@@ -1,7 +1,11 @@
 package emaildelivery
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -12,6 +16,7 @@ type providerOutcomeStoreStub struct {
 	event  SESProviderOutcomeEvent
 	result SESProviderOutcomeResult
 	calls  int
+	err    error
 }
 
 func (s *providerOutcomeStoreStub) ApplySESProviderOutcome(
@@ -23,7 +28,7 @@ func (s *providerOutcomeStoreStub) ApplySESProviderOutcome(
 	if s.result.UpdatedRecipients == 0 && len(s.result.MatchedRecipientEmails) == 0 {
 		s.result.UpdatedRecipients = 1
 	}
-	return s.result, nil
+	return s.result, s.err
 }
 
 type suppressionWriterStub struct{ requests []SuppressionRequest }
@@ -87,4 +92,25 @@ func TestProviderNotificationProcessorIgnoresTransientBounce(t *testing.T) {
 	}))
 	require.Zero(t, outcomes.calls)
 	require.Empty(t, suppressions.requests)
+}
+
+func TestProviderNotificationFailureLogsCauseAndProviderCorrelation(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	failure := errors.New(`write outcome: relation "email_delivery_recipient" missing for reader@example.test password=private-secret`)
+	processor := NewProviderNotificationProcessor(&providerOutcomeStoreStub{err: failure}, &suppressionWriterStub{})
+	err := processor.ProcessProviderNotification(t.Context(), ProviderNotification{
+		Type: "delivery", ProviderMessageID: "provider-1", OccurredAt: time.Now().UTC(),
+	})
+	require.ErrorIs(t, err, failure)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+	require.Equal(t, "ERROR", entry["level"])
+	require.Equal(t, "provider-1", entry["provider_message_id"])
+	require.Equal(t, "delivered", entry["provider_outcome"])
+	require.Contains(t, entry["failure_cause"], `relation "email_delivery_recipient" missing`)
+	require.NotContains(t, output.String(), "reader@example.test")
+	require.NotContains(t, output.String(), "private-secret")
 }

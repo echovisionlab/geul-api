@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/config"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/storage"
+	"github.com/minio/minio-go/v7"
 )
 
 type FontProxy struct {
@@ -45,10 +47,14 @@ func (p *FontProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if code := minio.ToErrorResponse(err).Code; code != "NoSuchKey" && code != "NoSuchObject" && code != "NotFound" {
+		slog.ErrorContext(r.Context(), "Failed to read font cache", failurecause.Attr(err), "path", path)
+	}
+
 	slog.Debug("font cache miss, fetching from upstream", "path", path)
 	data, contentType, err = p.fetchFromUpstream(ctx, path)
 	if err != nil {
-		slog.Error("failed to fetch from upstream", "path", path, "error", err)
+		slog.ErrorContext(r.Context(), "failed to fetch from upstream", failurecause.Attr(err), "path", path)
 		http.Error(w, "Failed to fetch font", http.StatusBadGateway)
 		return
 	}

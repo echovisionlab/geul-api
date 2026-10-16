@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -135,7 +136,7 @@ func (s *FileService) deleteS3ObjectBestEffort(ctx context.Context, fileKey stri
 		Bucket: aws.String(s.s3Bucket),
 		Key:    aws.String(fileKey),
 	}); err != nil {
-		slog.Warn("Failed to delete temporary S3 object", "error", err, "fileKey", fileKey)
+		slog.Error("Failed to delete temporary S3 object", failurecause.Attr(err), "fileKey", fileKey)
 	}
 }
 

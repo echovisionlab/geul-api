@@ -42,7 +42,7 @@ func TestNormalizingHandlerEnforcesKeysCorrelationAndDenylist(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
 		t.Fatalf("decode log entry: %v; output=%s", err, output.String())
 	}
-	for _, key := range []string{"recipient", "object_key", "source_path", "error"} {
+	for _, key := range []string{"recipient", "object_key", "source_path"} {
 		if _, exists := entry[key]; exists {
 			t.Fatalf("forbidden key %q was emitted: %#v", key, entry)
 		}
@@ -50,6 +50,7 @@ func TestNormalizingHandlerEnforcesKeysCorrelationAndDenylist(t *testing.T) {
 	if got := entry["command_id"]; got != "command-1" {
 		t.Fatalf("command_id = %q", got)
 	}
+	require.Equal(t, "[redacted-email]: rejected", entry["error"])
 	if got := entry["error_type"]; got != "error_string" {
 		t.Fatalf("error_type = %q", got)
 	}
@@ -132,4 +133,32 @@ func TestNormalizingHandlerDoesNotDuplicateEnvelopeFromWithAttrs(t *testing.T) {
 		bytes.Count([]byte(got), []byte(`"outcome"`)) != 1 {
 		t.Fatalf("envelope fields were duplicated: %s", got)
 	}
+}
+
+func TestNormalizingHandlerPreservesBoundAndGroupedFailureCauses(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(NewNormalizingHandler(slog.NewJSONHandler(&output, nil))).
+		With("error", errors.New("connect database: connection refused"), "token", "private-token").
+		WithGroup("worker").With("error", errors.New("write checkpoint: disk full"))
+	logger.Error("failed", slog.Group("operation", "err", errors.New("publish: broker unavailable")))
+	entry := decodeSingleLogEntry(t, output.Bytes())
+	require.Equal(t, "connect database: connection refused", entry["error"])
+	worker := entry["worker"].(map[string]any)
+	require.Equal(t, "write checkpoint: disk full", worker["error"])
+	require.Equal(t, "publish: broker unavailable", worker["operation"].(map[string]any)["error"])
+	require.NotContains(t, output.String(), "private-token")
+	require.NotContains(t, output.String(), diagnosticCauseKey)
+}
+
+func TestNormalizingHandlerKeepsDiagnosticSyntax(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	logger := slog.New(NewNormalizingHandler(slog.NewJSONHandler(&output, nil)))
+	logger.Error("render failed", "error", errors.New(`layout {header}: <img> references relation "site_settings": person@example.test at https://provider.example/render?token=private-token`))
+	entry := decodeSingleLogEntry(t, output.Bytes())
+	require.Contains(t, entry["error"], `layout {header}: <img> references relation "site_settings"`)
+	require.Contains(t, entry["error"], "https://provider.example/render")
+	require.NotContains(t, output.String(), "person@example.test")
+	require.NotContains(t, output.String(), "private-token")
 }

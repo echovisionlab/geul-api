@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -326,6 +328,7 @@ func (s *Lifecycle) storePublicAssetBinding(
 		}
 		if err := tx.Create(&binding).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
+				slog.WarnContext(ctx, "Public asset binding changed concurrently", failurecause.Attr(err), "asset_id", input.AssetID, "owner_type", input.OwnerType, "owner_id", input.OwnerID)
 				return errs.FailedPrecondition("public asset binding changed concurrently; retry")
 			}
 			return errs.Internal(err)

@@ -3,9 +3,11 @@ package form
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -21,6 +23,8 @@ func ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 			if locale := localization.NormalizeSupportedLocale(*preferred); locale != nil {
 				return *locale
 			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -40,6 +44,8 @@ func TranslationDefaultLocale(ctx context.Context, db *gorm.DB) string {
 	if db != nil {
 		if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
 			return settings.DefaultLocale
+		} else {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_default_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	return translation.DefaultLocale

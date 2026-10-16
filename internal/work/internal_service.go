@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -106,7 +108,18 @@ func (s *InternalWorkService) requireContentBlockStore() error {
 func (s *InternalWorkService) LoadWorkBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadWorkBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadWorkBlockDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadWorkBlockDocumentResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "LoadWorkBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -196,7 +209,18 @@ type workBlockApplyResult struct {
 func (s *InternalWorkService) ApplyWorkBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyWorkBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyWorkBlockBatchResponse], error) {
+) (_ *connect.Response[intrav1.ApplyWorkBlockBatchResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ApplyWorkBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -348,7 +372,18 @@ type workMetadataUpdateResult struct {
 func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateWorkLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdateWorkLocaleMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdateWorkLocaleMetadataResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWorkLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -520,7 +555,18 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 func (s *InternalWorkService) CreateWorkVersionCheckpoint(
 	ctx context.Context,
 	req *connect.Request[intrav1.CreateWorkVersionCheckpointRequest],
-) (*connect.Response[intrav1.CreateWorkVersionCheckpointResponse], error) {
+) (_ *connect.Response[intrav1.CreateWorkVersionCheckpointResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CreateWorkVersionCheckpoint", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}

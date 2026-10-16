@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const cacheWriteTimeout = 10 * time.Second
@@ -31,7 +33,7 @@ func cacheResponseInBackground(
 		defer cancel()
 
 		if err := storage.Put(ctx, cacheKey, data, contentType); err != nil {
-			slog.Error("failed to cache "+resource, append(attributes, "error", err)...)
+			slog.ErrorContext(ctx, "failed to cache "+resource, append(attributes, failurecause.Attr(err))...)
 			return
 		}
 		slog.Debug("cached "+resource, attributes...)

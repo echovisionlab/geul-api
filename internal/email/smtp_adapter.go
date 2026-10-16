@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -135,6 +136,16 @@ func (a *SMTPAdapter) Close() error {
 
 // Send sends an email using SMTP with connection pooling.
 func (a *SMTPAdapter) Send(ctx context.Context, email *Email) (result *SendResult, sendErr error) {
+	private := []string{a.user, a.password, a.from}
+	if sender, err := mail.ParseAddress(a.from); err == nil {
+		private = append(private, sender.Name)
+	}
+	if email != nil {
+		private = append(private, email.To, email.Subject, email.HTML, email.Text)
+		if recipient, err := mail.ParseAddress(email.To); err == nil {
+			private = append(private, recipient.Name)
+		}
+	}
 	defer func() {
 		if sendErr != nil {
 			logAdapterLifecycle(
@@ -149,6 +160,7 @@ func (a *SMTPAdapter) Send(ctx context.Context, email *Email) (result *SendResul
 				"failed",
 				"provider_request_failed",
 				"provider_error",
+				"failure_cause", failurecause.Message(sendErr, private...),
 			)
 			sendErr = classifySMTPDeliveryError(sendErr)
 		}
@@ -166,13 +178,13 @@ func (a *SMTPAdapter) Send(ctx context.Context, email *Email) (result *SendResul
 		return nil, err
 	}
 
-	sc, err = a.sendWithRetry(ctx, sc, email, msg)
+	sc, err = a.sendWithRetry(ctx, sc, email, msg, private...)
 	if err != nil {
 		sendErr = err
 		return nil, err
 	}
 
-	a.recycleConn(ctx, sc)
+	a.recycleConn(ctx, sc, email, private...)
 
 	logAdapterLifecycle(
 		ctx,
@@ -196,11 +208,13 @@ func (a *SMTPAdapter) sendWithRetry(
 	sc *smtpConn,
 	email *Email,
 	msg []byte,
+	private ...string,
 ) (*smtpConn, error) {
 	err := a.sendWithConn(ctx, sc, email, msg)
 	if err == nil {
 		return sc, nil
 	}
+	logAdapterLifecycle(ctx, slog.LevelError, "SMTP attempt failed", "mail.provider.attempt_failed", a.id, a.name, email, "", "failed", "connection_discarded", "provider_error", failurecause.Attr(err, private...))
 	a.closeConn(sc)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
@@ -222,8 +236,9 @@ func (a *SMTPAdapter) sendWithRetry(
 	return freshConn, nil
 }
 
-func (a *SMTPAdapter) recycleConn(ctx context.Context, sc *smtpConn) {
+func (a *SMTPAdapter) recycleConn(ctx context.Context, sc *smtpConn, email *Email, private ...string) {
 	if err := withSMTPConnContext(ctx, sc.conn, sc.client.Reset); err != nil {
+		logAdapterLifecycle(ctx, slog.LevelError, "SMTP reset failed", "mail.provider.reset_failed", a.id, a.name, email, "", "failed", "connection_discarded", "provider_error", failurecause.Attr(err, private...))
 		a.closeConn(sc)
 		return
 	}
@@ -346,6 +361,7 @@ func (a *SMTPAdapter) acquireConn(ctx context.Context) (*smtpConn, error) {
 			}
 			// Quick liveness check via NOOP
 			if err := withSMTPConnContext(ctx, sc.conn, sc.client.Noop); err != nil {
+				slog.ErrorContext(ctx, "SMTP liveness check failed", "domain", "mail", "event", "mail.provider.noop_failed", "adapter_id", a.id, "failure_cause", failurecause.Message(err, a.user, a.password, a.from))
 				a.closeConn(sc)
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return nil, ctxErr
@@ -359,7 +375,7 @@ func (a *SMTPAdapter) acquireConn(ctx context.Context) (*smtpConn, error) {
 			if err != nil {
 				slog.Error("Failed to create SMTP connection",
 					"adapter_id", a.id,
-					"error", err,
+					"failure_cause", failurecause.Message(err, a.user, a.password, a.from),
 				)
 				return nil, err
 			}
@@ -506,7 +522,9 @@ func withSMTPConnContext(
 	cancelWatch.Go(func() {
 		select {
 		case <-ctx.Done():
-			_ = conn.SetDeadline(time.Now())
+			if err := conn.SetDeadline(time.Now()); err != nil {
+				slog.ErrorContext(ctx, "Failed to interrupt SMTP operation", "domain", "mail", "event", "mail.provider.interrupt_failed", "outcome", "failed", failurecause.Attr(err))
+			}
 		case <-cancelWatchDone:
 		}
 	})

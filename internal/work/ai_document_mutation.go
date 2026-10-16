@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -64,7 +66,26 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	locale string,
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentMutationCompiler,
-) (AIDocumentMutationResult, error) {
+) (_ AIDocumentMutationResult, terminalErr error) {
+	defer func() {
+		var conflict *AIDocumentRevisionConflictError
+		expected := errors.As(terminalErr, &conflict)
+		if expected {
+			if terminalErr != nil {
+				slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr))
+			}
+		} else {
+			if terminalErr != nil {
+				level := slog.LevelWarn
+				switch connect.CodeOf(terminalErr) {
+				case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+					level = slog.LevelError
+				}
+				slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+			}
+		}
+	}()
+
 	if s == nil || s.internal == nil || s.internal.db == nil ||
 		s.internal.spiceDB == nil || s.internal.contentBlocks == nil {
 		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Work AI document")
@@ -146,12 +167,14 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	case errors.As(err, &conflict):
 		return AIDocumentMutationResult{}, conflict
 	case errors.As(err, &targetConflict):
+		slog.WarnContext(ctx, "AI document revision conflict", "domain", "work", "operation", "ExecuteAIDocumentMutation", "work_id", workID, "locale", locale, failurecause.Attr(err))
 		current := targetConflict.CurrentRevision
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: currentDocumentRevision,
 			CurrentTargetRevision: &current,
 		}
 	case errors.As(err, &stale):
+		slog.WarnContext(ctx, "AI document revision conflict", "domain", "work", "operation", "ExecuteAIDocumentMutation", "work_id", workID, "locale", locale, failurecause.Attr(err))
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
 		}
@@ -166,6 +189,9 @@ func validateCompiledWorkAIDocumentMutation(
 ) error {
 	contributor, err := uuid.Parse(mutation.ContributorMemberID)
 	if err != nil || contributor == uuid.Nil || contributor.String() != mutation.ContributorMemberID {
+		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "validateCompiledWorkAIDocumentMutation", failurecause.Attr(err))
+		}
 		return errs.InvalidArgument("contributor", "compiled Work contributor must be a canonical Member UUID")
 	}
 	if mutation.WorkID != state.Work.ID || mutation.Locale != state.Locale ||

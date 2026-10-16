@@ -304,9 +304,10 @@ func TestProviderAndDocumentFailuresUseBoundedTerminalCodes(t *testing.T) {
 }
 
 func TestRejectedDocumentMutationIsReportedWithoutRetryingApply(t *testing.T) {
+	output := captureEditorFailures(t)
 	document := newFakeDocument()
 	document.applyErr = &aidocument.ValidationError{Result: aidocument.ValidationResult{Issues: []aidocument.OperationIssue{{
-		Operation: 0, Code: aidocument.IssueUnknownField, Handle: "content", Message: "not exposed",
+		Operation: 0, Code: aidocument.IssueUnknownField, Handle: "content", Message: "field <content> is not in the catalog token=private-token",
 	}}}}
 	operations := []aidocument.Operation{aidocument.UnsetFieldOperation("block-a", "content")}
 	provider := &fakeProvider{session: &fakeSession{responses: []string{
@@ -327,6 +328,9 @@ func TestRejectedDocumentMutationIsReportedWithoutRetryingApply(t *testing.T) {
 	require.NotNil(t, rejected)
 	require.Len(t, rejected.Issues, 1)
 	assert.Equal(t, managev1.AIDocumentIssueCode_AI_DOCUMENT_ISSUE_CODE_UNKNOWN_FIELD, rejected.Issues[0].Code)
+	require.Contains(t, output.String(), "field <content> is not in the catalog")
+	require.Contains(t, output.String(), `"turn_id"`)
+	require.NotContains(t, output.String(), "private-token")
 }
 
 func TestBrowserPrincipalRejectsMissingOrIncompleteSession(t *testing.T) {

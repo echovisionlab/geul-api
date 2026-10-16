@@ -2,12 +2,14 @@ package menu
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -33,14 +35,17 @@ func checkMenuPermission(
 	}
 	can, err := action(menuID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.checkMenuPermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.NotFound("menu", menuID)
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.checkMenuPermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.checkMenuPermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -115,10 +120,12 @@ func requireMenuGlobalCan(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.requireMenuGlobalCan", "outcome", "failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.requireMenuGlobalCan", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

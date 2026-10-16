@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -100,6 +102,8 @@ func (c *PublicAssetCache) PurgePrefixes(ctx context.Context, prefixes []string)
 		if err == nil {
 			return nil
 		}
+		cause := failurecause.Message(err, c.apiToken)
+		slog.WarnContext(ctx, "Public asset cache purge attempt failed", "failure_cause", cause, "attempt", attempt, "retryable", retry)
 		lastErr = err
 		if !retry || attempt == purgeMaxAttempts {
 			break

@@ -3,11 +3,13 @@ package series
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -36,6 +38,9 @@ func ApplyProviderTranslationCandidateWithDB(
 	}
 	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "ApplyProviderTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "series_id", job.EntityID, "locale", job.TargetLocale)
+		}
 		return errs.InternalMsg("Post Series provider translation requires canonical requester Member")
 	}
 	now := input.Now.UTC()

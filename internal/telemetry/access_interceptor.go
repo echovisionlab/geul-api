@@ -2,12 +2,14 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -65,13 +67,13 @@ func (i *AccessLogInterceptor) appendAuthorizationDenial(ctx context.Context, pr
 
 	actor, err := requestRecordActor(ctx)
 	if err != nil {
-		ReportSecurityAccessAppendFailure(ctx, sharedtelemetry.SecurityAuthorizationDenied, sharedtelemetry.AuditAppendFailureActorInvalid)
+		ReportSecurityAccessAppendFailure(ctx, sharedtelemetry.SecurityAuthorizationDenied, sharedtelemetry.AuditAppendFailureActorInvalid, err)
 		return
 	}
 	if actor.Kind == sharedtelemetry.ActorKindSystem {
 		return
 	}
-	_ = BuildAndAppendSecurityAccess(
+	if err := BuildAndAppendSecurityAccess(
 		ctx,
 		i.securityWriter,
 		sharedtelemetry.SecurityAuthorizationDenied,
@@ -80,7 +82,9 @@ func (i *AccessLogInterceptor) appendAuthorizationDenial(ctx context.Context, pr
 		func(metadata sharedtelemetry.SecurityAccessMetadata) (sharedtelemetry.SecurityAccessRecord, error) {
 			return sharedtelemetry.NewAuthorizationDeniedRecord(metadata, procedure, reason)
 		},
-	)
+	); err != nil {
+		slog.ErrorContext(ctx, "Authorization denial audit failed", "rpc_procedure", procedure, "failure_cause", failurecause.Message(err))
+	}
 }
 
 func requestRecordActor(ctx context.Context) (sharedtelemetry.RecordActor, error) {
@@ -94,6 +98,7 @@ func requestRecordActor(ctx context.Context) (sharedtelemetry.RecordActor, error
 func requestActorAndCorrelation(ctx context.Context) (sharedtelemetry.RecordActor, sharedtelemetry.Correlation) {
 	recordActor, err := requestRecordActor(ctx)
 	if err != nil {
+		slog.WarnContext(ctx, "Invalid request actor; recording anonymous actor", "failure_cause", failurecause.Message(err))
 		recordActor, _ = sharedtelemetry.ActorForRecord(sharedtelemetry.AnonymousActor{})
 	}
 	return recordActor, sharedtelemetry.CorrelationFromContext(ctx)
@@ -117,9 +122,16 @@ func emitConnectRequestRecord(ctx context.Context, httpMethod, service, method s
 		OccurredAt: time.Now().UTC(), Correlation: correlation, RecordActor: actor,
 	}, httpMethod, service, method, result)
 	if buildErr != nil {
+		slog.ErrorContext(ctx, "Build RPC request record failed", "rpc_service", service, "rpc_method", method, "failure_cause", failurecause.Message(errors.Join(err, buildErr)))
 		return
 	}
-	_ = sharedtelemetry.EmitRequest(ctx, slogDefaultHandler(), record)
+	handler := slogDefaultHandler()
+	if err != nil {
+		handler = &requestFailureHandler{Handler: handler, cause: err, status: result.StatusCode}
+	}
+	if emitErr := sharedtelemetry.EmitRequest(ctx, handler, record); emitErr != nil {
+		slog.ErrorContext(ctx, "Emit RPC request record failed", "rpc_service", service, "rpc_method", method, "failure_cause", failurecause.Message(errors.Join(err, emitErr)))
+	}
 }
 
 func splitProcedure(procedure string) (service, method string) {
@@ -171,4 +183,22 @@ func connectHTTPStatus(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// Keep a single terminal request record, including its original cause and an
+// appropriate severity. Bodies, metadata and client error details are excluded.
+type requestFailureHandler struct {
+	slog.Handler
+	cause  error
+	status int
+}
+
+func (h *requestFailureHandler) Handle(ctx context.Context, record slog.Record) error {
+	record = record.Clone()
+	record.Level = slog.LevelWarn
+	if h.status >= http.StatusInternalServerError {
+		record.Level = slog.LevelError
+	}
+	record.AddAttrs(slog.String("failure_cause", failurecause.Message(h.cause)))
+	return h.Handler.Handle(ctx, record)
 }

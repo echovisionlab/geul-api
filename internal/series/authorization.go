@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strings"
 	"unicode"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -110,6 +112,7 @@ func checkSeriesPermission(
 	}
 	can, err := action(seriesID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "checkSeriesPermission", failurecause.Attr(err))
 		return errs.NotFound("series", seriesID)
 	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
@@ -117,10 +120,12 @@ func checkSeriesPermission(
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "checkSeriesPermission", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "checkSeriesPermission", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -151,10 +156,12 @@ func requireSeriesPlatformPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "requireSeriesPlatformPermission", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "requireSeriesPlatformPermission", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -193,10 +200,12 @@ func (s *SeriesService) lookupSeriesResources(
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "lookupSeriesResources", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "lookupSeriesResources", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	if s.permissions == nil {
@@ -204,6 +213,7 @@ func (s *SeriesService) lookupSeriesResources(
 	}
 	ids, err := s.permissions.LookupResources(ctx, lookup, actor)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "lookupSeriesResources", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	return ids, nil
@@ -303,6 +313,7 @@ func validateSeriesPostOrder(postIDs []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(postIDs))
 	for i, postID := range postIDs {
 		if _, err := uuidutil.ParseCanonical(postID, "post_ids"); err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "series", "operation", "validateSeriesPostOrder", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("post_ids", "must contain canonical Post UUIDs")
 		}
 		if _, exists := seen[postID]; exists {

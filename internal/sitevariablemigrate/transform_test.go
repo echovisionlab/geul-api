@@ -1,11 +1,14 @@
 package sitevariablemigrate
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -178,4 +181,28 @@ func TestRichMigrationUsesGeneratedPolicyStorageContract(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(transformed), `"siteVariable":{"key":"site.title"}`)
 	require.Contains(t, string(transformed), `"siteVariable":{"key":"contact.legalEmail"}`)
+}
+
+func TestInvalidSiteURLLogsCauseAndPreservesInput(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(sharedtelemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	source := "https://www.dsub.io/%zz?token=private-token"
+	got, accepted := sitePath(source)
+	require.Equal(t, source, got)
+	require.False(t, accepted)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+	require.Equal(t, "WARN", entry["level"])
+	require.Contains(t, entry["failure_cause"], "invalid URL escape")
+	require.Contains(t, entry["failure_cause"], "%zz")
+	require.NotContains(t, output.String(), "private-token")
+
+	output.Reset()
+	label := "menu label: 100%zz"
+	got, accepted = sitePath(label)
+	require.Equal(t, label, got)
+	require.False(t, accepted)
+	require.Empty(t, output.String())
 }

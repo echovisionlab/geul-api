@@ -1,12 +1,15 @@
 package authentication
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -74,17 +77,19 @@ func jsonTreeContainsString(value structured.Value, key string, expected string)
 	return false
 }
 
-func writeKratosProxyError(w http.ResponseWriter, status int, message string, retryAfter time.Duration) {
+func writeKratosProxyError(ctx context.Context, w http.ResponseWriter, status int, message string, retryAfter time.Duration) {
 	w.Header().Set("Content-Type", "application/json")
 	if retryAfter > 0 {
 		seconds := int64((retryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
 	}
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(structured.Fields{
+	if err := json.NewEncoder(w).Encode(structured.Fields{
 		"error": structured.Fields{
 			"code":    status,
 			"message": message,
 		},
-	})
+	}); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "write_authentication_error_response", "status_code", status, failurecause.Attr(err))
+	}
 }

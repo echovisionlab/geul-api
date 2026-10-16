@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -73,7 +75,19 @@ func switchPostVersionRestoreSourceLocale(
 func (s *PostService) ListPostVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPostVersionsRequest],
-) (*connect.Response[managev1.ListPostVersionsResponse], error) {
+) (_ *connect.Response[managev1.ListPostVersionsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostVersions", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	limit := int32(20)
 	offset := int32(0)
 	if req.Msg.Pagination != nil {
@@ -121,6 +135,7 @@ func (s *PostService) ListPostVersions(
 	for i := range versions {
 		result[i], err = s.toProtoPostVersion(&versions[i], contributorNames)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.ListPostVersions", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.FailedPrecondition("Post Version typed snapshot is invalid")
 		}
 	}
@@ -139,7 +154,19 @@ func (s *PostService) ListPostVersions(
 func (s *PostService) RestorePostVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.RestorePostVersionRequest],
-) (*connect.Response[managev1.Post], error) {
+) (_ *connect.Response[managev1.Post], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RestorePostVersion", "outcome", "failed", "post_id", req.Msg.GetPostId(), "version_id", req.Msg.GetVersionId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Post content Block store is not configured")
 	}
@@ -155,6 +182,7 @@ func (s *PostService) RestorePostVersion(
 	}
 	versionEnvelope, versionDocument, err := unmarshalPostVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.RestorePostVersion", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.FailedPrecondition("Post Version typed snapshot is invalid")
 	}
 

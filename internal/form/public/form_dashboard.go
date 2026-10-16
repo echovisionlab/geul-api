@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -23,7 +25,19 @@ import (
 func (s *FormService) GetDashboard(
 	ctx context.Context,
 	req *connect.Request[openv1.GetFormDashboardRequest],
-) (*connect.Response[openv1.GetFormDashboardResponse], error) {
+) (rpcResponse *connect.Response[openv1.GetFormDashboardResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetDashboard", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if req.Msg.ShareToken == "" {
 		return nil, errs.NotFoundMsg("form not found")
 	}
@@ -132,7 +146,9 @@ func buildFormDashboardFromSubmissions(
 		}
 
 		var data structured.Fields
-		_ = json.Unmarshal(submission.Data, &data)
+		if err := json.Unmarshal(submission.Data, &data); err != nil {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "decode_dashboard_submission", "outcome", "failed", failurecause.Attr(err))
+		}
 
 		for fieldID, rawValue := range data {
 			value, ok := stringifyDashboardValue(rawValue)

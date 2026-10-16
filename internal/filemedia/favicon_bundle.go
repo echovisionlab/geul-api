@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -85,6 +86,7 @@ func (s *FileService) loadValidatedFaviconSource(
 	}
 	objectKey, err := mediaauth.MediaObjectKey(source.ID, source.Extension)
 	if err != nil {
+		slog.ErrorContext(ctx, "Invalid favicon source metadata", failurecause.Attr(err), "file_id", source.ID)
 		return model.File{}, nil, errs.FailedPrecondition("favicon source metadata is not canonical")
 	}
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
@@ -202,13 +204,13 @@ func (s *FileService) commitFaviconBundle(
 		commitErr = s.testFaviconCommitError
 	}
 	if commitErr != nil {
+		slog.ErrorContext(ctx, "Favicon bundle commit failed; reconciling", failurecause.Attr(commitErr), "file_id", source.ID)
 		winner, reconcileErr := s.reconcileFaviconBundle(cleanupCtx, source.ID)
 		if reconcileErr == nil && winner != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(winner))
 			return winner.GetIconPng_32(), nil
 		}
-		slog.Error("favicon bundle commit outcome could not be reconciled; preserving source and staged assets",
-			"file_id", source.ID, "commit_error", commitErr, "reconcile_error", reconcileErr)
+		slog.ErrorContext(ctx, "favicon bundle commit outcome could not be reconciled; preserving source and staged assets", failurecause.Attr(stderrors.Join(commitErr, reconcileErr)), "file_id", source.ID)
 		return nil, errs.Internal(fmt.Errorf(
 			"%w: commit error: %v; reconcile error: %v",
 			errFaviconBundleCommitUncertain,
@@ -372,6 +374,6 @@ func (s *FileService) scheduleStagedFaviconDeletion(
 			"updated_at":          now,
 		})
 	if result.Error != nil {
-		slog.Warn("failed to schedule staged favicon assets for durable cleanup", "asset_ids", ids, "error", result.Error)
+		slog.Error("failed to schedule staged favicon assets for durable cleanup", "asset_ids", ids, failurecause.Attr(result.Error))
 	}
 }

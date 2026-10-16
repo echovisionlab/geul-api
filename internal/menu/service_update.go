@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -160,12 +162,18 @@ func menuUpdateAction(
 
 func menuItemTopologyEqual(stored, requested []byte) bool {
 	var storedItems []model.MenuItem
-	if len(stored) != 0 && json.Unmarshal(stored, &storedItems) != nil {
-		return false
+	if len(stored) != 0 {
+		if err := json.Unmarshal(stored, &storedItems); err != nil {
+			slog.ErrorContext(context.Background(), "failed to decode stored Menu topology", "domain", "menu", "operation", "compare_stored_topology", "outcome", "failed", failurecause.Attr(err))
+			return false
+		}
 	}
 	var requestedItems []model.MenuItem
-	if len(requested) != 0 && json.Unmarshal(requested, &requestedItems) != nil {
-		return false
+	if len(requested) != 0 {
+		if err := json.Unmarshal(requested, &requestedItems); err != nil {
+			slog.WarnContext(context.Background(), "failed to decode requested Menu topology", "domain", "menu", "operation", "compare_requested_topology", "outcome", "failed", failurecause.Attr(err))
+			return false
+		}
 	}
 	return reflectMenuItemTopology(storedItems, "") == reflectMenuItemTopology(requestedItems, "")
 }

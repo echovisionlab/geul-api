@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -103,7 +104,19 @@ func lockMenuForUpdate(ctx context.Context, tx *gorm.DB, menuID string) (*model.
 func (s *MenuService) GetMenuById(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMenuByIdRequest],
-) (*connect.Response[managev1.Menu], error) {
+) (_ *connect.Response[managev1.Menu], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.GetMenuById", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	// Validate ID is provided
 	id := strings.TrimSpace(req.Msg.Id)
 	if id == "" {
@@ -133,7 +146,19 @@ func (s *MenuService) GetMenuById(
 func (s *MenuService) ListMenus(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMenusRequest],
-) (*connect.Response[managev1.ListMenusResponse], error) {
+) (_ *connect.Response[managev1.ListMenusResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.ListMenus", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Menu.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -175,10 +200,9 @@ func (s *MenuService) ListMenus(
 		if err != nil {
 			// Log the error but continue with other menus
 			// This prevents one corrupted menu from breaking the whole list
-			slog.Error("failed to parse menu items JSON",
+			slog.ErrorContext(ctx, "failed to parse menu items JSON",
 				"menuId", menus[i].ID,
-				"menuName", menus[i].Name,
-				"error", err)
+				"failure_cause", failurecause.Message(err))
 			continue
 		}
 		protoMenus = append(protoMenus, protoMenu)
@@ -199,7 +223,19 @@ func (s *MenuService) ListMenus(
 func (s *MenuService) CreateMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMenuRequest],
-) (*connect.Response[managev1.Menu], error) {
+) (_ *connect.Response[managev1.Menu], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.CreateMenu", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Menu.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -298,7 +334,19 @@ func (s *MenuService) CreateMenu(
 func (s *MenuService) UpdateMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMenuRequest],
-) (*connect.Response[managev1.Menu], error) {
+) (_ *connect.Response[managev1.Menu], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.UpdateMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	// Validate ID
 	id := strings.TrimSpace(req.Msg.Id)
 	if id == "" {
@@ -330,7 +378,19 @@ func (s *MenuService) UpdateMenu(
 func (s *MenuService) DeleteMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMenuRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.DeleteMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	menuID := strings.TrimSpace(req.Msg.Id)
 	if menuID == "" {
 		return nil, errs.Required("id")
@@ -399,12 +459,14 @@ func semanticMenuItemsEqual(stored, requested []byte) bool {
 	var storedItems []model.MenuItem
 	if len(stored) > 0 {
 		if err := json.Unmarshal(stored, &storedItems); err != nil {
+			slog.ErrorContext(context.Background(), "content operation failed", "domain", "menu", "operation", "compare_stored_items", "outcome", "failed", failurecause.Attr(err))
 			return false
 		}
 	}
 	var requestedItems []model.MenuItem
 	if len(requested) > 0 {
 		if err := json.Unmarshal(requested, &requestedItems); err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "compare_requested_items", "outcome", "failed", failurecause.Attr(err))
 			return false
 		}
 	}
@@ -548,6 +610,7 @@ func validateMenuItemLink(item *managev1.MenuItem, itemPath string) error {
 		return nil
 	}
 	if _, err := url.ParseRequestURI(urlString); err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.validateMenuItemLink", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidArgument(itemPath, "url must be a valid URL or relative path")
 	}
 	return nil
@@ -705,7 +768,10 @@ func (s *MenuService) protoItemToModel(item *managev1.MenuItem) model.MenuItem {
 		modelItem.OpenInNewTab = item.OpenInNewTab
 	}
 	if item.Visibility != nil {
-		roles, _ := normalizeUserRoleList("visibility.roles", item.Visibility.Roles)
+		roles, err := normalizeUserRoleList("visibility.roles", item.Visibility.Roles)
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "normalize_visibility_roles", "outcome", "failed", failurecause.Attr(err))
+		}
 		modelItem.Visibility = &model.MenuVisibility{
 			Mode:  s.protoVisibilityModeToString(item.Visibility.Mode),
 			Roles: roles,

@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	programeventdomain "github.com/echovisionlab/geul-api/internal/programevent"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -438,6 +440,7 @@ func programEventDomainIssue(err error, operations []core.Operation) *core.Opera
 	if index < 0 {
 		return nil
 	}
+	slog.Warn("Program Event document File operation rejected", failurecause.Attr(err), "operation_index", index)
 	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 

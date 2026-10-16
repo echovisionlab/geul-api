@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -203,7 +204,7 @@ func (e *fileIngestEventEmitter) nextEventFields() (string, *managev1.FileIngest
 	if e.nextSequence != nil && e.uploadID != "" {
 		sequence, err := e.nextSequence(e.ctx, e.uploadID)
 		if err != nil {
-			slog.Warn("Failed to allocate file ingest event sequence", "error", err, "uploadId", e.uploadID, "fileId", e.fileID)
+			slog.ErrorContext(e.ctx, "Failed to allocate file ingest event sequence", failurecause.Attr(err), "uploadId", e.uploadID, "fileId", e.fileID, "entityType", e.entityType.String(), "entityId", e.entityID, "correlationId", e.correlationID, "attemptId", e.attemptID, "slotId", e.slotID)
 			return "", nil, 0, 0, false
 		}
 		e.sequence = sequence
@@ -256,8 +257,8 @@ func (e *fileIngestEventEmitter) publishWithResult(
 	}
 
 	if err := publishFileIngestEvent(e.ctx, e.publisher, event); err != nil {
-		slog.Warn("Failed to publish file ingest lifecycle event",
-			"error", err,
+		slog.ErrorContext(e.ctx, "Failed to publish file ingest lifecycle event",
+			failurecause.Attr(err),
 			"event", eventName,
 			"entityType", e.entityType.String(),
 			"entityId", e.entityID,
@@ -266,6 +267,7 @@ func (e *fileIngestEventEmitter) publishWithResult(
 			"slotId", e.slotID,
 			"attemptId", e.attemptID,
 			"correlationId", e.correlationID,
+			"progress", progress,
 		)
 		return err
 	}

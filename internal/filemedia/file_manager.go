@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -239,7 +241,17 @@ func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, erro
 func (s *FileService) ListFileManagerItems(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFileManagerItemsRequest],
-) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
+) (_ *connect.Response[managev1.ListFileManagerItemsResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileManagerItems", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	return s.listFileManagerItems(ctx, req, true)
 }
 

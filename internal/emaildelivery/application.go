@@ -391,7 +391,7 @@ func (a *DeliveryApplication) sendThroughProvider(
 	expiresAt, authCommand, err := EmailCommandExpiresAt(job)
 	if err != nil {
 		// An unreadable expiry is treated as expired, as before; only the cause is new.
-		LogDeliveryFailure(ctx, "mail.delivery.expiry_invalid", job, err, "reason", "expiry_invalid", "adapter_id", adapter.ID())
+		LogDeliveryFailure(ctx, "mail.delivery.expiry_invalid", job, err, "reason", "expiry_invalid", "adapter_id", adapter.ID(), "adapter_name", adapter.Name())
 		return "", true, nil
 	}
 	if authCommand {
@@ -408,7 +408,7 @@ func (a *DeliveryApplication) sendThroughProvider(
 	cancel()
 	if sendErr != nil {
 		if authCommand && errors.Is(sendContextErr, context.DeadlineExceeded) && !a.now().UTC().Before(expiresAt) {
-			LogDeliveryFailure(ctx, "mail.adapter.expired", job, sendErr, "reason", "expired", "adapter_id", adapter.ID())
+			LogDeliveryFailure(ctx, "mail.adapter.expired", job, sendErr, "reason", "expired", "adapter_id", adapter.ID(), "adapter_name", adapter.Name())
 			return "", true, nil
 		}
 		return "", false, sendErr

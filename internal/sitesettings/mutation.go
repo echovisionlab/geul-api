@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -23,7 +24,19 @@ import (
 func (s *SiteSettingService) SetSetting(
 	ctx context.Context,
 	req *connect.Request[managev1.SetSettingRequest],
-) (*connect.Response[managev1.SetSettingResponse], error) {
+) (_ *connect.Response[managev1.SetSettingResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.SetSetting", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -90,7 +103,7 @@ func (s *SiteSettingService) SetSetting(
 		if connectErr, ok := err.(*connect.Error); ok {
 			return nil, connectErr
 		}
-		slog.Error("failed to set setting", "key", req.Msg.Key, "error", err)
+		slog.ErrorContext(ctx, "failed to set setting", "key", req.Msg.Key, "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.SetSettingResponse{Success: true, OgGenerationRunId: ogGenerationRunID}), nil
@@ -100,7 +113,19 @@ func (s *SiteSettingService) SetSetting(
 func (s *SiteSettingService) SetManySettings(
 	ctx context.Context,
 	req *connect.Request[managev1.SetManySettingsRequest],
-) (*connect.Response[managev1.SetManySettingsResponse], error) {
+) (_ *connect.Response[managev1.SetManySettingsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.SetManySettings", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -116,7 +141,7 @@ func (s *SiteSettingService) SetManySettings(
 		if connectErr, ok := err.(*connect.Error); ok {
 			return nil, connectErr
 		}
-		slog.Error("failed to set multiple settings", "error", err)
+		slog.ErrorContext(ctx, "failed to set multiple settings", "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.SetManySettingsResponse{Success: true, OgGenerationRunId: runID}), nil
@@ -125,7 +150,19 @@ func (s *SiteSettingService) SetManySettings(
 func (s *SiteSettingService) AddSiteLoaderAsset(
 	ctx context.Context,
 	req *connect.Request[managev1.AddSiteLoaderAssetRequest],
-) (*connect.Response[managev1.AddSiteLoaderAssetResponse], error) {
+) (_ *connect.Response[managev1.AddSiteLoaderAssetResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.AddSiteLoaderAsset", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -180,7 +217,7 @@ func (s *SiteSettingService) AddSiteLoaderAsset(
 		if connectErr, ok := err.(*connect.Error); ok {
 			return nil, connectErr
 		}
-		slog.Error("failed to add site loader asset", "file_id", fileID, "error", err)
+		slog.ErrorContext(ctx, "failed to add site loader asset", "file_id", fileID, "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.AddSiteLoaderAssetResponse{Success: true}), nil
@@ -189,7 +226,19 @@ func (s *SiteSettingService) AddSiteLoaderAsset(
 func (s *SiteSettingService) RemoveSiteLoaderAsset(
 	ctx context.Context,
 	req *connect.Request[managev1.RemoveSiteLoaderAssetRequest],
-) (*connect.Response[managev1.RemoveSiteLoaderAssetResponse], error) {
+) (_ *connect.Response[managev1.RemoveSiteLoaderAssetResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.RemoveSiteLoaderAsset", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -227,7 +276,7 @@ func (s *SiteSettingService) RemoveSiteLoaderAsset(
 		if connectErr, ok := err.(*connect.Error); ok {
 			return nil, connectErr
 		}
-		slog.Error("failed to remove site loader asset", "file_id", fileID, "error", err)
+		slog.ErrorContext(ctx, "failed to remove site loader asset", "file_id", fileID, "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.RemoveSiteLoaderAssetResponse{Success: true}), nil

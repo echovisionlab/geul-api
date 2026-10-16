@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -18,7 +19,19 @@ import (
 func (s *SiteSettingService) GetSettings(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSettingsRequest],
-) (*connect.Response[managev1.GetSettingsResponse], error) {
+) (_ *connect.Response[managev1.GetSettingsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSettings", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -94,7 +107,7 @@ func (s *SiteSettingService) GetSettings(
 	}
 	loaderAssets, err := s.loadSiteLoaderAssets(ctx, s.db)
 	if err != nil {
-		slog.Error("failed to load site loader assets", "error", err)
+		slog.ErrorContext(ctx, "failed to load site loader assets", "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
 	}
 	applyLoaderAssetsToPublicSettings(public, loaderAssets)
@@ -102,7 +115,7 @@ func (s *SiteSettingService) GetSettings(
 	if socialLinks := jsonColumnToMap(settings.SocialLinks, "social_links", true); len(socialLinks) > 0 {
 		value, err := structpb.NewStruct(socialLinks)
 		if err != nil {
-			slog.Warn("failed to convert social_links to struct", "error", err)
+			slog.WarnContext(ctx, "failed to convert social_links to struct", "failure_cause", failurecause.Message(err))
 		} else {
 			public.SocialLinks = value
 		}
@@ -121,7 +134,19 @@ func (s *SiteSettingService) GetSettings(
 func (s *SiteSettingService) GetSetting(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSettingRequest],
-) (*connect.Response[managev1.GetSettingResponse], error) {
+) (_ *connect.Response[managev1.GetSettingResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSetting", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)

@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -109,7 +110,18 @@ func NewPrivacyService(
 func (s *PrivacyService) GetPrivacyVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.GetPrivacyVersionRequest],
-) (*connect.Response[managev1.Privacy], error) {
+) (rpcResponse *connect.Response[managev1.Privacy], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "GetPrivacyVersion", "failure_cause", cause)
+		}
+	}()
 	var response *connect.Response[managev1.Privacy]
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var privacy model.Privacy
@@ -135,7 +147,18 @@ func (s *PrivacyService) GetPrivacyVersion(
 func (s *PrivacyService) ListPrivacyVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPrivacyVersionsRequest],
-) (*connect.Response[managev1.ListPrivacyVersionsResponse], error) {
+) (rpcResponse *connect.Response[managev1.ListPrivacyVersionsResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "ListPrivacyVersions", "failure_cause", cause)
+		}
+	}()
 	can, err := policyv1.PrivacyHistory.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -200,7 +223,18 @@ func (s *PrivacyService) ListPrivacyVersions(
 func (s *PrivacyService) CreatePrivacyVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.CreatePrivacyVersionRequest],
-) (*connect.Response[managev1.Privacy], error) {
+) (rpcResponse *connect.Response[managev1.Privacy], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "CreatePrivacyVersion", "failure_cause", cause)
+		}
+	}()
 	privacyCan, err := policyv1.PrivacyHistory.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -294,7 +328,18 @@ func (s *PrivacyService) CreatePrivacyVersion(
 func (s *PrivacyService) SchedulePrivacy(
 	ctx context.Context,
 	req *connect.Request[managev1.SchedulePrivacyRequest],
-) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error) {
+) (rpcResponse *connect.Response[managev1.PrivacyLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "SchedulePrivacy", "failure_cause", cause)
+		}
+	}()
 	if req.Msg.EffectiveFrom == nil {
 		return nil, errs.Required("effective_from")
 	}
@@ -401,7 +446,18 @@ func (s *PrivacyService) SchedulePrivacy(
 func (s *PrivacyService) CancelPrivacySchedule(
 	ctx context.Context,
 	req *connect.Request[managev1.CancelPrivacyScheduleRequest],
-) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error) {
+) (rpcResponse *connect.Response[managev1.PrivacyLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "CancelPrivacySchedule", "failure_cause", cause)
+		}
+	}()
 	var privacy model.Privacy
 	var documentRevision string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -522,7 +578,18 @@ func (s *PrivacyService) CancelPrivacySchedule(
 func (s *PrivacyService) ActivatePrivacyNow(
 	ctx context.Context,
 	req *connect.Request[managev1.ActivatePrivacyNowRequest],
-) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error) {
+) (rpcResponse *connect.Response[managev1.PrivacyLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "ActivatePrivacyNow", "failure_cause", cause)
+		}
+	}()
 	now := time.Now()
 	var privacy model.Privacy
 	var effectiveRun *model.CampaignDeliveryRun
@@ -612,7 +679,18 @@ func (s *PrivacyService) ActivatePrivacyNow(
 func (s *PrivacyService) DeletePrivacy(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePrivacyRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (rpcResponse *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "DeletePrivacy", "failure_cause", cause)
+		}
+	}()
 	var privacy model.Privacy
 	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
@@ -692,7 +770,7 @@ func (s *PrivacyService) DeletePrivacy(
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "privacy", privacy.ID); err != nil {
-		slog.Warn("failed to release legal OG assets", "entity_type", "privacy", "entity_id", privacy.ID, "error", err)
+		slog.Warn("failed to release legal OG assets", "entity_type", "privacy", "entity_id", privacy.ID, "failure_cause", failurecause.Message(err))
 	}
 
 	return connect.NewResponse(&managev1.DeleteResponse{
@@ -704,7 +782,18 @@ func (s *PrivacyService) DeletePrivacy(
 func (s *PrivacyService) RegeneratePrivacyDerivedContent(
 	ctx context.Context,
 	req *connect.Request[managev1.RegeneratePrivacyDerivedContentRequest],
-) (*connect.Response[managev1.RegeneratePrivacyDerivedContentResponse], error) {
+) (rpcResponse *connect.Response[managev1.RegeneratePrivacyDerivedContentResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "RegeneratePrivacyDerivedContent", "failure_cause", cause)
+		}
+	}()
 	snapshotDigest, err := regenerateLegalDerivedContent(
 		ctx, s.db, s.contentBlocks, s.spiceDB, s.legalOG,
 		"privacy", req.Msg.Id, req.Msg.ExpectedSnapshotDigest,

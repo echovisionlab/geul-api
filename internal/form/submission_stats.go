@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +21,19 @@ import (
 func (s *FormService) GetFormSubmissionStats(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFormSubmissionStatsRequest],
-) (*connect.Response[managev1.GetFormSubmissionStatsResponse], error) {
+) (rpcResponse *connect.Response[managev1.GetFormSubmissionStatsResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetFormSubmissionStats", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	formID := strings.TrimSpace(req.Msg.FormId)
 	if formID == "" {
 		return nil, errs.Required("form_id")
@@ -57,6 +71,7 @@ func (s *FormService) GetFormSubmissionStats(
 	stats := buildFormSubmissionStats(formSchema, submissions, time.Now())
 	if s.securityAccess != nil {
 		if err := s.securityAccess.AppendFormSubmissions(ctx, formID); err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
 			return nil, securityAccessUnavailable()
 		}
 	}
@@ -97,6 +112,7 @@ func buildFormSubmissionStats(
 
 		var data structured.Fields
 		if err := json.Unmarshal(submission.Data, &data); err != nil {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "decode_submission_stats", "outcome", "failed", failurecause.Attr(err))
 			continue
 		}
 

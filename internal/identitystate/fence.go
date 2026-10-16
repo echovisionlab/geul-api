@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -79,7 +81,11 @@ func WithMutation(
 			return err
 		}
 		defer func() {
-			returnErr = errors.Join(returnErr, authzmutation.ReleaseSession(ctx, connection))
+			releaseErr := authzmutation.ReleaseSession(ctx, connection)
+			if releaseErr != nil {
+				slog.ErrorContext(context.WithoutCancel(ctx), "Operation failed", "reason", "authorization_session_unlock_failed", failurecause.Attr(releaseErr))
+			}
+			returnErr = errors.Join(returnErr, releaseErr)
 		}()
 		if err := connection.Exec(
 			"SELECT pg_advisory_lock(hashtextextended(?, ?))",
@@ -98,9 +104,12 @@ func WithMutation(
 				identityStateFenceSeed,
 			).Scan(&released).Error
 			if unlockErr != nil {
+				slog.ErrorContext(unlockCtx, "Operation failed", "reason", "identity_state_unlock_failed", failurecause.Attr(unlockErr), "identity_id", identityID)
 				returnErr = errors.Join(returnErr, fmt.Errorf("release user identity state fence: %w", unlockErr))
 			} else if !released {
-				returnErr = errors.Join(returnErr, fmt.Errorf("release user identity state fence: lock was not held"))
+				unlockErr := fmt.Errorf("release user identity state fence: lock was not held")
+				slog.ErrorContext(unlockCtx, "Identity state fence release failed", failurecause.Attr(unlockErr), "identity_id", identityID)
+				returnErr = errors.Join(returnErr, unlockErr)
 			}
 		}()
 		mutationCtx, cancel := context.WithTimeout(ctx, MutationTimeout)
@@ -171,6 +180,7 @@ func RequireFreshCan(
 	}
 	active, err := LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireFreshCan", failurecause.Attr(err))
 		return errs.Internal(err)
 	}
 	if !active {

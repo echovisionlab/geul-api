@@ -24,7 +24,9 @@ var (
 	urlUserInfo  = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@`)
 	urlQuery     = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://[^\s?#"'<>]+)[?#][^\s"'<>]*`)
 	authHeader   = regexp.MustCompile(`(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+`)
-	credential   = regexp.MustCompile(`(?i)\b((?:password|passwd|pwd|secret|secret_access_key|access_key_id|api[_-]?key|token|access_token|refresh_token|client_secret|cookie|authorization)\s*[=:]\s*)(?:(?:Bearer|Basic)\s+[^\s,;&]+|"[^"]*"|'[^']*'|[^\s,;&]+)`)
+	// Matches key=value, key: value and JSON "key":"value" forms, including
+	// provider spellings such as SecretAccessKey and AccessKeyId.
+	credential = regexp.MustCompile(`(?i)\b((?:password|passwd|pwd|secret|secret_?access_?key|access_?key_?id|api[_-]?key|token|access_?token|refresh_?token|client_?secret|cookie|authorization)"?\s*[=:]\s*)(?:(?:Bearer|Basic)\s+[^\s,;&]+|"[^"]*"|'[^']*'|[^\s,;&"]+)`)
 )
 
 // Message returns err's text with sensitive values removed. private lists
@@ -36,9 +38,11 @@ func Message(err error, private ...string) string {
 	return redact(err.Error(), private)
 }
 
-// Attr is the conventional slog attribute for a failure cause.
+// Attr is the conventional slog attribute for a failure cause. The telemetry
+// log normalizer reduces "error" attributes to their type, so the sanitized
+// text travels under "failure_cause", which it keeps.
 func Attr(err error, private ...string) slog.Attr {
-	return slog.String("error", Message(err, private...))
+	return slog.String("failure_cause", Message(err, private...))
 }
 
 // Panic returns the recovered value as a cause and a stack without rendered

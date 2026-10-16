@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -18,12 +20,17 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (h *Handlers) HandleTranscodeProgress(ctx context.Context, body []byte) error {
+func (h *Handlers) HandleTranscodeProgress(ctx context.Context, body []byte) (resultErr error) {
 	if h.transcodeJobs == nil {
 		return nil
 	}
 
 	var event managev1.TranscodeProgressEvent
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeProgress", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
+		}
+	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal transcode progress event: %w", err)
 	}

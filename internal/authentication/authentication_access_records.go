@@ -2,10 +2,13 @@ package authentication
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -26,31 +29,42 @@ func (recorder *AuthenticationAccessRecorder) complete(
 		if err == nil && principal != nil && !principal.Banned {
 			flowKind, flowErr := recorder.successFlowKind(request.Context(), observation, principal, sessionID)
 			if flowErr == nil && recorder.appendSuccess(request.Context(), observation, principal, flowKind) == nil {
-				copyBufferedKratosResponse(w, response, nil)
+				copyBufferedKratosResponse(request.Context(), w, response, nil)
 				return
 			}
 			if flowErr != nil {
+				slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_success_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(flowErr), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
 				recorder.appendFailure(request.Context(), observation, sharedtelemetry.AuthenticationFailureInternalError)
 			}
-			writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+			writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 			return
+		}
+		if err != nil {
+			level := slog.LevelError
+			if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+				level = slog.LevelWarn
+			}
+			slog.Log(request.Context(), level, "Operation failed", "reason", "resolve_completed_principal", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
 		}
 		reason := sharedtelemetry.AuthenticationFailureMemberLinkInvalid
 		if err == nil && principal != nil && principal.Banned {
 			reason = sharedtelemetry.AuthenticationFailureAccountBlocked
 		}
 		recorder.appendFailure(request.Context(), observation, reason)
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
+	}
+	if sessionLookupErr != nil {
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_terminal_session", failurecause.Attr(sessionLookupErr), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
 	}
 	if sessionLookupErr != nil && response.StatusCode < http.StatusBadRequest {
 		recorder.appendFailure(request.Context(), observation, sharedtelemetry.AuthenticationFailureInternalError)
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 
 	recorder.appendTerminalDenial(request, observation, response)
-	copyBufferedKratosResponse(w, response, nil)
+	copyBufferedKratosResponse(request.Context(), w, response, nil)
 }
 
 func (recorder *AuthenticationAccessRecorder) appendSuccess(
@@ -63,10 +77,11 @@ func (recorder *AuthenticationAccessRecorder) appendSuccess(
 		SessionID: principal.SessionID.String(), IdentityID: principal.IdentityID.String(), MemberID: principal.MemberID.String(),
 	})
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "build_success_actor", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
 		apitelemetry.ReportSecurityAccessAppendFailure(ctx, sharedtelemetry.SecurityAuthenticationSucceeded, sharedtelemetry.AuditAppendFailureActorInvalid)
 		return err
 	}
-	return apitelemetry.BuildAndAppendSecurityAccess(
+	err = apitelemetry.BuildAndAppendSecurityAccess(
 		ctx,
 		recorder.writer,
 		sharedtelemetry.SecurityAuthenticationSucceeded,
@@ -82,6 +97,10 @@ func (recorder *AuthenticationAccessRecorder) appendSuccess(
 			})
 		},
 	)
+	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "append_authentication_success", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
+	}
+	return err
 }
 
 func (recorder *AuthenticationAccessRecorder) appendFailure(
@@ -93,11 +112,11 @@ func (recorder *AuthenticationAccessRecorder) appendFailure(
 		recorder.appendBlock(ctx, observation, sharedtelemetry.AuthenticationBlockRequestInvalid)
 		return
 	}
-	_ = apitelemetry.BuildAndAppendSecurityAccess(
+	err := apitelemetry.BuildAndAppendSecurityAccess(
 		ctx,
 		recorder.writer,
 		sharedtelemetry.SecurityAuthenticationFailed,
-		recorder.denialActor(observation),
+		recorder.denialActor(ctx, observation),
 		recorder.now(),
 		func(metadata sharedtelemetry.SecurityAccessMetadata) (sharedtelemetry.SecurityAccessRecord, error) {
 			return sharedtelemetry.NewAuthenticationFailedRecord(metadata, sharedtelemetry.AuthenticationContext{
@@ -105,6 +124,9 @@ func (recorder *AuthenticationAccessRecorder) appendFailure(
 			}, reason)
 		},
 	)
+	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "append_authentication_failure", failurecause.Attr(err), "authentication_failure_reason", string(reason), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
+	}
 }
 
 func (recorder *AuthenticationAccessRecorder) appendBlock(
@@ -112,11 +134,11 @@ func (recorder *AuthenticationAccessRecorder) appendBlock(
 	observation *authenticationObservation,
 	reason sharedtelemetry.AuthenticationBlockReason,
 ) {
-	_ = apitelemetry.BuildAndAppendSecurityAccess(
+	err := apitelemetry.BuildAndAppendSecurityAccess(
 		ctx,
 		recorder.writer,
 		sharedtelemetry.SecurityAuthenticationBlocked,
-		recorder.denialActor(observation),
+		recorder.denialActor(ctx, observation),
 		recorder.now(),
 		func(metadata sharedtelemetry.SecurityAccessMetadata) (sharedtelemetry.SecurityAccessRecord, error) {
 			return sharedtelemetry.NewAuthenticationBlockedRecord(metadata, sharedtelemetry.AuthenticationContext{
@@ -124,6 +146,9 @@ func (recorder *AuthenticationAccessRecorder) appendBlock(
 			}, reason)
 		},
 	)
+	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "append_authentication_block", failurecause.Attr(err), "authentication_block_reason", string(reason), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
+	}
 }
 
 func (recorder *AuthenticationAccessRecorder) appendTerminalDenial(
@@ -171,12 +196,13 @@ func (recorder *AuthenticationAccessRecorder) appendTerminalDenial(
 	recorder.appendFailure(request.Context(), observation, sharedtelemetry.AuthenticationFailureProofRejected)
 }
 
-func (recorder *AuthenticationAccessRecorder) denialActor(observation *authenticationObservation) sharedtelemetry.RecordActor {
+func (recorder *AuthenticationAccessRecorder) denialActor(ctx context.Context, observation *authenticationObservation) sharedtelemetry.RecordActor {
 	if observation != nil && observation.FlowKind == sharedtelemetry.AuthenticationFlowReauthentication && observation.IncomingMember != nil {
 		actor, err := sharedtelemetry.ActorForRecord(sharedtelemetry.MemberActor{MemberID: observation.IncomingMember.MemberID.String()})
 		if err == nil {
 			return actor
 		}
+		slog.ErrorContext(ctx, "Build authentication denial actor failed", failurecause.Attr(err))
 	}
 	actor, _ := sharedtelemetry.ActorForRecord(sharedtelemetry.AnonymousActor{})
 	return actor

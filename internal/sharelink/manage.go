@@ -3,6 +3,7 @@ package sharelink
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -51,7 +53,19 @@ func NewService(db *gorm.DB, authority TargetAuthority) *Service {
 	return &Service{db: db, authority: authority}
 }
 
-func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[managev1.ListShareLinksRequest]) (*connect.Response[managev1.ListShareLinksResponse], error) {
+func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[managev1.ListShareLinksRequest]) (_ *connect.Response[managev1.ListShareLinksResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.ListShareLinks", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
 		return nil, err
 	}
@@ -71,7 +85,27 @@ func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[manag
 	return connect.NewResponse(&managev1.ListShareLinksResponse{ShareLinks: items}), nil
 }
 
-func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[managev1.CreateShareLinkRequest]) (*connect.Response[managev1.CreateShareLinkResponse], error) {
+func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[managev1.CreateShareLinkRequest]) (_ *connect.Response[managev1.CreateShareLinkResponse], returnErr error) {
+	var link *model.ShareLink
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		private := []string{req.Msg.GetPassword()}
+		if link != nil {
+			private = append(private, link.Token)
+			if link.PasswordHash != nil {
+				private = append(private, *link.PasswordHash)
+			}
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.CreateShareLink", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr, private...))
+	}()
+
 	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
 		return nil, err
 	}
@@ -88,8 +122,24 @@ func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[mana
 	return connect.NewResponse(&managev1.CreateShareLinkResponse{ShareLink: toProto(link)}), nil
 }
 
-func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[managev1.DeleteShareLinkRequest]) (*connect.Response[managev1.DeleteShareLinkResponse], error) {
+func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[managev1.DeleteShareLinkRequest]) (_ *connect.Response[managev1.DeleteShareLinkResponse], returnErr error) {
 	var link model.ShareLink
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		private := []string{link.Token}
+		if link.PasswordHash != nil {
+			private = append(private, *link.PasswordHash)
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.DeleteShareLink", "outcome", "failed", "share_link_id", req.Msg.GetId(), "entity_type", link.EntityType, "entity_id", link.EntityID, failurecause.Attr(returnErr, private...))
+	}()
+
 	if err := s.db.WithContext(ctx).First(&link, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("share link", req.Msg.Id)
@@ -114,6 +164,7 @@ func validateTarget(entityType managev1.ShareLinkEntityType, entityID string) er
 		return errs.InvalidEntityType(entityType.String())
 	}
 	if _, err := uuid.Parse(entityID); err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "sharelink", "operation", "sharelink.validateTarget", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidEntityID()
 	}
 	return nil

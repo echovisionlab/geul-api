@@ -3,6 +3,7 @@ package mediaruntime
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/config"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // OGProcess runs the original Node worker unchanged. Its existing queue leases,
@@ -118,14 +120,18 @@ func (p *OGProcess) Shutdown(ctx context.Context) error {
 	}
 	if !p.stopping {
 		p.stopping = true
-		_ = p.cmd.Process.Signal(syscall.SIGTERM)
+		if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil && err != os.ErrProcessDone {
+			slog.ErrorContext(ctx, "Failed to signal OG worker shutdown", failurecause.Attr(err))
+		}
 	}
 	p.mu.Unlock()
 	select {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		_ = p.cmd.Process.Kill()
+		if err := p.cmd.Process.Kill(); err != nil && err != os.ErrProcessDone {
+			slog.ErrorContext(ctx, "Failed to kill OG worker", failurecause.Attr(err))
+		}
 		<-done
 		return ctx.Err()
 	}

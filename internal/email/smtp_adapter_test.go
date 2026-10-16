@@ -26,8 +26,18 @@ func TestSMTPAdapterSendHonorsCanceledDialContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := adapter.Send(ctx, smtpTestEmail())
+	output := captureEmailPackageLogs(t)
+	message := smtpTestEmail()
+	message.CommandID = "command-canceled"
+	message.Template = "login_code"
+	_, err := adapter.Send(ctx, message)
 	require.ErrorIs(t, err, context.Canceled)
+	entry := decodeEmailPackageLog(t, output)
+	require.Equal(t, "mail.provider.failed", entry["event"])
+	require.Contains(t, entry["failure_cause"], "context canceled")
+	require.Equal(t, "command-canceled", entry["command_id"])
+	require.Equal(t, "login_code", entry["template_type"])
+	require.NotContains(t, output.String(), "recipient@example.test")
 }
 
 func TestSMTPAdapterCloseRetiresPoolAndClosesReleasedConnections(t *testing.T) {
@@ -221,4 +231,14 @@ func smtpTestEmail() *Email {
 		Subject:   "SMTP cancellation test",
 		Text:      "test",
 	}
+}
+
+func TestSMTPAdapterNilMessageFailureStillReturnsErrorAndLogsCause(t *testing.T) {
+	output := captureEmailPackageLogs(t)
+	adapter := &SMTPAdapter{id: "smtp-test"}
+	_, err := adapter.Send(t.Context(), nil)
+	require.Error(t, err)
+	entry := decodeEmailPackageLog(t, output)
+	require.NotEmpty(t, entry["failure_cause"])
+	require.Equal(t, "mail.provider.failed", entry["event"])
 }

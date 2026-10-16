@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -26,7 +28,18 @@ import (
 func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateProgramEventSeriesRequest],
-) (*connect.Response[managev1.ProgramEventSeries], error) {
+) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	can, err := policyv1.ProgramEventSeries.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -68,6 +81,7 @@ func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
+				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventSeries", failurecause.Attr(err))
 				return errs.SlugAlreadyExists("program event series", slug)
 			}
 			return errs.Internal(err)
@@ -108,7 +122,18 @@ func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 func (s *ProgramEventSeriesService) GetProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.GetProgramEventSeriesRequest],
-) (*connect.Response[managev1.ProgramEventSeries], error) {
+) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "GetProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	series, err := s.loadProgramEventSeriesRow(ctx, req.Msg.Id)
 	if err != nil {
 		return nil, err
@@ -130,7 +155,18 @@ func (s *ProgramEventSeriesService) GetProgramEventSeries(
 func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListProgramEventSeriesAdminRequest],
-) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error) {
+) (_ *connect.Response[managev1.ListProgramEventSeriesAdminResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventSeriesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	can, err := policyv1.ProgramEventSeries.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -177,7 +213,18 @@ func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
 func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventSeriesRequest],
-) (*connect.Response[managev1.ProgramEventSeries], error) {
+) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	can, err := programEventSeriesUpdateCan(req.Msg)
 	if err != nil {
 		return nil, err
@@ -203,9 +250,21 @@ func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
 func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventSeriesRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	can, err := policyv1.ProgramEventSeries.Delete(req.Msg.Id)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("id", "must be a canonical resource UUID")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {

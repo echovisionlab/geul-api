@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -54,7 +55,7 @@ func (s *FileService) refreshUploadSessionActivity(ctx context.Context, uploadID
 			"last_activity_at": now,
 			"updated_at":       now,
 		}).Error; err != nil {
-		slog.Warn("Failed to refresh upload session activity", "error", err, "uploadId", uploadID)
+		slog.Error("Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", uploadID)
 	}
 }
 

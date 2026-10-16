@@ -2,11 +2,13 @@ package public
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -45,7 +47,19 @@ func NewClientService(db *gorm.DB, assets AssetReader) *ClientService {
 func (s *ClientService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetClientRequest],
-) (*connect.Response[openv1.GetClientResponse], error) {
+) (_ *connect.Response[openv1.GetClientResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.GetClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var client model.Client
 	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -62,7 +76,19 @@ func (s *ClientService) Get(
 func (s *ClientService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListClientsRequest],
-) (*connect.Response[openv1.ListClientsResponse], error) {
+) (_ *connect.Response[openv1.ListClientsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.ListClients", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	var clients []model.Client
 	var total int64
 

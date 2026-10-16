@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -198,7 +199,7 @@ func Projection(
 ) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
 	set, err := LoadSet(ctx, db, cdnDomain, sourceFileID)
 	if err != nil {
-		slog.Warn("invalid generated favicon derivative set", "file_id", sourceFileID, "error", err)
+		slog.Warn("invalid generated favicon derivative set", "file_id", sourceFileID, failurecause.Attr(err))
 		return nil, nil
 	}
 	if set != nil {
@@ -206,7 +207,7 @@ func Projection(
 	}
 	legacy, err := readySourceAssetRef(ctx, db, cdnDomain, sourceFileID)
 	if err != nil {
-		slog.Warn("legacy favicon source asset not found", "file_id", sourceFileID, "error", err)
+		slog.Warn("legacy favicon source asset not found", "file_id", sourceFileID, failurecause.Attr(err))
 		return nil, nil
 	}
 	return legacy, nil

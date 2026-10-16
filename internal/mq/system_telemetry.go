@@ -2,14 +2,16 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func emitQueuePublishResult(ctx context.Context, queue, messageID string, duration time.Duration, reason sharedtelemetry.QueueFailureReason) {
+func emitQueuePublishResult(ctx context.Context, queue, messageID string, duration time.Duration, reason sharedtelemetry.QueueFailureReason, causes ...error) {
 	metadata := systemMetadata(ctx)
 	queueContext := sharedtelemetry.QueuePublishContext{
 		Queue: queue, MessageID: messageID, CommandID: messageID, DurationMS: duration.Milliseconds(),
@@ -23,7 +25,7 @@ func emitQueuePublishResult(ctx context.Context, queue, messageID string, durati
 	} else {
 		record, err = sharedtelemetry.NewQueuePublishFailedRecord(metadata, queueContext, reason)
 	}
-	emitSystem(ctx, record, err)
+	emitSystem(ctx, record, err, causes...)
 }
 
 func emitQueueDeliverySucceeded(ctx context.Context, queue string, delivery Message, retryCount int, duration time.Duration) {
@@ -98,9 +100,16 @@ func systemMetadata(ctx context.Context) sharedtelemetry.SystemMetadata {
 	return sharedtelemetry.SystemMetadata{OccurredAt: time.Now().UTC(), Correlation: sharedtelemetry.CorrelationFromContext(ctx)}
 }
 
-func emitSystem(ctx context.Context, record sharedtelemetry.SystemRecord, buildErr error) {
+func emitSystem(ctx context.Context, record sharedtelemetry.SystemRecord, buildErr error, causes ...error) {
 	if buildErr != nil {
+		slog.ErrorContext(ctx, "Build queue telemetry failed", "failure_cause", failurecause.Message(errors.Join(buildErr, errors.Join(causes...))))
 		return
 	}
-	_ = sharedtelemetry.EmitSystem(ctx, slog.Default().Handler(), record)
+	handler := slog.Default().Handler()
+	if cause := errors.Join(causes...); cause != nil {
+		handler = handler.WithAttrs([]slog.Attr{failurecause.Attr(cause)})
+	}
+	if err := sharedtelemetry.EmitSystem(ctx, handler, record); err != nil {
+		slog.ErrorContext(ctx, "Emit queue telemetry failed", "queue", record.Queue, "message_id", record.MessageID, "command_id", record.CommandID, "failure_cause", failurecause.Message(errors.Join(err, errors.Join(causes...))))
+	}
 }

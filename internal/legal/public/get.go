@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -166,6 +168,8 @@ func loadCurrentPublicLegalDocuments[Document structured.Value, Proto structured
 		First(&scheduled).Error
 	if err == nil {
 		result.scheduled = spec.toScheduled(&scheduled)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		slog.ErrorContext(ctx, "Failed to load scheduled legal document", "failure_cause", failurecause.Message(err))
 	}
 	return result, nil
 }

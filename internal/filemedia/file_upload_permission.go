@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -305,9 +306,8 @@ func (s *FileService) checkSpiceDBEntityUploadPermission(
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.Error(
-			"SpiceDB permission check failed during part upload",
-			"error", err,
+		slog.ErrorContext(ctx, "SpiceDB permission check failed during part upload",
+			failurecause.Attr(err),
 			"resourceType", target.resourceType,
 			"entityID", entityID,
 			"userID", userID,

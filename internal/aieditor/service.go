@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -131,7 +133,19 @@ func (s *Service) StartAIEditorTurn(
 	ctx context.Context,
 	request *connect.Request[managev1.StartAIEditorTurnRequest],
 	stream *connect.ServerStream[managev1.AIEditorTurnEvent],
-) error {
+) (retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "ai_editor", "event", "ai_editor.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "StartAIEditorTurn")
+		}
+	}()
 	owner, err := browserPrincipal(ctx)
 	if err != nil {
 		return err
@@ -145,7 +159,19 @@ func (s *Service) StartAIEditorTurn(
 func (s *Service) ResolveAIEditorToolCall(
 	ctx context.Context,
 	request *connect.Request[managev1.ResolveAIEditorToolCallRequest],
-) (*connect.Response[managev1.ResolveAIEditorToolCallResponse], error) {
+) (_ *connect.Response[managev1.ResolveAIEditorToolCallResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "ai_editor", "event", "ai_editor.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ResolveAIEditorToolCall")
+		}
+	}()
 	owner, err := browserPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -162,7 +188,19 @@ func (s *Service) ResolveAIEditorToolCall(
 func (s *Service) CancelAIEditorTurn(
 	ctx context.Context,
 	request *connect.Request[managev1.CancelAIEditorTurnRequest],
-) (*connect.Response[managev1.CancelAIEditorTurnResponse], error) {
+) (_ *connect.Response[managev1.CancelAIEditorTurnResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "ai_editor", "event", "ai_editor.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "CancelAIEditorTurn")
+		}
+	}()
 	owner, err := browserPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -234,6 +272,17 @@ func (s *Service) start(
 
 	metadata, err := s.document.Open(turnCtx, aidocument.OpenRequest{Document: documentID, Locale: locale})
 	if err != nil {
+		level := slog.LevelError
+		var input *aidocument.InputError
+		var cursor *aidocument.CursorError
+		if errors.As(err, &input) || errors.As(err, &cursor) {
+			level = slog.LevelWarn
+		}
+		switch connect.CodeOf(err) {
+		case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodePermissionDenied, connect.CodeUnauthenticated, connect.CodeFailedPrecondition:
+			level = slog.LevelWarn
+		}
+		slog.Log(turnCtx, level, "AI editor operation failed", "domain", "ai_editor", "event", "ai_editor.document.open_failed", failurecause.Attr(err), "turn_id", turnID, "action", request.Action)
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_DOCUMENT)
 	}
 	expectedTargetRevision := optionalRevision(request.ExpectedTargetRevision)
@@ -244,10 +293,24 @@ func (s *Service) start(
 	projection, err := s.readContext(turnCtx, documentID, locale, request.BlockHandles)
 	if err != nil || projection.DocumentRevision != metadata.DocumentRevision ||
 		!sameRevision(projection.TargetRevision, metadata.TargetRevision) {
+		if err != nil {
+			level := slog.LevelError
+			var input *aidocument.InputError
+			var cursor *aidocument.CursorError
+			if errors.As(err, &input) || errors.As(err, &cursor) {
+				level = slog.LevelWarn
+			}
+			switch connect.CodeOf(err) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodePermissionDenied, connect.CodeUnauthenticated, connect.CodeFailedPrecondition:
+				level = slog.LevelWarn
+			}
+			slog.Log(turnCtx, level, "AI editor operation failed", "domain", "ai_editor", "event", "ai_editor.document.read_failed", failurecause.Attr(err), "turn_id", turnID, "action", request.Action)
+		}
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_DOCUMENT)
 	}
 	encodedContext, err := aidocument.EncodeProjection(projection)
 	if err != nil {
+		slog.ErrorContext(turnCtx, "AI editor operation failed", "domain", "ai_editor", "event", "ai_editor.document.encode_failed", failurecause.Attr(err), "turn_id", turnID, "action", request.Action)
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_INTERNAL)
 	}
 
@@ -263,9 +326,10 @@ func (s *Service) start(
 		Timeout:            providerCallTimeout,
 	})
 	if err != nil {
+		slog.ErrorContext(turnCtx, "AI editor operation failed", "domain", "ai_editor", "event", "ai_editor.provider.start_failed", failurecause.Attr(err, request.GetPrompt(), string(encodedContext)), "turn_id", turnID, "action", request.Action)
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_PROVIDER)
 	}
-	defer closeProviderSession(providerSession)
+	defer closeProviderSession(providerSession, turnID)
 
 	providerPrompt := initialProviderPrompt(request, encodedContext)
 	for toolIndex := 0; toolIndex <= maxToolCalls; toolIndex++ {
@@ -275,6 +339,11 @@ func (s *Service) start(
 			UserPrompt:  providerPrompt,
 		})
 		if callErr != nil {
+			level := slog.LevelError
+			if turnCtx.Err() != nil {
+				level = slog.LevelWarn
+			}
+			slog.Log(turnCtx, level, "AI editor provider generation failed", "domain", "ai_editor", "event", "ai_editor.provider.generate_failed", failurecause.Attr(callErr, providerPrompt, request.GetPrompt()), "turn_id", turnID, "action", request.Action, "tool_index", toolIndex)
 			if errors.Is(turnCtx.Err(), context.Canceled) || errors.Is(turnCtx.Err(), context.DeadlineExceeded) {
 				return terminal(managev1.AIEditorTurnTerminalStatus_AI_EDITOR_TURN_TERMINAL_STATUS_CANCELLED, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_UNSPECIFIED)
 			}
@@ -284,6 +353,7 @@ func (s *Service) start(
 			responseText, documentID, locale, metadata.DocumentRevision, metadata.TargetRevision,
 		)
 		if parseErr != nil {
+			slog.ErrorContext(turnCtx, "AI editor operation failed", "domain", "ai_editor", "event", "ai_editor.provider.parse_failed", failurecause.Attr(parseErr, request.GetPrompt(), string(encodedContext)), "turn_id", turnID, "action", request.Action, "tool_index", toolIndex)
 			return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_PROVIDER)
 		}
 		if response.AssistantText != "" {
@@ -337,6 +407,18 @@ func (s *Service) start(
 		}
 		result, applyErr := s.document.Apply(turnCtx, response.Mutation)
 		if applyErr != nil {
+			level := slog.LevelError
+			var input *aidocument.InputError
+			if _, rejected := rejectedMutationToProto(applyErr); rejected || errors.As(applyErr, &input) || turnCtx.Err() != nil {
+				level = slog.LevelWarn
+			}
+			var validation *aidocument.ValidationError
+			if errors.As(applyErr, &validation) {
+				for _, issue := range validation.Result.Issues {
+					slog.WarnContext(turnCtx, "AI editor mutation rejected", "domain", "ai_editor", "event", "ai_editor.document.validation_rejected", "turn_id", turnID, "action", request.Action, "tool_index", toolIndex, "operation_index", issue.Operation, "reason", issue.Code, failurecause.Attr(errors.New(issue.Message), request.GetPrompt(), string(encodedContext)))
+				}
+			}
+			slog.Log(turnCtx, level, "AI editor document apply failed", "domain", "ai_editor", "event", "ai_editor.document.apply_failed", failurecause.Attr(applyErr, request.GetPrompt(), string(encodedContext)), "turn_id", turnID, "action", request.Action, "tool_index", toolIndex)
 			if turnCtx.Err() != nil {
 				return terminal(managev1.AIEditorTurnTerminalStatus_AI_EDITOR_TURN_TERMINAL_STATUS_CANCELLED, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_UNSPECIFIED)
 			}
@@ -639,10 +721,12 @@ func emitTerminalFailure(terminal func(managev1.AIEditorTurnTerminalStatus, mana
 	return terminal(managev1.AIEditorTurnTerminalStatus_AI_EDITOR_TURN_TERMINAL_STATUS_FAILED, code)
 }
 
-func closeProviderSession(session llm.Session) {
+func closeProviderSession(session llm.Session, turnID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 	defer cancel()
-	_ = session.Close(ctx)
+	if err := session.Close(ctx); err != nil {
+		slog.ErrorContext(ctx, "AI editor provider session close failed", "domain", "ai_editor", "event", "ai_editor.provider.close_failed", "turn_id", turnID, "failure_cause", failurecause.Message(err))
+	}
 }
 
 func optionalString(value string) *string {

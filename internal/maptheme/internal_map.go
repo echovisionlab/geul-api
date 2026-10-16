@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -203,10 +205,12 @@ func (s *InternalMapService) requireLockedMapThemeContributorsEdit(
 	}
 	memberID := memberIDs[0]
 	if _, err := uuidutil.ParseCanonical(memberID, "contributor_member_ids"); err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "requireLockedMapThemeContributorsEdit", failurecause.Attr(err))
 		return errs.InvalidArgument("contributor_member_ids", "must contain exactly one canonical Member UUID")
 	}
 	can, err := policyv1.MapTheme.Edit(themeID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "requireLockedMapThemeContributorsEdit", failurecause.Attr(err))
 		return errs.NotFound("theme", themeID)
 	}
 	target, err := authorizationtarget.RequireLocked(ctx, tx, memberID)
@@ -218,10 +222,12 @@ func (s *InternalMapService) requireLockedMapThemeContributorsEdit(
 	}
 	actor, err := policyv1.NewAccountIdentityActor(target.IdentityID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "requireLockedMapThemeContributorsEdit", failurecause.Attr(err))
 		return errs.NoPermission("edit", "map theme")
 	}
 	allowed, err := s.spiceDB.CheckActorCan(ctx, actor, can)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "maptheme", "operation", "requireLockedMapThemeContributorsEdit", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -232,7 +238,18 @@ func (s *InternalMapService) requireLockedMapThemeContributorsEdit(
 
 func (s *InternalMapService) SaveMapThemeSnapshot(
 	ctx context.Context, req *connect.Request[intrav1.SaveMapThemeSnapshotRequest],
-) (*connect.Response[intrav1.SaveMapThemeSnapshotResponse], error) {
+) (_ *connect.Response[intrav1.SaveMapThemeSnapshotResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "SaveMapThemeSnapshot", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	themeID, err := normalizeMapThemeID(req.Msg.ThemeId, "theme_id")
 	if err != nil {
 		return nil, err
@@ -313,7 +330,18 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 
 func (s *InternalMapService) LoadMapThemeSnapshot(
 	ctx context.Context, req *connect.Request[intrav1.LoadMapThemeSnapshotRequest],
-) (*connect.Response[intrav1.LoadMapThemeSnapshotResponse], error) {
+) (_ *connect.Response[intrav1.LoadMapThemeSnapshotResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "LoadMapThemeSnapshot", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	themeID, err := normalizeMapThemeID(req.Msg.ThemeId, "theme_id")
 	if err != nil {
 		return nil, err

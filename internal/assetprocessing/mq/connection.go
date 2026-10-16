@@ -5,8 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -43,7 +46,11 @@ func (c *Connection) Healthy() bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	return c.db.PingContext(ctx) == nil
+	if err := c.db.PingContext(ctx); err != nil {
+		slog.ErrorContext(ctx, "Media PostgreSQL health check failed", failurecause.Attr(err))
+		return false
+	}
+	return true
 }
 
 func (c *Connection) Close() error {

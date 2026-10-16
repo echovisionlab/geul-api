@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -234,6 +236,17 @@ func (h *RecipientPolicy) ensureAccountSelectedPrimaryEmail(ctx context.Context,
 		Select("id", "account_identity_id", "primary_email", "onboarded", "deleted_at").
 		Where("account_identity_id = ? AND onboarded = TRUE AND deleted_at IS NULL", identityID).
 		Take(&member).Error; err != nil {
+		level := slog.LevelWarn
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			level = slog.LevelError
+		}
+		private := []string{job.GetRecipient()}
+		for _, value := range job.GetTemplateData() {
+			private = append(private, value)
+		}
+		cause := failurecause.Message(err, private...)
+		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "member_identity_link_mismatch",
+			"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
 		return h.blockEmailForRecipientContext(ctx, job, "member_identity_link_mismatch", "account identity is not linked to an active Member")
 	}
 	if member.ID != identity.ExternalID {
@@ -266,6 +279,16 @@ func (h *RecipientPolicy) ensureCommittedAccountSecurityMutation(ctx context.Con
 	case email.EventPasskeyAdded.String(), email.EventPasskeyRemoved.String():
 		expectedCount, err := strconv.Atoi(strings.TrimSpace(job.GetTemplateData()["_credential_count"]))
 		if err != nil || expectedCount < 0 {
+			if err != nil {
+				level := slog.LevelWarn
+				private := []string{job.GetRecipient()}
+				for _, value := range job.GetTemplateData() {
+					private = append(private, value)
+				}
+				cause := failurecause.Message(err, private...)
+				slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "security_mutation_context_invalid",
+					"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
+			}
 			return h.blockEmailForRecipientContext(ctx, job, "security_mutation_context_invalid", "passkey notice is missing exact credential context")
 		}
 		passkeyIdentity, err := h.kratosClient.GetIdentityWithIncludeCredential(ctx, identity.ID, "passkey")
@@ -287,10 +310,26 @@ func (h *RecipientPolicy) ensureCommittedAccountSecurityMutation(ctx context.Con
 func (h *RecipientPolicy) ensureNewsletterCurrentVerifiedEmail(ctx context.Context, job *managev1.SendEmailEvent, identityID string, memberID string) (bool, error) {
 	identityID = strings.TrimSpace(identityID)
 	if _, err := uuidutil.ParseCanonical(identityID, "identity_id"); err != nil {
+		level := slog.LevelWarn
+		private := []string{job.GetRecipient()}
+		for _, value := range job.GetTemplateData() {
+			private = append(private, value)
+		}
+		cause := failurecause.Message(err, private...)
+		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "recipient_context_invalid",
+			"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
 		return h.blockEmailForRecipientContext(ctx, job, "recipient_context_invalid", "invalid newsletter identity context")
 	}
 	memberID = strings.TrimSpace(memberID)
 	if _, err := uuidutil.ParseCanonical(memberID, "member_id"); err != nil {
+		level := slog.LevelWarn
+		private := []string{job.GetRecipient()}
+		for _, value := range job.GetTemplateData() {
+			private = append(private, value)
+		}
+		cause := failurecause.Message(err, private...)
+		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "recipient_context_invalid",
+			"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
 		return h.blockEmailForRecipientContext(ctx, job, "recipient_context_invalid", "invalid newsletter member context")
 	}
 	if h.kratosClient == nil {
@@ -311,6 +350,17 @@ func (h *RecipientPolicy) ensureNewsletterCurrentVerifiedEmail(ctx context.Conte
 		Select("id", "account_identity_id", "primary_email", "onboarded", "deleted_at").
 		Where("id = ? AND account_identity_id = ? AND onboarded = TRUE AND deleted_at IS NULL", memberID, identityID).
 		First(&member).Error; err != nil {
+		level := slog.LevelWarn
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			level = slog.LevelError
+		}
+		private := []string{job.GetRecipient()}
+		for _, value := range job.GetTemplateData() {
+			private = append(private, value)
+		}
+		cause := failurecause.Message(err, private...)
+		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "member_identity_link_mismatch",
+			"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
 		return h.blockEmailForRecipientContext(ctx, job, "member_identity_link_mismatch", "newsletter identity is not linked to the requested active Member")
 	}
 	if member.AccountIdentityID == nil || *member.AccountIdentityID != identityID {

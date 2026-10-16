@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -32,7 +34,19 @@ func escapePgroongaQuery(q string) string {
 func (s *MapPlaceService) GetMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMapPlaceRequest],
-) (*connect.Response[managev1.MapPlace], error) {
+) (_ *connect.Response[managev1.MapPlace], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}
@@ -61,7 +75,19 @@ func (s *MapPlaceService) GetMapPlace(
 func (s *MapPlaceService) GetMapPlacesByIds(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMapPlacesByIdsRequest],
-) (*connect.Response[managev1.GetMapPlacesByIdsResponse], error) {
+) (_ *connect.Response[managev1.GetMapPlacesByIdsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetMapPlacesByIds", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if len(req.Msg.Ids) == 0 {
 		return connect.NewResponse(&managev1.GetMapPlacesByIdsResponse{
 			Places: []*managev1.MapPlace{},
@@ -105,7 +131,19 @@ func (s *MapPlaceService) GetMapPlacesByIds(
 func (s *MapPlaceService) SearchMapPlaces(
 	ctx context.Context,
 	req *connect.Request[managev1.SearchMapPlacesRequest],
-) (*connect.Response[managev1.SearchMapPlacesResponse], error) {
+) (_ *connect.Response[managev1.SearchMapPlacesResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SearchMapPlaces", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	limit := int(req.Msg.Limit)
 	if limit <= 0 {
 		limit = 10
@@ -149,7 +187,19 @@ func (s *MapPlaceService) SearchMapPlaces(
 func (s *MapPlaceService) ListMapPlacesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMapPlacesAdminRequest],
-) (*connect.Response[managev1.ListMapPlacesAdminResponse], error) {
+) (_ *connect.Response[managev1.ListMapPlacesAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListMapPlacesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

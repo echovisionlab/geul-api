@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -224,17 +226,22 @@ func normalizeCampaignEmailContentBlockError(entityType string, err error) error
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
+		slog.Warn("Email content operation rejected", "domain", "emailauthoring", "event", "emailauthoring.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
+		slog.Warn("Email content operation rejected", "domain", "emailauthoring", "event", "emailauthoring.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.NotFoundMsg(entityType + " content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
+		slog.Warn("Email content operation rejected", "domain", "emailauthoring", "event", "emailauthoring.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, entityType+" content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
+		slog.Warn("Email content operation rejected", "domain", "emailauthoring", "event", "emailauthoring.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):
+		slog.Warn("Email content operation rejected", "domain", "emailauthoring", "event", "emailauthoring.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "email documents cannot contain File Blocks")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())

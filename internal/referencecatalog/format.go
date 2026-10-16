@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -68,7 +70,19 @@ var formatListCRUD = referenceCRUD[model.Format]{filters: formatFilterConfig, so
 func (s *FormatService) ListFormats(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormatsRequest],
-) (*connect.Response[managev1.ListFormatsResponse], error) {
+) (_ *connect.Response[managev1.ListFormatsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListFormats", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	formats, total, page, err := formatListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -88,7 +102,19 @@ func (s *FormatService) ListFormats(
 func (s *FormatService) ListFormatsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormatsAdminRequest],
-) (*connect.Response[managev1.ListFormatsAdminResponse], error) {
+) (_ *connect.Response[managev1.ListFormatsAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListFormatsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Format.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -127,7 +153,19 @@ func (s *FormatService) ListFormatsAdmin(
 func (s *FormatService) CreateFormat(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateFormatRequest],
-) (*connect.Response[managev1.Format], error) {
+) (_ *connect.Response[managev1.Format], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateFormat", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Format.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -163,6 +201,7 @@ func (s *FormatService) CreateFormat(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(format).Error; err != nil {
 			if strings.Contains(err.Error(), "duplicate key") {
+				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 				return errs.SlugAlreadyExists("format", slug)
 			}
 			return errs.Internal(err)
@@ -193,7 +232,19 @@ func (s *FormatService) CreateFormat(
 func (s *FormatService) UpdateFormat(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFormatRequest],
-) (*connect.Response[managev1.Format], error) {
+) (_ *connect.Response[managev1.Format], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateFormat", "outcome", "failed", "format_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Format.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -261,6 +312,7 @@ func (s *FormatService) applyFormatUpdates(
 	}
 	if err := db.WithContext(ctx).Model(format).Updates(updates).Error; err != nil {
 		if isUniqueViolation(err) {
+			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return errs.SlugAlreadyExists("format", optionalStringValue(slug))
 		}
 		return errs.Internal(err)
@@ -279,7 +331,19 @@ func optionalStringValue(value *string) string {
 func (s *FormatService) DeleteFormat(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteFormatRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteFormat", "outcome", "failed", "format_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Format.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

@@ -44,7 +44,7 @@ func TestMessageTruncates(t *testing.T) {
 }
 
 func TestAttrAndPanic(t *testing.T) {
-	if a := Attr(errors.New("boom")); a.Key != "error" || a.Value.String() != "boom" {
+	if a := Attr(errors.New("boom")); a.Key != "failure_cause" || a.Value.String() != "boom" {
 		t.Fatalf("Attr = %v", a)
 	}
 	cause, stack := Panic("token=abc")

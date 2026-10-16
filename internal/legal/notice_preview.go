@@ -3,11 +3,13 @@ package legal
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -170,6 +172,9 @@ func deleteAutomaticLegalNoticePreviewShareLinks(
 	for i := range runs {
 		data, err := decodeEmailDeliveryTemplateData(runs[i].RunKind, eventKey, runs[i].TemplateData)
 		if err != nil || data.PreviewURL == nil {
+			if err != nil {
+				slog.ErrorContext(ctx, "Failed to decode legal notice data during preview revocation", "failure_cause", failurecause.Message(err), "run_id", runs[i].ID)
+			}
 			continue
 		}
 		token, ok := automaticLegalNoticePreviewToken(*data.PreviewURL)

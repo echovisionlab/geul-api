@@ -3,6 +3,8 @@ package emaildelivery
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"log/slog"
 	"strings"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -60,7 +62,12 @@ func NewBulkApplication(
 func (a *BulkApplication) Handle(
 	ctx context.Context,
 	job *managev1.SendBulkEmailBatchEvent,
-) error {
+) (handleErr error) {
+	defer func() {
+		if handleErr != nil {
+			slog.ErrorContext(ctx, "Bulk email delivery failed", "domain", "mail", "event", "mail.bulk.failed", "outcome", "failed", "run_id", job.GetDeliveryRunId(), failurecause.Attr(handleErr))
+		}
+	}()
 	if job == nil {
 		return fmt.Errorf("bulk email batch is required")
 	}

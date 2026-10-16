@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -84,7 +86,18 @@ func NewInternalReleaseService(db *gorm.DB, spiceDB *auth.SpiceDBClient, ogRefre
 func (s *InternalReleaseService) LoadReleaseBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadReleaseBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadReleaseBlockDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadReleaseBlockDocumentResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "LoadReleaseBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil || req.Msg == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
@@ -177,7 +190,18 @@ func (s *InternalReleaseService) LoadReleaseBlockDocument(
 func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyReleaseBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyReleaseBlockBatchResponse], error) {
+) (_ *connect.Response[intrav1.ApplyReleaseBlockBatchResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ApplyReleaseBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil || req.Msg == nil || req.Msg.Batch == nil {
 		return nil, errs.Required("batch")
 	}
@@ -203,6 +227,9 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 	}
 	expected, err := uuid.Parse(req.Msg.Batch.ExpectedRevision)
 	if err != nil || expected == uuid.Nil {
+		if err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ApplyReleaseBlockBatch", failurecause.Attr(err))
+		}
 		return nil, errs.InvalidArgument("batch.expected_revision", "must be a UUID")
 	}
 	var result contentblock.Result
@@ -284,7 +311,18 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateReleaseLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdateReleaseLocaleMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdateReleaseLocaleMetadataResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateReleaseLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	input := req.Msg
 	if s.contentBlocks == nil || input == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
@@ -298,6 +336,9 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 	}
 	expectedRevision, err := uuid.Parse(input.ExpectedRevision)
 	if err != nil || expectedRevision == uuid.Nil {
+		if err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "UpdateReleaseLocaleMetadata", failurecause.Attr(err))
+		}
 		return nil, errs.InvalidArgument("expected_revision", "must be a UUID")
 	}
 	documentID, err := loadReleaseContentDocumentID(ctx, s.db, input.ReleaseId)
@@ -465,6 +506,10 @@ func releaseContributorUUIDs(values []string) []uuid.UUID {
 	for _, value := range values {
 		if parsed, err := uuid.Parse(value); err == nil && parsed != uuid.Nil {
 			result = append(result, parsed)
+		} else {
+			if err != nil {
+				slog.WarnContext(context.Background(), "Operation failed", "domain", "release", "operation", "parse_contributor", failurecause.Attr(err))
+			}
 		}
 	}
 	return result

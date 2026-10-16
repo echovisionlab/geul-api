@@ -2,12 +2,14 @@ package telemetry
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/requestip"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/felixge/httpsnoop"
@@ -113,9 +115,11 @@ func ingressRequestContext(r *http.Request, trustIncomingRequestID func(*http.Re
 		if err == nil {
 			return requestContext
 		}
+		slog.WarnContext(r.Context(), "Propagated HTTP request context rejected", "failure_cause", failurecause.Message(err, r.Header.Get(RequestIDHeader)))
 	}
 	requestContext, err := sharedtelemetry.NewPublicRequestContext(trustedSourceIP(r))
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Public HTTP request context rejected", "failure_cause", failurecause.Message(err))
 		requestContext, _ = sharedtelemetry.NewPublicRequestContext("")
 	}
 	return requestContext
@@ -146,13 +150,17 @@ func logHTTPRequest(ctx context.Context, method, route string, statusCode int, d
 	actor, correlation := requestActorAndCorrelation(ctx)
 	result, err := sharedtelemetry.ClassifyHTTPResult(statusCode, duration.Milliseconds())
 	if err != nil {
+		slog.ErrorContext(ctx, "Classify HTTP request record failed", "http_method", method, "http_route", route, "status_code", statusCode, "failure_cause", failurecause.Message(err))
 		return
 	}
 	record, err := sharedtelemetry.NewHTTPRequestRecord(sharedtelemetry.RequestMetadata{
 		OccurredAt: time.Now().UTC(), Correlation: correlation, RecordActor: actor,
 	}, method, route, result)
 	if err != nil {
+		slog.ErrorContext(ctx, "Build HTTP request record failed", "http_method", method, "http_route", route, "failure_cause", failurecause.Message(err))
 		return
 	}
-	_ = sharedtelemetry.EmitRequest(ctx, slogDefaultHandler(), record)
+	if err := sharedtelemetry.EmitRequest(ctx, slogDefaultHandler(), record); err != nil {
+		slog.ErrorContext(ctx, "Emit HTTP request record failed", "http_method", method, "http_route", route, "failure_cause", failurecause.Message(err))
+	}
 }

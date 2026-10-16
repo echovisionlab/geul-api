@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -67,14 +69,17 @@ func requirePagePermission(
 	}
 	can, err := action(pageID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePagePermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.NotFound("page", pageID)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePagePermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePagePermission", "outcome", "failed", failurecause.Attr(err), "page_id", pageID)
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -97,10 +102,12 @@ func requirePagePlatformAction(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePagePlatformAction", "outcome", "failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePagePlatformAction", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -185,10 +192,12 @@ func authorizePagePermissionAfterRootLock(
 	}
 	can, err := action(pageID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.authorizePagePermissionAfterRootLock", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.NotFound("page", pageID)
 	}
 	if err := identitystate.RequireFreshCan(ctx, tx, checker, can); err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
+			slog.WarnContext(ctx, "Page permission rejected", "domain", "page", "operation", "authorize_page_after_root_lock", "outcome", "failed", "page_id", pageID, failurecause.Attr(err))
 			return nil, errs.NotFound("page", pageID)
 		}
 		return nil, err

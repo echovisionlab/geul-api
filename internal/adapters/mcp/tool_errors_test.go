@@ -25,10 +25,14 @@ func TestExpectedToolErrorPreservesActionableFailuresWithoutPrivateContext(t *te
 		{"unavailable", connect.NewError(connect.CodeUnavailable, errors.New("private upstream context")), "The service is temporarily unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := expectedToolError(fmt.Errorf("private wrapper: %w", tc.err))
+			original := fmt.Errorf("private wrapper: %w", tc.err)
+			_, err := expectedToolError(original)
 			var toolError *mcpserver.ToolExecutionError
 			if !errors.As(err, &toolError) || toolError.Message != tc.message {
 				t.Fatalf("error=%v, want %q", err, tc.message)
+			}
+			if toolError.Cause != original {
+				t.Fatal("original cause was dropped")
 			}
 		})
 	}

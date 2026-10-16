@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -29,7 +31,19 @@ var errArchiveRetry = errors.New("audience archive relationship changed while ac
 func (s *AudienceService) ArchiveSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.ArchiveSegmentRequest],
-) (*connect.Response[managev1.Segment], error) {
+) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "ArchiveSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, err := policyv1.AudienceSegment.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -59,7 +73,19 @@ func (s *AudienceService) ArchiveSegment(
 func (s *AudienceService) RestoreSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.RestoreSegmentRequest],
-) (*connect.Response[managev1.Segment], error) {
+) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "RestoreSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, err := policyv1.AudienceSegment.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

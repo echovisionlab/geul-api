@@ -2,9 +2,11 @@ package page
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -26,6 +28,8 @@ func resolveInitialSourceLocale(
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_preferred_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -33,6 +37,8 @@ func resolveInitialSourceLocale(
 	}
 	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
 		return settings.DefaultLocale
+	} else {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }

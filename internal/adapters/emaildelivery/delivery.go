@@ -3,6 +3,7 @@ package emaildeliveryadapter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -195,6 +197,7 @@ func (s *BulkCampaignStore) BuildCommand(
 	referenceID := campaign.EmailDeliveryRunReferenceID(run)
 	templateData, err := campaign.CampaignDeliveryRunTemplateData(run)
 	if err != nil {
+		slog.ErrorContext(context.Background(), "Failed to decode campaign delivery template data", "failure_cause", failurecause.Message(err), "run_id", run.ID, "message_id", recipient.ID, "template_type", templateType)
 		return nil, false
 	}
 	if _, persisted := templateData["recipient_email"]; persisted {

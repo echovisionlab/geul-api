@@ -2,6 +2,7 @@ package label
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -86,7 +88,19 @@ func labelLogoColumnForVariant(variant managev1.ThemeAssetVariant) (string, erro
 func (s *LabelService) SetLabelImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetLabelImageRequest],
-) (*connect.Response[managev1.SetLabelImageResponse], error) {
+) (_ *connect.Response[managev1.SetLabelImageResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.SetLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
+	}()
+
 	logoColumn, err := labelLogoColumnForVariant(req.Msg.Variant)
 	if err != nil {
 		return nil, err
@@ -178,7 +192,19 @@ func (s *LabelService) SetLabelImage(
 func (s *LabelService) DeleteLabelImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteLabelImageRequest],
-) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
+) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
+	}()
+
 	logoColumn, err := labelLogoColumnForVariant(req.Msg.Variant)
 	if err != nil {
 		return nil, err

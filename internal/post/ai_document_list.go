@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -143,10 +145,12 @@ func (s *PostService) authorizedPostListQuery(ctx context.Context) (*gorm.DB, er
 	}
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizedPostListQuery", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizedPostListQuery", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	viewPostIDs, err := lookupPostResources(ctx, s.spiceDB, actor, policyv1.Post.LookupView())

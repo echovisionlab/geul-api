@@ -3,6 +3,7 @@ package audience
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -10,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -40,7 +42,19 @@ var segmentFilterConfig = &queryutil.FilterConfig{
 func (s *AudienceService) GetSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSegmentRequest],
-) (*connect.Response[managev1.Segment], error) {
+) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "GetSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, err := policyv1.AudienceSegment.View(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -64,6 +78,8 @@ func (s *AudienceService) GetSegment(
 	proto := toProtoSegment(&segment)
 	if count, err := s.estimateCount(ctx, &segment); err == nil {
 		proto.EstimatedCount = &count
+	} else {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "audience", "event", "audience.operation_failed", "operation", "estimate_segment_count", "outcome", "failed", "segment_id", segment.ID, failurecause.Attr(err))
 	}
 	return connect.NewResponse(proto), nil
 }
@@ -71,7 +87,19 @@ func (s *AudienceService) GetSegment(
 func (s *AudienceService) ListSegmentsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSegmentsAdminRequest],
-) (*connect.Response[managev1.ListSegmentsAdminResponse], error) {
+) (rpcResponse *connect.Response[managev1.ListSegmentsAdminResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "ListSegmentsAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, err := policyv1.AudienceSegment.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -123,7 +151,19 @@ func (s *AudienceService) ListSegmentsAdmin(
 func (s *AudienceService) ListSegmentsForAuthenticatedAccess(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSegmentsForAuthenticatedAccessRequest],
-) (*connect.Response[managev1.ListSegmentsForAuthenticatedAccessResponse], error) {
+) (rpcResponse *connect.Response[managev1.ListSegmentsForAuthenticatedAccessResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "ListSegmentsForAuthenticatedAccess", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if _, err := requireDownloadPolicyAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

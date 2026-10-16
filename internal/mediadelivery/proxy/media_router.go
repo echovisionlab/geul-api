@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/config"
 	"github.com/minio/minio-go/v7"
@@ -59,6 +60,7 @@ func handleDeliveryPreflight(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if _, err := mediaauth.ParseDeliveryPath(r.URL.Path); err != nil {
+		slog.WarnContext(r.Context(), "Invalid delivery preflight path", failurecause.Attr(err))
 		http.NotFound(w, r)
 		return true
 	}
@@ -74,30 +76,35 @@ func isDeliveryMethod(method string) bool {
 func (m *MediaRouter) resolveDelivery(w http.ResponseWriter, r *http.Request) (*resolvedDelivery, bool) {
 	deliveryPath, err := mediaauth.ParseDeliveryPath(r.URL.Path)
 	if err != nil {
+		slog.WarnContext(r.Context(), "Invalid delivery path", failurecause.Attr(err))
 		http.NotFound(w, r)
 		return nil, false
 	}
 	claims, err := m.authorize(r, deliveryPath)
 	if err != nil {
-		slog.Warn("media authorization rejected", "kind", deliveryPath.Kind, "fileId", deliveryPath.FileID, "error", err)
+		slog.WarnContext(r.Context(), "media authorization rejected", "kind", deliveryPath.Kind, "fileId", deliveryPath.FileID, failurecause.Attr(err))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return nil, false
 	}
 
 	stat, err := m.store.Stat(r.Context(), deliveryPath.ObjectKey)
 	if err != nil {
-		slog.Info("delivery object not found", "kind", deliveryPath.Kind, "fileId", deliveryPath.FileID, "generationId", deliveryPath.GenerationID)
+		level := slog.LevelError
+		if code := minio.ToErrorResponse(err).Code; code == "NoSuchKey" || code == "NoSuchObject" || code == "NotFound" {
+			level = slog.LevelWarn
+		}
+		slog.Log(r.Context(), level, "Failed to stat delivery object", failurecause.Attr(err), "kind", deliveryPath.Kind, "fileId", deliveryPath.FileID, "generationId", deliveryPath.GenerationID, "assetId", deliveryPath.AssetID)
 		http.NotFound(w, r)
 		return nil, false
 	}
 	if deliveryPath.Kind == mediaauth.PathAsset && hasForbiddenPublicAssetDownloadMetadata(stat) {
-		slog.Warn("public asset has forbidden download metadata", "assetId", deliveryPath.AssetID)
+		slog.WarnContext(r.Context(), "public asset has forbidden download metadata", "assetId", deliveryPath.AssetID)
 		setNoStoreCacheHeaders(w)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return nil, false
 	}
 	if !pathKindAllowsContentType(deliveryPath.Kind, deliveryExtension(deliveryPath), stat.ContentType) {
-		slog.Error("delivery object metadata mismatch", "kind", deliveryPath.Kind, "fileId", deliveryPath.FileID, "assetId", deliveryPath.AssetID, "contentType", stat.ContentType)
+		slog.ErrorContext(r.Context(), "delivery object metadata mismatch", "kind", deliveryPath.Kind, "fileId", deliveryPath.FileID, "assetId", deliveryPath.AssetID, "contentType", stat.ContentType)
 		http.NotFound(w, r)
 		return nil, false
 	}

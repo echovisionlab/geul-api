@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"google.golang.org/genai"
 )
@@ -129,16 +130,19 @@ type OpenAICompatibleConfig struct {
 }
 
 type geminiAITextProvider struct {
+	apiKey      string
 	client      *genai.Client
 	modelName   string
 	temperature *float32
 }
 
 type geminiAITextSession struct {
-	chat      *genai.Chat
-	modelName string
-	spec      SessionSpec
-	config    *genai.GenerateContentConfig
+	apiKey      string
+	chat        *genai.Chat
+	modelName   string
+	spec        SessionSpec
+	config      *genai.GenerateContentConfig
+	privateText []string
 }
 
 // NewGeminiProvider constructs a Gemini-backed Provider.
@@ -161,6 +165,7 @@ func NewGeminiProvider(config GeminiConfig) (Provider, error) {
 	}
 
 	return &geminiAITextProvider{
+		apiKey:      apiKey,
 		client:      client,
 		modelName:   modelName,
 		temperature: config.Temperature,
@@ -212,6 +217,7 @@ func (p *geminiAITextProvider) StartSession(
 	}
 
 	return &geminiAITextSession{
+		apiKey:    p.apiKey,
 		chat:      chat,
 		modelName: p.modelName,
 		spec:      spec,
@@ -230,7 +236,53 @@ func (p *geminiAITextProvider) ModelName() string {
 func (s *geminiAITextSession) GenerateText(
 	ctx context.Context,
 	turn SessionTurn,
-) (string, error) {
+) (_ string, retErr error) {
+	s.privateText = append(s.privateText, turn.UserPrompt)
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		cause := retErr
+		var failure *ProviderFailure
+		if errors.As(retErr, &failure) && failure.Unwrap() != nil {
+			cause = failure.Unwrap()
+		}
+		level := slog.LevelError
+		if errors.Is(retErr, context.Canceled) {
+			level = slog.LevelWarn
+		}
+
+		private := append([]string{s.apiKey, s.spec.SystemPrompt}, s.privateText...)
+		var apiError genai.APIError
+		apiErrorFound := false
+		var apiErrorPointer *genai.APIError
+		if errors.As(cause, &apiErrorPointer) && apiErrorPointer != nil {
+			apiError = *apiErrorPointer
+			apiErrorFound = true
+		} else {
+			apiErrorFound = errors.As(cause, &apiError)
+		}
+		fields := []any{"provider", "gemini", "model", s.modelName}
+		if apiErrorFound {
+			// The SDK uses the HTTP status line as Status when Message is
+			// an unparsed response body. Treat that body as private.
+			apiMessage := apiError.Message
+			if apiError.Status == fmt.Sprintf("%d %s", apiError.Code, http.StatusText(apiError.Code)) {
+				apiMessage = "[response body omitted]"
+			}
+			// Error() also renders Details, which can contain raw response data.
+			message := fmt.Sprintf("Gemini API HTTP %d: %s: %s", apiError.Code, http.StatusText(apiError.Code), apiMessage)
+			cause = errors.New(strings.ReplaceAll(cause.Error(), apiError.Error(), message))
+			fields = append(fields, "http_status", apiError.Code, "api_status", failurecause.Message(errors.New(apiError.Status), private...))
+		}
+		fields = append(fields, failurecause.Attr(cause, private...))
+		if failure != nil {
+			fields = append(fields, "provider_failure_category", failure.Details().Category, "exception_type", failure.Details().ExceptionType)
+		}
+		fields = append(fields, "domain", "llm", "event", "llm.provider.generate_failed", "outcome", "failed",
+			"request_id", s.spec.RequestID, "action", s.spec.Action, "turn_kind", turn.TurnKind, "operation_id", turn.OperationID)
+		slog.Log(ctx, level, "AI provider generation failed", fields...)
+	}()
 	timeout := requestTimeout(s.spec.Timeout)
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -283,6 +335,7 @@ func (s *geminiAITextSession) GenerateText(
 		}, nil)
 	}
 
+	s.privateText = append(s.privateText, text)
 	return text, nil
 }
 
@@ -396,6 +449,9 @@ func normalizeOpenAICompatibleChatURL(baseURL string) (string, error) {
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if err != nil {
+			slog.Warn("OpenAI-compatible provider URL rejected", "domain", "llm", "event", "llm.provider.config_rejected", failurecause.Attr(err))
+		}
 		return "", fmt.Errorf("invalid OpenAI-compatible API base URL %q", baseURL)
 	}
 	return baseURL, nil
@@ -451,7 +507,39 @@ func (p *openAICompatibleTextProvider) GenerateText(
 func (s *openAICompatibleTextSession) GenerateText(
 	ctx context.Context,
 	turn SessionTurn,
-) (string, error) {
+) (_ string, retErr error) {
+	httpStatus := 0
+	var providerCause error
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		cause := retErr
+		if providerCause != nil {
+			cause = providerCause
+		}
+		var failure *ProviderFailure
+		if errors.As(retErr, &failure) && failure.Unwrap() != nil {
+			cause = failure.Unwrap()
+		}
+		level := slog.LevelError
+		if errors.Is(retErr, context.Canceled) {
+			level = slog.LevelWarn
+		}
+
+		private := []string{s.provider.apiKey, s.spec.SystemPrompt, turn.UserPrompt}
+		for _, message := range s.messages {
+			private = append(private, message.Content)
+		}
+		fields := []any{"provider", "openai-compatible", "model", s.provider.modelName, "http_status", httpStatus,
+			failurecause.Attr(cause, private...)}
+		if failure != nil {
+			fields = append(fields, "provider_failure_category", failure.Details().Category, "exception_type", failure.Details().ExceptionType)
+		}
+		fields = append(fields, "domain", "llm", "event", "llm.provider.generate_failed", "outcome", "failed",
+			"request_id", s.spec.RequestID, "action", s.spec.Action, "turn_kind", turn.TurnKind, "operation_id", turn.OperationID)
+		slog.Log(ctx, level, "AI provider generation failed", fields...)
+	}()
 	timeout := requestTimeout(s.spec.Timeout)
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -499,6 +587,7 @@ func (s *openAICompatibleTextSession) GenerateText(
 			ExceptionType: ProviderExceptionHTTPRequest,
 		}, err)
 	}
+	httpStatus = httpResp.StatusCode
 	defer httpResp.Body.Close()
 
 	responseBody, err := readOpenAICompatibleResponseBody(
@@ -518,6 +607,7 @@ func (s *openAICompatibleTextSession) GenerateText(
 		}, err)
 	}
 	if response.Error != nil && response.Error.Message != "" {
+		providerCause = errors.New(response.Error.Message)
 		return "", NewProviderFailure(ProviderFailureDetails{
 			Category:      ProviderFailureRejected,
 			ExceptionType: ProviderExceptionProviderResponse,

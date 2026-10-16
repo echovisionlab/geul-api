@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -36,12 +38,12 @@ func main() {
 	ctx := context.Background()
 	hookServer, hookBaseURL, err := startHookServer()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start backend integration hook server: %v\n", err)
+		fmt.Fprintf(os.Stderr, "start backend integration hook server: %v\n", failurecause.Message(err))
 		os.Exit(1)
 	}
 	defer func() {
 		if err := hookServer.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup backend integration hook server: %v\n", err)
+			fmt.Fprintf(os.Stderr, "cleanup backend integration hook server: %v\n", failurecause.Message(err))
 		}
 	}()
 
@@ -52,18 +54,18 @@ func main() {
 		},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start backend integration stack: %v\n", err)
+		fmt.Fprintf(os.Stderr, "start backend integration stack: %v\n", failurecause.Message(err))
 		os.Exit(1)
 	}
 	defer func() {
 		if err := stack.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup backend integration stack: %v\n", err)
+			fmt.Fprintf(os.Stderr, "cleanup backend integration stack: %v\n", failurecause.Message(err))
 		}
 	}()
 
 	publisher, err := mq.NewPublisher(stack.Postgres.SQLDB)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start backend integration hook publisher: %v\n", err)
+		fmt.Fprintf(os.Stderr, "start backend integration hook publisher: %v\n", failurecause.Message(err))
 		os.Exit(1)
 	}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
@@ -161,18 +163,23 @@ func startHookServer() (*hookServer, string, error) {
 	errCh := make(chan error, 1)
 	go func() {
 		if err := server.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			slog.Error("Backend integration hook server failed", "failure_cause", failurecause.Message(err))
 			errCh <- err
 		}
 	}()
 
 	select {
 	case err := <-errCh:
-		_ = listener.Close()
+		if closeErr := listener.Close(); closeErr != nil {
+			slog.Error("Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
+		}
 		return nil, "", err
 	default:
 		_, port, err := net.SplitHostPort(listener.Addr().String())
 		if err != nil {
-			_ = listener.Close()
+			if closeErr := listener.Close(); closeErr != nil {
+				slog.Error("Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
+			}
 			return nil, "", err
 		}
 		return server, "http://" + net.JoinHostPort(testcontainers.HostInternal, port), nil

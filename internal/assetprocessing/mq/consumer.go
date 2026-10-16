@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/assetprocessing/jobs"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -67,7 +68,7 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 			return
 		}
 		if err != nil {
-			slog.Error("PGMQ read failed", "queue", c.config.Name, "worker", workerID, "error", err)
+			slog.ErrorContext(ctx, "PGMQ read failed", "queue", c.config.Name, "worker", workerID, failurecause.Attr(err))
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
@@ -81,20 +82,35 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 
 func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 	startedAt := time.Now()
+	messageID, commandID := queueMessageIdentity(message)
 	parent = extractDeliveryCorrelation(parent, message)
 	if message.ContractError != "" || message.Envelope.MessageType != c.config.MessageType {
+		cause := message.ContractError
+		if cause == "" {
+			cause = "unexpected queue message type"
+		}
+		slog.WarnContext(parent, "PGMQ contract rejected", failurecause.Attr(fmt.Errorf("%s", cause)), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
 		emitQueueDeliveryFailed(parent, message, c.config.Name, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
 		c.deadLetter(parent, message, "PGMQ contract-invalid archive failed")
 		return
 	}
 	body, err := message.Envelope.Payload()
 	if err != nil {
+		slog.WarnContext(parent, "PGMQ payload rejected", failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
 		emitQueueDeliveryFailed(parent, message, c.config.Name, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
 		c.deadLetter(parent, message, "")
 		return
 	}
 	jobCtx, cancel := context.WithTimeout(parent, c.config.Timeout)
 	err = c.handler(jobCtx, body)
+	// The normalizing handler reduces "error" to a type; "cause" keeps the sanitized diagnostic.
+	if err != nil {
+		level := slog.LevelError
+		if jobCtx.Err() != nil {
+			level = slog.LevelWarn
+		}
+		slog.Log(jobCtx, level, "PGMQ handler failed", failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
+	}
 	cancel()
 	if isTerminalResult(err) && parent.Err() == nil {
 		c.complete(parent, message, startedAt, "PGMQ terminal completion failed")
@@ -108,6 +124,9 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 		retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer retryCancel()
 		retryErr := c.client.Retry(retryCtx, c.conn.DB(), c.config.Name, message.TransportID, 0)
+		if retryErr != nil {
+			slog.ErrorContext(parent, "PGMQ shutdown requeue failed", failurecause.Attr(retryErr), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
+		}
 		emitQueueDeliveryRequeued(retryCtx, message, c.config.Name, time.Since(startedAt))
 		emitQueueRetryResult(retryCtx, message, c.config.Name, retryErr != nil)
 		return
@@ -132,31 +151,40 @@ func isRetryable(err error) bool {
 }
 
 func (c *Consumer) complete(ctx context.Context, message eventpkg.Message, startedAt time.Time, failureMessage string) {
+	messageID, commandID := queueMessageIdentity(message)
 	err := c.client.Complete(ctx, c.conn.DB(), c.config.Name, message.TransportID)
 	if err == nil {
 		emitQueueDeliverySucceeded(ctx, message, c.config.Name, time.Since(startedAt))
 		return
 	}
 	emitQueueDeliveryFailed(ctx, message, c.config.Name, time.Since(startedAt), sharedtelemetry.QueueFailureCompletionFailed)
-	slog.Error(failureMessage, "queue", c.config.Name, "message_id", message.TransportID, "error", err)
+	if failureMessage == "" {
+		failureMessage = "PGMQ archive failed"
+	}
+	slog.ErrorContext(ctx, failureMessage, failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
 }
 
 func (c *Consumer) retry(ctx context.Context, message eventpkg.Message, delay time.Duration) {
+	messageID, commandID := queueMessageIdentity(message)
 	err := c.client.Retry(ctx, c.conn.DB(), c.config.Name, message.TransportID, delay)
 	emitQueueRetryResult(ctx, message, c.config.Name, err != nil)
 	if err == nil {
 		return
 	}
-	slog.Error("PGMQ retry failed", "queue", c.config.Name, "message_id", message.TransportID, "error", err)
+	slog.ErrorContext(ctx, "PGMQ retry failed", failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
 }
 
 func (c *Consumer) deadLetter(ctx context.Context, message eventpkg.Message, failureMessage string) {
+	messageID, commandID := queueMessageIdentity(message)
 	err := c.client.DeadLetter(ctx, c.conn.DB(), c.config.Name, message.TransportID)
 	emitQueueDLQResult(ctx, message, c.config.Name, err != nil)
-	if err == nil || failureMessage == "" {
+	if err == nil {
 		return
 	}
-	slog.Error(failureMessage, "queue", c.config.Name, "message_id", message.TransportID, "error", err)
+	if failureMessage == "" {
+		failureMessage = "PGMQ archive failed"
+	}
+	slog.ErrorContext(ctx, failureMessage, failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
 }
 
 func (c *Consumer) Close() error {

@@ -3,10 +3,12 @@ package sitesettings
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -33,6 +35,7 @@ func (ManifestMenus) Localize(
 ) ([]model.MenuItem, error) {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
+		slog.ErrorContext(ctx, "Failed to load menu localization settings", "failure_cause", failurecause.Message(err), "menu_id", menuID)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	requested := settings.DefaultLocale
@@ -265,6 +268,9 @@ func (ManifestMenus) TargetSlug(ctx context.Context, db *gorm.DB, item *model.Me
 		Slug *string `gorm:"column:slug"`
 	}
 	if err := db.WithContext(ctx).Table(table).Select("slug").Where("id = ?", strings.TrimSpace(*item.TargetID)).Take(&row).Error; err != nil || row.Slug == nil || strings.TrimSpace(*row.Slug) == "" {
+		if err != nil && err != gorm.ErrRecordNotFound {
+			slog.ErrorContext(ctx, "Failed to load menu target slug", "failure_cause", failurecause.Message(err))
+		}
 		return item.TargetSlug
 	}
 	slug := strings.TrimSpace(*row.Slug)

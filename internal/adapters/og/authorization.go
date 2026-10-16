@@ -3,9 +3,11 @@ package ogadapter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -43,14 +45,17 @@ func (a Authorization) RequireAdmin(ctx context.Context) error {
 	}
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AdminRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := a.spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -65,14 +70,17 @@ func (a Authorization) AuthorizeEntity(ctx context.Context, entityType string, e
 	}
 	adminCan, err := policyv1.Platform.IsAdmin()
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AdminRequired()
 	}
 	adminDecision, err := auth.AuthorizationDecision(ctx, adminCan)
 	if err != nil {
+		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	isAdmin, err := a.spiceDB.Can(ctx, adminDecision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if isAdmin {
@@ -80,14 +88,17 @@ func (a Authorization) AuthorizeEntity(ctx context.Context, entityType string, e
 	}
 	can, err := entityCan(entityType, entityID, requireEdit)
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AdminRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := a.spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

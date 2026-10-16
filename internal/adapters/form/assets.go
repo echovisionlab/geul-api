@@ -2,7 +2,10 @@ package form
 
 import (
 	"context"
+	"log/slog"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -54,10 +57,18 @@ func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) 
 	}
 	if err := db.WithContext(ctx).Table("form").Select("featured_image_file_id").
 		Where("id = ?", formID).Scan(&row).Error; err != nil || row.FileID == nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to resolve Form featured image", "failure_cause", failurecause.Message(err))
+		}
 		return nil
 	}
 	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, db, a.cdnDomain, *row.FileID, "image")
 	if err != nil {
+		level := slog.LevelError
+		if connect.CodeOf(err) == connect.CodeNotFound {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Failed to resolve Form featured image", "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	return asset

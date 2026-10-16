@@ -14,6 +14,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"gorm.io/gorm"
 
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
@@ -308,7 +309,7 @@ func logApplicationDependenciesReady(cfg *config.Config) {
 func (d *applicationDependencies) Close() {
 	if d.spicedbClient != nil {
 		if err := d.spicedbClient.Close(); err != nil {
-			slog.Warn("Failed to close SpiceDB client", "error", err)
+			slog.Warn("Failed to close SpiceDB client", "failure_cause", failurecause.Message(err))
 		}
 	}
 	closePublisher(d.workerPublisher)
@@ -316,7 +317,9 @@ func (d *applicationDependencies) Close() {
 	closePublisher(d.ogPublisher)
 	closePublisher(d.hooksPublisher)
 	if d.sqlDB != nil {
-		d.sqlDB.Close()
+		if err := d.sqlDB.Close(); err != nil {
+			slog.Error("Database close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 }
 

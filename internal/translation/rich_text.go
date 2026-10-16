@@ -2,10 +2,12 @@ package translation
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"strconv"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -238,7 +240,10 @@ func richTextSemanticInline(content []*contentv1.RichTextInline, emailTemplate .
 			})
 		}
 	}
-	visible, _ := ProjectXLIFFInline(nodes, data)
+	visible, err := ProjectXLIFFInline(nodes, data)
+	if err != nil {
+		slog.Error("Rich Text inline projection failed", "domain", "translation", "event", "translation.rich_text.projection_failed", failurecause.Attr(err))
+	}
 	return visible, data, nodes
 }
 

@@ -2,10 +2,12 @@ package post
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -64,6 +66,8 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_preferred_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -73,6 +77,8 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {
 			return *locale
 		}
+	} else {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }

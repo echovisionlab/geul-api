@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
@@ -19,8 +20,13 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (h *Handlers) HandleWaveformProgress(ctx context.Context, body []byte) error {
+func (h *Handlers) HandleWaveformProgress(ctx context.Context, body []byte) (resultErr error) {
 	var event managev1.WaveformProgressEvent
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleWaveformProgress", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
+		}
+	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal waveform progress event: %w", err)
 	}
@@ -107,8 +113,13 @@ WHERE event_id = ?
 }
 
 // HandleWaveformComplete stores a waveform sidecar derivative when the current track source still matches.
-func (h *Handlers) HandleWaveformComplete(ctx context.Context, body []byte) error {
+func (h *Handlers) HandleWaveformComplete(ctx context.Context, body []byte) (resultErr error) {
 	var event managev1.WaveformCompleteEvent
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleWaveformComplete", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
+		}
+	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal waveform complete event: %w", err)
 	}
@@ -158,7 +169,7 @@ func (h *Handlers) HandleWaveformComplete(ctx context.Context, body []byte) erro
 			return fmt.Errorf("retire stale waveform output: %w", err)
 		}
 		if err := h.markWaveformJobCancelled(ctx, event.EventId, "stale waveform completion ignored"); err != nil {
-			slog.Warn("Failed to mark stale waveform job cancelled", "eventId", event.EventId, "error", err)
+			slog.Error("Failed to mark stale waveform job cancelled", "eventId", event.EventId, failurecause.Attr(err))
 		}
 		return nil
 	}
@@ -290,8 +301,13 @@ func waveformResultAlreadyRetired(
 }
 
 // HandleWaveformFail clears stale waveform state only when the current track source still matches.
-func (h *Handlers) HandleWaveformFail(ctx context.Context, body []byte) error {
+func (h *Handlers) HandleWaveformFail(ctx context.Context, body []byte) (resultErr error) {
 	var event managev1.WaveformFailEvent
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleWaveformFail", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
+		}
+	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal waveform fail event: %w", err)
 	}
@@ -326,23 +342,25 @@ func (h *Handlers) HandleWaveformFail(ctx context.Context, body []byte) error {
 	if !isCurrent || job.CancelRequested || job.Status == transcodestate.WaveformJobStatusCancelled {
 		slog.Debug("Skipped stale waveform failure", "entityId", event.EntityId, "fileId", event.FileId)
 		if err := h.markWaveformJobCancelled(ctx, event.EventId, "stale waveform failure ignored"); err != nil {
-			slog.Warn("Failed to mark stale waveform job cancelled", "eventId", event.EventId, "error", err)
+			slog.Error("Failed to mark stale waveform job cancelled", "eventId", event.EventId, failurecause.Attr(err))
 		}
 		return nil
 	}
 
 	if err := h.removeFileDerivative(ctx, event.FileId, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM); err != nil {
-		slog.Warn("Failed to clear waveform derivative after waveform processing failure",
+		slog.Error("Failed to clear waveform derivative after waveform processing failure",
 			"entityId", event.EntityId,
 			"fileId", event.FileId,
-			"error", err,
+			failurecause.Attr(err),
 		)
 	}
 
-	slog.Warn("Waveform processing failed",
+	slog.ErrorContext(ctx, "Waveform processing failed",
+		"eventId", event.EventId,
+		"entityType", event.EntityType.String(),
 		"entityId", event.EntityId,
 		"fileId", event.FileId,
-		"error", event.Error,
+		failurecause.Attr(fmt.Errorf("%s", event.Error)),
 	)
 
 	if err := h.markWaveformJobFailed(ctx, event.EventId, event.Error); err != nil {

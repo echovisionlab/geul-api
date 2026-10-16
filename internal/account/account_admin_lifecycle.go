@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -27,6 +29,12 @@ func (s *AccountService) accountBanTargetIdentity(
 ) (*auth.Identity, error) {
 	identity, err := identityManager.GetIdentity(ctx, identityID)
 	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "accountBanTargetIdentity", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if identity == nil {
@@ -34,10 +42,12 @@ func (s *AccountService) accountBanTargetIdentity(
 	}
 	actor, actorErr := policyv1.NewAccountIdentityActor(identityID)
 	if actorErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "accountBanTargetIdentity", failurecause.Attr(actorErr))
 		return nil, errs.Internal(actorErr)
 	}
 	role, roleErr := globalRoleForActor(ctx, s.spicedb, actor)
 	if roleErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "account_role_lookup_failed", failurecause.Attr(roleErr))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if role == policyv1.Role.Admin() {
@@ -97,6 +107,16 @@ func (s *AccountService) BanAccount(
 		if errors.As(err, &connectErr) {
 			return nil, connectErr
 		}
+		level := slog.LevelError
+		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
+			level = slog.LevelWarn
+		}
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.Log(ctx, level, "Operation failed", "operation", "BanAccount", failurecause.Attr(err, privateBody))
 		return nil, errs.Wrap(err)
 	}
 	return s.accountSummaryForAdmin(ctx, req.Msg.MemberId)
@@ -126,6 +146,12 @@ func (s *AccountService) UnbanAccount(
 			},
 		)
 	}); err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Account unban failed", "member_id", req.Msg.MemberId, failurecause.Attr(err, privateBody))
 		return nil, err
 	}
 	return s.accountSummaryForAdmin(ctx, req.Msg.MemberId)
@@ -155,6 +181,12 @@ func (s *AccountService) SetAccountCanonicalEmail(
 				)
 			},
 		); err != nil {
+			var upstreamError *auth.KratosHTTPError
+			privateBody := ""
+			if errors.As(err, &upstreamError) {
+				privateBody = upstreamError.Body
+			}
+			slog.ErrorContext(ctx, "Operation failed", "operation", "SetAccountCanonicalEmail", failurecause.Attr(err, privateBody))
 			return nil, errs.Internal(err)
 		}
 	}
@@ -179,6 +211,12 @@ func (s *AccountService) RemoveAccountSsoProvider(
 	providerSubject := strings.TrimSpace(req.Msg.Identifier)
 	identity, err := s.identity.GetIdentityWithIncludeCredential(ctx, identityID, "oidc")
 	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RemoveAccountSsoProvider", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(fmt.Errorf("load account social credential: %w", err))
 	}
 	if identity == nil {
@@ -186,6 +224,16 @@ func (s *AccountService) RemoveAccountSsoProvider(
 	}
 	hadCredential := auth.NewCredentialInventory(identity.Credentials).HasOIDCProvider(provider, providerSubject)
 	if err := s.credentialMutator.RemoveOIDCProvider(ctx, identityID, provider, providerSubject); err != nil {
+		level := slog.LevelError
+		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
+			level = slog.LevelWarn
+		}
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.Log(ctx, level, "Remove account SSO provider failed", "identity_id", identityID, "provider", provider, failurecause.Attr(err, privateBody, providerSubject))
 		return nil, err
 	}
 	if hadCredential {
@@ -198,6 +246,12 @@ func (s *AccountService) RemoveAccountSsoProvider(
 				)
 			},
 		); err != nil {
+			var upstreamError *auth.KratosHTTPError
+			privateBody := ""
+			if errors.As(err, &upstreamError) {
+				privateBody = upstreamError.Body
+			}
+			slog.ErrorContext(ctx, "Operation failed", "operation", "RemoveAccountSsoProvider", failurecause.Attr(err, privateBody))
 			return nil, errs.Internal(err)
 		}
 	}
@@ -228,6 +282,12 @@ func (s *AccountService) DeleteAccount(
 		ctx, s.db, identityPublisher, s.memberDeletion, s.auditWriter, req.Msg.MemberId,
 	)
 	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "DeleteAccount", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if accepted {
@@ -267,6 +327,12 @@ func (s *AccountService) DeleteAccount(
 		if errors.Is(err, ErrLastActiveAdminDeletion) {
 			return nil, errs.FailedPrecondition("the last active admin cannot be deleted")
 		}
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "DeleteAccount", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil

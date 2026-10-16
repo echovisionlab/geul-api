@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -38,7 +39,7 @@ func (writer *DurableWriter) AppendDomainAuditInTransaction(
 	record sharedtelemetry.AuditRecord,
 ) error {
 	if err := record.Validate(); err != nil {
-		ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailureRecordInvalid)
+		ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailureRecordInvalid, err)
 		return fmt.Errorf("validate domain audit %s: %w", record.Action, err)
 	}
 	if transaction == nil {
@@ -47,7 +48,7 @@ func (writer *DurableWriter) AppendDomainAuditInTransaction(
 	}
 	persisted, err := serializeDomainAudit(record)
 	if err != nil {
-		ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed)
+		ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed, err)
 		return fmt.Errorf("serialize domain audit %s: %w", record.Action, err)
 	}
 	result := transaction.WithContext(ctx).Exec(`
@@ -65,17 +66,17 @@ func (writer *DurableWriter) AppendDomainAuditInTransaction(
 		persisted.TargetType, persisted.TargetID, persisted.Attributes,
 	)
 	if result.Error != nil {
-		ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed)
+		ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed, result.Error)
 		return fmt.Errorf("append domain audit %s: %w", record.Action, result.Error)
 	}
 	if result.RowsAffected == 0 {
 		matches, err := domainAuditSemanticMatch(ctx, transaction, persisted)
 		if err != nil {
-			ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed)
+			ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed, err)
 			return fmt.Errorf("verify replayed domain audit %s: %w", record.Action, err)
 		}
 		if !matches {
-			ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed)
+			ReportDomainAuditAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed, ErrAuditRecordIDCollision)
 			return fmt.Errorf("append domain audit %s: %w", record.Action, ErrAuditRecordIDCollision)
 		}
 	}
@@ -118,7 +119,7 @@ func (writer *DurableWriter) AppendSecurityAccess(
 	record sharedtelemetry.SecurityAccessRecord,
 ) error {
 	if err := record.Validate(); err != nil {
-		ReportSecurityAccessAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailureRecordInvalid)
+		ReportSecurityAccessAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailureRecordInvalid, err)
 		return fmt.Errorf("validate security access %s: %w", record.Action, err)
 	}
 	if writer == nil || writer.db == nil {
@@ -130,7 +131,7 @@ func (writer *DurableWriter) AppendSecurityAccess(
 
 	persisted, err := serializeSecurityAccess(record)
 	if err != nil {
-		ReportSecurityAccessAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed)
+		ReportSecurityAccessAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed, err)
 		return fmt.Errorf("serialize security access %s: %w", record.Action, err)
 	}
 	result := writer.db.WithContext(ctx).Exec(`
@@ -145,7 +146,7 @@ func (writer *DurableWriter) AppendSecurityAccess(
 		nullIfEmpty(persisted.SpanID), persisted.SourceIP, persisted.Attributes,
 	)
 	if err := exactInsertError(result); err != nil {
-		ReportSecurityAccessAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed)
+		ReportSecurityAccessAppendFailure(ctx, record.Action, sharedtelemetry.AuditAppendFailurePersistenceFailed, err)
 		return fmt.Errorf("append security access %s: %w", record.Action, err)
 	}
 	return nil
@@ -168,14 +169,14 @@ func nullIfEmpty(value string) any {
 	return value
 }
 
-func ReportDomainAuditAppendFailure(ctx context.Context, action sharedtelemetry.AuditAction, reason sharedtelemetry.AuditAppendFailureReason) {
+func ReportDomainAuditAppendFailure(ctx context.Context, action sharedtelemetry.AuditAction, reason sharedtelemetry.AuditAppendFailureReason, causes ...error) {
 	record, err := sharedtelemetry.NewDomainAuditAppendFailedRecord(auditAppendFailureMetadata(ctx), action, reason)
-	emitAuditAppendFailure(ctx, record, err)
+	emitAuditAppendFailure(ctx, record, err, causes...)
 }
 
-func ReportSecurityAccessAppendFailure(ctx context.Context, action sharedtelemetry.SecurityAction, reason sharedtelemetry.AuditAppendFailureReason) {
+func ReportSecurityAccessAppendFailure(ctx context.Context, action sharedtelemetry.SecurityAction, reason sharedtelemetry.AuditAppendFailureReason, causes ...error) {
 	record, err := sharedtelemetry.NewSecurityAccessAppendFailedRecord(auditAppendFailureMetadata(ctx), action, reason)
-	emitAuditAppendFailure(ctx, record, err)
+	emitAuditAppendFailure(ctx, record, err, causes...)
 }
 
 func auditAppendFailureMetadata(ctx context.Context) sharedtelemetry.SystemMetadata {
@@ -184,9 +185,16 @@ func auditAppendFailureMetadata(ctx context.Context) sharedtelemetry.SystemMetad
 	}
 }
 
-func emitAuditAppendFailure(ctx context.Context, record sharedtelemetry.SystemRecord, err error) {
+func emitAuditAppendFailure(ctx context.Context, record sharedtelemetry.SystemRecord, err error, causes ...error) {
 	if err != nil {
+		slog.ErrorContext(ctx, "Build audit failure record failed", "failure_cause", failurecause.Message(errors.Join(err, errors.Join(causes...))))
 		return
 	}
-	_ = sharedtelemetry.EmitSystem(ctx, slog.Default().Handler(), record)
+	handler := slog.Default().Handler()
+	if cause := errors.Join(causes...); cause != nil {
+		handler = handler.WithAttrs([]slog.Attr{failurecause.Attr(cause)})
+	}
+	if err := sharedtelemetry.EmitSystem(ctx, handler, record); err != nil {
+		slog.ErrorContext(ctx, "Emit audit failure record failed", "action", record.Action, "failure_cause", failurecause.Message(errors.Join(err, errors.Join(causes...))))
+	}
 }

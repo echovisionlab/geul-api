@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -54,14 +56,17 @@ func RequireGlobalAdmin(ctx context.Context, spicedb *auth.SpiceDBClient) (*auth
 	}
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireGlobalAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 		return nil, errs.InvalidSession()
 	}
 	allowed, err := spicedb.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -89,6 +94,7 @@ func Require(ctx context.Context, db *gorm.DB, memberID string) (Target, error) 
 	if errors.Is(err, ErrIneligible) {
 		return Target{}, errs.NotFound("member", memberID)
 	}
+	slog.ErrorContext(ctx, "Operation failed", "operation", "Require", failurecause.Attr(err))
 	return Target{}, errs.Internal(err)
 }
 
@@ -100,6 +106,7 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 		return Target{}, err
 	}
 	if err := identitystate.Lock(tx, target.IdentityID); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireLocked", failurecause.Attr(err))
 		return Target{}, errs.Internal(err)
 	}
 
@@ -116,6 +123,7 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 		return Target{}, errs.NotFound("member", memberID)
 	}
 	if result.Error != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireLocked", failurecause.Attr(result.Error))
 		return Target{}, errs.Internal(result.Error)
 	}
 
@@ -132,6 +140,7 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 		return Target{}, errs.NotFound("member", memberID)
 	}
 	if result.Error != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireLocked", failurecause.Attr(result.Error))
 		return Target{}, errs.Internal(result.Error)
 	}
 
@@ -154,6 +163,7 @@ func RequireLockedLinked(ctx context.Context, tx *gorm.DB, memberID string) (Tar
 		return Target{}, err
 	}
 	if err := identitystate.Lock(tx, target.IdentityID); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireLockedLinked", failurecause.Attr(err))
 		return Target{}, errs.Internal(err)
 	}
 	current, err := RequireLinkedMember(ctx, tx, memberID, false)
@@ -187,6 +197,7 @@ func WithMutation(
 			if errors.Is(err, ErrIneligible) {
 				return errs.NotFound("member", memberID)
 			}
+			slog.ErrorContext(ctx, "Operation failed", "operation", "WithMutation", failurecause.Attr(err))
 			return errs.Internal(err)
 		}
 		if current.IdentityID != target.IdentityID {
@@ -385,6 +396,7 @@ func RequireLive(ctx context.Context, db *gorm.DB, memberID string) (Target, err
 	if errors.Is(err, ErrIneligible) {
 		return Target{}, errs.NotFound("member", memberID)
 	}
+	slog.ErrorContext(ctx, "Operation failed", "operation", "RequireLive", failurecause.Attr(err))
 	return Target{}, errs.Internal(err)
 }
 
@@ -444,6 +456,7 @@ func RequireLinkedMember(
 	if errors.Is(err, ErrIneligible) {
 		return Target{}, errs.NotFound("member", memberID)
 	}
+	slog.ErrorContext(ctx, "Operation failed", "operation", "RequireLinkedMember", failurecause.Attr(err))
 	return Target{}, errs.Internal(err)
 }
 
@@ -505,9 +518,11 @@ func LockReferences(ctx context.Context, tx *gorm.DB, references []Reference) er
 			if errors.Is(err, ErrIneligible) {
 				return errs.InvalidArgument(field, fmt.Sprintf("not found: %s", memberID))
 			}
+			slog.ErrorContext(ctx, "Operation failed", "operation", "LockReferences", failurecause.Attr(err))
 			return errs.Internal(err)
 		}
 		if err := identitystate.Lock(tx, target.IdentityID); err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "operation", "LockReferences", failurecause.Attr(err))
 			return errs.Internal(err)
 		}
 		current, err := LinkedMemberForMember(tx.WithContext(ctx), memberID, true)
@@ -515,6 +530,7 @@ func LockReferences(ctx context.Context, tx *gorm.DB, references []Reference) er
 			if errors.Is(err, ErrIneligible) {
 				return errs.InvalidArgument(field, fmt.Sprintf("not found: %s", memberID))
 			}
+			slog.ErrorContext(ctx, "Operation failed", "operation", "LockReferences", failurecause.Attr(err))
 			return errs.Internal(err)
 		}
 		if current.IdentityID != target.IdentityID {

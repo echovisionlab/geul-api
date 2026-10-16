@@ -21,6 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -801,10 +802,12 @@ func checkUploadPrincipalPolicy(
 ) (bool, error) {
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
+		slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
 		return true, errs.DependencyUnavailable("SpiceDB")
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, spiceDB)
 	if err != nil {
+		slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
 		return true, errs.DependencyUnavailable("SpiceDB")
 	}
 	if isAdmin {
@@ -813,10 +816,12 @@ func checkUploadPrincipalPolicy(
 	if target.authorOnly {
 		authorCan, err := policyv1.File.List()
 		if err != nil {
+			slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
 			return true, errs.DependencyUnavailable("SpiceDB")
 		}
 		isAuthor, err := checkSpiceDBCan(ctx, user, authorCan, spiceDB)
 		if err != nil {
+			slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
 			return true, errs.DependencyUnavailable("SpiceDB")
 		}
 		if !isAuthor {
@@ -856,11 +861,12 @@ func (s *FileService) checkSpiceDBUploadPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "checkSpiceDBUploadPermission: AuthenticationRequired", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.Error("SpiceDB permission check failed", "error", err, "resourceType", target.resourceType, "entityID", entityID)
+		slog.ErrorContext(ctx, "SpiceDB permission check failed", failurecause.Attr(err), "resourceType", target.resourceType, "entityID", entityID)
 		return errs.InternalMsg("permission check failed")
 	}
 	if !hasPermission {
@@ -922,7 +928,17 @@ func uploadPermissionResourceTable(resourceType string) (string, bool) {
 func (s *FileService) AbortMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.AbortMultipartUploadRequest],
-) (*connect.Response[managev1.AbortMultipartUploadResponse], error) {
+) (_ *connect.Response[managev1.AbortMultipartUploadResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AbortMultipartUpload", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).
 		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
@@ -1012,7 +1028,17 @@ func (s *FileService) AbortMultipartUpload(
 func (s *FileService) FindMultipartUploadCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
+) (_ *connect.Response[managev1.FindMultipartUploadCandidateResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "FindMultipartUploadCandidate", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()

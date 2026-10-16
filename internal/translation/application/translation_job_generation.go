@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -95,7 +97,11 @@ func (m *TranslationJobManager) generateValidatedResumableDocument(
 	}
 	providerPinned := false
 	defer func() {
-		if closeErr := session.Close(ctx); closeErr != nil && retErr == nil {
+		if closeErr := session.Close(ctx); closeErr != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
+			if retErr != nil {
+				return
+			}
 			if providerPinned {
 				retErr = pinTranslationProviderDocumentError(closeErr)
 			} else {
@@ -244,6 +250,7 @@ func translationProviderDocumentHandle(
 	}
 	handle, err := translation.NewProviderDocumentHandle(*job.ProviderDocumentID, *job.ProviderDocumentKey)
 	if err != nil {
+		slog.Error("Translation provider document handle invalid", "domain", "translation", "event", "translation.provider.handle_failed", "job_id", job.ID, "operation_id", job.OperationID, failurecause.Attr(err, *job.ProviderDocumentKey))
 		return translation.ProviderDocumentHandle{}, false, errTranslationProviderDocumentHandleMismatch
 	}
 	return handle, true, nil
@@ -277,7 +284,11 @@ func (m *TranslationJobManager) generateValidatedTranslationRequest(
 				return nil, err
 			}
 			defer func() {
-				if closeErr := session.Close(callCtx); closeErr != nil && retErr == nil {
+				if closeErr := session.Close(callCtx); closeErr != nil {
+					slog.ErrorContext(callCtx, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
+					if retErr != nil {
+						return
+					}
 					retErr = closeErr
 				}
 			}()

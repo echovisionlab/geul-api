@@ -3,6 +3,7 @@ package emailauthoring
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -36,6 +38,9 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	}
 	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		if err != nil {
+			slog.ErrorContext(ctx, "Invalid provider translation requester", "domain", "emailauthoring", "event", "emailauthoring.translation_failed", "outcome", "failed", "entity_id", job.EntityID, failurecause.Attr(err))
+		}
 		return errs.InternalMsg("Email Layout provider translation requires canonical requester Member")
 	}
 	now := input.Now.UTC()
@@ -59,6 +64,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	sourceHTML := derefString(source.ContentHTML)
 	descriptors, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("Email Layout source unit markers require repair before provider apply")
 	}
 	allowed := make(map[string]struct{}, len(descriptors))
@@ -77,6 +83,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	} else if entry != nil && entry.ContentHTML != nil {
 		currentValues, err = emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 			return errs.FailedPrecondition("Email Layout target unit markers require repair before provider apply")
 		}
 	}

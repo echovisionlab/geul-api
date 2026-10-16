@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -27,7 +29,22 @@ type translationDeliveryExecution struct {
 func (m *TranslationJobManager) ProcessDelivery(
 	ctx context.Context,
 	jobID string,
-) error {
+) (retErr error) {
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		// Terminal mappings already log the cause before bounding it.
+		var bounded boundedTranslationFailureError
+		if errors.As(retErr, &bounded) {
+			return
+		}
+		level := slog.LevelError
+		if translationDeliveryTransportStopped(ctx, retErr) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Translation delivery failed", "domain", "translation", "event", "translation.delivery.failed", "job_id", jobID, "reason", classifyTranslationFailure(retErr), failurecause.Attr(retErr))
+	}()
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
 		return fmt.Errorf("job ID is required")

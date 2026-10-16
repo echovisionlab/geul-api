@@ -2,12 +2,14 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 	"github.com/kelseyhightower/envconfig"
@@ -215,6 +217,9 @@ func normalizeSiteOrigin(value string) (string, error) {
 func normalizeAbsoluteOrigin(name string, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	parsed, err := url.Parse(value)
+	if err != nil {
+		slog.Error("Invalid configured origin", "config_key", name, "failure_cause", failurecause.Message(err))
+	}
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery {
 		return "", fmt.Errorf("%s must be an absolute origin in scheme://host[:port] form", name)
 	}

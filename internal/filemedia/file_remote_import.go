@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -16,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -114,7 +116,17 @@ type RemoteFileImportInput struct {
 	CorrelationID string
 }
 
-func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error) {
+func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Remote file import failed", failurecause.Attr(resultErr, input.FileName), "correlation_id", input.CorrelationID, "upload_type", input.UploadType.String())
+		}
+	}()
 	if input.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && !isEditorFileIngestUploadType(input.UploadType) {
 		return nil, errs.InvalidArgument("upload_type", "standalone File import requires a File library upload kind")
 	}
@@ -267,6 +279,9 @@ func validateRemoteImportURL(ctx context.Context, resolver remoteImportResolver,
 
 	ips, err := resolver.LookupIP(ctx, "ip", hostname)
 	if err != nil || len(ips) == 0 {
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to resolve remote import hostname", failurecause.Attr(err))
+		}
 		return remoteImportTarget{}, fmt.Errorf("failed to resolve hostname")
 	}
 	if slices.ContainsFunc(ips, isInternalIP) {
@@ -317,7 +332,17 @@ func newRemoteImportHTTPClient(
 func (s *FileService) DownloadFromUrl(
 	ctx context.Context,
 	req *connect.Request[managev1.DownloadFromUrlRequest],
-) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
+) (_ *connect.Response[managev1.DownloadFromUrlResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DownloadFromUrl", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	var entityType string
 	transcodeEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
 	if req.Msg.EntityType != nil {

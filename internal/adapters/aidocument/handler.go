@@ -6,10 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
-
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
@@ -34,7 +35,17 @@ func NewService(application Application) (*Service, error) {
 	return &Service{application: application}, nil
 }
 
-func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[managev1.OpenAIDocumentRequest]) (*connect.Response[managev1.OpenAIDocumentResponse], error) {
+func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[managev1.OpenAIDocumentRequest]) (rpcResponse *connect.Response[managev1.OpenAIDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "RPC failed", "method", "OpenAIDocument", "failure_cause", failurecause.Message(returnErr))
+		}
+	}()
 	if request == nil || request.Msg == nil {
 		return nil, invalidArgument(errors.New("request is required"))
 	}
@@ -53,7 +64,17 @@ func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[m
 	return connect.NewResponse(&managev1.OpenAIDocumentResponse{Metadata: metadataToProto(metadata)}), nil
 }
 
-func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connect.Request[managev1.ApplyAIDocumentOperationsRequest]) (*connect.Response[managev1.ApplyAIDocumentOperationsResponse], error) {
+func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connect.Request[managev1.ApplyAIDocumentOperationsRequest]) (rpcResponse *connect.Response[managev1.ApplyAIDocumentOperationsResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "RPC failed", "method", "ApplyAIDocumentOperations", "failure_cause", failurecause.Message(returnErr))
+		}
+	}()
 	if request == nil || request.Msg == nil {
 		return nil, invalidArgument(errors.New("request is required"))
 	}
@@ -65,6 +86,7 @@ func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connec
 	if err != nil {
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
+			slog.WarnContext(ctx, "AI document mutation rejected", "failure_cause", failurecause.Message(err))
 			validation, conversionErr := validationToProto(validationError.Result)
 			if conversionErr != nil {
 				return nil, fmt.Errorf("convert AI document rejection: %w", conversionErr)
@@ -73,6 +95,7 @@ func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connec
 		}
 		var conflictError *core.ConflictError
 		if errors.As(err, &conflictError) {
+			slog.WarnContext(ctx, "AI document mutation conflicted", "failure_cause", failurecause.Message(err))
 			validation, conversionErr := validationToProto(core.ValidationResult{Conflict: &conflictError.Conflict})
 			if conversionErr != nil {
 				return nil, fmt.Errorf("convert AI document conflict: %w", conversionErr)

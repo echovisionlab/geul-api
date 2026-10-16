@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -142,6 +144,7 @@ func check(ctx context.Context, checker PermissionChecker, can policyv1.Can) (bo
 func Require(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageID string, raw json.RawMessage) error {
 	reason, err := Evaluate(ctx, db, checker, pageID, raw)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "pageaccess", "operation", "require_page_access", "outcome", "failed", failurecause.Attr(err), "page_id", pageID)
 		return errs.Internal(err)
 	}
 	switch reason {

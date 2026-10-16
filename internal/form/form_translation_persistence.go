@@ -3,11 +3,13 @@ package form
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -66,6 +68,7 @@ func ApplyProviderTranslationCandidateWithDB(
 		return errs.FailedPrecondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("Form source locale document is invalid")
 	}
 

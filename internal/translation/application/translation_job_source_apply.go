@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -219,6 +220,6 @@ func (m *TranslationJobManager) publishLifecycle(
 	}
 	event.FailureReason = toProtoTranslationFailureReason(failureReason)
 	if err := m.publisher.PublishTranslationLifecycle(ctx, event); err != nil {
-		slog.Warn("Failed to publish translation lifecycle event", "job_id", job.ID, "status", status.String(), "error", err)
+		slog.ErrorContext(ctx, "Failed to publish translation lifecycle event", "domain", "translation", "event", "translation.lifecycle.publish_failed", "job_id", job.ID, "operation_id", job.OperationID, "entity_type", job.EntityType, "target_locale", job.TargetLocale, "status", status.String(), "failure_cause", failurecause.Message(err))
 	}
 }

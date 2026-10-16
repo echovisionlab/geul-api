@@ -8,6 +8,7 @@ import (
 	"time"
 
 	apptelemetry "github.com/echovisionlab/geul-api/internal/assetprocessing/telemetry"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -92,7 +93,7 @@ func (p *Processor) publishProgress(ctx context.Context, job *apiv1.MeshOptimiza
 		TimestampMs:    time.Now().UnixMilli(),
 	}
 	if err := p.publisher.PublishMeshOptimizationProgress(ctx, event); err != nil && !errors.Is(ctx.Err(), context.Canceled) {
-		slog.Warn("Failed to publish mesh optimization progress", "jobId", job.GetJobId(), "progress", progress.percent, "error", err)
+		slog.ErrorContext(ctx, "Failed to publish mesh optimization progress", "jobId", job.GetJobId(), "progress", progress.percent, failurecause.Attr(err))
 	}
 }
 

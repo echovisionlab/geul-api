@@ -3,12 +3,14 @@ package form
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -38,7 +40,19 @@ type formUpdatePlan struct {
 func (s *FormService) UpdateForm(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFormRequest],
-) (*connect.Response[managev1.Form], error) {
+) (rpcResponse *connect.Response[managev1.Form], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "UpdateForm", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	var form model.Form
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
@@ -323,6 +337,9 @@ func (s *FormService) applyFormUpdate(
 	if plan.nextSourceTitle != nil || plan.nextSourceSchema != nil {
 		documentID, err := uuid.Parse(form.ContentDocumentID)
 		if err != nil || documentID == uuid.Nil {
+			if err != nil {
+				slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(err))
+			}
 			return errs.FailedPrecondition("Form Content Document is not initialized")
 		}
 		var documentRevision uuid.UUID

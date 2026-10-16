@@ -15,6 +15,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sitemapdomain "github.com/echovisionlab/geul-api/internal/sitemap"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
@@ -102,7 +103,19 @@ func NewSitemapService(
 func (s *SitemapService) GetDocument(
 	ctx context.Context,
 	req *connect.Request[openv1.GetSitemapDocumentRequest],
-) (*connect.Response[openv1.GetSitemapDocumentResponse], error) {
+) (_ *connect.Response[openv1.GetSitemapDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitemap", "operation", "sitemap/public.GetDocument", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	kind := req.Msg.Kind
 	if kind == openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_UNSPECIFIED {
 		return nil, errs.Required("kind")
@@ -117,7 +130,7 @@ func (s *SitemapService) GetDocument(
 			GeneratedAt: document.GeneratedAt,
 		}
 		if _, saveErr := s.store.SaveSnapshot(ctx, snapshotKey, snapshot); saveErr != nil {
-			slog.Warn("failed to save sitemap snapshot", "kind", kind.String(), "error", saveErr)
+			slog.WarnContext(ctx, "failed to save sitemap snapshot", "kind", kind.String(), "failure_cause", failurecause.Message(saveErr))
 		}
 		s.recordFreshResponseMetric(ctx, kind)
 
@@ -138,26 +151,26 @@ func (s *SitemapService) GetDocument(
 
 	snapshot, loadErr := s.store.LoadSnapshot(ctx, snapshotKey)
 	if loadErr != nil {
-		slog.Error(
+		slog.ErrorContext(ctx,
 			"failed to load sitemap snapshot",
 			"kind",
 			kind.String(),
-			"error",
-			loadErr,
+			"failure_cause",
+			failurecause.Message(loadErr),
 			"generation_error",
-			err,
+			failurecause.Message(err),
 		)
 	}
 
 	if snapshot != nil {
-		slog.Warn(
+		slog.WarnContext(ctx,
 			"serving stale sitemap snapshot",
 			"kind",
 			kind.String(),
 			"age_seconds",
 			int(time.Since(snapshot.GeneratedAt).Seconds()),
 			"generation_error",
-			err,
+			failurecause.Message(err),
 		)
 		s.recordStaleResponseMetric(ctx, kind, snapshot.GeneratedAt)
 
@@ -169,7 +182,7 @@ func (s *SitemapService) GetDocument(
 		}), nil
 	}
 
-	slog.Error("sitemap unavailable with no snapshot", "kind", kind.String(), "error", err)
+	slog.ErrorContext(ctx, "sitemap unavailable with no snapshot", "kind", kind.String(), "failure_cause", failurecause.Message(err))
 	s.recordUnavailableResponseMetric(ctx, kind)
 
 	return connect.NewResponse(&openv1.GetSitemapDocumentResponse{
@@ -421,7 +434,7 @@ func (s *SitemapService) loadHomepageLastModified(
 	}
 	page, err := s.store.LoadHomepage(ctx, *homepagePageID)
 	if err != nil {
-		slog.Warn("failed to load homepage last modified for sitemap", "page_id", *homepagePageID, "error", err)
+		slog.WarnContext(ctx, "failed to load homepage last modified for sitemap", "page_id", *homepagePageID, "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	if page == nil {
@@ -469,7 +482,10 @@ func renderURLSetXML(rows []sitemapURLRow) string {
 		})
 	}
 
-	payload, _ := xml.MarshalIndent(document, "", "  ")
+	payload, err := xml.MarshalIndent(document, "", "  ")
+	if err != nil {
+		slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitemap", "operation", "marshal_sitemap_xml", "outcome", "failed", failurecause.Attr(err))
+	}
 	return xml.Header + string(payload)
 }
 
@@ -483,7 +499,10 @@ func renderSitemapIndexXML(rows []sitemapIndexRow) string {
 		document.Sitemaps = append(document.Sitemaps, sitemapIndexDocumentEntry(row))
 	}
 
-	payload, _ := xml.MarshalIndent(document, "", "  ")
+	payload, err := xml.MarshalIndent(document, "", "  ")
+	if err != nil {
+		slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitemap", "operation", "marshal_sitemap_xml", "outcome", "failed", failurecause.Attr(err))
+	}
 	return xml.Header + string(payload)
 }
 
@@ -548,7 +567,7 @@ func newSitemapMetrics() sitemapMetrics {
 		otelmetric.WithDescription("Counts crawler-facing sitemap responses by kind and freshness status."),
 	)
 	if err != nil {
-		slog.Warn("failed to create sitemap response counter", "error", err)
+		slog.WarnContext(context.Background(), "failed to create sitemap response counter", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.responseCounter = responseCounter
 	}
@@ -558,7 +577,7 @@ func newSitemapMetrics() sitemapMetrics {
 		otelmetric.WithDescription("Counts sitemap generation failures before stale fallback or unavailability handling."),
 	)
 	if err != nil {
-		slog.Warn("failed to create sitemap generation failure counter", "error", err)
+		slog.WarnContext(context.Background(), "failed to create sitemap generation failure counter", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.generationFailureCounter = generationFailureCounter
 	}
@@ -568,7 +587,7 @@ func newSitemapMetrics() sitemapMetrics {
 		otelmetric.WithDescription("Records the age in seconds of stale sitemap snapshots served to crawlers."),
 	)
 	if err != nil {
-		slog.Warn("failed to create sitemap stale age histogram", "error", err)
+		slog.WarnContext(context.Background(), "failed to create sitemap stale age histogram", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.staleAgeHistogram = staleAgeHistogram
 	}

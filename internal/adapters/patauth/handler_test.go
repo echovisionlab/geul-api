@@ -1,9 +1,12 @@
 package patauth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/member/pat"
+	"github.com/echovisionlab/geul-api/internal/telemetry"
 )
 
 const testSecret = "gateway-secret-for-pat-tests-only"
@@ -159,5 +163,35 @@ func TestSaturationAndCancellation(t *testing.T) {
 	wg.Wait()
 	if len(h.slots) != 0 {
 		t.Error("slot leak")
+	}
+}
+
+func TestPATVerificationLogsCauseWithoutSubmittedCredential(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	handler, err := New(testSecret, authenticateFunc(func(context.Context, string) (pat.Principal, error) {
+		return pat.Principal{}, errors.New("database unavailable for test-bearer reader@example.test password=secret-value")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedRequest())
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", response.Code)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if cause, ok := entry["failure_cause"].(string); !ok || !strings.Contains(cause, "database unavailable") {
+		t.Fatalf("missing cause: %v", entry)
+	}
+	for _, private := range []string{"test-bearer", "reader@example.test", "secret-value"} {
+		if strings.Contains(output.String(), private) {
+			t.Fatalf("log contains private value %q", private)
+		}
 	}
 }

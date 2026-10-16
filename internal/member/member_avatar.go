@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -86,10 +88,18 @@ func (s *MemberService) setAvatar(ctx context.Context, memberID, fileID string, 
 			)
 		})
 	}); err != nil {
+		level := slog.LevelError
+		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Operation failed", "operation", "setAvatar", failurecause.Attr(err))
 		return nil, errs.Wrap(err)
 	}
 	members, err := s.loadMembers(ctx, []string{memberID})
 	if err != nil || len(members) != 1 {
+		if err != nil {
+			slog.ErrorContext(ctx, "Load member after avatar mutation failed", "member_id", memberID, failurecause.Attr(err))
+		}
 		return nil, errs.NotFound("member", memberID)
 	}
 	return memberSummary(members[0], asset), nil
@@ -138,10 +148,18 @@ func (s *MemberService) deleteAvatar(ctx context.Context, memberID string, admin
 			)
 		})
 	}); err != nil {
+		level := slog.LevelError
+		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Operation failed", "operation", "deleteAvatar", failurecause.Attr(err))
 		return nil, errs.Wrap(err)
 	}
 	members, err := s.loadMembers(ctx, []string{memberID})
 	if err != nil || len(members) != 1 {
+		if err != nil {
+			slog.ErrorContext(ctx, "Load member after avatar mutation failed", "member_id", memberID, failurecause.Attr(err))
+		}
 		return nil, errs.NotFound("member", memberID)
 	}
 	return memberSummary(members[0], nil), nil

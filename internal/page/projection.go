@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
@@ -121,6 +123,12 @@ func (s *PageService) loadPageContentProjection(
 			ctx, tx, s.spiceDB, page.ID, policyv1.Page.View,
 		)
 		if err != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(err) {
+			case connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeNotFound:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.loadPageContentProjection", "outcome", "failed", "page_id", page.ID, failurecause.Attr(err))
 			return errs.NotFound("page", value)
 		}
 		if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
@@ -230,7 +238,19 @@ func (s *PageService) toProtoPageSummary(p *model.Page) (*managev1.PageSummary, 
 func (s *PageService) CheckPageSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckPageSlugAvailableRequest],
-) (*connect.Response[managev1.CheckPageSlugAvailableResponse], error) {
+) (_ *connect.Response[managev1.CheckPageSlugAvailableResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CheckPageSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	excludeID := ""
 	if req.Msg.ExcludeId != nil {
 		excludeID = *req.Msg.ExcludeId
@@ -242,6 +262,7 @@ func (s *PageService) CheckPageSlugAvailable(
 	}
 	slug := strings.TrimSpace(req.Msg.Slug)
 	if err := routeregistry.ValidatePagePath(slug); err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.CheckPageSlugAvailable", "outcome", "failed", failurecause.Attr(err))
 		return connect.NewResponse(&managev1.CheckPageSlugAvailableResponse{Available: false}), nil
 	}
 

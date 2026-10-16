@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -102,6 +104,10 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
+		} else {
+			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
+			}
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -110,6 +116,10 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
 		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {
 			return *locale
+		}
+	} else {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
 		}
 	}
 	return translation.DefaultLocale
@@ -144,6 +154,7 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 	}
 	for index, contributor := range contributors {
 		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireDocumentContributors", failurecause.Attr(err))
 			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
 		}
 		if index > 0 && contributors[index-1] >= contributor {

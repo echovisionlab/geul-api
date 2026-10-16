@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -217,6 +219,12 @@ func (s *AccountEmailChangeLifecycle) resolveAccountEmailApplyError(
 	if !auth.IsKratosConflict(applyErr) {
 		return applyErr
 	}
+	var upstreamError *auth.KratosHTTPError
+	privateBody := ""
+	if errors.As(applyErr, &upstreamError) {
+		privateBody = upstreamError.Body
+	}
+	slog.WarnContext(ctx, "Operation failed", "reason", "account_email_apply_conflict", failurecause.Attr(applyErr, privateBody), "identity_id", request.IdentityID, "request_id", request.ID)
 	current, err := s.identity.GetIdentity(ctx, request.IdentityID)
 	if err != nil {
 		return err

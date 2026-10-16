@@ -2,6 +2,7 @@ package menu
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -50,7 +52,19 @@ func NewInternalMenuService(
 func (s *InternalMenuService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadMenuDocumentRequest],
-) (*connect.Response[intrav1.LoadMenuDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadMenuDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.LoadDocument", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -90,7 +104,19 @@ func (s *InternalMenuService) LoadDocument(
 func (s *InternalMenuService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveMenuDocumentRequest],
-) (*connect.Response[intrav1.SaveMenuDocumentResponse], error) {
+) (_ *connect.Response[intrav1.SaveMenuDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.SaveDocument", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -258,6 +284,9 @@ func canonicalMenuCollaborationUUID(value, field string) (uuid.UUID, error) {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(trimmed)
 	if err != nil || parsed == uuid.Nil || parsed.String() != trimmed || value != trimmed {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.canonicalMenuCollaborationUUID", "outcome", "failed", failurecause.Attr(err))
+		}
 		return uuid.Nil, errs.InvalidArgument(field, "must be a canonical UUID")
 	}
 	return parsed, nil

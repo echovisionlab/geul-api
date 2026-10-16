@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -35,6 +37,7 @@ func newStableFileIngestAudioTranscodeJob(
 ) (*managev1.TranscodeAudioEvent, bool, error) {
 	source, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
+		slog.ErrorContext(ctx, "Invalid transcode source file metadata", failurecause.Attr(err), "file_id", file.ID, "entity_type", entityType.String(), "entity_id", entityID)
 		return nil, false, errs.FailedPrecondition("source file metadata is not canonical")
 	}
 	hls, spectrogram, shouldPublish, err := ensureStableFileIngestAudioOutputs(ctx, db, file.ID)
@@ -61,6 +64,7 @@ func newStableFileIngestVideoTranscodeJob(
 ) (*managev1.TranscodeVideoEvent, bool, error) {
 	source, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
+		slog.ErrorContext(ctx, "Invalid transcode source file metadata", failurecause.Attr(err), "file_id", file.ID, "entity_type", entityType.String(), "entity_id", entityID)
 		return nil, false, errs.FailedPrecondition("source file metadata is not canonical")
 	}
 	hls, thumbnail, shouldPublish, err := ensureStableFileIngestVideoOutputs(ctx, db, file.ID)

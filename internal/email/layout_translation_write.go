@@ -3,10 +3,12 @@ package email
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -112,6 +114,7 @@ func PrepareLayoutSourceLocaleSwitch(
 		)
 	}
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching")
 	}
 	if entry == nil {
@@ -163,6 +166,7 @@ func normalizeLayoutTargetRepresentations(
 			row.ContentHTML.String,
 		)
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 			return errs.FailedPrecondition("Email Layout target markers require backfill before source editing")
 		}
 		if dereferenceString(nextHTML) == row.ContentHTML.String &&
@@ -205,6 +209,7 @@ func SeedLayoutTranslationEntryFromSource(
 	sourceHTML := dereferenceString(source.ContentHTML)
 	units, err := ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target")
 	}
 	values := make(map[string]string, len(units))

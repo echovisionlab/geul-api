@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"log/slog"
 	"reflect"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -29,7 +31,18 @@ type workUpdatePlan struct {
 func (s *WorkService) UpdateWork(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateWorkRequest],
-) (*connect.Response[managev1.UpdateWorkResponse], error) {
+) (_ *connect.Response[managev1.UpdateWorkResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	work, err := loadWorkForUpdate(ctx, s.db, req.Msg.Id)
 	if err != nil {
 		return nil, err
@@ -450,6 +463,9 @@ func mapWorkUpdateError(err error) error {
 		return err
 	}
 	if strings.Contains(err.Error(), "duplicate key") {
+		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "mapWorkUpdateError", failurecause.Attr(err))
+		}
 		return errs.SlugAlreadyExists("work", "slug")
 	}
 	return errs.Internal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -11,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -108,13 +110,25 @@ func publicLoadMapThemes(
 
 func (s *MapThemeService) ResolveByIds(
 	ctx context.Context, req *connect.Request[openv1.ResolveMapThemesByIdsRequest],
-) (*connect.Response[openv1.ResolveMapThemesByIdsResponse], error) {
+) (_ *connect.Response[openv1.ResolveMapThemesByIdsResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ResolveByIds", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	requested := make([]string, 0, len(req.Msg.RequestedThemeIds))
 	for _, id := range req.Msg.RequestedThemeIds {
 		if id == "" {
 			continue
 		}
 		if _, err := uuidutil.ParseCanonical(id, "requested_theme_ids"); err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "ResolveByIds", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("requested_theme_ids", "must contain only canonical UUIDs")
 		}
 		requested = append(requested, id)
@@ -144,7 +158,18 @@ func (s *MapThemeService) ResolveByIds(
 
 func (s *MapThemeService) Resolve(
 	ctx context.Context, req *connect.Request[openv1.ResolveMapThemeRequest],
-) (*connect.Response[openv1.ResolvedMapTheme], error) {
+) (_ *connect.Response[openv1.ResolvedMapTheme], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "Resolve", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	scheme := req.Msg.Scheme
 	if scheme == "" {
 		scheme = "light"
@@ -157,6 +182,7 @@ func (s *MapThemeService) Resolve(
 		requestedID = *req.Msg.ThemeId
 		if requestedID != "" {
 			if _, err := uuidutil.ParseCanonical(requestedID, "theme_id"); err != nil {
+				slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "Resolve", failurecause.Attr(err))
 				return nil, errs.InvalidArgument("theme_id", "must be a canonical UUID")
 			}
 		}

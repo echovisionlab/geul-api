@@ -2,11 +2,13 @@ package filemedia
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -24,7 +26,17 @@ func (s *FileService) meshOptimizationService() *MeshOptimizationService {
 func (s *FileService) ListMeshOptimizationCandidates(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMeshOptimizationCandidatesRequest],
-) (*connect.Response[managev1.ListMeshOptimizationCandidatesResponse], error) {
+) (_ *connect.Response[managev1.ListMeshOptimizationCandidatesResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListMeshOptimizationCandidates", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	candidates, err := s.meshOptimizationService().ListCandidates(ctx, MeshOptimizationListInput{
 		SourceFileID: strings.TrimSpace(req.Msg.SourceFileId),
 		EntityType:   req.Msg.EntityType,
@@ -51,7 +63,17 @@ func (s *FileService) ListMeshOptimizationCandidates(
 func (s *FileService) GenerateMeshOptimizationCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.GenerateMeshOptimizationCandidateRequest],
-) (*connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], error) {
+) (_ *connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GenerateMeshOptimizationCandidate", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	result, err := s.meshOptimizationService().GenerateCandidate(ctx, MeshOptimizationGenerateInput{
 		SourceFileID:       strings.TrimSpace(req.Msg.SourceFileId),
 		EntityType:         req.Msg.EntityType,
@@ -79,7 +101,17 @@ func (s *FileService) GenerateMeshOptimizationCandidate(
 func (s *FileService) UseMeshOptimizationCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.UseMeshOptimizationCandidateRequest],
-) (*connect.Response[managev1.UseMeshOptimizationCandidateResponse], error) {
+) (_ *connect.Response[managev1.UseMeshOptimizationCandidateResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "UseMeshOptimizationCandidate", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	candidate, err := s.meshOptimizationService().UseCandidate(ctx, strings.TrimSpace(req.Msg.CandidateId))
 	if err != nil {
 		return nil, err
@@ -98,7 +130,17 @@ func (s *FileService) UseMeshOptimizationCandidate(
 func (s *FileService) ClearMeshOptimizationCandidates(
 	ctx context.Context,
 	req *connect.Request[managev1.ClearMeshOptimizationCandidatesRequest],
-) (*connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], error) {
+) (_ *connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ClearMeshOptimizationCandidates", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	meshOptimization := s.meshOptimizationService()
 	if req.Msg.CandidateId != nil && strings.TrimSpace(*req.Msg.CandidateId) != "" {
 		if err := meshOptimization.DiscardCandidate(ctx, strings.TrimSpace(*req.Msg.CandidateId)); err != nil {

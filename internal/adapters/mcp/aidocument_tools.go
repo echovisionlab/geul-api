@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"github.com/google/uuid"
@@ -444,6 +446,7 @@ func (tools *AIDocumentTools) validate(ctx context.Context, arguments mcpserver.
 	validation, err := tools.application.Validate(ctx, request)
 	if err != nil {
 		if conflict := mutationConflict(err); conflict != nil {
+			slog.WarnContext(ctx, "MCP document mutation conflicted", "failure_cause", failurecause.Message(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
 			return mutationSyncResult(request, conflict)
 		}
 		return expectedToolError(err)
@@ -470,10 +473,12 @@ func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.App
 	result, err := tools.application.Apply(ctx, request)
 	if err != nil {
 		if conflict := mutationConflict(err); conflict != nil {
+			slog.WarnContext(ctx, "MCP document mutation conflicted", "failure_cause", failurecause.Message(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
 			return mutationSyncResult(request, conflict)
 		}
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
+			slog.WarnContext(ctx, "MCP document mutation rejected", "failure_cause", failurecause.Message(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
 			encoded, encodeErr := encodeValidation(validationError.Result)
 			if encodeErr != nil {
 				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document rejection: %w", encodeErr)

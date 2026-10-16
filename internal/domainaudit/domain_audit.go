@@ -3,8 +3,10 @@ package domainaudit
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -39,6 +41,7 @@ func AppendRequest(
 	if err != nil || actor.Kind != sharedtelemetry.ActorKindMember {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
 		if err != nil {
+			slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
 			return err
 		}
 		return errors.New("request domain audit requires member actor")
@@ -76,6 +79,7 @@ func AppendMember(
 	actor, err := sharedtelemetry.ActorForRecord(sharedtelemetry.MemberActor{MemberID: memberID})
 	if err != nil {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
+		slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
 		return err
 	}
 	return appendRecord(ctx, tx, writer, action, actor, build)
@@ -96,6 +100,7 @@ func AppendSystem(
 	actor, err := sharedtelemetry.ActorForRecord(sharedtelemetry.SystemActor{ServiceName: serviceName})
 	if err != nil {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
+		slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
 		return err
 	}
 	return appendRecord(ctx, tx, writer, action, actor, build)
@@ -117,6 +122,7 @@ func AppendVersion(
 		actor, err := sharedtelemetry.ActorForRecord(requestContext.Actor)
 		if err != nil {
 			apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
+			slog.WarnContext(ctx, "Invalid domain audit actor", failurecause.Attr(err), "action", string(action))
 			return err
 		}
 		switch actor.Kind {
@@ -163,7 +169,12 @@ func appendRecord(
 	})
 	if err != nil {
 		apitelemetry.ReportDomainAuditAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureRecordBuildFailed)
+		slog.ErrorContext(ctx, "Failed to build domain audit record", failurecause.Attr(err), "action", string(action))
 		return err
 	}
-	return writer.AppendDomainAuditInTransaction(ctx, tx, record)
+	err = writer.AppendDomainAuditInTransaction(ctx, tx, record)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to append domain audit record", failurecause.Attr(err, record.Nickname), "action", string(action), "audit_id", record.AuditID)
+	}
+	return err
 }

@@ -3,6 +3,7 @@ package label
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -95,6 +97,7 @@ func buildLabelDocumentMetadataPlan(input *intrav1.LabelDocumentMetadataUpdate) 
 	if plan.parentLabelID.value != nil {
 		parsed, err := uuid.Parse(*plan.parentLabelID.value)
 		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "label.buildLabelDocumentMetadataPlan", "outcome", "failed", failurecause.Attr(err))
 			return labelDocumentMetadataPlan{}, errs.InvalidArgument("parent_label_id", "must be a valid Label ID")
 		}
 		canonical := parsed.String()
@@ -113,7 +116,19 @@ func buildLabelDocumentMetadataPlan(input *intrav1.LabelDocumentMetadataUpdate) 
 	return plan, nil
 }
 
-func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, req *connect.Request[intrav1.UpdateLabelDocumentMetadataRequest]) (*connect.Response[intrav1.UpdateLabelDocumentMetadataResponse], error) {
+func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, req *connect.Request[intrav1.UpdateLabelDocumentMetadataRequest]) (_ *connect.Response[intrav1.UpdateLabelDocumentMetadataResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.UpdateLabelDocumentMetadata", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Label content Block store is not configured")
 	}
@@ -123,6 +138,7 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 	}
 	expectedRevision, err := uuid.Parse(req.Msg.ExpectedRevision)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.UpdateLabelDocumentMetadata", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("expected_revision", "must be a UUID")
 	}
 	documentID, err := loadLabelContentDocumentID(ctx, s.db, req.Msg.LabelId)

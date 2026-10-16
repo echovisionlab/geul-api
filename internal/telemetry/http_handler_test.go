@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -118,8 +119,9 @@ func TestConnectRequestEmitsOneTerminalRecordAndContinuesIncomingTrace(t *testin
 	require.Equal(t, http.StatusForbidden, response.Code)
 
 	entries := decodeLogEntries(t, logBuffer.Bytes())
-	require.Len(t, entries, 1)
-	entry := entries[0]
+	require.Len(t, entries, 2)
+	require.Contains(t, entries[0]["failure_cause"], "audit storage unavailable")
+	entry := entries[1]
 	require.Equal(t, "request.completed", entry["event"])
 	require.Equal(t, "blocked", entry["outcome"])
 	require.Equal(t, float64(http.StatusForbidden), entry["status_code"])
@@ -292,5 +294,30 @@ func assertSpansExclude(t *testing.T, spans []sdktrace.ReadOnlySpan, forbidden .
 				}
 			}
 		}
+	}
+}
+
+func TestRPCFailureCauseSurvivesNormalization(t *testing.T) {
+	for _, code := range []connect.Code{connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded, connect.CodeInvalidArgument} {
+		t.Run(code.String(), func(t *testing.T) {
+			var output bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			ctx := ContextWithPropagatedRequestID(t.Context(), "11111111-1111-4111-8111-111111111111", AnonymousActor{})
+			cause := connect.NewError(code, errors.New("resolve provider: connection refused for person@example.test"))
+			emitConnectRequestRecord(ctx, "POST", "test.Service", "Send", time.Now(), cause)
+			entry := decodeSingleLogEntry(t, output.Bytes())
+			require.Contains(t, entry["failure_cause"], "resolve provider: connection refused")
+			require.NotContains(t, output.String(), "person@example.test")
+			require.Equal(t, "test.Service", entry["rpc_service"])
+			require.Equal(t, "Send", entry["rpc_method"])
+			require.Equal(t, RequestIDFromContext(ctx), entry["request_id"])
+			level := "ERROR"
+			if code == connect.CodeInvalidArgument {
+				level = "WARN"
+			}
+			require.Equal(t, level, entry["level"])
+		})
 	}
 }

@@ -2,8 +2,10 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -36,6 +38,7 @@ func (s *ClientService) getClientLogoAssets(ctx context.Context, clientID string
 		Where("id = ?", clientID).
 		Take(&row).Error
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "load_client_logo_assets", "outcome", "failed", failurecause.Attr(err), "client_id", clientID)
 		return nil
 	}
 
@@ -46,6 +49,7 @@ func (s *ClientService) getClientLogoAssets(ctx context.Context, clientID string
 		}
 		asset, err := s.assets.ReadyRef(ctx, s.db, AssetSource{FileID: *fileID, Kind: "logo"})
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "resolve_client_logo_asset", "outcome", "failed", failurecause.Attr(err), "client_id", clientID, "file_id", *fileID)
 			return nil
 		}
 		return asset

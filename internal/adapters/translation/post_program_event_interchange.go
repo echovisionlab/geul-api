@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -148,6 +150,9 @@ func canonicalInterchangeDocumentID(value *string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(*value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
+		if err != nil {
+			slog.Error("Stored translation content document identity is invalid", failurecause.Attr(err))
+		}
 		return uuid.Nil, errors.New("content document identity is invalid")
 	}
 	return parsed, nil

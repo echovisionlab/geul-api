@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/localization"
@@ -50,7 +52,19 @@ type formSubmissionSystemMetadata struct {
 func (s *FormService) Submit(
 	ctx context.Context,
 	req *connect.Request[openv1.SubmitFormRequest],
-) (*connect.Response[openv1.SubmitFormResponse], error) {
+) (rpcResponse *connect.Response[openv1.SubmitFormResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "Submit", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if err := validateFormSubmissionDataPayload(req.Msg.Data); err != nil {
 		return nil, err
 	}
@@ -321,6 +335,9 @@ func mergeValidatedFormSubmissionSystemMetadata(
 func validateFormSubmissionDataPayload(rawData []byte) *connect.Error {
 	var data map[string]json.RawMessage
 	if err := json.Unmarshal(rawData, &data); err != nil || data == nil {
+		if err != nil {
+			slog.Warn("Invalid form submission JSON", "domain", "form", "event", "form.submission_rejected", "outcome", "blocked", failurecause.Attr(err))
+		}
 		return errs.InvalidArgument("data", "must be a JSON object")
 	}
 	for key := range data {

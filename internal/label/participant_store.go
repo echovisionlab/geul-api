@@ -3,6 +3,7 @@ package label
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -148,6 +150,7 @@ func loadEntityParticipantViews(
 			}
 			hasEffectiveAuthority, err = spiceDB.CheckActorCan(ctx, actor, canManage)
 			if err != nil {
+				slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.loadEntityParticipantViews", "outcome", "failed", failurecause.Attr(err))
 				return nil, errs.DependencyUnavailable("SpiceDB")
 			}
 		}
@@ -447,10 +450,12 @@ func requireParticipantPermission(ctx context.Context, spiceDB *auth.SpiceDBClie
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireParticipantPermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.NotFound(spec.entityName, entityID)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireParticipantPermission", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

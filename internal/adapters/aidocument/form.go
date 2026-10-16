@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	formintrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -246,6 +248,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 				Shared: []core.FieldValue{{ID: formRawField, Value: operation.SetField.Value}},
 			}
 			if _, err := formObjectFromNode(node); err != nil {
+				slog.Warn("Form document source operation rejected", failurecause.Attr(err, operation.SetField.Value.Text), "operation_index", index)
 				return formdomain.AIDocumentMutation{}, []core.OperationIssue{{
 					Operation: index, Code: core.IssueInvalidOperation,
 					Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: err.Error(),

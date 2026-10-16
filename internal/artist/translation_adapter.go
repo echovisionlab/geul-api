@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -136,6 +138,7 @@ func applyTypedTranslationCandidateWithDB(
 	}
 	expectedRevision, err := canonicalArtistUUID(candidate.ContentDocumentRevision)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
 		return translation.ErrSourceNoLongerCurrent
 	}
 	domain, err := internalCreativeContentFence(artistContentEntity, job.EntityID)(ctx, tx, documentID)
@@ -162,6 +165,7 @@ func applyTypedTranslationCandidateWithDB(
 			ctx, tx, batch, artistLockedTargetFence(documentID, domain),
 		)
 		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
+			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(applyErr), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
 			return translation.ErrSourceNoLongerCurrent
 		}
 		if applyErr != nil {
@@ -213,6 +217,7 @@ func applyTypedTranslationCandidateWithDB(
 		artistLockedTargetFence(documentID, domain),
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
+		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
 		return translation.ErrSourceNoLongerCurrent
 	}
 	if err != nil {

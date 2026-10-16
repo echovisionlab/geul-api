@@ -123,7 +123,7 @@ func (tools *LegalPolicyTools) CallTool(ctx context.Context, _ mcpserver.Princip
 	if name == ToolPolicySchedule {
 		instant, err := time.Parse(time.RFC3339Nano, input.EffectiveFrom)
 		if err != nil {
-			return executionError(errors.New("effective_from must be an RFC 3339 instant"))
+			return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: "effective_from must be an RFC 3339 instant", Cause: err}
 		}
 		effectiveFrom = timestamppb.New(instant)
 		if err := effectiveFrom.CheckValid(); err != nil {

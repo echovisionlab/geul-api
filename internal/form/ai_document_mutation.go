@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"log/slog"
 	"reflect"
 	"strings"
 	"time"
@@ -139,8 +141,20 @@ func (s *InternalFormService) ExecuteAIDocumentMutation(
 	if err != nil {
 		var compilerErr *formAIDocumentCompilerError
 		if errors.As(err, &compilerErr) {
+			slog.WarnContext(ctx, "AI document compilation rejected", "domain", "form", "event", "form.document_rejected", "outcome", "blocked", "entity_id", formID, "locale", locale, failurecause.Attr(err))
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
+		level := slog.LevelWarn
+		var conflict *AIDocumentRevisionConflictError
+		var stale *contentblock.StaleRevisionError
+		var target *translation.TargetRevisionConflict
+		if !errors.As(err, &conflict) && !errors.As(err, &stale) && !errors.As(err, &target) && !errors.Is(err, contentblock.ErrStaleRevision) {
+			switch connect.CodeOf(err) {
+			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+		}
+		slog.Log(ctx, level, "AI document mutation failed", "domain", "form", "event", "form.document_mutation_failed", "outcome", "failed", "entity_id", formID, "locale", locale, failurecause.Attr(err))
 		return AIDocumentMutationResult{}, err
 	}
 	return output, nil
@@ -258,6 +272,9 @@ func (s *InternalFormService) persistAIDocumentMutation(ctx context.Context, tx 
 	}
 	documentID, err := uuid.Parse(root.DocumentID)
 	if err != nil || documentID == uuid.Nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(err))
+		}
 		return false, errs.FailedPrecondition("Form Content Document is not initialized")
 	}
 	expectedRevision, err := uuid.Parse(input.ExpectedDocumentRevision)

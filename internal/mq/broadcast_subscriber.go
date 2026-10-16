@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/jackc/pgx/v5"
 )
@@ -61,7 +62,12 @@ func (s *BroadcastSubscriber) Start(ctx context.Context) error {
 		}
 		if err != nil {
 			if conn != nil {
-				_ = conn.Close(context.Background())
+				if closeErr := conn.Close(context.Background()); closeErr != nil {
+					slog.ErrorContext(ctx, "PostgreSQL signal connection close failed", "signal", s.signal, "failure_cause", failurecause.Message(closeErr))
+				}
+			}
+			if ctx.Err() == nil && !isClosed(s.closed) {
+				slog.ErrorContext(ctx, "PostgreSQL signal listener connect failed", "signal", s.signal, "attempt", attempt, "failure_cause", failurecause.Message(err, s.databaseDSN))
 			}
 			emitPostgreSQLSignalDependencyDegraded(ctx, "listener_connect_failed")
 			if !waitForSignalReconnect(ctx, s.closed, broadcastReconnectDelay(attempt)) {
@@ -78,14 +84,19 @@ func (s *BroadcastSubscriber) Start(ctx context.Context) error {
 		for ctx.Err() == nil && !isClosed(s.closed) {
 			notification, waitErr := conn.WaitForNotification(ctx)
 			if waitErr != nil {
+				if ctx.Err() == nil && !isClosed(s.closed) {
+					slog.ErrorContext(ctx, "PostgreSQL signal listener disconnected", "signal", s.signal, "failure_cause", failurecause.Message(waitErr))
+				}
 				break
 			}
-			if handleErr := s.process(ctx, notification.Payload); handleErr != nil {
-				slog.Error("PostgreSQL signal handler failed", "signal", s.signal, "error", handleErr)
-			}
+			// process logs failures with the decoded message identity before the
+			// listener continues to the next signal.
+			_ = s.process(ctx, notification.Payload)
 		}
 		s.clearConnection(conn)
-		_ = conn.Close(context.Background())
+		if closeErr := conn.Close(context.Background()); closeErr != nil {
+			slog.ErrorContext(ctx, "PostgreSQL signal connection close failed", "signal", s.signal, "failure_cause", failurecause.Message(closeErr))
+		}
 		if ctx.Err() != nil || isClosed(s.closed) {
 			return nil
 		}
@@ -94,8 +105,14 @@ func (s *BroadcastSubscriber) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *BroadcastSubscriber) process(ctx context.Context, payload string) error {
+func (s *BroadcastSubscriber) process(ctx context.Context, payload string) (resultErr error) {
 	var envelope eventpkg.Envelope
+	defer func() {
+		if resultErr != nil {
+			commandID := queueCommandID(Message{MessageID: envelope.MessageID, CorrelationID: envelope.CorrelationID})
+			slog.ErrorContext(ctx, "PostgreSQL signal handler failed", "signal", s.signal, "message_id", envelope.MessageID, "command_id", commandID, "failure_cause", failurecause.Message(resultErr))
+		}
+	}()
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		return fmt.Errorf("decode signal envelope: %w", err)
 	}

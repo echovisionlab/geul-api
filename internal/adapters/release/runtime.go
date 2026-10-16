@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/transcode"
@@ -86,7 +87,7 @@ func (r *TrackTranscodes) CancelFiles(
 
 		if r.canceller != nil {
 			if err := r.canceller.MarkCancelled(ctx, *fileID, reason); err != nil {
-				slog.Warn("Failed to mark track transcode jobs cancelled", "trackId", trackID, "fileId", *fileID, "error", err)
+				slog.Warn("Failed to mark track transcode jobs cancelled", "trackId", trackID, "fileId", *fileID, "reason", reason, "failure_cause", failurecause.Message(err))
 			}
 		}
 		if r.publisher != nil {
@@ -94,7 +95,7 @@ func (r *TrackTranscodes) CancelFiles(
 				FileId: *fileID, EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
 				EntityId: trackID, Reason: reason, TimestampMs: time.Now().UnixMilli(),
 			}); err != nil {
-				slog.Warn("Failed to publish track transcode cancel event", "trackId", trackID, "fileId", *fileID, "error", err)
+				slog.Warn("Failed to publish track transcode cancel event", "trackId", trackID, "fileId", *fileID, "reason", reason, "failure_cause", failurecause.Message(err))
 			}
 		}
 	}

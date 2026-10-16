@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -47,15 +49,32 @@ func NewService(db *gorm.DB, targets TargetResolver) *ShareLinkService {
 func (s *ShareLinkService) Validate(
 	ctx context.Context,
 	req *connect.Request[openv1.ValidateShareLinkRequest],
-) (*connect.Response[openv1.ValidateShareLinkResponse], error) {
+) (_ *connect.Response[openv1.ValidateShareLinkResponse], returnErr error) {
+	var link model.ShareLink
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		private := []string{req.Msg.GetToken(), req.Msg.GetPassword()}
+		if link.PasswordHash != nil {
+			private = append(private, *link.PasswordHash)
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink/public.Validate", "outcome", "failed", "entity_type", link.EntityType, "entity_id", link.EntityID, failurecause.Attr(returnErr, private...))
+	}()
+
 	token := req.Msg.Token
 	if token == "" {
 		return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
 	}
 
-	var link model.ShareLink
 	if err := s.db.WithContext(ctx).First(&link, "token = ?", token).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			slog.WarnContext(ctx, "content operation failed", "domain", "sharelink", "operation", "validate_share_link", "outcome", "failed", failurecause.Attr(err), "reason", "not_found")
 			return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
 		}
 		return nil, errs.Internal(err)

@@ -3,6 +3,7 @@ package member
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -33,15 +35,18 @@ func (s *MemberService) GetMySettings(
 	memberID := principal.MemberID.String()
 	var member model.Member
 	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL AND account_identity_id IS NOT NULL", memberID).First(&member).Error; err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	subscription, err := newsletterSubscriptionState(ctx, s.db, principal.IdentityID.String())
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	var consent model.UserCookieConsent
 	consentErr := s.db.WithContext(ctx).Where("member_id = ?", memberID).Order("recorded_at DESC").First(&consent).Error
 	if consentErr != nil && consentErr != gorm.ErrRecordNotFound {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(consentErr))
 		return nil, errs.Internal(consentErr)
 	}
 	account, err := s.accountSummary(ctx, memberID)
@@ -135,11 +140,27 @@ func (s *MemberService) updateProfile(
 		})
 	}); err != nil {
 		if nickname != nil && dberrors.IsUniqueViolation(err) {
+			slog.WarnContext(ctx, "Member nickname conflict", failurecause.Attr(err, *nickname, strings.TrimSpace(*nickname)))
 			return nil, errs.AlreadyExists("member", "nickname", strings.TrimSpace(*nickname))
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("member", memberID)
 		}
+		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
+			return nil, err
+		}
+		var privateValues []string
+		for _, value := range updates {
+			switch value := value.(type) {
+			case string:
+				privateValues = append(privateValues, value)
+			case map[string]string:
+				for _, entry := range value {
+					privateValues = append(privateValues, entry)
+				}
+			}
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "updateProfile", failurecause.Attr(err, privateValues...))
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
@@ -170,6 +191,21 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 				if errors.Is(err, authorizationtarget.ErrIneligible) {
 					return errs.NotFound("member", memberID)
 				}
+				var privateValues []string
+				for _, value := range updates {
+					switch value := value.(type) {
+					case string:
+						privateValues = append(privateValues, value)
+					case map[string]string:
+						for _, entry := range value {
+							privateValues = append(privateValues, entry)
+						}
+					}
+				}
+				slog.ErrorContext(ctx, "Operation failed", "operation", "updateMemberProfileAsAdmin", failurecause.Attr(err, privateValues...))
+				if connect.CodeOf(err) != connect.CodeUnknown {
+					return err
+				}
 				return errs.Internal(err)
 			}
 			if current.IdentityID != target.IdentityID {
@@ -199,11 +235,27 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 	})
 	if err != nil {
 		if nickname != nil && dberrors.IsUniqueViolation(err) {
+			slog.WarnContext(ctx, "Member nickname conflict", failurecause.Attr(err, *nickname, strings.TrimSpace(*nickname)))
 			return nil, errs.AlreadyExists("member", "nickname", strings.TrimSpace(*nickname))
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("member", memberID)
 		}
+		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
+			return nil, err
+		}
+		var privateValues []string
+		for _, value := range updates {
+			switch value := value.(type) {
+			case string:
+				privateValues = append(privateValues, value)
+			case map[string]string:
+				for _, entry := range value {
+					privateValues = append(privateValues, entry)
+				}
+			}
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "updateMemberProfileAsAdmin", failurecause.Attr(err, privateValues...))
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
@@ -280,6 +332,7 @@ func (s *MemberService) CheckNicknameAvailability(
 			  AND id <> ?::uuid
 		)
 	`, nickname, principal.MemberID.String()).Scan(&claimed).Error; err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "CheckNicknameAvailability", failurecause.Attr(err, nickname))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.CheckNicknameAvailabilityResponse{Available: !claimed}), nil

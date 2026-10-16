@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,7 +35,7 @@ func newSynchronousAuthorizationMetrics() synchronousAuthorizationMetrics {
 		otelmetric.WithDescription("Counts exceptional synchronous authorization transaction boundaries by bounded failure."),
 	)
 	if err != nil {
-		slog.Warn("failed to create synchronous authorization boundary failure counter", "error", err)
+		slog.Warn("failed to create synchronous authorization boundary failure counter", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.boundaryFailureCounter = counter
 	}
@@ -47,7 +48,7 @@ func newSynchronousAuthorizationMetrics() synchronousAuthorizationMetrics {
 		),
 	)
 	if err != nil {
-		slog.Warn("failed to create SpiceDB-to-database commit duration histogram", "error", err)
+		slog.Warn("failed to create SpiceDB-to-database commit duration histogram", "failure_cause", failurecause.Message(err))
 	} else {
 		metrics.writeToCommitDuration = writeToCommitDuration
 	}

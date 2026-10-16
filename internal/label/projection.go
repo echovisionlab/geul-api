@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -22,7 +23,19 @@ import (
 func (s *LabelService) CheckLabelSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckLabelSlugAvailableRequest],
-) (*connect.Response[managev1.CheckLabelSlugAvailableResponse], error) {
+) (_ *connect.Response[managev1.CheckLabelSlugAvailableResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.CheckLabelSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()
@@ -124,12 +137,12 @@ func labelImageAssetsFromReadyMap(label *model.Label, refs map[string]*commonv1.
 func (s *LabelService) getLabelImageAssets(ctx context.Context, labelID string) *labelImageAssets {
 	var label model.Label
 	if err := s.db.WithContext(ctx).Select("id", "logo_light_file_id", "logo_dark_file_id").First(&label, "id = ?", labelID).Error; err != nil {
-		slog.Warn("failed to load label logo assets", "label_id", labelID, "error", err)
+		slog.WarnContext(ctx, "failed to load label logo assets", "label_id", labelID, "failure_cause", failurecause.Message(err))
 		return &labelImageAssets{}
 	}
 	refs, err := s.loadReadyLabelLogoAssets(ctx, []model.Label{label})
 	if err != nil {
-		slog.Warn("failed to resolve label logo assets", "label_id", labelID, "error", err)
+		slog.WarnContext(ctx, "failed to resolve label logo assets", "label_id", labelID, "failure_cause", failurecause.Message(err))
 		return &labelImageAssets{}
 	}
 	return labelImageAssetsFromReadyMap(&label, refs)

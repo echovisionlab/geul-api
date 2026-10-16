@@ -1,8 +1,12 @@
 package page
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -12,6 +16,7 @@ func pageAuthorizationDeletionBatches(
 ) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 	deleteMutation, err := policyv1.Page.DeletePolicy(pageID)
 	if err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.pageAuthorizationDeletionBatches", "outcome", "failed", failurecause.Attr(err))
 		return nil, nil, errs.InvalidArgument("page_id", "must be a canonical UUID")
 	}
 	restoreMutation, err := policyv1.Page.TouchPolicy(pageID)

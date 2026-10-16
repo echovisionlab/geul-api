@@ -3,8 +3,10 @@ package post
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -156,6 +158,7 @@ func applyTypedTranslationCandidateWithDB(
 		"content_document_revision", candidate.ContentDocumentRevision,
 	)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "parse_translation_revision", "outcome", "failed", failurecause.Attr(err), "entity_id", job.EntityID, "target_locale", job.TargetLocale, "job_id", job.ID)
 		return translation.ErrSourceNoLongerCurrent
 	}
 	var batch contentblock.Batch
@@ -184,6 +187,7 @@ func applyTypedTranslationCandidateWithDB(
 		ctx, tx, batch, postSystemTranslationDocumentFence(job.EntityID),
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
 		return translation.ErrSourceNoLongerCurrent
 	}
 	if err != nil {
@@ -210,6 +214,7 @@ func applyTypedTranslationCandidateWithDB(
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
 		return translation.ErrSourceNoLongerCurrent
 	}
 	return err
@@ -238,6 +243,9 @@ func applyPostProviderSourceCandidate(
 	}
 	requesterID, err := uuid.Parse(job.RequestedByMemberID)
 	if err != nil || requesterID == uuid.Nil || requesterID.String() != job.RequestedByMemberID {
+		if err != nil {
+			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.applyPostProviderSourceCandidate", "outcome", "failed", failurecause.Attr(err))
+		}
 		return errors.New("post translation provider delivery requires its requesting Member")
 	}
 	batch.ContributorMemberIDs = []uuid.UUID{requesterID}
@@ -258,6 +266,7 @@ func applyPostProviderSourceCandidate(
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
 		return translation.ErrSourceNoLongerCurrent
 	}
 	if err != nil {

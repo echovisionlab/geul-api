@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -25,11 +26,14 @@ func (s *SeriesService) setSeriesFeaturedImageAsset(ctx context.Context, series 
 		Select("featured_image_file_id AS file_id").
 		Where("id = ?", series.Id).
 		Scan(&result).Error; err != nil || result.FileID == nil || *result.FileID == "" {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "setSeriesFeaturedImageAsset", failurecause.Attr(err), "series_id", series.Id)
+		}
 		return
 	}
 	imageAsset, err := s.media.ReadyAssetForSourceFile(ctx, *result.FileID, "image")
 	if err != nil {
-		slog.Warn("failed to resolve Series featured image asset", "seriesId", series.Id, "fileId", *result.FileID, "error", err)
+		slog.ErrorContext(ctx, "failed to resolve Series featured image asset", "seriesId", series.Id, "fileId", *result.FileID, failurecause.Attr(err))
 		return
 	}
 	if imageAsset != nil {

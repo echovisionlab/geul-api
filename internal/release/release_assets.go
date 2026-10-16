@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -19,7 +21,18 @@ import (
 func (s *ReleaseService) SetReleaseArtwork(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseArtworkRequest],
-) (*connect.Response[managev1.SetReleaseArtworkResponse], error) {
+) (_ *connect.Response[managev1.SetReleaseArtworkResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseArtwork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var release model.Release
 	if err := s.db.WithContext(ctx).
 		Select("id").
@@ -120,7 +133,18 @@ func (s *ReleaseService) SetReleaseArtwork(
 func (s *ReleaseService) DeleteReleaseArtwork(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteReleaseArtworkRequest],
-) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
+) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteReleaseArtwork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var release model.Release
 	if err := s.db.WithContext(ctx).
 		Select("id").

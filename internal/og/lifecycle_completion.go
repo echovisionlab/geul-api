@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -107,6 +109,7 @@ func (s *Lifecycle) finalizeNewOgGenerationCompletion(
 	}
 	if err := s.bindCompletedOgAsset(ctx, tx, generation, target, asset, now); err != nil {
 		if errors.Is(err, ErrTranslationTargetMissing) {
+			slog.WarnContext(ctx, "OG completion target missing", failurecause.Attr(err), "generation_id", generation.ID, "run_id", generation.RunID)
 			// No replacement exists when a locale was removed. Superseded
 			// requires a real successor; finish this rejected completion as
 			// failed so its lease cannot keep retrying an invalid DB transition.
@@ -169,6 +172,7 @@ func (s *Lifecycle) bindCompletedOgAsset(
 ) error {
 	var snapshot ogEntitySnapshot
 	if err := json.Unmarshal(generation.EntitySnapshot, &snapshot); err != nil {
+		slog.ErrorContext(ctx, "Failed to decode OG generation entity snapshot", failurecause.Attr(err), "generation_id", generation.ID, "run_id", generation.RunID)
 		return errs.FailedPrecondition("OG generation entity snapshot is invalid")
 	}
 	pinnedTarget := Target{

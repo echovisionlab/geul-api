@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const (
@@ -98,12 +100,12 @@ func (l *PostgresLeader) Start(ctx context.Context) {
 			var err error
 			session, err = l.connect(ctx)
 			if err != nil {
-				slog.Warn("Failed to open scheduler leader session", "error", err)
+				slog.Warn("Failed to open scheduler leader session", "instance", l.instanceID, "failure_cause", failurecause.Message(err))
 			}
 		}
 		if session != nil {
 			if err := l.refreshLeadership(ctx, session); err != nil {
-				slog.Warn("Scheduler leader session failed", "error", err)
+				slog.Warn("Scheduler leader session failed", "instance", l.instanceID, "failure_cause", failurecause.Message(err))
 				// sql.Conn.Close returns a healthy physical session to the pool.
 				// Release first so a cancellable Ping error cannot leak the
 				// session-level advisory lock into an unrelated pool borrower.
@@ -146,12 +148,14 @@ func (l *PostgresLeader) releaseSession(session advisoryLockSession) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := session.Unlock(ctx, postgresLeaderLockID); err != nil {
-			slog.Warn("Failed to release scheduler leader lock", "instance", l.instanceID, "error", err)
+			slog.Warn("Failed to release scheduler leader lock", "instance", l.instanceID, "failure_cause", failurecause.Message(err))
 		} else {
 			slog.Info("Released scheduler leader lock", "instance", l.instanceID)
 		}
 	}
-	_ = session.Close()
+	if err := session.Close(); err != nil {
+		slog.Error("Failed to close scheduler leader session", "instance", l.instanceID, "failure_cause", failurecause.Message(err))
+	}
 }
 
 func (l *PostgresLeader) Stop() {

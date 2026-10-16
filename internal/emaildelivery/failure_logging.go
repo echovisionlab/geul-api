@@ -3,46 +3,40 @@ package emaildelivery
 import (
 	"context"
 	"errors"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"log/slog"
-	"regexp"
-	"sort"
-	"strings"
+	"net/mail"
 
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-const minRedactedValueLength = 4
-
-var failureEmail = regexp.MustCompile(`(?i)[\pL\pN.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[\pL\pN.-]+`)
-var failureURL = regexp.MustCompile(`(?i)(?:https?|postgres(?:ql)?|smtp)://[^\s<>"']+`)
-var failureCredential = regexp.MustCompile(`(?i)((?:"|')?(?:authorization|password|passwd|secret(?:_access_key|accesskey)?|access_?key_?id|token|credential|api[_-]?key)(?:"|')?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|(?:Bearer|Basic)\s+[^\s,;]+|[^\s,;]+)`)
-
-// FailureCause retains diagnostic messages (including wrapped causes), but
-// strips command values, addresses, URLs, and credential assignments before
-// logging. Raw template_data and provider requests are never logged.
+// FailureCause redacts private command values with the shared failurecause sanitizer.
 func FailureCause(err error, job *managev1.SendEmailEvent) string {
-	if err == nil {
-		return ""
+	values := []string{job.GetRecipient()}
+	if recipient, parseErr := mail.ParseAddress(job.GetRecipient()); parseErr == nil {
+		values = append(values, recipient.Name)
 	}
-	message := err.Error()
-	if job != nil {
-		values := []string{job.GetRecipient()}
-		for _, value := range job.GetTemplateData() {
-			values = append(values, value)
-		}
-		sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
-		for _, value := range values {
-			// Short values ("15", "ko") would erase unrelated parts of the message; codes,
-			// addresses and URLs are long enough, and URLs/addresses are also matched below.
-			if len([]rune(value)) >= minRedactedValueLength {
-				message = strings.ReplaceAll(message, value, "[redacted]")
-			}
+	for _, value := range job.GetTemplateData() {
+		values = append(values, value)
+	}
+	return failurecause.Message(err, values...)
+}
+
+// requestFailureCause sanitizes err against the recipient and the string
+// template values of an incoming SendEmail request.
+func requestFailureCause(err error, request *intrav1.SendEmailRequest) string {
+	values := []string{request.GetRecipient()}
+	if recipient, parseErr := mail.ParseAddress(request.GetRecipient()); parseErr == nil {
+		values = append(values, recipient.Name)
+	}
+	for _, value := range request.GetTemplateData().AsMap() {
+		if text, ok := value.(string); ok {
+			values = append(values, text)
 		}
 	}
-	message = failureURL.ReplaceAllString(message, "[redacted-url]")
-	message = failureEmail.ReplaceAllString(message, "[redacted-email]")
-	return failureCredential.ReplaceAllString(message, "${1}[redacted]")
+	return failurecause.Message(err, values...)
 }
 
 type deliveryRenderContextKey struct{}
@@ -60,7 +54,7 @@ func LogDeliveryFailure(ctx context.Context, event string, job *managev1.SendEma
 		layoutID = renderErr.LayoutID
 		locale = renderErr.Locale
 	}
-	attrs := []any{"error", FailureCause(err, job), "locale", locale, "layout_id", layoutID}
+	attrs := []any{"failure_cause", FailureCause(err, job), "locale", locale, "layout_id", layoutID}
 	attrs = append(attrs, extra...)
 	logDeliveryLifecycle(ctx, slog.LevelError, event, job, "failed", "", "", attrs...)
 }

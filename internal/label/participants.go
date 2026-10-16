@@ -2,10 +2,12 @@ package label
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -16,7 +18,19 @@ import (
 func (s *LabelService) ListLabelParticipants(
 	ctx context.Context,
 	req *connect.Request[managev1.ListLabelParticipantsRequest],
-) (*connect.Response[managev1.ListLabelParticipantsResponse], error) {
+) (_ *connect.Response[managev1.ListLabelParticipantsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabelParticipants", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := requireLabelPermission(ctx, s.spiceDB, req.Msg.LabelId, policyv1.Label.ManageParticipants); err != nil {
 		return nil, err
 	}
@@ -31,7 +45,19 @@ func (s *LabelService) ListLabelParticipants(
 func (s *LabelService) SetLabelParticipant(
 	ctx context.Context,
 	req *connect.Request[managev1.SetLabelParticipantRequest],
-) (*connect.Response[managev1.LabelParticipant], error) {
+) (_ *connect.Response[managev1.LabelParticipant], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.SetLabelParticipant", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
+	}()
+
 	role, err := labelParticipantRole(req.Msg.Role)
 	if err != nil {
 		return nil, err
@@ -50,7 +76,19 @@ func (s *LabelService) SetLabelParticipant(
 func (s *LabelService) RemoveLabelParticipant(
 	ctx context.Context,
 	req *connect.Request[managev1.RemoveLabelParticipantRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.RemoveLabelParticipant", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
+	}()
+
 	return removeEntityParticipantResponseWithAudit(ctx, s.db, s.spiceDB, labelParticipantSpec(), req.Msg.LabelId, req.Msg.MemberId, func(ctx context.Context, tx *gorm.DB, previous, next string) error {
 		return s.appendLabelParticipantAudit(ctx, tx, req.Msg.LabelId, req.Msg.MemberId, labelAuditRelationship(previous), labelAuditRelationship(next))
 	})

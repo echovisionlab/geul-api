@@ -2,6 +2,7 @@ package artist
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -108,7 +110,18 @@ func NewArtistService(db *gorm.DB, spiceDB *auth.SpiceDBClient, kratosClient aut
 func (s *ArtistService) GetArtistEditorData(
 	ctx context.Context,
 	req *connect.Request[managev1.GetArtistEditorDataRequest],
-) (*connect.Response[managev1.GetArtistEditorDataResponse], error) {
+) (_ *connect.Response[managev1.GetArtistEditorDataResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "GetArtistEditorData", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var artist model.Artist
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
@@ -160,7 +173,18 @@ func (s *ArtistService) GetArtistEditorData(
 func (s *ArtistService) ListArtists(
 	ctx context.Context,
 	req *connect.Request[managev1.ListArtistsRequest],
-) (*connect.Response[managev1.ListArtistsResponse], error) {
+) (_ *connect.Response[managev1.ListArtistsResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListArtists", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var artists []model.Artist
 	var total int64
 
@@ -249,7 +273,18 @@ func (s *ArtistService) ListArtists(
 func (s *ArtistService) ListArtistsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListArtistsAdminRequest],
-) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
+) (_ *connect.Response[managev1.ListArtistsAdminResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListArtistsAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	// Check admin permission
 	if err := requireArtistList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -368,7 +403,18 @@ func (s *ArtistService) ListArtistsAdmin(
 func (s *ArtistService) CreateArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateArtistRequest],
-) (*connect.Response[managev1.Artist], error) {
+) (_ *connect.Response[managev1.Artist], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "CreateArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Artist content Block store is not configured")
 	}
@@ -550,7 +596,18 @@ func insertArtistOwner(tx *gorm.DB, artistID, memberID string, now time.Time) er
 func (s *ArtistService) DeleteArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteArtistRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Artist content Block store is not configured")
 	}
@@ -560,6 +617,7 @@ func (s *ArtistService) DeleteArtist(
 
 	snapshotPlan, err := policyv1.Artist.Snapshot(req.Msg.Id)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("id", "must identify an Artist")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
@@ -584,10 +642,12 @@ func (s *ArtistService) DeleteArtist(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(err))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		deleteRelationships, restoreRelationships, err := artistDeletionRelationshipMutations(req.Msg.Id, snapshots)
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(err))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		if err := validateResourceDeletionAuthorizationBatchSize("artist", deleteRelationships, restoreRelationships); err != nil {
@@ -644,7 +704,18 @@ func (s *ArtistService) DeleteArtist(
 func (s *ArtistService) PublishArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishArtistRequest],
-) (*connect.Response[managev1.ArtistLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.ArtistLifecycleMutationResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "PublishArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var artist model.Artist
 	transitioned := false
 	now := time.Now()
@@ -694,7 +765,18 @@ func (s *ArtistService) PublishArtist(
 func (s *ArtistService) UnpublishArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishArtistRequest],
-) (*connect.Response[managev1.ArtistLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.ArtistLifecycleMutationResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UnpublishArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var artist model.Artist
 	transitioned := false
 	now := time.Now()
