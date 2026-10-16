@@ -134,10 +134,14 @@ jobs:
         if: ${{ steps.og-render-review.outputs.changed == 'true' }}
         env:
           BASELINE_VERSION: ${{ steps.og-render-review.outputs.baseline_version }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           npm install --prefix "$RUNNER_TEMP/og-render-baseline" --no-save --ignore-scripts "satori@$BASELINE_VERSION"
+          mkdir -p "$RUNNER_TEMP/og-source-baseline"
+          git archive "$BASE_SHA" media/og/src/templates media/og/src/types media/og/tsconfig.json | tar -x -C "$RUNNER_TEMP/og-source-baseline"
+          ln -s "$GITHUB_WORKSPACE/media/og/node_modules" "$RUNNER_TEMP/og-source-baseline/media/og/node_modules"
           cd media/og
-          pnpm exec tsx scripts/ci/render-og-comparison.mjs "$RUNNER_TEMP/og-render-baseline" "$RUNNER_TEMP/og-render-review"
+          pnpm exec tsx scripts/ci/render-og-comparison.mjs "$RUNNER_TEMP/og-render-baseline" "$RUNNER_TEMP/og-source-baseline" "$RUNNER_TEMP/og-render-review"
 
       - name: Upload OG renderer comparison
         if: ${{ always() && steps.og-render-review.outputs.changed == 'true' }}
