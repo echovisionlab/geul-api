@@ -30,6 +30,13 @@ The optional cleanup below is a separate maintenance operation. Do not remove
 legacy keys or wire numbers after converting live content: saved history and
 old clients can still contain them.
 
+Pause contact-setting edits between schema backfill and completion of the API
+replacement: an older API binary can still write the legacy columns without
+updating the new canonical column. Reload old administration forms after the
+new Web release; conflicting old support/privacy inputs are rejected rather
+than choosing one silently. This narrow settings cutover does not require
+stopping content writers or Collab rooms.
+
 ## Optional offline cleanup of live content
 
 Physical conversion is optional; it is unnecessary for settings or rendering to
