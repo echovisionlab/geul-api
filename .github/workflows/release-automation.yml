@@ -1,0 +1,45 @@
+name: Release automation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-automation.yml"
+
+permissions: {}
+
+jobs:
+  access:
+    name: Verify existing automation access
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+    steps:
+      - name: Read existing receiver access
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+
+          response = subprocess.check_output(
+              ["gh", "api", "--include", "repos/echovisionlab/deployment"], text=True
+          ).replace("\r\n", "\n")
+          headers, body = response.split("\n\n", 1)
+          scopes = next(
+              (line.split(":", 1)[1].strip().split(", ")
+               for line in headers.splitlines()
+               if line.lower().startswith("x-oauth-scopes:")), []
+          )
+          if "repo" not in scopes or not json.loads(body)["permissions"]["push"]:
+              raise SystemExit("Existing credential does not prove receiver dispatch access")
+          for workflow in ("release-pr-maintenance.yml", "image-discovery.yml"):
+              metadata = json.loads(subprocess.check_output(
+                  ["gh", "api", f"repos/echovisionlab/deployment/actions/workflows/{workflow}"],
+                  text=True,
+              ))
+              if metadata["state"] != "active":
+                  raise SystemExit("Existing receiver is not active")
+          print("Existing repository credential can access both active automation receivers.")
+          PY
