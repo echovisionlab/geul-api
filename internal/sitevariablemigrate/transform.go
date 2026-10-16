@@ -63,7 +63,7 @@ func occurrences(source string) []occurrence {
 		}
 		key := "site.title"
 		if email {
-			key = "contact." + strings.Split(literal, "@")[0] + "Email"
+			key = migratedContactKey(strings.Split(literal, "@")[0])
 		}
 		found = append(found, occurrence{loc[0], loc[1], key})
 	}
@@ -108,7 +108,7 @@ var emailAddress = regexp.MustCompile(`[\pL\pN_.+%-]+@[\pL\pN](?:[\pL\pN.-]*[\pL
 func emailHrefTarget(value string) string {
 	for _, name := range []string{"legal", "privacy", "support"} {
 		if strings.EqualFold(value, "mailto:"+name+"@dsub.io") {
-			return "mailto:{{contact." + name + "Email}}"
+			return "mailto:{{" + migratedContactKey(name) + "}}"
 		}
 	}
 	if strings.HasPrefix(strings.ToLower(value), "mailto:") {
@@ -277,10 +277,10 @@ func richNode(value any) any {
 								}
 							}
 							if strings.EqualFold(strings.TrimSpace(label.String()), name+"@dsub.io") {
-								result = append(result, atom("contact."+name+"Email", true, styles))
+								result = append(result, atom(migratedContactKey(name), true, styles))
 								goto next
 							}
-							link["href"] = "mailto:{{contact." + name + "Email}}"
+							link["href"] = "mailto:{{" + migratedContactKey(name) + "}}"
 							href = link["href"].(string)
 						}
 					}
@@ -356,4 +356,12 @@ func MenuJSON(source []byte) ([]byte, error) {
 		return v
 	}
 	return json.Marshal(walk(value))
+}
+
+// migratedContactKey is confined to the offline conversion package.
+func migratedContactKey(name string) string {
+	if name == "legal" {
+		return "contact.legalEmail"
+	}
+	return "contact.email"
 }

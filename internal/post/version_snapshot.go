@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -80,7 +79,6 @@ func unmarshalPostVersionContentSnapshot(
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(envelope.Document, document); err != nil {
 		return postVersionContentSnapshot{}, nil, fmt.Errorf("decode Post Version typed document: %w", err)
 	}
-	document.BlockCatalogFingerprint = contentblock.UpgradeVersionSnapshotCatalogFingerprint(document.GetBlockCatalogFingerprint())
 	if err := validatePostVersionLocalizedDocument(document, envelope.SourceLocale); err != nil {
 		return postVersionContentSnapshot{}, nil, err
 	}
@@ -110,7 +108,7 @@ func validatePostVersionLocalizedDocument(
 	if document.GetLocaleOverlay().GetLocale() != sourceLocale {
 		return fmt.Errorf("post Version typed document overlay does not match source locale")
 	}
-	return nil
+	return contentv1.ValidateRichTextDocument(&contentv1.RichTextDocument{BlockCatalogFingerprint: document.GetBlockCatalogFingerprint(), Profile: document.GetProfile(), SourceLocale: sourceLocale, Base: document.GetBase(), LocaleOverlays: []*contentv1.RichTextLocaleOverlay{document.GetLocaleOverlay()}}, contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT)
 }
 
 func cloneNullableString(value *string) *string {

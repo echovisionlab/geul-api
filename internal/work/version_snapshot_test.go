@@ -4,36 +4,29 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func TestWorkVersionCheckpointRestoresTheKnownPreviousCatalog(t *testing.T) {
+func TestWorkVersionCheckpointRequiresMigratedCatalog(t *testing.T) {
 	encoded, err := EncodeVersionContentSnapshot("en", nil, nil, &contentv1.LocalizedRichTextDocument{
 		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
-		Locale:                  "en", Base: &contentv1.RichTextBlockGraph{},
-		LocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "en"},
+		Locale:                  "en", Base: &contentv1.RichTextBlockGraph{}, LocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "en"},
 	})
 	require.NoError(t, err)
-	legacy := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e"))
-	_, decoded, err := DecodeVersionContentSnapshot(legacy)
-	require.NoError(t, err)
-	require.Equal(t, contentv1.ContentBlockCatalogFingerprint, decoded.GetBlockCatalogFingerprint())
-	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
-	require.NoError(t, err)
-
-	unknown := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("stale-catalog"))
-	_, decoded, err = DecodeVersionContentSnapshot(unknown)
-	require.NoError(t, err)
-	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
-	require.ErrorContains(t, err, "fingerprint")
+	for _, fingerprint := range []string{"de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e", "2db3b07d50a139a670f68e3cd045063d20475a102acbee7852066b1929b7172b", "7ee996e5a23685d3b981268c3dd6608d8f006f5b62dbec5fb35e1b4d0532cf49", "ffc51f7192e406fe25fcb5383428be94e74a52db83c666b550ca38d4db88dc85", "stale-catalog"} {
+		require.NotEqual(t, fingerprint, contentv1.ContentBlockCatalogFingerprint)
+		stored := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte(fingerprint))
+		_, decoded, err := DecodeVersionContentSnapshot(stored)
+		require.ErrorContains(t, err, "fingerprint")
+		require.Nil(t, decoded)
+	}
 }
 
 func TestWorkVersionProtoFormatting(t *testing.T) {
@@ -76,7 +69,7 @@ func TestVersionContentSnapshotRoundTrip(t *testing.T) {
 	title := "Title"
 	summary := "Summary"
 	document := &contentv1.LocalizedRichTextDocument{
-		BlockCatalogFingerprint: "catalog",
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
 		Locale:                  "en",
 		Base:                    &contentv1.RichTextBlockGraph{},
@@ -85,7 +78,7 @@ func TestVersionContentSnapshotRoundTrip(t *testing.T) {
 
 	encoded, err := EncodeVersionContentSnapshot("en", &title, &summary, document)
 	require.NoError(t, err)
-	require.JSONEq(t, `{
+	require.JSONEq(t, strings.ReplaceAll(`{
 		"schemaVersion": 1,
 		"sourceLocale": "en",
 		"title": "Title",
@@ -97,7 +90,7 @@ func TestVersionContentSnapshotRoundTrip(t *testing.T) {
 			"base": {},
 			"localeOverlay": {"locale": "en"}
 		}
-	}`, string(encoded))
+	}`, "catalog", contentv1.ContentBlockCatalogFingerprint), string(encoded))
 
 	snapshot, decoded, err := DecodeVersionContentSnapshot(encoded)
 	require.NoError(t, err)

@@ -195,7 +195,7 @@ var siteSettingsFileKeys = []string{"logo_light_file_id", "logo_dark_file_id", "
 
 func siteSettingsMutableKey(key string) bool {
 	switch key {
-	case "site_title", "company_name", "company_address", "tax_id", "legal_email", "support_email", "privacy_email", "social_links",
+	case "site_title", "company_name", "company_address", "tax_id", "legal_email", "contact_email", "social_links",
 		"logo_light_file_id", "logo_dark_file_id", "logo_email_file_id", "favicon_file_id", "site_og_background_file_id", "privacy_og_background_file_id", "terms_og_background_file_id",
 		"primary_color", "default_comments_enabled", "homepage_page_id", "menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id",
 		"meta_description", "google_analytics_id", "og_image_config", "og_image_config.home", "og_image_config.content":
@@ -216,7 +216,7 @@ func projectSiteSettings(settings *managev1.AllSettings) map[string]any {
 	}
 	return map[string]any{
 		"site_title": public.GetSiteTitle(), "company_name": public.GetCompanyName(), "company_address": public.GetCompanyAddress(), "tax_id": public.GetTaxId(),
-		"legal_email": public.GetLegalEmail(), "support_email": public.GetSupportEmail(), "privacy_email": public.GetPrivacyEmail(),
+		"legal_email": public.GetLegalEmail(), "contact_email": public.GetContactEmail(),
 		"social_links": public.GetSocialLinks().AsMap(), "primary_color": public.GetPrimaryColor(), "default_comments_enabled": public.GetDefaultCommentsEnabled(),
 		"homepage_page_id": public.HomepagePageId, "menu_header_id": public.MenuHeaderId, "menu_secondary_id": public.MenuSecondaryId,
 		"menu_footer_id": public.MenuFooterId, "menu_avatar_dropdown_id": public.MenuAvatarDropdownId,

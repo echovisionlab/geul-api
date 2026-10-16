@@ -15,12 +15,12 @@ import (
 )
 
 type Context struct {
-	SiteTitle, SiteURL, CompanyName        string
-	LegalEmail, SupportEmail, PrivacyEmail string
+	SiteTitle, SiteURL, CompanyName string
+	LegalEmail, ContactEmail        string
 }
 
 func FromSettings(settings model.SiteSettings, origin string) Context {
-	return Context{settings.SiteTitle, strings.TrimRight(strings.TrimSpace(origin), "/"), settings.CompanyName, settings.LegalEmail, settings.SupportEmail, settings.PrivacyEmail}
+	return Context{SiteTitle: settings.SiteTitle, SiteURL: strings.TrimRight(strings.TrimSpace(origin), "/"), CompanyName: settings.CompanyName, LegalEmail: settings.LegalEmail, ContactEmail: settings.ContactEmail}
 }
 
 func Load(ctx context.Context, db *gorm.DB, origin string) (Context, error) {
@@ -28,7 +28,7 @@ func Load(ctx context.Context, db *gorm.DB, origin string) (Context, error) {
 	if db == nil {
 		return Context{}, fmt.Errorf("site settings database is required")
 	}
-	if err := db.WithContext(ctx).Select("site_title", "company_name", "legal_email", "support_email", "privacy_email").Where("id = 1").Take(&settings).Error; err != nil {
+	if err := db.WithContext(ctx).Select("site_title", "company_name", "legal_email", "contact_email").Where("id = 1").Take(&settings).Error; err != nil {
 		return Context{}, err
 	}
 	return FromSettings(settings, origin), nil
@@ -39,7 +39,7 @@ func LoadRuntime(ctx context.Context, db *gorm.DB) (Context, error) {
 }
 
 func (c Context) Values() map[string]string {
-	return map[string]string{"site.title": c.SiteTitle, "site.url": c.SiteURL, "site.companyName": c.CompanyName, "contact.legalEmail": c.LegalEmail, "contact.supportEmail": c.SupportEmail, "contact.privacyEmail": c.PrivacyEmail}
+	return map[string]string{"site.title": c.SiteTitle, "site.url": c.SiteURL, "site.companyName": c.CompanyName, "contact.legalEmail": c.LegalEmail, "contact.email": c.ContactEmail}
 }
 
 func (c Context) Resolve(key string) (string, error) {
@@ -78,5 +78,5 @@ func ResolvePublicText(ctx context.Context, db *gorm.DB, source string) (string,
 
 // TemplateContext keeps email projections dynamic until trusted delivery data is bound.
 func TemplateContext() Context {
-	return Context{"{{site.title}}", "{{site.url}}", "{{site.companyName}}", "{{contact.legalEmail}}", "{{contact.supportEmail}}", "{{contact.privacyEmail}}"}
+	return Context{SiteTitle: "{{site.title}}", SiteURL: "{{site.url}}", CompanyName: "{{site.companyName}}", LegalEmail: "{{contact.legalEmail}}", ContactEmail: "{{contact.email}}"}
 }

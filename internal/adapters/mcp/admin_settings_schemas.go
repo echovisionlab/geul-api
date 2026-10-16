@@ -2,16 +2,14 @@ package mcp
 
 const adminSettingsEmptyInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{}}`
 
-// Keep this list aligned with SiteSettingService.SetManySettings. Value
-// validation, reference checks and attachment checks belong to that service.
+// Value, reference and attachment checks belong to the settings service.
 const siteSettingsMutablePropertiesJSONSchema = `
   "site_title":{"type":["string","null"]},
   "company_name":{"type":["string","null"]},
   "company_address":{"type":["string","null"]},
   "tax_id":{"type":["string","null"]},
   "legal_email":{"type":["string","null"],"description":"Email address, or empty/null to clear."},
-  "support_email":{"type":["string","null"],"description":"Email address, or empty/null to clear."},
-  "privacy_email":{"type":["string","null"],"description":"Email address, or empty/null to clear."},
+  "contact_email":{"type":["string","null"],"description":"Unified contact email address, or empty/null to clear. Legal email remains separate."},
   "social_links":{"type":["object","null"],"description":"Replaces the full social links object; null resets it to an empty object."},
   "logo_light_file_id":{"type":["string","null"],"description":"Source File UUID; empty/null clears. Use file_list or file_upload to resolve Files."},
   "logo_dark_file_id":{"type":["string","null"],"description":"Source File UUID; empty/null clears."},

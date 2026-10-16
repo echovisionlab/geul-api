@@ -1,0 +1,102 @@
+package sitevariablemigrate
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+)
+
+// This allowlist is an offline data conversion policy, never a runtime decoder.
+var contactSourceCatalogs = map[string]bool{
+	"de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e": true,
+	"2db3b07d50a139a670f68e3cd045063d20475a102acbee7852066b1929b7172b": true,
+	"7ee996e5a23685d3b981268c3dd6608d8f006f5b62dbec5fb35e1b4d0532cf49": true,
+	"ffc51f7192e406fe25fcb5383428be94e74a52db83c666b550ca38d4db88dc85": true,
+}
+
+const contactTargetCatalog = "732d62ad223d3012770b10d0a1ab25a8dae2336c52b56ecd01cf276051e75637"
+
+func ContactSnapshotJSON(source []byte, kind string) ([]byte, error) {
+	if contentv1.ContentBlockCatalogFingerprint != contactTargetCatalog {
+		return nil, fmt.Errorf("contact migration requires its reviewed target catalog")
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(source, &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope) != 5 {
+		return nil, fmt.Errorf("invalid version snapshot envelope")
+	}
+	for _, key := range []string{"schemaVersion", "sourceLocale", "title", "summary", "document"} {
+		if _, ok := envelope[key]; !ok {
+			return nil, fmt.Errorf("missing version snapshot field %s", key)
+		}
+	}
+	var version int
+	var locale string
+	if json.Unmarshal(envelope["schemaVersion"], &version) != nil || version != 1 || json.Unmarshal(envelope["sourceLocale"], &locale) != nil || locale == "" || locale != strings.TrimSpace(locale) {
+		return nil, fmt.Errorf("invalid version snapshot identity")
+	}
+	for _, key := range []string{"title", "summary"} {
+		var value *string
+		if err := json.Unmarshal(envelope[key], &value); err != nil {
+			return nil, err
+		}
+		if value != nil {
+			text := ContactText(*value)
+			envelope[key], _ = json.Marshal(text)
+		}
+	}
+	converted, err := ContactRichJSON(envelope["document"])
+	if err != nil {
+		return nil, err
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(converted, &document); err != nil {
+		return nil, err
+	}
+	var fingerprint string
+	if json.Unmarshal(document["blockCatalogFingerprint"], &fingerprint) != nil || (fingerprint != contactTargetCatalog && !contactSourceCatalogs[fingerprint]) {
+		return nil, fmt.Errorf("unreviewed stored catalog fingerprint")
+	}
+	document["blockCatalogFingerprint"], _ = json.Marshal(contactTargetCatalog)
+	converted, err = json.Marshal(document)
+	if err != nil {
+		return nil, err
+	}
+	mode := contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT
+	switch kind {
+	case "page":
+		var typed contentv1.LocalizedPageDocument
+		if err := (protojson.UnmarshalOptions{}).Unmarshal(converted, &typed); err != nil {
+			return nil, err
+		}
+		if typed.GetLocale() != locale || typed.GetLocaleOverlay().GetLocale() != locale {
+			return nil, fmt.Errorf("version locale mismatch")
+		}
+		err = contentv1.ValidatePageDocument(&contentv1.PageDocument{BlockCatalogFingerprint: typed.GetBlockCatalogFingerprint(), SourceLocale: locale, Base: typed.GetBase(), LocaleOverlays: []*contentv1.PageLocaleOverlay{typed.GetLocaleOverlay()}}, mode)
+	case "post", "work":
+		var typed contentv1.LocalizedRichTextDocument
+		if err := (protojson.UnmarshalOptions{}).Unmarshal(converted, &typed); err != nil {
+			return nil, err
+		}
+		profile := contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST
+		if kind == "work" {
+			profile = contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK
+		}
+		if typed.GetProfile() != profile || typed.GetLocale() != locale || typed.GetLocaleOverlay().GetLocale() != locale {
+			return nil, fmt.Errorf("version profile or locale mismatch")
+		}
+		err = contentv1.ValidateRichTextDocument(&contentv1.RichTextDocument{BlockCatalogFingerprint: typed.GetBlockCatalogFingerprint(), Profile: profile, SourceLocale: locale, Base: typed.GetBase(), LocaleOverlays: []*contentv1.RichTextLocaleOverlay{typed.GetLocaleOverlay()}}, mode)
+	default:
+		return nil, fmt.Errorf("unsupported version owner")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("validate converted %s snapshot: %w", kind, err)
+	}
+	envelope["document"] = converted
+	return json.Marshal(envelope)
+}

@@ -35,6 +35,33 @@ var tables = []tableSpec{
 	{"page_translation", "summary", "entity_id", "locale", "text"},
 }
 
+var contactHistoryTables = []tableSpec{
+	{"page_version", "content_snapshot", "id", "", "snapshot"},
+	{"post_version", "content_snapshot", "id", "", "snapshot"},
+	{"work_version", "content_snapshot", "id", "", "snapshot"},
+}
+
+var contactTextTables = []tableSpec{
+	{"post_translation", "summary", "entity_id", "locale", "text_audit"},
+	{"work_translation", "summary", "entity_id", "locale", "text_audit"},
+	{"series_translation", "summary", "entity_id", "locale", "text_audit"},
+	{"program_event_translation", "summary", "entity_id", "locale", "text_audit"},
+	{"site_settings", "meta_description", "id", "", "text_audit"},
+}
+
+var contactDeliveryAudit = tableSpec{"email_delivery_run", "render_snapshot", "id", "", "delivery_audit"}
+var contactTranslationAudit = tableSpec{"translation_job", "request_manifest", "id", "", "translation_audit"}
+
+func contactTables() []tableSpec {
+	specs := append(append([]tableSpec(nil), tables...), contactTextTables...)
+	specs = append(specs, contactHistoryTables...)
+	return append(specs, contactDeliveryAudit, contactTranslationAudit)
+}
+
+func (spec tableSpec) jsonValue() bool {
+	return spec.jsonKind == "rich" || spec.jsonKind == "menu" || spec.jsonKind == "snapshot"
+}
+
 type change struct {
 	spec          tableSpec
 	key           json.RawMessage
@@ -45,10 +72,43 @@ type change struct {
 
 // Run never opens a database itself. The command requires an explicit DATABASE_URL.
 func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
+	return run(ctx, db, apply, report, false, false)
+}
+
+// RunContactEmail rewrites only live legacy contact atoms and reserved tokens.
+// It shares Run's owner locks, before-image backups, validation and revisions.
+// Callers must stop content writers and close collaboration rooms before apply;
+// this maintenance path does not emit live content invalidation events.
+func RunContactEmail(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
+	return run(ctx, db, apply, report, true, false)
+}
+
+// VerifyContactEmail performs the same strict inventory without writing and
+// fails if any live content/history conversion or active delivery blocker remains.
+func VerifyContactEmail(ctx context.Context, db *gorm.DB, report io.Writer) error {
+	return run(ctx, db, false, report, true, true)
+}
+
+func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contactOnly, requireClean bool) error {
+	if contactOnly {
+		if contentv1.ContentBlockCatalogFingerprint != contactTargetCatalog {
+			return fmt.Errorf("contact migration requires its reviewed target catalog")
+		}
+		if _, err := fmt.Fprintf(report, "target_catalog=%s\n", contactTargetCatalog); err != nil {
+			return err
+		}
+	}
 	owners := map[string][]change{}
 	counts := map[string]int{}
 	layoutOwners := map[string]layoutMigrationOwner{}
-	for _, spec := range tables {
+	blockingDeliveries, archivedDeliveries := 0, 0
+	blockingTranslations := 0
+	blockingMetadata := 0
+	specs := tables
+	if contactOnly {
+		specs = contactTables()
+	}
+	for _, spec := range specs {
 		var exists bool
 		if err := db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?)`, spec.table, spec.column).Scan(&exists).Error; err != nil {
 			return err
@@ -59,7 +119,15 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 		// Primary-key JSON avoids PostgreSQL physical row identifiers and works for
 		// compound locale keys. Identifiers below come only from the static allowlist.
 		var rows []struct{ Row []byte }
-		if err := db.WithContext(ctx).Raw(`SELECT to_jsonb(t) AS row FROM "` + spec.table + `" t ORDER BY ` + spec.owner + func() string {
+		projection := "to_jsonb(t)"
+		if spec.jsonKind == "delivery_audit" {
+			projection = "jsonb_build_object('status',t.status,'render_snapshot',t.render_snapshot)"
+		} else if spec.jsonKind == "translation_audit" {
+			projection = "jsonb_build_object('status',t.status,'request_manifest',t.request_manifest,'request_xliff',encode(t.request_xliff,'base64'))"
+		} else if spec.jsonKind == "text_audit" {
+			projection = "jsonb_build_object('" + spec.column + "',t.\"" + spec.column + "\")"
+		}
+		if err := db.WithContext(ctx).Raw(`SELECT ` + projection + ` AS row FROM "` + spec.table + `" t ORDER BY ` + spec.owner + func() string {
 			if spec.locale != "" {
 				return ", " + spec.locale
 			}
@@ -69,7 +137,7 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 		}
 		if spec.table == "email_layout_translation" {
 			var err error
-			layoutOwners, err = planLayoutBackfills(ctx, db, rows)
+			layoutOwners, err = planLayoutChanges(ctx, db, rows, contactOnly)
 			if err != nil {
 				return err
 			}
@@ -83,13 +151,73 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 			if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 				continue
 			}
+			if spec.jsonKind == "text_audit" {
+				var source string
+				if err := json.Unmarshal(raw, &source); err != nil {
+					return err
+				}
+				if ContactEmailText(source) != source {
+					blockingMetadata++
+				}
+				continue
+			}
+			if spec.jsonKind == "translation_audit" {
+				var status string
+				if err := json.Unmarshal(fields["status"], &status); err != nil {
+					return err
+				}
+				if status == "queued" || status == "running" {
+					var xliff []byte
+					if err := json.Unmarshal(fields["request_xliff"], &xliff); err != nil {
+						return err
+					}
+					manifest := strings.ToLower(string(raw) + "\n" + string(xliff))
+					old := strings.Contains(manifest, "contact.supportemail") || strings.Contains(manifest, "contact.privacyemail") || ContactEmailText(string(xliff)) != string(xliff)
+					for fingerprint := range contactSourceCatalogs {
+						old = old || strings.Contains(manifest, fingerprint)
+					}
+					if old {
+						blockingTranslations++
+					}
+				}
+				continue
+			}
+			if spec.jsonKind == "delivery_audit" {
+				hasTokens, err := hasContactTokensJSON(raw)
+				if err != nil {
+					return err
+				}
+				if hasTokens {
+					var status string
+					if err := json.Unmarshal(fields["status"], &status); err != nil {
+						return err
+					}
+					switch status {
+					case "sent", "failed", "cancelled", "skipped":
+						archivedDeliveries++
+					default:
+						blockingDeliveries++
+					}
+				}
+				continue
+			}
 			var next []byte
 			var err error
 			switch spec.jsonKind {
+			case "snapshot":
+				next, err = ContactSnapshotJSON(raw, strings.TrimSuffix(spec.table, "_version"))
 			case "rich":
-				next, err = RichJSON(raw)
+				if contactOnly {
+					next, err = ContactRichJSON(raw)
+				} else {
+					next, err = RichJSON(raw)
+				}
 			case "menu":
-				next, err = MenuJSON(raw)
+				if contactOnly {
+					next, err = ContactMenuJSON(raw)
+				} else {
+					next, err = MenuJSON(raw)
+				}
 			default:
 				var source string
 				err = json.Unmarshal(raw, &source)
@@ -100,8 +228,16 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 							_ = json.Unmarshal(fields["entity_id"], &id)
 							_ = json.Unmarshal(fields["locale"], &locale)
 							source = layoutOwners[id].Locales[locale]
+						} else if contactOnly {
+							source = ContactEmailText(source)
 						} else {
 							source = EmailSource(source)
+						}
+					} else if contactOnly {
+						if spec.table == "email_template_translation" {
+							source = ContactEmailText(source)
+						} else {
+							source = ContactText(source)
 						}
 					} else {
 						source = Text(source)
@@ -166,10 +302,7 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 					ownerGroup = "document:" + *root.ContentDocumentID
 				}
 			case "email_template_translation", "page_translation":
-				rootTable := "email_template"
-				if spec.table == "page_translation" {
-					rootTable = "page"
-				}
+				rootTable := strings.TrimSuffix(spec.table, "_translation")
 				var root struct{ ContentDocumentID *string }
 				if err := db.Table(rootTable).Select("content_document_id").Where("id = ?", owner).Scan(&root).Error; err != nil {
 					return err
@@ -196,6 +329,26 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 			counts[spec.table+"."+spec.column+" locale="+locale]++
 		}
 	}
+	if contactOnly {
+		if _, err := fmt.Fprintf(report, "metadata_rows_blocking=%d\n", blockingMetadata); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(report, "translation_jobs_blocking=%d\n", blockingTranslations); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(report, "delivery_runs_blocking=%d archives_preserved=%d\n", blockingDeliveries, archivedDeliveries); err != nil {
+			return err
+		}
+		if blockingTranslations != 0 {
+			return fmt.Errorf("contact cutover blocked by %d active immutable translation artifacts; drain or cancel through the translation owner before retry", blockingTranslations)
+		}
+		if blockingMetadata != 0 {
+			return fmt.Errorf("contact cutover blocked by %d metadata rows outside the reviewed mutation allowlist", blockingMetadata)
+		}
+		if blockingDeliveries != 0 {
+			return fmt.Errorf("contact cutover blocked by %d active immutable delivery snapshots; resolve through the delivery owner before retry", blockingDeliveries)
+		}
+	}
 	keys := make([]string, 0, len(counts))
 	for key := range counts {
 		keys = append(keys, key)
@@ -208,6 +361,9 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 	}
 	if _, err := fmt.Fprintf(report, "owners=%d apply=%t\n", len(owners), apply); err != nil {
 		return err
+	}
+	if requireClean && len(owners) != 0 {
+		return fmt.Errorf("contact cutover verification failed: %d owners still require conversion", len(owners))
 	}
 	if !apply || len(owners) == 0 {
 		return nil
@@ -272,7 +428,7 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 					}
 					var original map[string]json.RawMessage
 					_ = json.Unmarshal(c.before, &original)
-					if c.spec.jsonKind == "rich" || c.spec.jsonKind == "menu" {
+					if c.spec.jsonValue() {
 						query = query.Where(`"`+c.spec.column+`" = ?::jsonb`, string(original[c.spec.column]))
 					} else {
 						var old string
@@ -280,7 +436,7 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 						query = query.Where(`"`+c.spec.column+`" = ?`, old)
 					}
 					var result *gorm.DB
-					if c.spec.jsonKind == "rich" || c.spec.jsonKind == "menu" {
+					if c.spec.jsonValue() {
 						result = query.UpdateColumn(c.spec.column, gorm.Expr("?::jsonb", c.after))
 					} else {
 						result = query.UpdateColumn(c.spec.column, c.after)

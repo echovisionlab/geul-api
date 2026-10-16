@@ -14,9 +14,8 @@ type SiteSettings struct {
 	CompanyName    string `gorm:"column:company_name;type:varchar(255);not null;default:''"`
 	CompanyAddress string `gorm:"column:company_address;type:text;not null;default:''"`
 	TaxID          string `gorm:"column:tax_id;type:varchar(255);not null;default:''"`
+	ContactEmail   string `gorm:"column:contact_email;type:varchar(255);not null;default:''"`
 	LegalEmail     string `gorm:"column:legal_email;type:varchar(255);not null;default:''"`
-	SupportEmail   string `gorm:"column:support_email;type:varchar(255);not null;default:''"`
-	PrivacyEmail   string `gorm:"column:privacy_email;type:varchar(255);not null;default:''"`
 	SocialLinks    []byte `gorm:"column:social_links;type:jsonb;not null;default:'{}'::jsonb"`
 
 	// Branding

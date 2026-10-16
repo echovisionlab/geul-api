@@ -16,7 +16,7 @@ type layoutMigrationOwner struct {
 	Before            map[string]string `gorm:"-"`
 }
 
-func planLayoutBackfills(ctx context.Context, db *gorm.DB, rows []struct{ Row []byte }) (map[string]layoutMigrationOwner, error) {
+func planLayoutChanges(ctx context.Context, db *gorm.DB, rows []struct{ Row []byte }, contactOnly bool) (map[string]layoutMigrationOwner, error) {
 	owners := map[string]layoutMigrationOwner{}
 	for _, raw := range rows {
 		var row struct {
@@ -42,6 +42,14 @@ func planLayoutBackfills(ctx context.Context, db *gorm.DB, rows []struct{ Row []
 	}
 	for id, owner := range owners {
 		owner.Before = owner.Locales
+		if contactOnly {
+			owner.Locales = make(map[string]string, len(owner.Before))
+			for locale, html := range owner.Before {
+				owner.Locales[locale] = ContactEmailText(html)
+			}
+			owners[id] = owner
+			continue
+		}
 		canonical, err := email.BackfillLayoutMarkers(owner.SourceLocale, owner.Locales)
 		if err != nil {
 			return nil, fmt.Errorf("layout %s backfill: %w", id, err)

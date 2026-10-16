@@ -346,11 +346,11 @@ func validateXLIFFInlineID(node XLIFFInline, seen map[string]struct{}) error {
 	return nil
 }
 
-// siteTokenPattern matches the six exact site variable tokens; translations must keep their count.
-var siteTokenPattern = regexp.MustCompile(`\{\{(?:site\.(?:title|url|companyName)|contact\.(?:legalEmail|supportEmail|privacyEmail))\}\}`)
+// siteTokenPattern matches the five exact site variable tokens; translations must keep their count.
+var siteTokenPattern = regexp.MustCompile(`\{\{(?:site\.(?:title|url|companyName)|contact\.(?:legalEmail|email))\}\}`)
 
 // Every translated document protects `{{...}}` placeholders, which include the
-// six site variable tokens; email templates keep their arbitrary vocabulary.
+// five site variable tokens; email templates keep their arbitrary vocabulary.
 func placeholderPattern(_ ...bool) *regexp.Regexp {
 	return translationPlaceholderPattern
 }

@@ -89,6 +89,9 @@ func (s *SiteSettingService) applyRequestedSiteSettings(
 	settings *model.SiteSettings,
 	requested []*managev1.SiteSetting,
 ) error {
+	if err := validateSiteSettingKeys(requested); err != nil {
+		return err
+	}
 	for _, setting := range requested {
 		var value structured.Value
 		if setting.Value != nil {

@@ -104,6 +104,10 @@ github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6Xe
 github.com/ebitengine/purego v0.11.1/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/echovisionlab/geul-event-contracts v0.7.0 h1:+gepdavYeImN01FOor0imSKcweznWcJGOUv5OC43j8Y=
 github.com/echovisionlab/geul-event-contracts v0.7.0/go.mod h1:JitYTYiWJRI5HzZraOEOOEQ8lXEU5hqR4QQyCgpqPhg=
+github.com/echovisionlab/geul-event-contracts v0.8.0 h1:LxbV0Xcn8dnon7Lu6K8cvF5L/dT+4fdZW5vKyiu7X48=
+github.com/echovisionlab/geul-event-contracts v0.8.0/go.mod h1:JitYTYiWJRI5HzZraOEOOEQ8lXEU5hqR4QQyCgpqPhg=
+github.com/echovisionlab/geul-event-contracts v0.9.0 h1:DNAYDCUbp7FXDHFAn1mG9WIt3BTq9LGPH+0dzhl2U3U=
+github.com/echovisionlab/geul-event-contracts v0.9.0/go.mod h1:JitYTYiWJRI5HzZraOEOOEQ8lXEU5hqR4QQyCgpqPhg=
 github.com/echovisionlab/geul-telemetry v0.2.0 h1:A2to7LMxp0KpIbR+moNFn8IC/sXdA6dE5nnXm016y18=
 github.com/echovisionlab/geul-telemetry v0.2.0/go.mod h1:AjDsMVeAw8s1GkiOSiJctx+5eCE7UHE0okB5VIHbXaU=
 github.com/envoyproxy/protoc-gen-validate v1.3.3 h1:MVQghNeW+LZcmXe7SY1V36Z+WFMDjpqGAGacLe2T0ds=
