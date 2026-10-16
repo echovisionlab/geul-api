@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/echovisionlab/geul-api/compare/v2.0.0...v2.0.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **migration:** validate observed history snapshots for contact cutover ([#130](https://github.com/echovisionlab/geul-api/issues/130)) ([9a64f22](https://github.com/echovisionlab/geul-api/commit/9a64f2270e0ab0a115e1110765cbf2eec0f30ffd))
+
 ## [2.0.0](https://github.com/echovisionlab/geul-api/compare/v1.10.0...v2.0.0) (2026-10-16)
 
 
