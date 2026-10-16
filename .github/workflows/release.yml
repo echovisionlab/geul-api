@@ -55,7 +55,10 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
 
       - name: Validate release context
         run: |
@@ -64,6 +67,24 @@ jobs:
           [[ "${RELEASE_TAG}" == "v${RELEASE_VERSION}" ]]
           [[ "${RELEASE_SHA}" =~ ^[a-f0-9]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "${RELEASE_SHA}" ]]
+
+      - name: Join the tailnet for the internal registry path
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Resolve the registry to its tailnet address
+        env:
+          REGISTRY_INTERNAL_ADDRESS: ${{ vars.REGISTRY_INTERNAL_ADDRESS }}
+          BUILDKIT_CONTAINER: buildx_buildkit_${{ steps.buildx.outputs.name }}0
+        run: |
+          : "${REGISTRY_INTERNAL_ADDRESS:?Set the REGISTRY_INTERNAL_ADDRESS repository variable}"
+          echo "${REGISTRY_INTERNAL_ADDRESS} registry.rawsector.com" | sudo tee -a /etc/hosts >/dev/null
+          # Host networking provides the tailnet route; BuildKit has its own hosts file.
+          echo "${REGISTRY_INTERNAL_ADDRESS} registry.rawsector.com" |
+            docker exec --interactive --user 0 "${BUILDKIT_CONTAINER}" sh -c 'cat >> /etc/hosts'
+          curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://registry.rawsector.com/v2/
 
       - name: Log in to registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
