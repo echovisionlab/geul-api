@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,15 +76,17 @@ func (c *S3Client) Download(ctx context.Context, key string, localPath string) e
 	if err != nil {
 		return fmt.Errorf("create local file: %w", err)
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(err), "bucket", c.bucket)
-		}
-	}()
-
-	written, err := copyStream(file, result.Body)
-	if err != nil {
-		return fmt.Errorf("write local file: %w", err)
+	written, writeErr := copyStream(file, result.Body)
+	closeErr := file.Close()
+	if writeErr != nil {
+		writeErr = fmt.Errorf("write local file: %w", writeErr)
+	}
+	if closeErr != nil {
+		slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(closeErr), "bucket", c.bucket)
+		closeErr = fmt.Errorf("close local file: %w", closeErr)
+	}
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return err
 	}
 	slog.Debug("Downloaded object", "key", key, "path", localPath, "bytes", written)
 	return nil

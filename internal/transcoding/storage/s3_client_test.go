@@ -126,6 +126,64 @@ func TestS3ClientDownloadsSource(t *testing.T) {
 	}
 }
 
+type downloadOutputFileSystem struct {
+	failingLocalFileSystem
+	file localFile
+}
+
+func (f downloadOutputFileSystem) Create(string) (localFile, error) { return f.file, nil }
+
+type failingDownloadOutput struct {
+	bytes.Buffer
+	writeErr   error
+	closeErr   error
+	closeCalls int
+}
+
+func (f *failingDownloadOutput) Write(data []byte) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	return f.Buffer.Write(data)
+}
+
+// Override Buffer.ReadFrom so io.Copy must observe the output's Write method.
+func (f *failingDownloadOutput) ReadFrom(reader io.Reader) (int64, error) {
+	return io.Copy(struct{ io.Writer }{f}, reader)
+}
+func (f *failingDownloadOutput) Close() error             { f.closeCalls++; return f.closeErr }
+func (*failingDownloadOutput) Stat() (os.FileInfo, error) { return nil, nil }
+
+func TestDownloadPropagatesOutputCloseFailure(t *testing.T) {
+	for _, copyFails := range []bool{false, true} {
+		name := "close failure"
+		if copyFails {
+			name = "write and close failures"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := newS3TestServer(t)
+			client := store.client(t)
+			closeErr := errors.New("output flush failed")
+			writeErr := errors.New("output write failed")
+			output := &failingDownloadOutput{closeErr: closeErr}
+			if copyFails {
+				output.writeErr = writeErr
+			}
+			client.files = downloadOutputFileSystem{file: output}
+			err := client.Download(t.Context(), "source.mp3", "unused")
+			if !errors.Is(err, closeErr) {
+				t.Fatalf("close failure was lost: %v", err)
+			}
+			if copyFails && !errors.Is(err, writeErr) {
+				t.Fatalf("write failure was lost: %v", err)
+			}
+			if output.closeCalls != 1 {
+				t.Fatalf("Close calls = %d, want 1", output.closeCalls)
+			}
+		})
+	}
+}
+
 func TestS3ClientUploadsFile(t *testing.T) {
 	t.Parallel()
 	store := newS3TestServer(t)

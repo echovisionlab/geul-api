@@ -91,17 +91,16 @@ func requireCampaignEmailDocumentLoad(
 		return errs.AuthenticationRequired()
 	}
 	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
-	if err != nil && !errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "resolve_collaboration_principal", "outcome", "failed", failurecause.Attr(err, principal.GetSessionId()))
-	}
-	if errors.Is(err, auth.ErrSessionPrincipalInvalid) || resolved == nil || !resolved.Authenticated {
+	if err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 			slog.WarnContext(ctx, "Collaboration principal rejected", "domain", "emailauthoring", "event", "emailauthoring.principal_rejected", "outcome", "blocked", failurecause.Attr(err, principal.GetSessionId()))
+			return errs.AuthenticationRequired()
 		}
-		return errs.AuthenticationRequired()
-	}
-	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "resolve_collaboration_principal", "outcome", "failed", failurecause.Attr(err, principal.GetSessionId()))
 		return errs.Internal(err)
+	}
+	if resolved == nil || !resolved.Authenticated {
+		return errs.AuthenticationRequired()
 	}
 	if resolved.Banned {
 		return errs.AccountBanned()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -57,6 +58,13 @@ func (s *AccountService) SetMyCanonicalEmail(
 	return connect.NewResponse(&managev1.AccountSecurityMutationResponse{Security: security}), nil
 }
 
+// accountIdentityLookupError keeps the diagnostic cause available to callers
+// without exposing an identity provider response body in the RPC message.
+type accountIdentityLookupError struct{ cause error }
+
+func (accountIdentityLookupError) Error() string   { return "identity lookup failed" }
+func (e accountIdentityLookupError) Unwrap() error { return e.cause }
+
 func (s *AccountService) RequestEmailChange(
 	ctx context.Context,
 	req *connect.Request[managev1.RequestEmailChangeRequest],
@@ -69,15 +77,19 @@ func (s *AccountService) RequestEmailChange(
 		return nil, err
 	}
 	identity, err := s.identity.GetIdentity(ctx, p.IdentityID.String())
-	if err != nil || identity == nil {
-		if err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
+	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			if upstreamError.StatusCode == http.StatusNotFound {
+				return nil, errs.NotFound("identity", p.IdentityID.String())
 			}
-			slog.ErrorContext(ctx, "Operation failed", "reason", "request_email_change_identity_lookup_failed", failurecause.Attr(err, privateBody))
+			privateBody = upstreamError.Body
 		}
+		slog.ErrorContext(ctx, "Operation failed", "reason", "request_email_change_identity_lookup_failed", failurecause.Attr(err, privateBody))
+		return nil, errs.Internal(accountIdentityLookupError{cause: err})
+	}
+	if identity == nil {
 		return nil, errs.NotFound("identity", p.IdentityID.String())
 	}
 	normalized, ok := normalizeAccountEmailInput(req.Msg.NewEmail)

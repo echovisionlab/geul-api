@@ -111,6 +111,18 @@ func (e *KratosHTTPError) Error() string {
 	return fmt.Sprintf("kratos returned %d: %s", e.StatusCode, e.Body)
 }
 
+// Preserve the existing missing-identity message while retaining the HTTP
+// status for callers that distinguish absence from an upstream outage.
+type kratosIdentityNotFoundError struct {
+	identityID string
+	cause      error
+}
+
+func (e kratosIdentityNotFoundError) Error() string {
+	return fmt.Sprintf("identity not found: %s", e.identityID)
+}
+func (e kratosIdentityNotFoundError) Unwrap() error { return e.cause }
+
 func IsKratosConflict(err error) bool {
 	var httpErr *KratosHTTPError
 	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict
@@ -187,7 +199,7 @@ func (c *KratosClient) getIdentity(ctx context.Context, identityID, credentialTy
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("identity not found: %s", identityID)
+		return nil, kratosIdentityNotFoundError{identityID: identityID, cause: kratosResponseError(resp)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, kratosResponseError(resp)

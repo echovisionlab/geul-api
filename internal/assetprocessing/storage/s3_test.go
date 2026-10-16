@@ -101,6 +101,36 @@ func TestS3ClientDownload(t *testing.T) {
 		}
 	})
 
+	for _, copyFails := range []bool{false, true} {
+		name := "close error"
+		if copyFails {
+			name = "copy and close errors"
+		}
+		t.Run(name, func(t *testing.T) {
+			resetStorageOps(t)
+			getObject = objectWithBody("payload")
+			writeErr := errors.New("copy failed")
+			copyStream = func(writer io.Writer, _ io.Reader) (int64, error) {
+				// A real closed output file makes the final Close fail without a
+				// production-only file abstraction or mutable test hook.
+				if err := writer.(*os.File).Close(); err != nil {
+					t.Fatal(err)
+				}
+				if copyFails {
+					return 0, writeErr
+				}
+				return 7, nil
+			}
+			err := client.Download(context.Background(), "key", filepath.Join(t.TempDir(), "file"))
+			if !errors.Is(err, os.ErrClosed) {
+				t.Fatalf("close failure was lost: %v", err)
+			}
+			if copyFails && !errors.Is(err, writeErr) {
+				t.Fatalf("copy failure was lost: %v", err)
+			}
+		})
+	}
+
 	t.Run("success", func(t *testing.T) {
 		resetStorageOps(t)
 		getObject = objectWithBody("payload")

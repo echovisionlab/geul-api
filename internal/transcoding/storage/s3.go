@@ -121,18 +121,18 @@ func (c *S3Client) Download(ctx context.Context, key string, localPath string) e
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(err), "bucket", c.bucket)
-		}
-	}()
-
-	// Copy content
-	written, err := io.Copy(file, result.Body)
-	if err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+	written, writeErr := io.Copy(file, result.Body)
+	closeErr := file.Close()
+	if writeErr != nil {
+		writeErr = fmt.Errorf("failed to write file: %w", writeErr)
 	}
-
+	if closeErr != nil {
+		slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(closeErr), "bucket", c.bucket)
+		closeErr = fmt.Errorf("failed to close file: %w", closeErr)
+	}
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return err
+	}
 	slog.Debug("Downloaded file from S3",
 		"key", key,
 		"local_path", localPath,
