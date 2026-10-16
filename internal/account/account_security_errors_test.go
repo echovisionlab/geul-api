@@ -31,7 +31,7 @@ func TestRequestEmailChangePreservesIdentityLookupFailures(t *testing.T) {
 	}{
 		{"missing", nil, connect.CodeNotFound},
 		{"HTTP not found", &auth.KratosHTTPError{StatusCode: http.StatusNotFound}, connect.CodeNotFound},
-		{"HTTP unavailable", &auth.KratosHTTPError{StatusCode: http.StatusServiceUnavailable}, connect.CodeInternal},
+		{"HTTP unavailable", &auth.KratosHTTPError{StatusCode: http.StatusServiceUnavailable, Body: "private-upstream-response session_token=private-token"}, connect.CodeInternal},
 		{"connection failure", unavailable, connect.CodeInternal},
 		{"deadline", context.DeadlineExceeded, connect.CodeDeadlineExceeded},
 	} {
@@ -43,6 +43,11 @@ func TestRequestEmailChangePreservesIdentityLookupFailures(t *testing.T) {
 			require.Equal(t, tt.code, connect.CodeOf(err))
 			if tt.err != nil && tt.code == connect.CodeInternal {
 				require.ErrorIs(t, err, tt.err)
+				var rpcError *connect.Error
+				require.ErrorAs(t, err, &rpcError)
+				require.Equal(t, "identity lookup failed", rpcError.Message())
+				require.NotContains(t, err.Error(), "private-upstream-response")
+				require.NotContains(t, err.Error(), "private-token")
 			}
 		})
 	}
