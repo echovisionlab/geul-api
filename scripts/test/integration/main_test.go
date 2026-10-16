@@ -96,6 +96,78 @@ func TestRunSerialIntegrationBandStopsAndReportsPackageAndResetFailures(t *testi
 	}
 }
 
+func TestRunSerialIntegrationBandCancellationStopsNextPackageAfterCleanup(t *testing.T) {
+	t.Parallel()
+
+	type contextKey struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), contextKey{}, "suite"))
+	defer cancel()
+	resetCalls := 0
+	backend := &suiteBackend{resetFn: func(resetCtx context.Context) error {
+		resetCalls++
+		if err := resetCtx.Err(); err != nil {
+			t.Fatalf("reset must remain usable after package cancellation: %v", err)
+		}
+		if resetCtx.Value(contextKey{}) != "suite" {
+			t.Fatal("reset lost suite context values")
+		}
+		if _, bounded := resetCtx.Deadline(); !bounded {
+			t.Fatal("reset has no cleanup deadline")
+		}
+		return nil
+	}}
+	runCalls := 0
+	err := runSerialIntegrationBand(ctx, []string{"./cancelled", "./must-not-run"}, backend, func(packagePath string) error {
+		runCalls++
+		if packagePath != "./cancelled" {
+			t.Fatalf("ran %s after cancellation", packagePath)
+		}
+		cancel()
+		return context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("band error = %v, want context cancellation", err)
+	}
+	if runCalls != 1 || resetCalls != 2 {
+		t.Fatalf("run calls = %d, reset calls = %d; want one package and both resets", runCalls, resetCalls)
+	}
+}
+
+func TestRunSerialIntegrationBandDoesNotStartCancelledSuite(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	backend := &suiteBackend{resetFn: func(context.Context) error {
+		t.Fatal("reset started after suite cancellation")
+		return nil
+	}}
+	err := runSerialIntegrationBand(ctx, []string{"./must-not-run"}, backend, func(string) error {
+		t.Fatal("package started after suite cancellation")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("band error = %v, want context cancellation", err)
+	}
+}
+
+func TestRunSerialIntegrationBandCancellationDuringResetDoesNotStartPackage(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	backend := &suiteBackend{resetFn: func(context.Context) error {
+		cancel()
+		return nil
+	}}
+	err := runSerialIntegrationBand(ctx, []string{"./must-not-run"}, backend, func(string) error {
+		t.Fatal("package started after cancellation during reset")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("band error = %v, want context cancellation", err)
+	}
+}
+
 func TestEnvironmentWithGoWorkReplacesAmbientWorkspace(t *testing.T) {
 	t.Parallel()
 

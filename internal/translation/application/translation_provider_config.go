@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/llm"
+	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -529,11 +530,11 @@ func newTranslationLLMTextProvider(cfg *model.LLMTranslationProviderConfig) (llm
 		if modelName == "" && preset == model.TranslationLLMProviderPresetGemini {
 			modelName = defaultTranslationLLMGeminiModel
 		}
-		return llm.NewGeminiProvider(llm.GeminiConfig{
+		return llmproviders.NewGeminiProvider(llmproviders.GeminiConfig{
 			APIKey: apiKey, Model: modelName, Temperature: float32PtrFromFloat64Ptr(cfg.Temperature),
 		})
 	case model.TranslationLLMProviderPresetOpenAICompatible:
-		return llm.NewOpenAICompatibleProvider(llm.OpenAICompatibleConfig{
+		return llmproviders.NewOpenAICompatibleProvider(llmproviders.OpenAICompatibleConfig{
 			APIKey: apiKey, BaseURL: cfg.APIBaseURL, Model: modelName, SupportsJSONMode: cfg.SupportsJSONMode,
 			Temperature: cfg.Temperature, MaxOutputTokens: cfg.MaxOutputTokens,
 		})

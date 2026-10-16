@@ -43,9 +43,9 @@ const (
 func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 	port := &compositionDomainPort{}
 	registrations := completeTestAIDocumentRegistrations(port)
-	actual := make([]aidocument.Domain, 0, len(registrations.values()))
+	registeredDomains := make([]aidocument.Domain, 0, len(registrations.values()))
 	for _, registration := range registrations.values() {
-		actual = append(actual, registration.Domain)
+		registeredDomains = append(registeredDomains, registration.Domain)
 	}
 	require.Equal(t, []aidocument.Domain{
 		aidocument.DomainPost,
@@ -63,7 +63,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		aidocument.DomainPrivacy,
 		aidocument.DomainTerms,
 		aidocument.DomainPostSeries,
-	}, actual)
+	}, registeredDomains)
 
 	policyOwner := &compositionLegalPolicyApplication{}
 	references := compositionContentApplications()

@@ -1,4 +1,4 @@
-package llm
+package providers
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/genai"
 )
@@ -30,7 +31,7 @@ func TestOpenAICompatibleFailureLogsExactStatusAndRequestContext(t *testing.T) {
 	provider.(*openAICompatibleTextProvider).httpClient.Transport = failureTestTransport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"private response body"}}`))}, nil
 	})
-	_, err = provider.GenerateText(t.Context(), GenerationRequest{RequestID: "job-1", Action: "metadata-json", UserPrompt: "private prompt"})
+	_, err = provider.GenerateText(t.Context(), llm.GenerationRequest{RequestID: "job-1", Action: "metadata-json", UserPrompt: "private prompt"})
 	require.Error(t, err)
 	var record map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
@@ -65,7 +66,7 @@ func TestOpenAICompatibleLogsDiagnosticCauseWithPrivateValuesRedacted(t *testing
 				require.NoError(t, err)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body))}, nil
 			})
-			_, err = provider.GenerateText(t.Context(), GenerationRequest{RequestID: "job-2", Action: "translation-json"})
+			_, err = provider.GenerateText(t.Context(), llm.GenerationRequest{RequestID: "job-2", Action: "translation-json"})
 			require.Error(t, err)
 			var record map[string]any
 			require.NoError(t, json.Unmarshal(output.Bytes(), &record))
@@ -89,11 +90,11 @@ func TestOpenAICompatibleRedactsEarlierSessionPrompts(t *testing.T) {
 		}
 		return nil, errors.New("connection refused: private initial prompt; private prior response")
 	})
-	session, err := provider.StartSession(t.Context(), SessionSpec{RequestID: "job-history"})
+	session, err := provider.StartSession(t.Context(), llm.SessionSpec{RequestID: "job-history"})
 	require.NoError(t, err)
-	_, err = session.GenerateText(t.Context(), SessionTurn{UserPrompt: "private initial prompt"})
+	_, err = session.GenerateText(t.Context(), llm.SessionTurn{UserPrompt: "private initial prompt"})
 	require.NoError(t, err)
-	_, err = session.GenerateText(t.Context(), SessionTurn{UserPrompt: "next turn"})
+	_, err = session.GenerateText(t.Context(), llm.SessionTurn{UserPrompt: "next turn"})
 	require.Error(t, err)
 	require.Contains(t, output.String(), "connection refused")
 	require.NotContains(t, output.String(), "private initial prompt")
@@ -110,7 +111,7 @@ func TestGeminiLogsAPIMessageWithoutResponseDetails(t *testing.T) {
 	})
 	require.NoError(t, err)
 	provider := &geminiAITextProvider{apiKey: "private-key", client: client, modelName: "test"}
-	_, err = provider.GenerateText(t.Context(), GenerationRequest{RequestID: "gemini-job", UserPrompt: "private prompt"})
+	_, err = provider.GenerateText(t.Context(), llm.GenerationRequest{RequestID: "gemini-job", UserPrompt: "private prompt"})
 	require.Error(t, err)
 	var record map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &record))

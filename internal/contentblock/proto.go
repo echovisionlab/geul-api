@@ -10,6 +10,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -292,10 +293,14 @@ func batchFromStorage(documentID uuid.UUID, profile string, input contentv1.Cont
 			if err != nil {
 				return Batch{}, err
 			}
+			localized, err := richtextinline.CanonicalizeStorageLocale(update.LocalizedData)
+			if err != nil {
+				return Batch{}, invalidProtoMutation("normalize inline line breaks", err)
+			}
 			converted.Upserts = append(converted.Upserts, LocaleBlockUpdate{
 				BlockID:       blockID,
 				ExpectedKind:  update.ExpectedKind,
-				LocalizedData: append(json.RawMessage(nil), update.LocalizedData...),
+				LocalizedData: append(json.RawMessage(nil), localized...),
 			})
 		}
 		for _, rawID := range group.Deletes {
@@ -333,9 +338,13 @@ func replaceFromStorage(documentID, expectedRevision uuid.UUID, rows []contentv1
 		}
 		result.Blocks = append(result.Blocks, block)
 		for _, locale := range row.Locales {
+			localized, err := richtextinline.CanonicalizeStorageLocale(locale.LocalizedData)
+			if err != nil {
+				return ReplaceInput{}, invalidProtoMutation("normalize restored inline line breaks", err)
+			}
 			overlays[locale.Locale] = append(overlays[locale.Locale], LocaleBlockUpdate{
 				BlockID:       block.ID,
-				LocalizedData: append(json.RawMessage(nil), locale.LocalizedData...),
+				LocalizedData: append(json.RawMessage(nil), localized...),
 			})
 		}
 	}

@@ -606,13 +606,13 @@ func nullString(value string) structured.Value {
 	return value
 }
 
-func requireGeoIPCSVColumns(actual, expected []string) error {
-	if len(actual) < len(expected) {
-		return fmt.Errorf("got %d columns, need at least %d", len(actual), len(expected))
+func requireGeoIPCSVColumns(columns, expected []string) error {
+	if len(columns) < len(expected) {
+		return fmt.Errorf("got %d columns, need at least %d", len(columns), len(expected))
 	}
 	for index, name := range expected {
-		if strings.TrimSpace(actual[index]) != name {
-			return fmt.Errorf("column %d is %q, want %q", index+1, actual[index], name)
+		if strings.TrimSpace(columns[index]) != name {
+			return fmt.Errorf("column %d is %q, want %q", index+1, columns[index], name)
 		}
 	}
 	return nil

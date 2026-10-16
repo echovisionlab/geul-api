@@ -435,6 +435,27 @@ func snapshotFromRichDocument(t *testing.T, document *contentv1.RichTextDocument
 
 func stringPointer(value string) *string { return &value }
 
+func TestMaterializeEmailParagraphsAndHardBreaks(t *testing.T) {
+	first := paragraphDocument(uuid.New(), "First\r\nline")
+	first.Profile = contentv1.RichTextProfile_RICH_TEXT_PROFILE_EMAIL
+	paragraph := first.LocaleOverlays[0].Blocks[0].GetParagraph()
+	paragraph.Content[0].GetText().Styles = &contentv1.RichTextStyle{Bold: proto.Bool(true)}
+	paragraph.Content = append(paragraph.Content,
+		&contentv1.RichTextInline{Value: &contentv1.RichTextInline_HardBreak{HardBreak: &contentv1.RichTextHardBreak{}}},
+		&contentv1.RichTextInline{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "after break"}}},
+	)
+	second := paragraphDocument(uuid.New(), "Second paragraph")
+	second.Base.Nodes[0].Placement.Index = 1
+	first.Base.Nodes = append(first.Base.Nodes, second.Base.Nodes...)
+	first.LocaleOverlays[0].Blocks = append(first.LocaleOverlays[0].Blocks, second.LocaleOverlays[0].Blocks...)
+	localized, err := MaterializeSnapshotRichTextLocale(snapshotFromRichDocument(t, first), "en")
+	require.NoError(t, err)
+	result, err := MaterializeLocalizedRichTextDocument(t.Context(), localized, nil)
+	require.NoError(t, err)
+	require.Equal(t, "<p><strong>First</strong><br><strong>line</strong><br>after break</p><p>Second paragraph</p>", result.HTML)
+	require.Equal(t, "First\nline\nafter break\nSecond paragraph", result.Text)
+}
+
 func TestMaterializeMermaidKeepsSourceAndEscapesAuthoredMarkup(t *testing.T) {
 	blockID := uuid.New()
 	document := paragraphDocument(blockID, "")

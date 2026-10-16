@@ -1,5 +1,3 @@
-//go:build integration
-
 package maptheme
 
 import (
@@ -8,24 +6,19 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 )
 
-func adminCtxForUser(user *testutil.OryUser) context.Context {
-	return auth.WithUser(context.Background(), user.AuthUserInfo())
-}
-
 func TestNormalizeMapThemeColorRejectsValidLookingValueOverFiftyRunes(t *testing.T) {
+	t.Parallel()
 	value := "rgb(" + strings.Repeat(" ", 45) + "1,2,3)"
 	_, ok := normalizeMapThemeColor(value)
 	require.False(t, ok)
 }
 
 func TestNormalizeMapThemeNameUsesTrimmedUnicodeCodePoints(t *testing.T) {
+	t.Parallel()
 	accepted := strings.Repeat("🎧", 255)
 	normalized, err := normalizeMapThemeName(" " + accepted + " ")
 	require.NoError(t, err)
@@ -36,28 +29,30 @@ func TestNormalizeMapThemeNameUsesTrimmedUnicodeCodePoints(t *testing.T) {
 }
 
 func TestManageMapThemeResolveRejectsMalformedIDBeforeDB(t *testing.T) {
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	t.Parallel()
+	// Nil dependencies make any database or authorization access fail the test.
 	malformed := "not-a-uuid"
-	_, err := mapThemeServiceForTest(t, stack.DB, stack.SpiceDBClient).ResolveMapTheme(adminCtxForUser(admin), connect.NewRequest(&managev1.ResolveMapThemeRequest{
+	response, err := (&MapThemeService{}).ResolveMapTheme(context.Background(), connect.NewRequest(&managev1.ResolveMapThemeRequest{
 		ThemeId: &malformed,
 		Scheme:  "light",
 	}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Nil(t, response)
 }
 
 func TestManageMapThemeResolveRejectsWhitespaceWrappedCanonicalIDBeforeDB(t *testing.T) {
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	t.Parallel()
 	wrapped := " 550e8400-e29b-41d4-a716-446655440000 "
-	_, err := mapThemeServiceForTest(t, stack.DB, stack.SpiceDBClient).ResolveMapTheme(adminCtxForUser(admin), connect.NewRequest(&managev1.ResolveMapThemeRequest{
+	response, err := (&MapThemeService{}).ResolveMapTheme(context.Background(), connect.NewRequest(&managev1.ResolveMapThemeRequest{
 		ThemeId: &wrapped,
 		Scheme:  "light",
 	}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Nil(t, response)
 }
 
 func TestNormalizeMapThemeIDRejectsWhitespaceInsteadOfTrimming(t *testing.T) {
+	t.Parallel()
 	for _, value := range []string{
 		" ",
 		"\t",

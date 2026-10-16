@@ -92,12 +92,14 @@ func buildEmailTemplateSendTestJob(
 ) (*managev1.SendEmailEvent, error) {
 	recipient = strings.TrimSpace(recipient)
 	messageID := "template-test:" + uuid.NewString()
+	sampleData := emailTemplateSampleData()
+	for _, key := range emailTemplateEmailAliasVariables {
+		sampleData[key] = recipient
+	}
 	sendJob := &managev1.SendEmailEvent{
-		Recipient:    recipient,
-		TemplateType: email.DirectTemplateType(templateID),
-		TemplateData: map[string]string{
-			"recipient_email": recipient,
-		},
+		Recipient:        recipient,
+		TemplateType:     email.DirectTemplateType(templateID),
+		TemplateData:     sampleData,
 		ReferenceId:      &templateID,
 		MessageId:        &messageID,
 		RecipientContext: &managev1.SendEmailEvent_TestEmail{TestEmail: &managev1.TestEmailRecipient{ActorMemberId: strings.TrimSpace(actorID)}},

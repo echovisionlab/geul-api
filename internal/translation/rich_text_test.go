@@ -145,3 +145,55 @@ func paragraphBlock(id string, content ...*contentv1.RichTextInline) *contentv1.
 		}},
 	}
 }
+
+func TestTranslationLineBreakRoundTripCanonicalAndLegacy(t *testing.T) {
+	for _, source := range [][]*contentv1.RichTextInline{
+		{{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "\na\r\n\nb\n"}}}},
+		{{Value: &contentv1.RichTextInline_HardBreak{HardBreak: &contentv1.RichTextHardBreak{}}},
+			{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "a"}}},
+			{Value: &contentv1.RichTextInline_HardBreak{HardBreak: &contentv1.RichTextHardBreak{}}},
+			{Value: &contentv1.RichTextInline_HardBreak{HardBreak: &contentv1.RichTextHardBreak{}}},
+			{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "b"}}},
+			{Value: &contentv1.RichTextInline_HardBreak{HardBreak: &contentv1.RichTextHardBreak{}}}},
+	} {
+		block := paragraphBlock("breaks", source...)
+		units, err := ExtractRichTextUnits(block, RichTextUnitScope{EntityType: "post", EntityID: "p", SourceLocale: "en", ContainerID: "breaks", UnitPrefix: "b", PathPrefix: "b"})
+		require.NoError(t, err)
+		require.Len(t, units, 1)
+		unit := units[0]
+		require.Equal(t, "\na\n\nb\n", unit.SourceText)
+		// Provider returns a newline inside an original styled run as well as the
+		// protected break placeholders. Both must survive, without duplication.
+		target := unit.SourceInline
+		for index := range target {
+			if target[index].ID == "r1" {
+				target[index].Children = []XLIFFInline{{Kind: XLIFFInlineText, Text: "가\n나"}}
+			}
+			if target[index].ID == "r2" {
+				target[index].Children = []XLIFFInline{{Kind: XLIFFInlineText, Text: "다"}}
+			}
+		}
+		translated, err := ProjectXLIFFInline(target, unit.OriginalData)
+		require.NoError(t, err)
+		require.Equal(t, "\n가\n나\n\n다\n", translated)
+		require.NoError(t, ApplyRichTextResults(block, "b", map[string]UnitResult{unit.UnitID: {UnitID: unit.UnitID, TranslatedText: translated, TargetInline: target, OriginalData: unit.OriginalData}}))
+		content := block.GetParagraph().GetContent()
+		require.Len(t, content, 8)
+		for _, index := range []int{0, 2, 4, 5, 7} {
+			require.NotNil(t, content[index].GetHardBreak())
+		}
+		visible, _, _ := richTextSemanticInline(content)
+		require.Equal(t, translated, visible)
+	}
+}
+
+func TestTranslationPlainTargetNewlinesBecomeHardBreaks(t *testing.T) {
+	block := paragraphBlock("breaks", &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: "source"}}})
+	result := UnitResult{UnitID: "b:typed:paragraph/content", TranslatedText: "\n가\r\n\n나\n"}
+	require.NoError(t, ApplyRichTextResults(block, "b", map[string]UnitResult{result.UnitID: result}))
+	content := block.GetParagraph().GetContent()
+	require.Len(t, content, 6)
+	for _, index := range []int{0, 2, 3, 5} {
+		require.NotNil(t, content[index].GetHardBreak())
+	}
+}

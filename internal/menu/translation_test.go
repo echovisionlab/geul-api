@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func TestBuildTranslationExtractionPlanSkipsFixedLocaleItemsForOtherTargets(t *t
 }
 
 func TestLoadTranslationSourceDocumentUsesCurrentSourceValuesWithoutRootFallback(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE menu (id TEXT PRIMARY KEY, items BLOB, source_locale TEXT NOT NULL, updated_at DATETIME);
@@ -231,7 +232,7 @@ func TestLoadTranslationSourceDocumentRejectsMissingRootSourceValues(t *testing.
 
 func openMenuTranslationTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE menu (

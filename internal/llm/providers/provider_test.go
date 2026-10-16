@@ -1,4 +1,4 @@
-package llm
+package providers
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,7 +17,7 @@ import (
 
 func TestBuildGenerationConfig(t *testing.T) {
 	t.Run("structured response uses JSON MIME type and lower temperature", func(t *testing.T) {
-		config := buildGenerationConfig(GenerationRequest{
+		config := buildGenerationConfig(llm.GenerationRequest{
 			SystemPrompt: "system prompt",
 			ResponseJSONSchema: structured.Fields{
 				"type": "object",
@@ -31,7 +32,7 @@ func TestBuildGenerationConfig(t *testing.T) {
 	})
 
 	t.Run("ordinary text uses the default temperature", func(t *testing.T) {
-		config := buildGenerationConfig(GenerationRequest{SystemPrompt: "system prompt"}, nil)
+		config := buildGenerationConfig(llm.GenerationRequest{SystemPrompt: "system prompt"}, nil)
 
 		require.NotNil(t, config)
 		require.NotNil(t, config.Temperature)
@@ -66,7 +67,7 @@ func TestOpenAICompatibleProviderUsesChatCompletions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	text, err := provider.GenerateText(context.Background(), GenerationRequest{
+	text, err := provider.GenerateText(context.Background(), llm.GenerationRequest{
 		RequestID:    "req-1",
 		Action:       "structured-response",
 		SystemPrompt: "Return JSON.",
@@ -105,16 +106,16 @@ func TestOpenAICompatibleProviderRedactsProviderResponseBody(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = provider.GenerateText(context.Background(), GenerationRequest{
+	_, err = provider.GenerateText(context.Background(), llm.GenerationRequest{
 		RequestID: "req-1", SystemPrompt: "system", UserPrompt: "source text",
 	})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), sensitiveResponse)
-	details, ok := ProviderFailureDetailsFromError(err)
+	details, ok := llm.ProviderFailureDetailsFromError(err)
 	require.True(t, ok)
-	require.Equal(t, ProviderFailureRateLimited, details.Category)
+	require.Equal(t, llm.ProviderFailureRateLimited, details.Category)
 	require.Equal(t, "4xx", details.HTTPStatusClass)
-	require.Equal(t, ProviderExceptionProviderResponse, details.ExceptionType)
+	require.Equal(t, llm.ProviderExceptionProviderResponse, details.ExceptionType)
 }
 
 func TestOpenAICompatibleProviderRedactsSuccessfulHTTPErrorEnvelope(t *testing.T) {
@@ -130,16 +131,16 @@ func TestOpenAICompatibleProviderRedactsSuccessfulHTTPErrorEnvelope(t *testing.T
 	})
 	require.NoError(t, err)
 
-	_, err = provider.GenerateText(context.Background(), GenerationRequest{
+	_, err = provider.GenerateText(context.Background(), llm.GenerationRequest{
 		RequestID: "req-1", SystemPrompt: "system", UserPrompt: "source text",
 	})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), sensitiveMessage)
-	details, ok := ProviderFailureDetailsFromError(err)
+	details, ok := llm.ProviderFailureDetailsFromError(err)
 	require.True(t, ok)
-	require.Equal(t, ProviderFailureRejected, details.Category)
+	require.Equal(t, llm.ProviderFailureRejected, details.Category)
 	require.Empty(t, details.HTTPStatusClass)
-	require.Equal(t, ProviderExceptionProviderResponse, details.ExceptionType)
+	require.Equal(t, llm.ProviderExceptionProviderResponse, details.ExceptionType)
 }
 
 func TestNormalizeOpenAICompatibleChatURL(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -18,7 +19,7 @@ func TestPostSystemTranslationDocumentFenceAllowsArchivedRootAndRejectsDeletedRo
 	postID := uuid.NewString()
 	documentID := uuid.New()
 	rootExists := true
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Callback().Query().Replace("gorm:query", func(query *gorm.DB) {
 		switch query.Statement.Table {

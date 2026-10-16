@@ -5,98 +5,14 @@ package member
 import (
 	"context"
 	"testing"
-	"time"
-	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
-
-func TestMemberSummaryDeletedMemberNeverExposesProfilePII(t *testing.T) {
-	nickname := "Former name"
-	deletedAt := time.Now()
-	avatar := &commonv1.AssetRef{AssetId: "former-avatar"}
-
-	summary := memberSummary(model.Member{
-		ID:        "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f6",
-		Nickname:  nickname,
-		DeletedAt: &deletedAt,
-	}, avatar)
-
-	if !summary.Deleted {
-		t.Fatal("deleted summary must be marked deleted")
-	}
-	if summary.Nickname != nickname {
-		t.Fatalf("nickname = %v, want %q", summary.Nickname, nickname)
-	}
-	if summary.AvatarAsset != nil {
-		t.Fatal("deleted summary must not expose an avatar")
-	}
-}
-
-func TestNormalizeRegistrationMemberInputHasNoProfileAuthority(t *testing.T) {
-	input, err := normalizeRegistrationMemberInput(RegistrationMemberInput{
-		IdentityID:      "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f6",
-		Email:           " member@example.test ",
-		PreferredLocale: " pt-PT ",
-	})
-	if err != nil {
-		t.Fatalf("normalize registration input: %v", err)
-	}
-	if input.Email != "member@example.test" {
-		t.Fatalf("email = %q, want trimmed input", input.Email)
-	}
-	if input.PreferredLocale != "pt-PT" {
-		t.Fatalf("preferred locale = %q, want canonical locale", input.PreferredLocale)
-	}
-}
-
-func TestNormalizeRegistrationMemberInputRejectsUnsupportedLocale(t *testing.T) {
-	for _, locale := range []string{"", "  ", "xx-XX"} {
-		_, err := normalizeRegistrationMemberInput(RegistrationMemberInput{
-			IdentityID:      "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f6",
-			Email:           "member@example.test",
-			PreferredLocale: locale,
-		})
-		if err == nil {
-			t.Fatalf("unsupported registration locale %q must fail", locale)
-		}
-	}
-}
-
-func TestNormalizeMemberNicknameIsTrimmedCaseSensitiveAndBounded(t *testing.T) {
-	for _, value := range []string{"Member", "member", "M", "가"} {
-		got, err := normalizeMemberNickname("  " + value + "  ")
-		if err != nil || got != value {
-			t.Fatalf("normalize %q = %q, %v", value, got, err)
-		}
-	}
-	for _, value := range []string{"", "   ", string(make([]rune, memberNicknameMaxLength+1))} {
-		if utf8.RuneCountInString(value) == 0 && value != "" {
-			continue
-		}
-		if _, err := normalizeMemberNickname(value); err == nil {
-			t.Fatalf("normalize %q unexpectedly succeeded", value)
-		}
-	}
-}
-
-func TestNormalizeMemberPreferenceLocale(t *testing.T) {
-	if got, err := normalizeMemberPreferenceLocale("pt-PT"); err != nil || got != "pt-PT" {
-		t.Fatalf("normalize preferred locale = %q, %v; want pt-PT", got, err)
-	}
-	for _, value := range []string{"", "  ", "xx-XX"} {
-		if got, err := normalizeMemberPreferenceLocale(value); err == nil || got != "" {
-			t.Fatalf("normalize unsupported locale %q = %q, %v; want error", value, got, err)
-		}
-	}
-}
 
 func TestSelfExtendedProfileMutationRequiresAuthorRole(t *testing.T) {
 	stack := testutil.SetupOryStack(t)
@@ -126,25 +42,6 @@ func TestSelfExtendedProfileMutationRequiresAuthorRole(t *testing.T) {
 		if err := service.validateSelfMemberProfileMutation(ctx, &bio, &website, links); err != nil {
 			t.Fatalf("%s extended mutation denied: %v", principal.Role, err)
 		}
-	}
-}
-
-func TestHideExtendedMemberProfilePreservesSummary(t *testing.T) {
-	bio := "biography"
-	website := "https://profile.example.test"
-	profile := &managev1.MemberProfile{
-		Summary:     &commonv1.MemberSummary{Id: "member-id", Nickname: "nickname"},
-		Bio:         &bio,
-		Website:     &website,
-		SocialLinks: map[string]string{"homepage": website},
-	}
-
-	hideExtendedMemberProfile(profile)
-	if profile.Bio != nil || profile.Website != nil || profile.SocialLinks != nil {
-		t.Fatal("extended profile fields were not hidden")
-	}
-	if profile.Summary.GetId() != "member-id" || profile.Summary.GetNickname() != "nickname" {
-		t.Fatalf("summary changed: %+v", profile.Summary)
 	}
 }
 

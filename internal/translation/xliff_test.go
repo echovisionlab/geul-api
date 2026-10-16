@@ -187,17 +187,17 @@ func TestValidateResponseRejectsXLIFFIdentityAndSourceChanges(t *testing.T) {
 			ID: "entity:meta", TranslationUnit: []XLIFFUnit{{ID: "entity:title", Source: "Hello"}},
 		}}},
 	}
-	actual := XLIFFWithTargets(expected, map[string]UnitResult{
+	responseDocument := XLIFFWithTargets(expected, map[string]UnitResult{
 		"entity:title": {UnitID: "entity:title", TranslatedText: "안녕하세요"},
 	})
-	actual.Version = "2.0"
-	actual.SourceLocale = "fr"
-	actual.TargetLocale = "ja"
-	actual.File.ID = "page:other"
-	actual.File.Groups[0].ID = "other:group"
-	actual.File.Groups[0].TranslationUnit[0].Source = "Changed"
+	responseDocument.Version = "2.0"
+	responseDocument.SourceLocale = "fr"
+	responseDocument.TargetLocale = "ja"
+	responseDocument.File.ID = "page:other"
+	responseDocument.File.Groups[0].ID = "other:group"
+	responseDocument.File.Groups[0].TranslationUnit[0].Source = "Changed"
 
-	result := ValidateResponse(expected, ProviderResponse{Document: actual})
+	result := ValidateResponse(expected, ProviderResponse{Document: responseDocument})
 	require.False(t, result.Passed)
 	require.NotNil(t, result.ParseError)
 	require.Contains(t, *result.ParseError, "XLIFF version changed")

@@ -17,8 +17,6 @@ type EmailPublisher interface {
 // Email Template preview and test-send flows.
 type EmailTemplateRuntime interface {
 	ResolveLocalizedTemplate(context.Context, *gorm.DB, model.EmailTemplate, string) (model.EmailTemplate, error)
-	RenderVariables(string, map[string]string) string
-	WrapWithLayout(context.Context, *gorm.DB, string, string, string, map[string]string) (string, error)
-	NormalizeRenderedHTML(string) string
+	ResolveLayoutHTML(context.Context, *gorm.DB, string, string) (string, error)
 	NormalizeSupportedLocale(string) *string
 }

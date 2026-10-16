@@ -208,9 +208,9 @@ func TestMutationBatchAdaptersEnforceBrowserAndSystemContributorBoundaries(t *te
 
 func TestMutationContributorRequiresOneCanonicalMember(t *testing.T) {
 	memberID := uuid.NewString()
-	actual, err := MutationContributor([]string{memberID})
+	contributor, err := MutationContributor([]string{memberID})
 	require.NoError(t, err)
-	require.Equal(t, memberID, actual)
+	require.Equal(t, memberID, contributor)
 
 	for _, values := range [][]string{nil, {}, {memberID, uuid.NewString()}, {" "}, {"not-a-uuid"}} {
 		_, err := MutationContributor(values)

@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -43,7 +44,7 @@ func authenticatedCheckerContext() context.Context {
 
 func newCheckerTestDB(t *testing.T, postID string) (*gorm.DB, *atomic.Int64) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec("CREATE TABLE posts (id TEXT PRIMARY KEY)").Error)
 	if postID != "" {

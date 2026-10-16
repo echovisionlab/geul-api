@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -60,7 +61,7 @@ func TestMenuTargetRewriteUpdatesAndRemovesNestedReferences(t *testing.T) {
 }
 
 func TestMenuTargetLifecycleRejectsMalformedSourceAtomically(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:menu-target-malformed?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE menu (id TEXT PRIMARY KEY, items BLOB)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO menu (id, items) VALUES (?, ?)`, "menu-1", []byte(`{"broken"`)).Error)
@@ -77,7 +78,7 @@ func TestMenuTargetLifecycleRejectsMalformedSourceAtomically(t *testing.T) {
 }
 
 func TestMenuTargetLifecyclePreservesTargetRevisionDuringRewrite(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:menu-target-caller-transaction?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE content_document (id TEXT PRIMARY KEY, profile TEXT, revision TEXT, updated_at DATETIME);
@@ -138,7 +139,7 @@ func TestMenuTargetLifecyclePreservesTargetRevisionDuringRewrite(t *testing.T) {
 }
 
 func TestMenuTargetLifecycleRemovalPrunesOnlyRemovedSubtreeLabels(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:menu-target-prune?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE content_document (id TEXT PRIMARY KEY, profile TEXT, revision TEXT, updated_at DATETIME);

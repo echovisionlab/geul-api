@@ -840,7 +840,10 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 		layoutHTML = localizedHTML
 	}
 
-	renderedHTML := renderLayoutPreviewHTML(layoutHTML, sampleContent, sampleData)
+	renderedHTML, err := renderLayoutPreviewHTML(layoutHTML, sampleContent, sampleData)
+	if err != nil {
+		return nil, errs.FailedPrecondition("email layout preview failed: " + err.Error())
+	}
 
 	return connect.NewResponse(&managev1.PreviewEmailLayoutResponse{
 		Html: renderedHTML,
@@ -898,7 +901,10 @@ func (s *EmailLayoutService) PreviewEmailLayoutContent(
 
 	sampleData := s.sampleLayoutPreviewData(ctx, sampleContent, req.Msg.Locale)
 
-	renderedHTML := renderLayoutPreviewHTML(htmlContent, sampleContent, sampleData)
+	renderedHTML, err := renderLayoutPreviewHTML(htmlContent, sampleContent, sampleData)
+	if err != nil {
+		return nil, errs.InvalidArgument("html_content", err.Error())
+	}
 
 	return connect.NewResponse(&managev1.PreviewEmailLayoutContentResponse{
 		Valid:  true,
@@ -911,10 +917,12 @@ func (s *EmailLayoutService) PreviewEmailLayoutContent(
 
 // renderLayoutPreviewHTML mirrors production layout rendering:
 // 1) inject raw HTML into {{content}}, 2) render remaining escaped variables.
-func renderLayoutPreviewHTML(layoutHTML, contentHTML string, data map[string]string) string {
-	layoutHTML = email.NormalizeTemplatePlaceholders(layoutHTML)
-	rendered := strings.ReplaceAll(layoutHTML, "{{content}}", contentHTML)
-	return email.RenderVars(rendered, data)
+func renderLayoutPreviewHTML(layoutHTML, contentHTML string, data map[string]string) (string, error) {
+	prepared, err := email.PrepareDraftLayoutHTML(layoutHTML)
+	if err != nil {
+		return "", err
+	}
+	return email.RenderEmailHTML(contentHTML, prepared, data)
 }
 
 func (s *EmailLayoutService) sampleLayoutPreviewData(

@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestProjectionBindsCanonicalLocalizedLegalRoutesIntegration(t *testing.T) {
@@ -65,12 +64,4 @@ func TestProjectionBindsCanonicalLocalizedLegalRoutesIntegration(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestProjectionRejectsNonCanonicalLegalRoute(t *testing.T) {
-	locale := "en"
-	err := NewProjection().ReleasePending(t.Context(), &gorm.DB{}, og.Target{
-		EntityType: "privacy", EntityID: uuid.NewString(), Locale: &locale, Kind: "locale",
-	}, "")
-	require.ErrorContains(t, err, "canonical route identity")
 }

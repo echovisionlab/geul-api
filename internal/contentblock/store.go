@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -878,7 +879,11 @@ func (s *Store) apply(
 	for _, group := range batch.LocaleGroups {
 		updates := make(map[uuid.UUID]json.RawMessage, len(group.Upserts))
 		for _, update := range group.Upserts {
-			updates[update.BlockID] = update.LocalizedData
+			localized, err := richtextinline.CanonicalizeStorageLocale(update.LocalizedData)
+			if err != nil {
+				return aggregate{}, persistedMutation{}, fmt.Errorf("%w: Block %s inline line breaks: %v", ErrInvalidMutation, update.BlockID, err)
+			}
+			updates[update.BlockID] = localized
 		}
 		localeInputs[group.Locale] = updates
 	}
@@ -962,7 +967,7 @@ func (s *Store) apply(
 				return aggregate{}, persistedMutation{}, fmt.Errorf("%w: locale update Block %s does not exist", ErrInvalidMutation, update.BlockID)
 			}
 			candidate := cloneBlock(base)
-			candidate.LocalizedData = update.LocalizedData
+			candidate.LocalizedData = localeInputs[group.Locale][update.BlockID]
 			normalized, err := normalizeBlock(s.contract, before.document.Profile, candidate)
 			if err != nil {
 				return aggregate{}, persistedMutation{}, err

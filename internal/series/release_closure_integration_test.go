@@ -696,10 +696,10 @@ func requireSeriesSlug(t *testing.T, db *gorm.DB, seriesID string) string {
 
 func requireSeriesOrder(t *testing.T, db *gorm.DB, seriesID string, expected []string) {
 	t.Helper()
-	var actual []string
+	var persistedReleaseIDs []string
 	require.NoError(t, db.Table("post").Where("series_id = ?", seriesID).
-		Order("series_order ASC").Pluck("id", &actual).Error)
-	require.Equal(t, expected, actual)
+		Order("series_order ASC").Pluck("id", &persistedReleaseIDs).Error)
+	require.Equal(t, expected, persistedReleaseIDs)
 	for index, postID := range expected {
 		requirePostSeriesRelation(t, db, postID, &seriesID, intPtr(index))
 	}

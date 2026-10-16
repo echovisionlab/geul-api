@@ -104,11 +104,11 @@ func TestSiteSettingsUpdateForwardsOnlySuppliedValuesAtomically(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, owner.calls)
 	require.Equal(t, t.Context(), owner.ctx)
-	actual := map[string]any{}
+	settingsByKey := map[string]any{}
 	for _, setting := range owner.setRequest.Settings {
-		actual[setting.Key] = setting.Value.AsInterface()
+		settingsByKey[setting.Key] = setting.Value.AsInterface()
 	}
-	require.Equal(t, map[string]any{"site_title": "New title", "favicon_file_id": nil, "default_comments_enabled": false, "social_links": map[string]any{}, "og_image_config.home": map[string]any{"title": "New home"}}, actual)
+	require.Equal(t, map[string]any{"site_title": "New title", "favicon_file_id": nil, "default_comments_enabled": false, "social_links": map[string]any{}, "og_image_config.home": map[string]any{"title": "New home"}}, settingsByKey)
 	require.Equal(t, true, result.StructuredContent["success"])
 	require.Nil(t, result.StructuredContent["og_generation_run_id"])
 }

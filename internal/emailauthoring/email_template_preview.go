@@ -55,44 +55,7 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 		requestedLocale = *req.Msg.Locale
 	}
 
-	sampleData := s.buildEmailRenderData(ctx, requestedLocale, map[string]string{
-		"name":               "John Doe",
-		"recipient_name":     "John Doe",
-		"recipient_email":    "john@example.com",
-		"to":                 "john@example.com",
-		"identity_email":     "john@example.com",
-		"identity_name":      "John Doe",
-		"confirm_url":        "https://example.com/confirm/abc123",
-		"reset_link":         "https://example.com/reset/abc123",
-		"confirm_link":       "https://example.com/confirm/abc123",
-		"cancel_url":         "https://example.com/cancel/abc123",
-		"unsubscribe_link":   "https://example.com/unsubscribe/abc123",
-		"verification_code":  "123456",
-		"verification_url":   "https://example.com/verify/abc123",
-		"request_url":        "https://example.com/auth/continue/abc123",
-		"expires_in_minutes": "15",
-		"recover_url":        "https://example.com/recover/abc123",
-		"login_code":         "789012",
-		"registration_code":  "345678",
-		"preview_url":        "https://example.com/preview/abc123",
-		"policy_title":       "September policy update",
-		"terms_url":          "https://example.com/terms",
-		"privacy_url":        "https://example.com/privacy",
-		"login_url":          "https://example.com/login",
-		"signout_all_url":    "https://example.com/my/security",
-		"expires_in":         "24 hours",
-		"effective_date":     "2026-01-01",
-		"scheduled_date":     "2026-02-01",
-		"grace_period":       "30 days",
-		"old_email":          "old@example.com",
-		"new_email":          "new@example.com",
-		"country":            "US",
-		"location":           "United States",
-		"ip":                 "203.0.113.42",
-		"time":               "2026-01-01T09:00:00Z",
-		"device":             "Chrome on macOS",
-		"provider":           "email",
-	})
+	sampleData := s.buildEmailRenderData(ctx, requestedLocale, emailTemplateSampleData())
 
 	localizedTemplate, err := s.runtime.ResolveLocalizedTemplate(ctx, s.db, emailTemplate, requestedLocale)
 	if err != nil {
@@ -112,43 +75,24 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 	// so preview can render unknown/custom variables instead of leaving braces.
 	fillMissingPreviewVariables(sampleData, previewSubject, html)
 
-	renderedSubject, err := email.RenderSubjectVarsStrict(previewSubject, sampleData)
+	layoutHTML := ""
+	if layoutID := resolveEmailTemplatePreviewLayoutID(req.Msg, localizedTemplate); layoutID != nil {
+		layoutHTML, err = s.runtime.ResolveLayoutHTML(ctx, s.db, *layoutID, requestedLocale)
+		if err != nil {
+			return nil, errs.FailedPrecondition("email layout preview failed: " + err.Error())
+		}
+	}
+	rendered, err := email.RenderDraftEmail(ctx, email.DraftEmail{
+		Subject: previewSubject, ContentHTML: html, LayoutHTML: layoutHTML,
+		Variables: sampleData, Locale: requestedLocale,
+	})
 	if err != nil {
 		return nil, errs.FailedPrecondition(err.Error())
 	}
-	renderedHTML := html
-
-	// Add subject to sampleData for layout rendering
-	sampleData["subject"] = renderedSubject
-
-	// Determine layout ID: request param takes precedence over saved value
-	layoutID := resolveEmailTemplatePreviewLayoutID(req.Msg, localizedTemplate)
-
-	// Wrap with layout if configured
-	if layoutID != nil {
-		var layoutErr error
-		renderedHTML, layoutErr = s.runtime.WrapWithLayout(
-			ctx,
-			s.db,
-			*layoutID,
-			requestedLocale,
-			renderedHTML,
-			sampleData,
-		)
-		if layoutErr != nil {
-			return nil, errs.FailedPrecondition("email layout preview failed: " + layoutErr.Error())
-		}
-	} else {
-		renderedHTML, err = email.RenderHTMLVarsStrict(renderedHTML, sampleData)
-		if err != nil {
-			return nil, errs.FailedPrecondition(err.Error())
-		}
-	}
-	renderedHTML = s.runtime.NormalizeRenderedHTML(renderedHTML)
 
 	return connect.NewResponse(&managev1.PreviewEmailTemplateResponse{
-		Subject: renderedSubject,
-		Html:    renderedHTML,
+		Subject: rendered.Subject,
+		Html:    rendered.HTML,
 	}), nil
 }
 
@@ -253,5 +197,49 @@ func previewSampleValueForKey(key string) string {
 		return "email"
 	default:
 		return fmt.Sprintf("sample_%s", lowerKey)
+	}
+}
+
+// emailTemplateSampleData is shared by preview and explicit admin test sends.
+// Always return a fresh map: rendering adds subject and recipient aliases.
+func emailTemplateSampleData() map[string]string {
+	return map[string]string{
+		"name":               "John Doe",
+		"recipient_name":     "John Doe",
+		"recipient_email":    "john@example.com",
+		"email":              "john@example.com",
+		"to":                 "john@example.com",
+		"identity_email":     "john@example.com",
+		"identity_name":      "John Doe",
+		"confirm_url":        "https://example.com/confirm/abc123",
+		"reset_link":         "https://example.com/reset/abc123",
+		"confirm_link":       "https://example.com/confirm/abc123",
+		"cancel_url":         "https://example.com/cancel/abc123",
+		"unsubscribe_link":   "https://example.com/unsubscribe/abc123",
+		"verification_code":  "123456",
+		"verification_url":   "https://example.com/verify/abc123",
+		"request_url":        "https://example.com/auth/continue/abc123",
+		"expires_in_minutes": "15",
+		"recover_url":        "https://example.com/recover/abc123",
+		"login_code":         "789012",
+		"registration_code":  "345678",
+		"preview_url":        "https://example.com/preview/abc123",
+		"policy_title":       "September policy update",
+		"terms_url":          "https://example.com/terms",
+		"privacy_url":        "https://example.com/privacy",
+		"login_url":          "https://example.com/login",
+		"signout_all_url":    "https://example.com/my/security",
+		"expires_in":         "24 hours",
+		"effective_date":     "2026-01-01",
+		"scheduled_date":     "2026-02-01",
+		"grace_period":       "30 days",
+		"old_email":          "old@example.com",
+		"new_email":          "new@example.com",
+		"country":            "US",
+		"location":           "United States",
+		"ip":                 "203.0.113.42",
+		"time":               "2026-01-01T09:00:00Z",
+		"device":             "Chrome on macOS",
+		"provider":           "email",
 	}
 }

@@ -67,11 +67,11 @@ func TestRepositoryIntegrationPackagesExactlyMatchCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repository root: %v", err)
 	}
-	actual, err := discoverIntegrationPackages(repoRoot, integrationGoWorkOff)
+	discoveredPackages, err := discoverIntegrationPackages(repoRoot, integrationGoWorkOff)
 	if err != nil {
 		t.Fatalf("discover integration packages: %v", err)
 	}
-	if err := verifyIntegrationCatalog(actual); err != nil {
+	if err := verifyIntegrationCatalog(discoveredPackages); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -79,14 +79,14 @@ func TestRepositoryIntegrationPackagesExactlyMatchCatalog(t *testing.T) {
 func TestVerifyIntegrationCatalogRejectsDrift(t *testing.T) {
 	t.Parallel()
 
-	actual := catalogPackagePaths()
-	if err := verifyIntegrationCatalog(actual); err != nil {
+	discoveredPackages := catalogPackagePaths()
+	if err := verifyIntegrationCatalog(discoveredPackages); err != nil {
 		t.Fatalf("verify exact catalog: %v", err)
 	}
-	if err := verifyIntegrationCatalog(actual[1:]); err == nil {
+	if err := verifyIntegrationCatalog(discoveredPackages[1:]); err == nil {
 		t.Fatal("expected stale catalog entry to fail")
 	}
-	if err := verifyIntegrationCatalog(append(actual, "./internal/newintegration")); err == nil {
+	if err := verifyIntegrationCatalog(append(discoveredPackages, "./internal/newintegration")); err == nil {
 		t.Fatal("expected unclassified integration package to fail")
 	}
 }

@@ -24,7 +24,8 @@ import (
 // a rolled-back domain transaction publishes nothing and a committed one
 // publishes exactly once.
 func TestContentUpdatedSignalIsAtomicWithTransaction(t *testing.T) {
-	pg := resetMQIntegrationQueues(t, "content.updated")
+	t.Parallel()
+	pg := newMQIntegrationPostgres(t, "content.updated")
 	var err error
 	ctx := t.Context()
 

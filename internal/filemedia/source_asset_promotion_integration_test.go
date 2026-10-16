@@ -85,13 +85,13 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 		Key:    aws.String(asset.ObjectKey),
 	})
 	require.NoError(t, err)
-	actualDigest := sha256.New()
-	actualSize, readErr := io.Copy(actualDigest, stored.Body)
+	storedDigest := sha256.New()
+	storedSize, readErr := io.Copy(storedDigest, stored.Body)
 	closeErr := stored.Body.Close()
 	require.NoError(t, readErr)
 	require.NoError(t, closeErr)
-	require.Equal(t, file.FileSize, actualSize)
-	require.Equal(t, digest[:], actualDigest.Sum(nil))
+	require.Equal(t, file.FileSize, storedSize)
+	require.Equal(t, digest[:], storedDigest.Sum(nil))
 }
 
 func TestSourceAssetPromotionStorageRunsOutsideDatabaseTransactionIntegration(t *testing.T) {

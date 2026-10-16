@@ -35,7 +35,7 @@ func parseOptions(args []string) (suiteOptions, error) {
 	flags.StringVar(&options.Band, "band", "", "resource band to run")
 	flags.StringVar(&options.Package, "package", "", "cataloged integration package to run")
 	flags.StringVar(&options.Run, "run", "", "test name regexp (requires --package)")
-	flags.IntVar(&options.Jobs, "jobs", jobs, "maximum concurrent packages")
+	flags.IntVar(&options.Jobs, "jobs", jobs, "maximum concurrent packages and opted-in tests per package")
 	flags.BoolVar(&options.List, "list", false, "list the verified catalog")
 	flags.StringVar(&options.GoWork, "go-work", integrationGoWorkOff, "Go workspace: off or an absolute go.work path")
 	flags.StringVar(&options.SchemaRoot, "schema-root", "../geul-schema", "reviewed schema asset root")
@@ -120,18 +120,22 @@ func bandGoTestArguments(band integrationBand, jobs int) []string {
 	return append([]string{
 		"test",
 		"-p", strconv.Itoa(jobs),
-		"-parallel", "1",
+		"-parallel", strconv.Itoa(jobs),
 		"-timeout", "30m",
 		"-count=1",
 		"-tags=integration",
 	}, band.Packages...)
 }
 
-func packageGoTestArguments(packagePath, run string) []string {
+func packageGoTestArguments(packagePath, run string, resources integrationResourceMode, jobs int) []string {
+	parallelTests := 1
+	if resources == integrationPostgresOnly {
+		parallelTests = jobs
+	}
 	arguments := []string{
 		"test",
 		"-p", "1",
-		"-parallel", "1",
+		"-parallel", strconv.Itoa(parallelTests),
 		"-timeout", "30m",
 		"-count=1",
 		"-tags=integration",

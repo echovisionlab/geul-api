@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/adapters/patauth"
 	patdomain "github.com/echovisionlab/geul-api/internal/member/pat"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -308,7 +309,7 @@ func (clock *mutableClock) Now() time.Time { return clock.now }
 
 func newPATRepositoryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{
 		Logger:         logger.Default.LogMode(logger.Silent),
 		TranslateError: true,
 	})

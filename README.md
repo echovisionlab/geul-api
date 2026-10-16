@@ -113,6 +113,7 @@ for registry authentication.
    ([pnpm registry-switch issue](https://github.com/pnpm/pnpm/issues/7579)).
    Do not guess the URLs or remove integrity checks. This step requires the
    packages to exist and is a prerequisite to the cutover.
+
 5. Retain `HARBOR_REGISTRY_USERNAME` and `HARBOR_REGISTRY_PASSWORD` with push
    access to the `echovisionlab` project at `registry.rawsector.com`. Developers
    and deployment hosts must run `docker login registry.rawsector.com` with
@@ -296,10 +297,28 @@ may send a verification email to the sender address.
 relations, and File ownership; domain defaults and constraints remain with the
 owning compiler.
 
+## Go package boundaries
+
+`internal/llm` owns provider-neutral requests, sessions, and bounded failures.
+`internal/llm/providers` owns Gemini SDK and OpenAI-compatible HTTP adapters;
+provider construction imports that leaf package. Translation validation and
+placeholder policies have no provider I/O or logging. The AI adapter reports
+private parsing diagnostics in the calling request context while returning the
+same bounded invalid-response error.
+
+The integration runner keeps resource composition in `main.go`, serial band
+policy in `band.go`, protected lease file I/O in `lease.go`, and child-process
+ownership in `process.go`. A band consumes only the backend reset interface.
+After cancellation, it finishes bounded cleanup and starts no further packages.
+Test-only fixtures and `TestMain` belong in `_test.go` files unless they are
+shared deliberately through `internal/testutil`.
+
 ## Tests
 
 CI runs unit and package tests with `go test ./...`, media-tool tests, `go vet`,
-and the server build. Input validation, authorization decisions, state
+and the server build. Go checks restore the module/build cache and run alongside
+media-tool checks; the required `Validate` check waits for both to pass.
+Input validation, authorization decisions, state
 transitions, and adapter mappings belong in unit tests. Reuse the owning
 service's tests when an adapter only delegates to it.
 
@@ -312,9 +331,26 @@ reviewed schema checkout and the pinned PostgreSQL image:
 make test-integration-db
 ```
 
+For a CI-only check of the changed PostgreSQL fixtures, dispatch `CI` with
+`integration_smoke=true`. It uses the pinned schema and test image, verifies
+clone/cleanup isolation, and runs MQ, durable telemetry, and transcode application
+contracts with two test workers. Pull requests keep the ordinary fast gates.
+
 Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
 local inputs. The runner starts its own PostgreSQL container and creates
 disposable databases.
+
+The database band bounds both package concurrency and opted-in parallel tests
+with `--jobs` (default 2). MQ and durable-telemetry tests own separate disposable
+databases, including queues and committed records. Legacy package-scoped database
+fixtures remain sequential. The Ory and runtime bands still run serially because
+their PostgreSQL, Kratos, SpiceDB, object storage, and process resets share a
+backend lease.
+
+For in-process SQLite fixtures, use `internal/testutil/sqlitetest.Open` with the
+test's SQLite driver. It allocates a fresh shared-memory database per invocation
+and closes its connection pool with `t.Cleanup`. A fixed name, including
+`t.Name()`, can retain rows across `go test -count` runs in the same process.
 
 Existing native system tests are available locally for changes to the relevant
 service boundary. For a focused regression, pass its package and test name:
@@ -409,7 +445,10 @@ PAT verifiers use the existing constant-time SHA-256 comparison.
 Success returns `200` JSON:
 
 ```json
-{"subject":"<member id>","extra":{"member_id":"<member id>","token_id":"<selector>"}}
+{
+  "subject": "<member id>",
+  "extra": { "member_id": "<member id>", "token_id": "<selector>" }
+}
 ```
 
 Missing, malformed or invalid credentials return `401 {"error":"Unauthorized"}`.

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/config"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -51,7 +52,7 @@ func TestDatabaseTracingDoesNotInterpolateQueryVariables(t *testing.T) {
 		require.NoError(t, provider.Shutdown(context.Background()))
 	})
 
-	db, err := gorm.Open(sqlite.Open("file:telemetry-query-redaction?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Use(newDatabaseTracingPlugin()))
 

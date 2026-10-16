@@ -28,24 +28,9 @@ func (*Runtime) ResolveLocalizedTemplate(
 	return resolved, err
 }
 
-func (*Runtime) RenderVariables(value string, data map[string]string) string {
-	return email.RenderVars(value, data)
-}
-
-func (*Runtime) WrapWithLayout(
-	ctx context.Context,
-	db *gorm.DB,
-	layoutID string,
-	locale string,
-	content string,
-	data map[string]string,
-) (string, error) {
-	rendered, _, err := email.WrapWithLayoutForLocaleStrict(ctx, db, layoutID, locale, content, data)
-	return rendered, err
-}
-
-func (*Runtime) NormalizeRenderedHTML(value string) string {
-	return email.NormalizeRenderedHTML(value)
+func (*Runtime) ResolveLayoutHTML(ctx context.Context, db *gorm.DB, layoutID, locale string) (string, error) {
+	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, locale)
+	return layout, err
 }
 
 func (*Runtime) NormalizeSupportedLocale(value string) *string {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -13,7 +14,8 @@ import (
 )
 
 func TestContentBlockFileReuseAuthority(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:content-block-file-reuse?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY, uploaded_by_member_id TEXT)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE content_block (id TEXT PRIMARY KEY, document_id TEXT NOT NULL)`).Error)

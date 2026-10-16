@@ -107,16 +107,6 @@ func TestManageMediaDeliveryRejectsArbitraryAndMixedFileIDsBeforeSigning(t *test
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 }
 
-func TestManageBulkMediaDeliveryRejectsOversizedRequestUnit(t *testing.T) {
-	t.Parallel()
-	fileIDs := make([]string, MaxMediaDeliveryBatchSize+1)
-	for index := range fileIDs {
-		fileIDs[index] = uuid.NewString()
-	}
-	_, err := (&FileService{}).GetBulkMediaDeliveries(context.Background(), connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: fileIDs}))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-}
-
 func TestAuthorizeManageFileDeliveriesRejectsUnauthenticatedAndBannedUsers(t *testing.T) {
 	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)

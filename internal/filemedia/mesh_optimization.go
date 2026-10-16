@@ -237,14 +237,14 @@ func meshOptimizationProfileForPipelineVersion(pipelineVersion string) managev1.
 
 func validateMeshOptimizationOutputProfile(
 	candidate model.MeshOptimizationCandidate,
-	actual managev1.MeshOptimizationProfile,
+	outputProfile managev1.MeshOptimizationProfile,
 ) error {
 	expected := meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion)
 	if expected == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1 &&
-		actual == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED {
+		outputProfile == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED {
 		return nil
 	}
-	if actual != expected {
+	if outputProfile != expected {
 		return errs.InvalidArgument("output.profile", "does not match the requested mesh optimization profile")
 	}
 	return nil

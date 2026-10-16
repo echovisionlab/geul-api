@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -15,7 +16,8 @@ import (
 )
 
 func TestInitializeProgramEventBlockTranslationState(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:program-event-block-translation?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE program_event (
 		id TEXT PRIMARY KEY,
@@ -62,7 +64,8 @@ func TestInitializeProgramEventBlockTranslationState(t *testing.T) {
 }
 
 func TestLoadProgramEventLocalesRendersTypedBlockAuthority(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:program-event-locale-projection?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE program_event (
 		id TEXT PRIMARY KEY,

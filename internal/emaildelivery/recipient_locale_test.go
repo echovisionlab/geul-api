@@ -3,6 +3,7 @@ package emaildelivery
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -14,7 +15,7 @@ func TestResolveEmailRecipientLocaleNormalizesUserLocale(t *testing.T) {
 }
 
 func TestLookupEmailRecipientLocaleUsesExactActiveMember(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec("ATTACH DATABASE ':memory:' AS kratos").Error)
 	require.NoError(t, db.Exec(`

@@ -27,9 +27,9 @@ func TestReadStoredObjectPrefixUsesBoundedRange(t *testing.T) {
 		_, _ = w.Write(prefix)
 	})
 
-	actual, err := service.readStoredObjectPrefix(context.Background(), "media/file-id.webp", 8*1024*1024*1024)
+	storedPrefix, err := service.readStoredObjectPrefix(context.Background(), "media/file-id.webp", 8*1024*1024*1024)
 	require.NoError(t, err)
-	require.Equal(t, prefix, actual)
+	require.Equal(t, prefix, storedPrefix)
 }
 
 func TestReadStoredObjectPrefixReadsWholeSmallObject(t *testing.T) {
@@ -42,9 +42,9 @@ func TestReadStoredObjectPrefixReadsWholeSmallObject(t *testing.T) {
 		_, _ = w.Write(body)
 	})
 
-	actual, err := service.readStoredObjectPrefix(context.Background(), "media/file-id.webp", int64(len(body)))
+	storedPrefix, err := service.readStoredObjectPrefix(context.Background(), "media/file-id.webp", int64(len(body)))
 	require.NoError(t, err)
-	require.Equal(t, body, actual)
+	require.Equal(t, body, storedPrefix)
 }
 
 func TestReadStoredObjectPrefixRejectsFetchFailure(t *testing.T) {

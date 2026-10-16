@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func TestAdapterCacheFreshExpiresMissedBroadcastInvalidation(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
 
 	require.True(t, adapterCacheFresh(true, now.Add(-29*time.Second), now, 30*time.Second))
@@ -22,7 +24,8 @@ func TestAdapterCacheFreshExpiresMissedBroadcastInvalidation(t *testing.T) {
 }
 
 func TestAdapterLoaderRejectsInvalidAndNonDeliveryActiveAdaptersWithoutCaching(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:adapter-loader?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE mail_adapter (
@@ -58,7 +61,8 @@ func TestAdapterLoaderRejectsInvalidAndNonDeliveryActiveAdaptersWithoutCaching(t
 }
 
 func TestAdapterLoaderTTLReloadsDatabaseAfterMissedBroadcast(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:adapter-loader-ttl?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE mail_adapter (
@@ -107,6 +111,7 @@ func TestAdapterLoaderTTLReloadsDatabaseAfterMissedBroadcast(t *testing.T) {
 }
 
 func TestAdapterLoaderInvalidationClosesRetiredSMTPPool(t *testing.T) {
+	t.Parallel()
 	retired := &SMTPAdapter{
 		id:   "retired-smtp",
 		pool: make(chan *smtpConn, smtpPoolSize),
@@ -124,6 +129,7 @@ func TestAdapterLoaderInvalidationClosesRetiredSMTPPool(t *testing.T) {
 }
 
 func TestAdapterLoaderInvalidationWaitsForActiveSendBeforeClose(t *testing.T) {
+	t.Parallel()
 	adapter := &blockingCloseableAdapter{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
@@ -149,6 +155,7 @@ func TestAdapterLoaderInvalidationWaitsForActiveSendBeforeClose(t *testing.T) {
 }
 
 func TestManagedMailAdapterRejectsNewSendAfterRetirement(t *testing.T) {
+	t.Parallel()
 	adapter := &blockingCloseableAdapter{
 		started: make(chan struct{}),
 		release: make(chan struct{}),

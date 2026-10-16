@@ -457,7 +457,7 @@ func (s *FileService) completeMultipartObject(
 		return nil
 	}
 
-	actualParts, err := s.listAndValidateMultipartResumeParts(
+	storedParts, err := s.listAndValidateMultipartResumeParts(
 		ctx,
 		completion.session,
 		completion.objectKey,
@@ -489,13 +489,13 @@ func (s *FileService) completeMultipartObject(
 			errs.Internal(fmt.Errorf("failed to reconcile multipart parts before completion: %w", err)),
 		)
 	}
-	if err := validateMultipartCompletionParts(completion.session, actualParts); err != nil {
+	if err := validateMultipartCompletionParts(completion.session, storedParts); err != nil {
 		return completion.publishFailure(err)
 	}
 	// S3 owns the actual bytes and ETags. A still-valid presigned URL can
 	// replace a previously confirmed part, so the completion boundary must not
 	// trust the upload_part cache captured before the finalizing transition.
-	completion.uploadedParts = actualParts
+	completion.uploadedParts = storedParts
 
 	completeStartedAt := time.Now()
 	_, err = s.s3Client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
@@ -589,16 +589,16 @@ func (s *FileService) verifyCompletedObjectContent(
 	if config == nil {
 		return fmt.Errorf("%w: upload type no longer has a MIME policy", errStoredObjectMIMEMismatch)
 	}
-	actualMime := detectCanonicalMime(prefix, buildAllowedMimeSet(config.PermittedMimeTypes))
-	if actualMime != expectedMime {
+	detectedMIME := detectCanonicalMime(prefix, buildAllowedMimeSet(config.PermittedMimeTypes))
+	if detectedMIME != expectedMime {
 		return fmt.Errorf(
 			"%w: completed object MIME %q does not match verified MIME %q",
 			errStoredObjectMIMEMismatch,
-			actualMime,
+			detectedMIME,
 			expectedMime,
 		)
 	}
-	if actualMime == "model/gltf-binary" {
+	if detectedMIME == "model/gltf-binary" {
 		if err := validateGLBUploadSize(prefix, expectedSize); err != nil {
 			return fmt.Errorf("%w: %v", errStoredObjectMIMEMismatch, err)
 		}

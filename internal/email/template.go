@@ -164,7 +164,7 @@ func renderStoredTemplate(
 			displayedLocale = layoutLocale
 		}
 	} else {
-		html, err = RenderHTMLVarsStrict(html, data)
+		html, err = RenderEmailHTML(html, "", data)
 		if err != nil {
 			return nil, fmt.Errorf("render email HTML: %w", err)
 		}
@@ -209,16 +209,11 @@ func RenderCampaignSnapshotForLocale(
 	if layoutLocale != "" {
 		displayedLocale = layoutLocale
 	}
-	if strings.TrimSpace(layoutHTML) != "" {
-		layoutHTML = NormalizeTemplatePlaceholders(layoutHTML)
-		html = strings.ReplaceAll(layoutHTML, "{{content}}", html)
-	}
-	html, err = RenderHTMLVarsStrict(html, data)
+	html, err = RenderEmailHTML(html, layoutHTML, data)
 	if err != nil {
 		return nil, fmt.Errorf("render delivery snapshot HTML: %w", err)
 	}
 
-	html = NormalizeRenderedHTML(html)
 	return &RenderedEmail{
 		Subject:            subject,
 		HTML:               html,
@@ -381,17 +376,14 @@ func WrapWithLayoutForLocaleStrict(
 	if err != nil {
 		return "", displayedLocale, err
 	}
+	rendered, err := RenderEmailHTML(content, layoutHTML, data)
 	if strings.TrimSpace(layoutHTML) == "" {
-		rendered, err := RenderHTMLVarsStrict(content, data)
 		return rendered, "", err
 	}
-	layoutHTML = NormalizeTemplatePlaceholders(layoutHTML)
-	result := strings.ReplaceAll(layoutHTML, "{{content}}", content)
-	result, err = RenderHTMLVarsStrict(result, data)
 	if err != nil {
 		return "", "", err
 	}
-	return NormalizeRenderedHTML(result), displayedLocale, nil
+	return rendered, displayedLocale, nil
 }
 
 // RenderVars replaces {{key}} placeholders with HTML-escaped values.
@@ -483,7 +475,7 @@ func renderVarsStrict(
 	return result, nil
 }
 
-// Pre-compiled regex patterns for StripHTML
+// Pre-compiled template normalization patterns
 var (
 	renderVarRe                = regexp.MustCompile(`{{\s*[^\s{}]+\s*}}`)
 	normalizedPlaceholderRe    = regexp.MustCompile(`\{\s*\{\s*([^\s{}]+)\s*\}\s*\}`)
@@ -493,10 +485,6 @@ var (
 	emptyParagraphRe           = regexp.MustCompile(`(?is)<p([^>]*)>\s*</p>`)
 	doubleQuoteDuplicateHrefRe = regexp.MustCompile(`(?i)\bhref="(https?:\/\/)(https?:\/\/[^"<>]+)"`)
 	singleQuoteDuplicateHrefRe = regexp.MustCompile(`(?i)\bhref='(https?:\/\/)(https?:\/\/[^'<>]+)'`)
-	stripScriptRe              = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-	stripStyleRe               = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-	stripTagRe                 = regexp.MustCompile(`<[^>]*>`)
-	stripWhitespaceRe          = regexp.MustCompile(`\s+`)
 )
 
 func NormalizeTemplatePlaceholders(value string) string {
@@ -564,27 +552,4 @@ func normalizeRenderedDoctype(html string) string {
 		result = result[:match[0]] + result[match[1]:]
 	}
 	return result
-}
-
-// StripHTML removes HTML tags and returns plain text.
-func StripHTML(html string) string {
-	// Remove script and style tags with their content
-	text := stripScriptRe.ReplaceAllString(html, "")
-	text = stripStyleRe.ReplaceAllString(text, "")
-
-	// Remove all HTML tags
-	text = stripTagRe.ReplaceAllString(text, "")
-
-	// Decode common HTML entities
-	text = strings.ReplaceAll(text, "&nbsp;", " ")
-	text = strings.ReplaceAll(text, "&amp;", "&")
-	text = strings.ReplaceAll(text, "&lt;", "<")
-	text = strings.ReplaceAll(text, "&gt;", ">")
-	text = strings.ReplaceAll(text, "&quot;", "\"")
-	text = strings.ReplaceAll(text, "&#39;", "'")
-
-	// Collapse multiple whitespace
-	text = stripWhitespaceRe.ReplaceAllString(text, " ")
-
-	return strings.TrimSpace(text)
 }

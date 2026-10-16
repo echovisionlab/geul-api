@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"golang.org/x/net/html"
@@ -80,6 +81,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 
 	for {
 		tokenType := tokenizer.Next()
+		raw := string(tokenizer.Raw())
 		switch tokenType {
 		case html.ErrorToken:
 			if !errors.Is(tokenizer.Err(), io.EOF) {
@@ -110,7 +112,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if err := flushEmptyText(); err != nil {
 				return "", err
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		case html.StartTagToken, html.SelfClosingTagToken:
 			if pending != nil && pending.Kind == layoutTextMarker {
 				if err := flushEmptyText(); err != nil {
@@ -129,7 +131,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if marker != nil {
 				output.WriteString(formatLayoutUnitMarker(*marker))
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 			if tokenType == html.StartTagToken && isExcluded {
 				excludedDepth++
 			}
@@ -141,7 +143,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if translation.IsExcludedHTMLElement(token.DataAtom) && excludedDepth > 0 {
 				excludedDepth--
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		case html.TextToken:
 			text := string(tokenizer.Text())
 			eligible := excludedDepth == 0 && (layoutTextIsTranslatable(text) || (pending != nil && pending.Kind == layoutTextMarker))
@@ -158,12 +160,12 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if marker != nil {
 				output.WriteString(formatLayoutUnitMarker(*marker))
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		default:
 			if err := flushEmptyText(); err != nil {
 				return "", err
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		}
 	}
 }
@@ -363,7 +365,7 @@ func ApplyLayoutLocaleValues(
 	source string,
 	values map[string]string,
 ) (*string, *string, error) {
-	units, err := ExtractLayoutContentUnits(source)
+	_, err := ExtractLayoutContentUnits(source)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -373,7 +375,6 @@ func ApplyLayoutLocaleValues(
 	tokenizer := html.NewTokenizer(strings.NewReader(source))
 	var output strings.Builder
 	output.WriteString("<!--" + layoutOverlayMarker + "-->")
-	textParts := make([]string, 0, len(units))
 	var pending *layoutUnitMarker
 	flushEmptyText := func() {
 		if pending == nil || pending.Kind != layoutTextMarker {
@@ -385,9 +386,6 @@ func ApplyLayoutLocaleValues(
 			output.WriteString(formatLayoutValueMarker(layoutValueMarker{Kind: layoutTextMarker, ID: pending.ID}))
 			text := layoutTranslatedValue("", value)
 			output.WriteString(html.EscapeString(text))
-			if trimmed := strings.TrimSpace(text); trimmed != "" {
-				textParts = append(textParts, trimmed)
-			}
 		}
 		pending = nil
 	}
@@ -401,7 +399,7 @@ func ApplyLayoutLocaleValues(
 			}
 			flushEmptyText()
 			rendered := output.String()
-			text := strings.Join(textParts, "\n")
+			text := StripHTML(rendered)
 			return stringPointer(rendered), stringPointer(text), nil
 		case html.CommentToken:
 			marker, recognized, parseErr := parseLayoutUnitMarker(tokenizer.Token().Data)
@@ -453,9 +451,6 @@ func ApplyLayoutLocaleValues(
 					output.WriteString(html.EscapeString(text))
 				} else {
 					output.Write(tokenizer.Raw())
-				}
-				if trimmed := strings.TrimSpace(text); trimmed != "" {
-					textParts = append(textParts, trimmed)
 				}
 				pending = nil
 				continue
@@ -628,12 +623,15 @@ func ResolveLayoutLocaleMarkup(source string, target *string) (string, error) {
 }
 
 // StripLayoutPrivateMarkers removes unit and value comments without
-// serializing ordinary tags, preserving the exact rendered wrapper bytes.
+// serializing ordinary tags. Locale text values retain their authored line
+// breaks in HTML; stored values stay byte-stable for marker extraction.
 func StripLayoutPrivateMarkers(content string) (string, error) {
 	tokenizer := html.NewTokenizer(strings.NewReader(content))
 	var output strings.Builder
+	textUnit := false
 	for {
 		tokenType := tokenizer.Next()
+		raw := string(tokenizer.Raw())
 		if tokenType == html.ErrorToken {
 			if errors.Is(tokenizer.Err(), io.EOF) {
 				return output.String(), nil
@@ -645,7 +643,7 @@ func StripLayoutPrivateMarkers(content string) (string, error) {
 			if data == layoutOverlayMarker {
 				continue
 			}
-			_, unit, err := parseLayoutUnitMarker(data)
+			marker, unit, err := parseLayoutUnitMarker(data)
 			if err != nil {
 				return "", err
 			}
@@ -653,11 +651,25 @@ func StripLayoutPrivateMarkers(content string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if unit || value {
+			if unit {
+				textUnit = marker.Kind == layoutTextMarker
+				continue
+			}
+			if value {
 				continue
 			}
 		}
-		output.Write(tokenizer.Raw())
+		if tokenType == html.TextToken && textUnit {
+			text := string(tokenizer.Text())
+			if strings.ContainsAny(text, "\r\n") {
+				text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+				output.WriteString(strings.ReplaceAll(html.EscapeString(text), "\n", "<br>"))
+				textUnit = false
+				continue
+			}
+		}
+		textUnit = false
+		output.WriteString(raw)
 	}
 }
 
@@ -765,5 +777,24 @@ func layoutTranslatedValue(source, value string) string {
 	if value == "" {
 		return ""
 	}
-	return translation.PreserveSourceEdgeWhitespace(source, value)
+	// Preserve source formatting spaces, but explicit locale newlines are
+	// authored content. Trimming them would erase leading/trailing hard breaks.
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" && strings.ContainsAny(value, "\r\n") {
+		return value
+	}
+	leading := source[:len(source)-len(strings.TrimLeftFunc(source, unicode.IsSpace))]
+	trailing := source[len(strings.TrimRightFunc(source, unicode.IsSpace)):]
+	valueLeading := value[:len(value)-len(strings.TrimLeftFunc(value, unicode.IsSpace))]
+	valueTrailing := value[len(strings.TrimRightFunc(value, unicode.IsSpace)):]
+	if strings.ContainsAny(valueLeading, "\r\n") {
+		leading = valueLeading
+	}
+	if strings.ContainsAny(valueTrailing, "\r\n") {
+		trailing = valueTrailing
+	}
+	if trimmed == "" {
+		return ""
+	}
+	return leading + trimmed + trailing
 }

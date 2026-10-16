@@ -16,8 +16,9 @@ import (
 )
 
 func TestEmptyQueueConsumerBecomesReadyIntegration(t *testing.T) {
+	t.Parallel()
 	queue := eventpkg.QueueAiMetadataGenerate
-	pg := resetMQIntegrationQueues(t, queue)
+	pg := newMQIntegrationPostgres(t, queue)
 	ctx, cancel := context.WithCancel(t.Context())
 	consumer := NewQueueConsumer(pg.SQLDB, QueueConfig{
 		Name:        queue,
@@ -35,9 +36,10 @@ func TestEmptyQueueConsumerBecomesReadyIntegration(t *testing.T) {
 }
 
 func TestUserDeletionCommandsShareCallerTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	identityQueue := eventpkg.QueueUserDeleteIdentity
 	avatarQueue := eventpkg.QueueUserDeleteAvatar
-	pg := resetMQIntegrationQueues(t, identityQueue, avatarQueue)
+	pg := newMQIntegrationPostgres(t, identityQueue, avatarQueue)
 	ctx := t.Context()
 	publisher, err := NewPublisher(pg.SQLDB)
 	require.NoError(t, err)
@@ -79,8 +81,9 @@ func TestUserDeletionCommandsShareCallerTransactionIntegration(t *testing.T) {
 }
 
 func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	queue := eventpkg.QueueAiMetadataGenerate
-	pg := resetMQIntegrationQueues(t, queue)
+	pg := newMQIntegrationPostgres(t, queue)
 	ctx := t.Context()
 
 	rolledBack, err := pg.SQLDB.BeginTx(ctx, nil)
@@ -116,8 +119,9 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 }
 
 func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.T) {
+	t.Parallel()
 	queue := eventpkg.QueueAiMetadataGenerate
-	pg := resetMQIntegrationQueues(t, queue)
+	pg := newMQIntegrationPostgres(t, queue)
 	ctx := t.Context()
 	messageID := uuid.NewString()
 	publisher, err := NewPublisher(pg.SQLDB)
@@ -139,8 +143,9 @@ func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.
 }
 
 func TestSharedPGMQReadPreservesContractInvalidTransportIDIntegration(t *testing.T) {
+	t.Parallel()
 	queue := eventpkg.QueueAiMetadataGenerate
-	pg := resetMQIntegrationQueues(t, queue)
+	pg := newMQIntegrationPostgres(t, queue)
 	ctx := t.Context()
 
 	var transportID int64

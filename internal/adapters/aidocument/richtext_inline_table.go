@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -37,11 +38,15 @@ func (style generatedInlineStyle) with(item core.InlineItem) generatedInlineStyl
 
 func projectInlineList(list protoreflect.List) ([]core.InlineItem, error) {
 	result := make([]core.InlineItem, 0, list.Len())
+	content := make([]*contentv1.RichTextInline, 0, list.Len())
 	for index := 0; index < list.Len(); index++ {
 		inline, ok := list.Get(index).Message().Interface().(*contentv1.RichTextInline)
 		if !ok {
 			return nil, errors.New("generated inline type mismatch")
 		}
+		content = append(content, inline)
+	}
+	for _, inline := range richtextinline.Canonicalize(content) {
 		switch {
 		case inline.GetSiteVariable() != nil:
 			variable := inline.GetSiteVariable()
@@ -133,7 +138,7 @@ func inlineToGenerated(values []core.InlineItem) ([]*contentv1.RichTextInline, e
 		}
 		result = append(result, converted...)
 	}
-	return result, nil
+	return richtextinline.Canonicalize(result), nil
 }
 
 func inlineItemToGenerated(
