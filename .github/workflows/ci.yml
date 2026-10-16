@@ -3,10 +3,6 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    paths-ignore:
-      - ".release-please-manifest.json"
-      - "CHANGELOG.md"
-      - "release-please-config.json"
   workflow_dispatch:
     inputs:
       integration_smoke:

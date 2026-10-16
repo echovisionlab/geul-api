@@ -32,6 +32,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          # The existing deployment bot maintains release PRs; this job owns releases only.
+          skip-github-pull-request: true
 
   publish-image:
     name: Publish Image
