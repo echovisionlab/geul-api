@@ -87,12 +87,46 @@ contact mode. The separate broader branding command also generates canonical
 contact keys; it is not part of this cutover.
 
 Historical `page_version`, `post_version` and `work_version.content_snapshot`
-rows are converted as well. Only the four reviewed predecessor catalog
-fingerprints are accepted by the offline converter; unknown fingerprints fail
-closed. It updates the snapshot document to the reviewed strict catalog, then
-validates the exact Page/Post/Work profile and source locale using generated
-restore validation. Snapshot IDs, version numbers, contributors and timestamps
-are preserved. Canonical hashes are derived from the stored snapshot bytes;
+rows are converted as well. The offline converter accepts only these reviewed
+source identities; every other noncurrent fingerprint fails closed:
+
+| Fingerprint                                                        | Evidence                                                             |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `1b0b80933dd4e3a92f66d8f85d25c915d74410ee47bb6cf6ec3adffcfe964bc8` | Contracts initial catalog, commit `5a24205`                          |
+| `e037d77d859734c7c716372434602edfe8872d521e8f0f9b9e28e12827635335` | Contracts Mermaid catalog, commit `68d7cd7`                          |
+| `de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e` | Contracts embed catalog, commit `26fec00`                            |
+| `2db3b07d50a139a670f68e3cd045063d20475a102acbee7852066b1929b7172b` | Contracts durable collaboration catalog, commit `cdae513`            |
+| `7ee996e5a23685d3b981268c3dd6608d8f006f5b62dbec5fb35e1b4d0532cf49` | Contracts site-variable catalog, commit `cb2755f`                    |
+| `ffc51f7192e406fe25fcb5383428be94e74a52db83c666b550ca38d4db88dc85` | Contracts unified contact catalog, commit `3004be1`                  |
+| `5afc20ddc15f7c6099873f33dae6557c5f263e668f12e0babb0186f051a52977` | Observed stored identity; per-snapshot current-shape validation only |
+| `0bff2608f4dfcb86193ffbb4ef9da9ad27a9c5ed9812e7dfe15a6711ef873235` | Observed stored identity; per-snapshot current-shape validation only |
+| `17a1f44809c2a0c3acc168ae6ad756b00a7d980ccca546881fd3b43b3fbbc401` | Observed stored identity; per-snapshot current-shape validation only |
+
+The last three identities have no recovered historical schema in the available
+split-repository Git history. Their admission does not declare general support
+for those old schemas. Each individual payload must decode without unknown
+fields and pass the complete current generated restore validator for its exact
+Page/Post/Work profile and source locale. There is no structural field repair,
+default injection, field removal or runtime fallback. A separate recursive
+before/after comparison permits only the catalog replacement and exact contact
+key/token substitutions. It rejects changes to any other value, object key,
+array order, identity, style or number. JSON numbers retain their precision.
+
+The entire inventory is converted and validated before the first backup-table
+or content write. Operators can validate a private JSON export of rows shaped
+as `{table, id, snapshot}` without committing it or logging authored values:
+
+```sh
+GEUL_CONTACT_HISTORY_CORPUS=/private/path/history.json \
+  go test ./internal/sitevariablemigrate -run '^TestContactPrivateHistoryCorpus$' -count=1 -v
+```
+
+The diagnostic logs row indexes, fingerprints and structural failure categories,
+checks idempotence, and exits nonzero if any row cannot be converted. Its separate
+target-shape probe grants no migration permission. A successful private-corpus
+check does not replace the final immutable-image dry-run and verification while
+writers are stopped. Snapshot IDs, version numbers, contributors and timestamps
+remain unchanged. Canonical hashes are derived from the stored snapshot bytes;
 there is no separate stored hash to leave stale. Runtime decoders never upgrade
 old catalog identities or accept old keys.
 

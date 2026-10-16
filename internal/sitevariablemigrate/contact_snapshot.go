@@ -11,10 +11,19 @@ import (
 
 // This allowlist is an offline data conversion policy, never a runtime decoder.
 var contactSourceCatalogs = map[string]bool{
+	// Verified contracts Git: initial catalog 5a24205, then Mermaid 68d7cd7.
+	"1b0b80933dd4e3a92f66d8f85d25c915d74410ee47bb6cf6ec3adffcfe964bc8": true,
+	"e037d77d859734c7c716372434602edfe8872d521e8f0f9b9e28e12827635335": true,
 	"de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e": true,
 	"2db3b07d50a139a670f68e3cd045063d20475a102acbee7852066b1929b7172b": true,
 	"7ee996e5a23685d3b981268c3dd6608d8f006f5b62dbec5fb35e1b4d0532cf49": true,
 	"ffc51f7192e406fe25fcb5383428be94e74a52db83c666b550ca38d4db88dc85": true,
+	// Observed stored identities, not recovered historical schema definitions.
+	// Each snapshot must independently satisfy the complete current schema and
+	// the contact/catalog-only delta proof below. No field repair is permitted.
+	"5afc20ddc15f7c6099873f33dae6557c5f263e668f12e0babb0186f051a52977": true,
+	"0bff2608f4dfcb86193ffbb4ef9da9ad27a9c5ed9812e7dfe15a6711ef873235": true,
+	"17a1f44809c2a0c3acc168ae6ad756b00a7d980ccca546881fd3b43b3fbbc401": true,
 }
 
 const contactTargetCatalog = "732d62ad223d3012770b10d0a1ab25a8dae2336c52b56ecd01cf276051e75637"
@@ -98,5 +107,12 @@ func ContactSnapshotJSON(source []byte, kind string) ([]byte, error) {
 		return nil, fmt.Errorf("validate converted %s snapshot: %w", kind, err)
 	}
 	envelope["document"] = converted
-	return json.Marshal(envelope)
+	result, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateContactSnapshotDelta(source, result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
