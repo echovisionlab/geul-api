@@ -7,9 +7,15 @@ ARG TARGETARCH
 
 WORKDIR /app
 
-# Download public Go dependencies before copying the source tree.
+ENV GOPRIVATE=github.com/echovisionlab/*
+RUN apk add --no-cache git ca-certificates
+
+# Keep the authenticated Git rewrite in tmpfs, outside all image layers.
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN --mount=type=secret,id=private_deps_token,required=true \
+    --mount=type=tmpfs,target=/root \
+    git config --global url."https://x-access-token:$(cat /run/secrets/private_deps_token)@github.com/".insteadOf "https://github.com/" \
+    && go mod download && go mod verify
 
 # Copy source code.
 COPY . .
@@ -20,10 +26,12 @@ RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -
 FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS og-builder
 WORKDIR /app/media/og
 RUN npm install --global pnpm@12.9.1
-COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml media/og/.npmrc ./
+RUN --mount=type=secret,id=private_deps_token,env=NODE_AUTH_TOKEN,required=true \
+    pnpm install --frozen-lockfile
 COPY media/og/ ./
-RUN pnpm typecheck && pnpm build && pnpm prune --prod
+RUN --mount=type=secret,id=private_deps_token,env=NODE_AUTH_TOKEN,required=true \
+    pnpm typecheck && pnpm build && pnpm prune --prod
 
 FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS mesh-builder
 WORKDIR /app/media/asset-optimizer

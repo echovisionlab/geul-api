@@ -1,12 +1,37 @@
 version: 2
 
+registries:
+  github-private:
+    type: git
+    url: https://github.com
+    username: x-access-token
+    password: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+  github-packages:
+    type: npm-registry
+    url: https://npm.pkg.github.com
+    scope: "@echovisionlab"
+    token: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+
 updates:
   - package-ecosystem: gomod
     directory: /
+    registries:
+      - github-private
     schedule:
       interval: weekly
     groups:
       go-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /media/og
+    registries:
+      - github-packages
+    schedule:
+      interval: weekly
+    groups:
+      og-dependencies:
         patterns:
           - "*"
 

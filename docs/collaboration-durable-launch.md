@@ -167,7 +167,7 @@ implementation; each step needs an explicit go-ahead.
    prefix. Earlier unscoped v1 tab backups are ignored.
 7. **MinIO** — `minio/minio` on Docker Hub denies pulls, so the pinned
    `deployment/infrastructure/data/minio.yaml` image cannot be re-pulled on a new node.
-   Preferred: copy the currently running image by digest into `registry.dsub.io` and pin
+   Preferred: copy the currently running image by digest into `registry.rawsector.com` and pin
    that (same binary, no data migration). A different image (for example Chainguard)
    runs as a non-root user and needs a reviewed data-volume ownership change first.
 8. **Bundle check** — run web `perf:bundle` against the released packages.

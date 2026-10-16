@@ -42,8 +42,8 @@ jobs:
     permissions:
       contents: read
     env:
-      REGISTRY: registry.dsub.io
-      IMAGE_NAME: registry.dsub.io/echovisionlab/geul-api
+      REGISTRY: registry.rawsector.com
+      IMAGE_NAME: registry.rawsector.com/echovisionlab/geul-api
       RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
       RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
       RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
@@ -78,6 +78,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          secrets: |
+            private_deps_token=${{ secrets.PRIVATE_DEPS_TOKEN }}
           labels: |
             org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
             org.opencontainers.image.ref.name=${{ env.RELEASE_TAG }}

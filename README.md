@@ -12,6 +12,37 @@ default is `X-Internal-Service`, matching editor-collab. Invalid header names
 and a missing auth header fail startup closed. `SESSION_COOKIE_NAME` is the companion Identity/Ory
 session-cookie contract.
 
+### Private dependencies
+
+Authenticate before downloading dependencies. Export `NODE_AUTH_TOKEN` from
+your credential manager with read access to the private GitHub npm packages.
+`media/og/.npmrc` reads the token from the environment:
+
+```ini
+registry=https://registry.npmjs.org/
+@echovisionlab:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+The scope mapping applies to every `@echovisionlab` package. This repo consumes
+`geul-event`, `geul-proto`, and `geul-telemetry`; it does not depend on `ionian`
+or `audio-transcoder`. Keep those two packages on public npmjs. If either is
+added here, use an explicit, versioned npmjs tarball URL in `package.json`
+(and the lockfile) to bypass the scope mapping; no republication is required
+with that approach. `.npmrc` cannot route individual packages within a scope.
+
+The API also consumes the private Go modules
+`github.com/echovisionlab/geul-event-contracts` and
+`github.com/echovisionlab/geul-telemetry`. Authenticate Git HTTPS with a
+credential helper that can read these repositories, then set:
+
+```sh
+export GOPRIVATE='github.com/echovisionlab/*'
+```
+
+This bypasses the public Go proxy and checksum database for the private modules.
+Keep tokens out of tracked files and Docker build arguments.
+
 ```sh
 go mod download
 make media-build
@@ -22,12 +53,69 @@ make build
 Build the production image locally:
 
 ```sh
-docker build -t registry.dsub.io/echovisionlab/geul-api:0.1.0 .
+docker build \
+  --secret id=private_deps_token,env=NODE_AUTH_TOKEN \
+  -t registry.rawsector.com/echovisionlab/geul-api:0.1.0 .
 ```
 
-The API uses the public Go modules
-`github.com/echovisionlab/geul-event-contracts` and
-`github.com/echovisionlab/geul-telemetry`.
+For Docker builds, this token must read both the private repositories and npm
+packages. BuildKit mounts it only during dependency operations; the Go Git
+configuration lives in tmpfs. The runtime image needs no GitHub token.
+
+### Operator cutover
+
+1. Create one organization Actions secret, `PRIVATE_DEPS_TOKEN`, available to
+   `geul-api` and the other consuming repositories. Use a GitHub PAT (classic)
+   with `repo` and `read:packages`, an account with access to the dependency
+   repositories/packages, and organization SSO authorization where required
+   ([GitHub npm authentication requirements](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)).
+   Store the same value under the same name in organization Dependabot secrets
+   and grant this repository access there too. Dependabot has a separate secret
+   store; its PR workflows also need that secret.
+2. Publish the dependency versions to **private** GitHub Packages first. This
+   repo currently pins `@echovisionlab/geul-event@0.4.1`,
+   `@echovisionlab/geul-proto@0.4.1`, and
+   `@echovisionlab/geul-telemetry@0.1.4`. Preserve the original npmjs tarball
+   bytes so the committed integrity hashes still match. If repacking changes
+   the bytes, publish a new version and update this consumer deliberately.
+   Ensure `geul-common` is migrated for consumers that need it as well.
+3. Grant the token's account read access to each package, and link packages to
+   their source repositories with private access/inheritance configured.
+   Package visibility and access must be checked separately from repository
+   visibility. In each publishing repo, use its own `GITHUB_TOKEN` with
+   `permissions: packages: write`, GitHub Packages `publishConfig`, and no npmjs
+   provenance/trusted-publishing flags. This repo publishes only a Harbor image;
+   both bundled Node projects remain `private: true` and release-please remains
+   a Go release.
+4. Before enabling frozen installs against the new registry, resolve the three
+   pinned packages against GitHub Packages on an authorized machine:
+
+   ```sh
+   pnpm --dir media/og update --lockfile-only --force \
+     @echovisionlab/geul-event@0.4.1 \
+     @echovisionlab/geul-proto@0.4.1 \
+     @echovisionlab/geul-telemetry@0.1.4
+   ```
+
+   Review and commit the resulting lockfile: each of those entries must have
+   the actual GitHub Packages `dist.tarball` URL and matching integrity.
+   The current npmjs lock entries have only integrity hashes; a registry switch
+   alone can make frozen installs construct invalid GitHub tarball URLs
+   ([pnpm registry-switch issue](https://github.com/pnpm/pnpm/issues/7579)).
+   Do not guess the URLs or remove integrity checks. This step requires the
+   packages to exist and is a prerequisite to the cutover.
+5. Retain `HARBOR_REGISTRY_USERNAME` and `HARBOR_REGISTRY_PASSWORD` with push
+   access to the `echovisionlab` project at `registry.rawsector.com`. Developers
+   and deployment hosts must run `docker login registry.rawsector.com` with
+   pull credentials before pulling API or PostgreSQL images. Kubernetes needs
+   a matching `imagePullSecret` on the consuming workloads. Existing image
+   digests are unchanged; confirm they exist at this registry before cutover.
+6. Merge the consumer configuration and refreshed lockfile after dependency
+   publication, then switch the geul repositories to private. Verify CI and a
+   release build with empty dependency caches on an authorized runner. Private
+   fork PRs do not receive Actions secrets; use trusted same-repository branches
+   for checks requiring private dependencies. Enable Actions to create release
+   pull requests if the organization currently disallows it.
 
 Collection blocks support the shared `itemSize` enum (`s`, `m`, `l`, default
 `m`), released in contracts v0.6.0. See
@@ -239,7 +327,7 @@ For local integration tests, pre-pull an alternative and select it explicitly:
 docker pull cgr.dev/chainguard/minio:latest
 GOWORK=off go run -tags=integration ./scripts/test/integration \
   --band ory --schema-root ../geul-schema \
-  --postgres-image registry.dsub.io/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f \
+  --postgres-image registry.rawsector.com/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f \
   --minio-image cgr.dev/chainguard/minio:latest
 ```
 

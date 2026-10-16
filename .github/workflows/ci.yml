@@ -21,6 +21,8 @@ jobs:
     name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GOPRIVATE: github.com/echovisionlab/*
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,6 +34,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: Configure private Go dependencies
+        env:
+          TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+        run: |
+          : "${TOKEN:?Set the PRIVATE_DEPS_TOKEN repository secret}"
+          config="$RUNNER_TEMP/geul-private-deps.gitconfig"
+          git config --file "$config" url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GIT_CONFIG_GLOBAL=$config" >> "$GITHUB_ENV"
 
       - name: Download modules
         run: go mod download
@@ -52,8 +63,14 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
+          # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
+          # environment-backed auth in the repository .npmrc.
+          registry-url: https://npm.pkg.github.com
+          scope: '@echovisionlab'
 
       - name: Build and test media tools
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
         run: |
           npm install --global pnpm@12.9.1
           make media-test
@@ -72,3 +89,7 @@ jobs:
 
       - name: Build
         run: make build
+
+      - name: Remove private Git credentials
+        if: ${{ always() }}
+        run: rm -f "$GIT_CONFIG_GLOBAL"
