@@ -2,8 +2,9 @@ package mcp
 
 const adminSettingsEmptyInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{}}`
 
-// Keep this list aligned with SiteSettingService.SetManySettings. Value
-// validation, reference checks and attachment checks belong to that service.
+// Advertise canonical authoring settings. SetManySettings also accepts legacy
+// contact aliases for old RPC clients. Value, reference and attachment checks
+// belong to that service.
 const siteSettingsMutablePropertiesJSONSchema = `
   "site_title":{"type":["string","null"]},
   "company_name":{"type":["string","null"]},

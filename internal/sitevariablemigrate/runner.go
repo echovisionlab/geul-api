@@ -50,6 +50,8 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 
 // RunContactEmail rewrites only live legacy contact atoms and reserved tokens.
 // It shares Run's owner locks, before-image backups, validation and revisions.
+// Callers must stop content writers and close collaboration rooms before apply;
+// this maintenance path does not emit live content invalidation events.
 func RunContactEmail(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 	return run(ctx, db, apply, report, true)
 }
