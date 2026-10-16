@@ -25,6 +25,9 @@ func TestContactRichMigrationPreservesDistinctAtomsStylesAndExecutableSource(t *
 }
 
 func TestContactMenuAndTemplateMigrationOnlyRewritesReservedTokens(t *testing.T) {
+	for _, source := range []string{"{{\n contact.supportEmail \n}}", "{ { CONTACT.SUPPORTEMAIL } }", "{{contact.privacyemail}}"} {
+		require.Equal(t, "{{contact.email}}", ContactEmailText(source))
+	}
 	source := `<p data-layout-unit="stable">DSUB {{contact.supportEmail}} / {{contact.privacyEmail}} / {{contact.legalEmail}} / {{recipient.email}}</p>`
 	require.Equal(t, `<p data-layout-unit="stable">DSUB {{contact.email}} / {{contact.email}} / {{contact.legalEmail}} / {{recipient.email}}</p>`, ContactText(source))
 	converted, err := ContactMenuJSON([]byte(`[{"id":"stable","label":"{{contact.supportEmail}}","href":"mailto:{{contact.privacyEmail}}","children":[{"label":"Legal","href":"mailto:{{contact.legalEmail}}"}]}]`))
@@ -35,9 +38,10 @@ func TestContactMenuAndTemplateMigrationOnlyRewritesReservedTokens(t *testing.T)
 func TestContactMigrationDoesNotBackfillUnrelatedLayoutMarkersOrBranding(t *testing.T) {
 	db, mock := migrationTestDB(t)
 	expectLayoutInventory(mock, map[string]string{"en": `<p>DSUB</p>{{content}}`, "ko": `<p>DSUB</p>{{content}}`})
+	expectNoContactHistory(mock)
 	var report bytes.Buffer
 	require.NoError(t, RunContactEmail(t.Context(), db, true, &report))
-	require.Equal(t, "owners=0 apply=true\n", report.String())
+	require.Equal(t, "target_catalog="+contactTargetCatalog+"\nmetadata_rows_blocking=0\ntranslation_jobs_blocking=0\ndelivery_runs_blocking=0 archives_preserved=0\nowners=0 apply=true\n", report.String())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -47,6 +51,7 @@ func TestContactMigrationKeepsMenuOwnerBackupsRevisionAndConflictFence(t *testin
 			db, mock := migrationTestDB(t)
 			before, after := "mailto:{{contact.supportEmail}}", "mailto:{{contact.email}}"
 			expectMenuInventory(mock, before)
+			expectNoContactHistory(mock)
 			expectBackupSchema(mock)
 			mock.ExpectBegin()
 			documentID, revision := uuid.NewString(), uuid.NewString()
@@ -80,11 +85,20 @@ func TestContactMigrationKeepsMenuOwnerBackupsRevisionAndConflictFence(t *testin
 			require.NoError(t, mock.ExpectationsWereMet())
 			if !conflict {
 				expectMenuInventory(mock, after)
+				expectNoContactHistory(mock)
 				report.Reset()
 				require.NoError(t, RunContactEmail(t.Context(), db, true, &report))
-				require.Equal(t, "owners=0 apply=true\n", report.String())
+				require.Equal(t, "target_catalog="+contactTargetCatalog+"\nmetadata_rows_blocking=0\ntranslation_jobs_blocking=0\ndelivery_runs_blocking=0 archives_preserved=0\nowners=0 apply=true\n", report.String())
 				require.NoError(t, mock.ExpectationsWereMet())
 			}
 		})
 	}
+}
+
+func expectNoContactHistory(mock sqlmock.Sqlmock) {
+	for _, spec := range append(append([]tableSpec(nil), contactTextTables...), contactHistoryTables...) {
+		mock.ExpectQuery("SELECT EXISTS").WithArgs(spec.table, spec.column).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	}
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(contactDeliveryAudit.table, contactDeliveryAudit.column).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(contactTranslationAudit.table, contactTranslationAudit.column).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 }

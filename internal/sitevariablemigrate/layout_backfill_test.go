@@ -113,7 +113,7 @@ func TestLayoutBackfillApplyBacksUpWholeOwnerValidatesAndIsIdempotent(t *testing
 				require.NoError(t, Run(t.Context(), db, true, &report))
 				require.Equal(t, "owners=0 apply=true\n", report.String())
 				require.Contains(t, after["ko"], "도움말")
-				require.Contains(t, after["ko"], "mailto:{{contact.supportEmail}}")
+				require.Contains(t, after["ko"], "mailto:{{contact.email}}")
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})

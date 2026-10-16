@@ -8,7 +8,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -55,6 +54,10 @@ func EncodeVersionContentSnapshot(
 		return nil, fmt.Errorf("work version document locale does not match its source locale")
 	}
 
+	if err := contentv1.ValidateRichTextDocument(&contentv1.RichTextDocument{BlockCatalogFingerprint: document.GetBlockCatalogFingerprint(), Profile: document.GetProfile(), SourceLocale: sourceLocale, Base: document.GetBase(), LocaleOverlays: []*contentv1.RichTextLocaleOverlay{document.GetLocaleOverlay()}}, contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT); err != nil {
+		return nil, err
+	}
+
 	documentJSON, err := (protojson.MarshalOptions{UseProtoNames: false}).Marshal(document)
 	if err != nil {
 		return nil, fmt.Errorf("encode Work version typed document: %w", err)
@@ -98,12 +101,15 @@ func DecodeVersionContentSnapshot(data []byte) (VersionContentSnapshot, *content
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(envelope.Document, document); err != nil {
 		return VersionContentSnapshot{}, nil, fmt.Errorf("decode Work version typed document: %w", err)
 	}
-	document.BlockCatalogFingerprint = contentblock.UpgradeVersionSnapshotCatalogFingerprint(document.GetBlockCatalogFingerprint())
 	if document.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK {
 		return VersionContentSnapshot{}, nil, fmt.Errorf("work version document profile must be Work")
 	}
 	if document.GetLocale() != envelope.SourceLocale {
 		return VersionContentSnapshot{}, nil, fmt.Errorf("work version document locale does not match its source locale")
+	}
+
+	if err := contentv1.ValidateRichTextDocument(&contentv1.RichTextDocument{BlockCatalogFingerprint: document.GetBlockCatalogFingerprint(), Profile: document.GetProfile(), SourceLocale: envelope.SourceLocale, Base: document.GetBase(), LocaleOverlays: []*contentv1.RichTextLocaleOverlay{document.GetLocaleOverlay()}}, contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT); err != nil {
+		return VersionContentSnapshot{}, nil, err
 	}
 
 	return VersionContentSnapshot{

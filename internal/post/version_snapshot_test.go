@@ -6,31 +6,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
-func TestPostVersionCheckpointRestoresTheKnownPreviousCatalog(t *testing.T) {
+func TestPostVersionCheckpointRequiresMigratedCatalog(t *testing.T) {
 	document := testPostVersionLocalizedDocument()
 	document.BlockCatalogFingerprint = contentv1.ContentBlockCatalogFingerprint
 	encoded, _, err := marshalPostVersionContentSnapshot(document, "en", nil, nil)
 	require.NoError(t, err)
-	legacy := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e"))
-	_, decoded, err := unmarshalPostVersionContentSnapshot(legacy)
-	require.NoError(t, err)
-	require.Equal(t, contentv1.ContentBlockCatalogFingerprint, decoded.GetBlockCatalogFingerprint())
-	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
-	require.NoError(t, err)
-
-	unknown := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte("stale-catalog"))
-	_, decoded, err = unmarshalPostVersionContentSnapshot(unknown)
-	require.NoError(t, err)
-	_, err = contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(uuid.New(), uuid.New(), decoded, nil)
-	require.ErrorContains(t, err, "fingerprint")
+	for _, fingerprint := range []string{"de190638c6014cc2ac80efce5f747b30d20cc024f3d0820c87ba6c1f1a56e16e", "2db3b07d50a139a670f68e3cd045063d20475a102acbee7852066b1929b7172b", "7ee996e5a23685d3b981268c3dd6608d8f006f5b62dbec5fb35e1b4d0532cf49", "ffc51f7192e406fe25fcb5383428be94e74a52db83c666b550ca38d4db88dc85", "stale-catalog"} {
+		require.NotEqual(t, fingerprint, contentv1.ContentBlockCatalogFingerprint)
+		stored := bytes.ReplaceAll(encoded, []byte(contentv1.ContentBlockCatalogFingerprint), []byte(fingerprint))
+		_, decoded, err := unmarshalPostVersionContentSnapshot(stored)
+		require.ErrorContains(t, err, "fingerprint")
+		require.Nil(t, decoded)
+	}
 }
 
 func TestPostVersionProtoFormatting(t *testing.T) {
@@ -113,7 +106,7 @@ func TestPostVersionContentSnapshotRejectsUnknownEnvelopeField(t *testing.T) {
 func testPostVersionLocalizedDocument() *contentv1.LocalizedRichTextDocument {
 	blockID := "10000000-0000-4000-8000-000000000001"
 	return &contentv1.LocalizedRichTextDocument{
-		BlockCatalogFingerprint: "test-fingerprint",
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST,
 		Locale:                  "en",
 		Base: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{{

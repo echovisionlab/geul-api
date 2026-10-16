@@ -20,8 +20,9 @@ RUN --mount=type=secret,id=private_deps_token,required=true \
 # Copy source code.
 COPY . .
 
-# Build single production binary (includes API, worker, scheduler).
+# Build the server and the reviewed one-time maintenance command.
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o backend ./cmd/server
+RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o site-variable-migrate ./cmd/site-variable-migrate
 
 FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS og-builder
 WORKDIR /app/media/og
@@ -51,6 +52,7 @@ WORKDIR /app
 RUN mkdir -p /coverdata
 
 COPY --from=builder /app/backend .
+COPY --from=builder /app/site-variable-migrate .
 COPY --from=builder /app/assets ./assets
 COPY --from=og-builder /app/media/og/node_modules ./media/og/node_modules
 COPY --from=og-builder /app/media/og/dist ./media/og/dist

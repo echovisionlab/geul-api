@@ -1,97 +1,129 @@
-# Unified public contact email
+# Canonical public contact cutover
 
-`site_settings.contact_email` owns the public contact address. `legal_email`
-remains separate. New content uses `contact.email`. Existing
-`contact.supportEmail` and `contact.privacyEmail` atoms and reserved text tokens
-remain accepted, including in historical snapshots and restores, and resolve to
-the canonical address. An explicitly cleared canonical value stays empty; reads
-never fall back to old database columns.
+The runtime accepts exactly five site-variable keys: `site.title`, `site.url`,
+`site.companyName`, `contact.legalEmail` and `contact.email`. `contact_email` is
+the only public contact setting; legal contact remains independent. Removed
+support/privacy fields, keys, lookup aliases and context fallbacks are absent.
+Their old Protobuf names and numbers are reserved. Older clients must reload.
 
-Management and manifest responses expose the new field and retain both old wire
-fields as read aliases. Existing setting RPC aliases write the canonical column;
-a batch with different canonical/alias values is rejected before mutation. New
-Web and MCP authoring exposes only the canonical setting/key. Legal settings,
-legacy column values and saved history are preserved.
+This is a coordinated maintenance cutover. Package publication and the column
+migration alone do not convert stored content. Do not start canonical-only
+consumers until the live-content/history verification gate below succeeds.
 
-## Schema and package prerequisites
+## Prerequisites and shutdown
 
-Apply geul-schema `migrations/20261016-contact-email-v1.sql` before deploying
-this API. Its transaction locks and backs up the settings table, adds the new
-column and fills only NULL canonical values from trimmed nonempty support,
-then privacy, then an empty string. Retry preserves existing canonical values,
-including an explicit empty string, and does not overwrite prior backups.
+Publish the strict contracts, then common; pin the real published versions and
+lockfiles in API, Web and Collab. Build the reviewed API release image, which
+contains both `/app/backend` and `/app/site-variable-migrate`. Use that immutable
+image digest for the maintenance Kubernetes Job; do not build or run ad hoc Go
+source against production.
 
-Publish the new contracts, then common, and update API/Web/Collab consumers to
-the same content catalog fingerprint before allowing new atoms to be authored.
-Schema migration and package publication do not rewrite content. Existing atoms
-and tokens already render the canonical value through aliases, so the normal
-rolling release requires no content rewrite, writer shutdown or room drain.
-The optional cleanup below is a separate maintenance operation. Do not remove
-legacy keys or wire numbers after converting live content: saved history and
-old clients can still contain them.
+Apply geul-schema `20261016-contact-email-v1.sql`. Its transaction locks and backs
+up settings before adding `contact_email` and initializing only NULL values from
+trimmed nonempty support, then privacy, then an empty string. Existing canonical
+values, including an explicit empty string, and prior backups are preserved.
+The schema Job's Ready condition covers the column only, not content conversion.
 
-Pause contact-setting edits between schema backfill and completion of the API
-replacement: an older API binary can still write the legacy columns without
-updating the new canonical column. Reload old administration forms after the
-new Web release; conflicting old support/privacy inputs are rejected rather
-than choosing one silently. This narrow settings cutover does not require
-stopping content writers or Collab rooms.
+Block content and settings mutations, stop API/MCP/automatic authoring writers
+and delivery schedulers/workers, drain in-flight writes/checkpoints, and close
+Collab rooms. Keep writers stopped until conversion and verification finish.
+Take and verify a fresh external database backup after the drain. The
+`--writers-stopped` acknowledgement does not stop services itself.
 
-## Optional offline cleanup of live content
+Inventory active immutable delivery runs before shutdown when possible. The
+migration preflight counts old reserved contact tokens in
+`email_delivery_run.render_snapshot`, including nested translations and layout
+HTML. Scheduled/sending or unknown-status runs with those tokens block the
+entire conversion before any backup-table or content write. Resolve them through
+the delivery owner's normal drain or cancel/recreate operation; inspect recipient
+claims and outcomes before doing so. Never update sealed snapshots, disable their
+triggers, reset recipient states or re-send delivered mail to bypass this gate.
+Terminal sent/failed/cancelled/skipped archives remain byte-for-byte unchanged and
+are reported as `archives_preserved`; runtime aliases are not restored for them.
 
-Physical conversion is optional; it is unnecessary for settings or rendering to
-use the unified address. The contact conversion is an offline maintenance
-operation. It does not publish
-`content.updated` events or close resident rooms. Before apply, block all content
-writes, stop API/MCP/automatic authoring writers, drain pending checkpoints, and
-close/stop Collab rooms so no resident room can save an old snapshot. Keep these
-writers stopped through verification. The command's `--writers-stopped` flag
-acknowledges this operational prerequisite; it does not stop services itself.
+Queued/running translation jobs are also audited for removed contact keys/tokens
+or predecessor catalog identities in the immutable request manifest and XLIFF.
+Drain or cancel affected requests through the translation owner before cutover;
+recreate them from the canonical source after the new API starts. The converter
+does not rewrite provider handles, request artifacts, digests or archive data.
+Existing queued request recovery plans must be preserved externally.
 
-Take and verify an external database backup first. Build the command from the
-exact API release source on the operator's approved build environment
-(`go build -o site-variable-migrate ./cmd/site-variable-migrate`); the application
-image contains only the server. Supply an explicitly configured `DATABASE_URL`
-through the operator's existing secret mechanism. Inspect the dry-run counts:
+Other entity summaries (Post, Work, Series, Program Event) and site metadata
+descriptions are read-only audited. Any removed contact token there blocks the
+cutover before writes, because those owners are outside the reviewed mutation
+allowlist. Resolve a reported owner through its own normal authoring contract
+and retry; do not broaden an operator SQL replacement to bypass the check.
+
+## Immutable-image maintenance Job
+
+Configure `DATABASE_URL` through the deployment's existing Secret reference and
+inherit the API's real `SITE_ORIGIN`/`CDN_URL` ConfigMap values for email
+validation, without putting credentials in arguments or logs. Override the image command in
+the one-time Job and run these steps in order:
 
 ```sh
-./site-variable-migrate --contact-email --dry-run
-./site-variable-migrate --contact-email --apply --writers-stopped
-./site-variable-migrate --contact-email --dry-run
+/app/site-variable-migrate --contact-email --dry-run
+/app/site-variable-migrate --contact-email --apply --writers-stopped
+/app/site-variable-migrate --contact-email --verify
 ```
 
-Only `--apply` enables writes. The final dry run should report zero changes for
-converted owners. Review any skipped owner or error before restarting writers.
-Email validation failures roll back and report that owner; database errors or
-concurrent-change conflicts stop the run. A partially completed run can be
-retried: completed owners are unchanged on the next pass.
+Only `--apply` writes. `--verify` is read-only, cannot be combined with apply,
+and exits nonzero if any conversion owner or active delivery blocker remains.
+Successful verification reports the pinned `target_catalog`,
+`metadata_rows_blocking=0`, `translation_jobs_blocking=0`,
+`delivery_runs_blocking=0` and `owners=0 apply=false`; the preserved archive count
+may be nonzero. Logs contain
+counts and owner/run identifiers, not content dumps or contact values. Require
+both the Job's successful exit and its verification output before resuming apps.
 
-The contact mode rewrites exact legacy reserved tokens and rich-text atom keys
-in live content Block/locale rows, menu rows/translations, email layout/template
-translations and Page summaries. It preserves atom order, duplicate instances,
-marks, links and legal keys. It does not convert literal addresses or branding,
-backfill layout markers, rewrite executable source fields, delete snapshots or
-modify legacy settings. Omit `--contact-email` only when intentionally running
-the separate, broader legacy branding/layout migration.
+The allowlist converts live content Block/locale JSON, menu rows/translations,
+email layout/template HTML and subject text, and Page summaries. Contact atom
+keys and reserved tokens are rewritten to `contact.email`, preserving order,
+distinct occurrences, marks, links, CSS and private layout markers. Email
+conversion also recognizes the case and brace whitespace accepted by the
+email renderer; ordinary public text and atom keys retain their exact key rules.
+Executable source fields and unrelated branding/literal addresses are not rewritten by
+contact mode. The separate broader branding command also generates canonical
+contact keys; it is not part of this cutover.
 
-Each changed owner runs in a transaction with before-image rows in
-`site_variable_migration_backup`, keyed by reported `run_id`; subsequent runs
-keep prior backups. Row locks and comparisons against the planned values reject
-stale plans. Content documents receive a new revision; legal projections are
-regenerated with their backup contract. Menu and email layout owners also use
-their existing root/document or locale-graph locks. These database fences do
-not replace the writer/room shutdown prerequisite.
+Historical `page_version`, `post_version` and `work_version.content_snapshot`
+rows are converted as well. Only the four reviewed predecessor catalog
+fingerprints are accepted by the offline converter; unknown fingerprints fail
+closed. It updates the snapshot document to the reviewed strict catalog, then
+validates the exact Page/Post/Work profile and source locale using generated
+restore validation. Snapshot IDs, version numbers, contributors and timestamps
+are preserved. Canonical hashes are derived from the stored snapshot bytes;
+there is no separate stored hash to leave stale. Runtime decoders never upgrade
+old catalog identities or accept old keys.
 
-After checking counts, backups, legal projections and revisions, restart the
-matching API/Web/Collab releases and verify current contact/legal settings,
-public content and email rendering. Unsaved browser journals must remain
-available for explicit recovery; do not erase them as part of migration. Old
-revisions must reload/reconcile through the normal conflict flow. Historical
-restores can reintroduce accepted legacy keys; read aliases continue to work
-and the conversion can be rerun during a later maintenance window.
+Each changed owner has a transaction, locked rows, current before-images in
+`site_variable_migration_backup` keyed by a fresh reported `run_id`, and compare
+predicates that reject stale plans. Existing runs' backups are retained. Live
+content documents advance their revision; legal projections are regenerated
+with their own before-images. Menu and layout changes retain their existing
+root/document or locale-graph locks. Version snapshot rows use their own
+before-image and JSON comparison; they do not edit the current live document.
+These database fences do not replace the required writer and room shutdown.
 
-For rollback, stop writers again and use the external backup or the identified
-run's owner before-images under the same owner and revision discipline. Do not
-bulk overwrite content rows while rooms are active or revert only a child row
-without its document revision and derived legal projections. This command
-provides backups, not an automatic rollback command.
+Email validation failures roll back and report the owner. Other failures stop
+the run; earlier committed owners remain backed up. Keep apps stopped, resolve
+the failure and retry. Completed owners are unchanged on retry. A zero exit from
+apply alone is insufficient: the final `--verify` must also succeed, including
+after any reported skipped owner.
+
+## Resume and rollback
+
+After backup/count/revision checks and a successful verification Job, start the
+matching API and confirm readiness, then Collab and Web with the same strict
+catalog fingerprint. Check contact/legal settings, representative live content,
+version restore and email preview. Browsers must reload the new client. Preserve
+unsaved browser journals for explicit recovery; old catalog journals must not be
+silently replayed or deleted. Do not reopen writers on an older binary that can
+write removed keys or old setting columns.
+
+For rollback, stop writers again and restore the external database backup or a
+reviewed migration run's complete owner before-images under the same locking and
+revision discipline. Restore derived legal projections and document revisions
+with their owner, not isolated child rows. Use a matching application version
+for that restored catalog. The command records backups and does not provide an
+automatic rollback operation. Immutable delivery archives are never rewritten.

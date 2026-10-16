@@ -15,9 +15,10 @@ import (
 func TestEmailHrefMigrationRendersAndPreservesMailtoParameters(t *testing.T) {
 	data := map[string]string{"site.title": "rawsector", "site.url": "https://www.rawsector.com"}
 	for _, name := range []string{"legal", "privacy", "support"} {
-		data["contact."+name+"Email"] = name + "@settings.example"
+		key := map[string]string{"legal": "contact.legalEmail", "privacy": "contact.email", "support": "contact.email"}[name]
+		data[key] = name + "@settings.example"
 		for _, fixture := range []struct{ href, want, rendered string }{
-			{"mailto:" + name + "@dsub.io", "mailto:{{contact." + name + "Email}}", "mailto:" + name + "@settings.example"},
+			{"mailto:" + name + "@dsub.io", "mailto:{{" + key + "}}", "mailto:" + name + "@settings.example"},
 			{"mailto:" + name + "@dsub.io?subject=Help", "mailto:" + name + "@rawsector.com?subject=Help", "mailto:" + name + "@rawsector.com?subject=Help"},
 			{"mailto:" + name + "@dsub.io?subject=Help&amp;cc=support@dsub.io", "mailto:" + name + "@rawsector.com?subject=Help&amp;cc=support@rawsector.com", "mailto:" + name + "@rawsector.com?subject=Help&amp;cc=support@rawsector.com"},
 			{"mailto:" + name + "@dsub.io,privacy@dsub.io", "mailto:" + name + "@rawsector.com,privacy@rawsector.com", "mailto:" + name + "@rawsector.com,privacy@rawsector.com"},
@@ -27,7 +28,7 @@ func TestEmailHrefMigrationRendersAndPreservesMailtoParameters(t *testing.T) {
 				t.Run(attribute, func(t *testing.T) {
 					got := EmailSource(`<a ` + attribute + `>DSUB ` + name + `@dsub.io</a>`)
 					require.Contains(t, got, fixture.want)
-					require.Contains(t, got, `>{{site.title}} {{contact.`+name+`Email}}</a>`)
+					require.Contains(t, got, `>{{site.title}} {{`+key+`}}</a>`)
 					require.Equal(t, got, EmailSource(got))
 					rendered, err := email.RenderHTMLVarsStrict(got, data)
 					require.NoError(t, err)
@@ -45,7 +46,7 @@ func TestEmailHrefMigrationRendersAndPreservesMailtoParameters(t *testing.T) {
 func TestTextFixtures(t *testing.T) {
 	for _, fixture := range []struct{ source, want string }{
 		{"DSUB DSUB.IO DSUB.", "{{site.title}} {{site.title}} {{site.title}}."},
-		{"legal@dsub.io privacy@dsub.io support@dsub.io", "{{contact.legalEmail}} {{contact.privacyEmail}} {{contact.supportEmail}}"},
+		{"legal@dsub.io privacy@dsub.io support@dsub.io", "{{contact.legalEmail}} {{contact.email}} {{contact.email}}"},
 		{"MYDSUB DSUBBY https://example.test/DSUB aDSUB@example.test DSUB@example.test", "MYDSUB DSUBBY https://example.test/DSUB aDSUB@example.test DSUB@example.test"},
 		{"/DSUB example.test/DSUB?x=1", "/DSUB example.test/DSUB?x=1"},
 		{"https://DSUB.IO/test https://www.dsub.io/DSUB?x=DSUB support@DSUB.IO", "https://DSUB.IO/test https://www.dsub.io/DSUB?x=DSUB support@DSUB.IO"},
@@ -61,7 +62,7 @@ func TestTextFixtures(t *testing.T) {
 func TestRichJSONFixtures(t *testing.T) {
 	for _, fixture := range []struct{ name, source, want string }{
 		{"styled brand", `{"content":[{"text":{"text":"Hello DSUB!","styles":{"bold":true}}}]}`, `{"content":[{"text":{"text":"Hello ","styles":{"bold":true}}},{"siteVariable":{"key":"site.title","styles":{"bold":true}}},{"text":{"text":"!","styles":{"bold":true}}}]}`},
-		{"plain email", `{"content":[{"text":{"text":"support@dsub.io"}}]}`, `{"content":[{"siteVariable":{"key":"contact.supportEmail"}}]}`},
+		{"plain email", `{"content":[{"text":{"text":"support@dsub.io"}}]}`, `{"content":[{"siteVariable":{"key":"contact.email"}}]}`},
 		{"linked email", `{"content":[{"link":{"href":"mailto:legal@dsub.io","content":[{"text":"legal@dsub.io"}]}}]}`, `{"content":[{"siteVariable":{"key":"contact.legalEmail","linked":true}}]}`},
 		{"relative path", `{"content":[{"link":{"href":"https://www.dsub.io/tools/hwp?x=1#a","content":[{"text":"HWP"}]}}]}`, `{"content":[{"link":{"href":"/tools/hwp?x=1#a","content":[{"text":"HWP"}]}}]}`},
 		{"old url label", `{"content":[{"link":{"href":"https://dsub.io/path?q=1#a","content":[{"text":"https://dsub.io/path?q=1#a"}]}}]}`, `{"content":[{"link":{"href":"/path?q=1#a","content":[{"text":"{{site.url}}/path?q=1#a"}]}}]}`},
@@ -75,7 +76,7 @@ func TestRichJSONFixtures(t *testing.T) {
 		{"match spans styles", `{"content":[{"text":{"text":"Hi DS","styles":{"bold":true}}},{"text":{"text":"UB.IO!","styles":{"italic":true}}}]}`, `{"content":[{"text":{"text":"Hi ","styles":{"bold":true}}},{"siteVariable":{"key":"site.title","styles":{"bold":true}}},{"text":{"text":"!","styles":{"italic":true}}}]}`},
 		{"email spans runs", `{"content":[{"text":{"text":"legal@","styles":{"bold":true}}},{"text":{"text":"dsub.io"}}]}`, `{"content":[{"siteVariable":{"key":"contact.legalEmail","styles":{"bold":true}}}]}`},
 		{"descriptive mailto label", `{"content":[{"link":{"href":"mailto:legal@dsub.io","content":[{"text":"Contact our ","styles":{"bold":true}},{"text":"legal team"}]}}]}`, `{"content":[{"link":{"href":"mailto:{{contact.legalEmail}}","content":[{"text":"Contact our ","styles":{"bold":true}},{"text":"legal team"}]}}]}`},
-		{"empty mailto label", `{"content":[{"link":{"href":"mailto:privacy@dsub.io","content":[]}}]}`, `{"content":[{"link":{"href":"mailto:{{contact.privacyEmail}}","content":[]}}]}`},
+		{"empty mailto label", `{"content":[{"link":{"href":"mailto:privacy@dsub.io","content":[]}}]}`, `{"content":[{"link":{"href":"mailto:{{contact.email}}","content":[]}}]}`},
 		{"trimmed case insensitive email label", `{"content":[{"link":{"href":"MAILTO:LEGAL@DSUB.IO","content":[{"text":" LEGAL@","styles":{"bold":true}},{"text":"DSUB.IO ","styles":{"italic":true}}]}}]}`, `{"content":[{"siteVariable":{"key":"contact.legalEmail","linked":true,"styles":{"bold":true}}}]}`},
 		{"link label boundaries", `{"content":[{"link":{"href":"/about","content":[{"text":"MY"},{"text":"DSUB","styles":{"bold":true}},{"text":" https://example.test/"},{"text":"DSUB","styles":{"italic":true}}]}}]}`, `{"content":[{"link":{"href":"/about","content":[{"text":"MY"},{"text":"DSUB","styles":{"bold":true}},{"text":" https://example.test/"},{"text":"DSUB","styles":{"italic":true}}]}}]}`},
 		{"link label match spans styles", `{"content":[{"link":{"href":"/about","content":[{"text":"DS","styles":{"bold":true}},{"text":"UB!","styles":{"italic":true}}]}}]}`, `{"content":[{"link":{"href":"/about","content":[{"text":"{{site.title}}","styles":{"bold":true}},{"text":"!","styles":{"italic":true}}]}}]}`},
@@ -132,7 +133,8 @@ func TestDescriptiveMailtoUsesGeneratedStorageContract(t *testing.T) {
 			source := []byte(`{"paragraph":{"content":[{"link":{"href":"mailto:` + name + `@dsub.io","content":[{"text":"Contact our team","styles":{"bold":true}}]}}]}}`)
 			got, err := RichJSON(source)
 			require.NoError(t, err)
-			require.Contains(t, string(got), `"href":"mailto:{{contact.`+name+`Email}}"`)
+			key := map[string]string{"legal": "contact.legalEmail", "privacy": "contact.email", "support": "contact.email"}[name]
+			require.Contains(t, string(got), `"href":"mailto:{{`+key+`}}"`)
 			for _, mode := range []contentv1.ContentValidationMode{contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT, contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_WRITE} {
 				_, err = contentv1.NormalizeContentStorageLocale("policy", "paragraph", got, mode)
 				require.NoError(t, err)
@@ -145,7 +147,7 @@ func TestDescriptiveMailtoUsesGeneratedStorageContract(t *testing.T) {
 }
 func TestEmailAndMenuFixtures(t *testing.T) {
 	source := `<p>DSUB.IO support@dsub.io <a href="mailto:privacy@dsub.io">privacy@dsub.io</a><a href="https://www.dsub.io/my?x=1#a">My</a><a href="https://opendiscogs.dsub.io/docs">Docs</a></p>`
-	want := `<p>{{site.title}} {{contact.supportEmail}} <a href="mailto:{{contact.privacyEmail}}">{{contact.privacyEmail}}</a><a href="{{site.url}}/my?x=1#a">My</a><a href="https://opendiscogs.rawsector.com/docs">Docs</a></p>`
+	want := `<p>{{site.title}} {{contact.email}} <a href="mailto:{{contact.email}}">{{contact.email}}</a><a href="{{site.url}}/my?x=1#a">My</a><a href="https://opendiscogs.rawsector.com/docs">Docs</a></p>`
 	require.Equal(t, want, EmailSource(source))
 	require.Equal(t, want, EmailSource(want))
 	menu := `[{"id":"stable","url":"https://www.dsub.io/a%2Fb?x=1#a","children":[{"url":"https://dsub.io/"}]}]`
@@ -170,7 +172,7 @@ func TestMigrationPreservesUnrelatedAndEmptyValues(t *testing.T) {
 	for _, source := range []string{`<a href="https://www.dsub.io.evil/path">DSUB@example.test</a>`, `<a href="https://www.dsub.io@evil/path">Other</a>`} {
 		require.Equal(t, source, EmailSource(source))
 	}
-	require.Equal(t, "{{contact.supportEmail}}.", Text("support@dsub.io."))
+	require.Equal(t, "{{contact.email}}.", Text("support@dsub.io."))
 }
 
 func TestRichMigrationUsesGeneratedPolicyStorageContract(t *testing.T) {

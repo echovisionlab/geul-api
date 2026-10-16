@@ -535,13 +535,14 @@ advertise Bearer authentication merely to share a response format.
 
 ## Concurrent content and delivery contracts
 
-Public contact settings use `contact_email` and the `contact.email` content
-variable; legal contact remains separate. Apply schema migration
-`20261016-contact-email-v1.sql` before starting this API. Deprecated support and
-privacy reads project the unified address, while existing stored columns and
-historical atoms remain intact. See
+Public contact settings use only `contact_email` and the `contact.email` content
+variable; legal contact remains separate. Removed support/privacy settings and
+content keys are rejected. Apply the schema column migration, then complete the
+backed-up offline live-content and history conversion before starting the
+canonical-only API/Web/Collab release. The release image includes
+`/app/site-variable-migrate`; see
 [`docs/contact-email-migration.md`](docs/contact-email-migration.md) for the
-explicit maintenance command, backup and collaboration shutdown requirements.
+mandatory writer shutdown, immutable delivery preflight and verification gate.
 
 Post configuration writes use `configuration_revision` as an optimistic
 concurrency token. Manage clients read it from `manage.v1.Post` and send it as

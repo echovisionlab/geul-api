@@ -45,7 +45,7 @@ func planLayoutChanges(ctx context.Context, db *gorm.DB, rows []struct{ Row []by
 		if contactOnly {
 			owner.Locales = make(map[string]string, len(owner.Before))
 			for locale, html := range owner.Before {
-				owner.Locales[locale] = ContactText(html)
+				owner.Locales[locale] = ContactEmailText(html)
 			}
 			owners[id] = owner
 			continue

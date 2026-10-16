@@ -2,17 +2,49 @@ package sitevariablemigrate
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
-var contactTokens = strings.NewReplacer(
-	"{{contact.supportEmail}}", "{{contact.email}}",
-	"{{contact.privacyEmail}}", "{{contact.email}}",
-)
+var contactTokens = strings.NewReplacer("{{contact.supportEmail}}", "{{contact.email}}", "{{contact.privacyEmail}}", "{{contact.email}}")
+var contactEmailTokens = regexp.MustCompile(`(?i)\{\s*\{\s*contact\.(?:supportemail|privacyemail)\s*\}\s*\}`)
 
 // ContactText replaces exact reserved tokens without interpreting setting values
 // or changing unrelated branding, addresses, template variables or HTML markers.
 func ContactText(source string) string { return contactTokens.Replace(source) }
+
+// Email historically accepts case-folded keys and formatter whitespace.
+func ContactEmailText(source string) string {
+	return contactEmailTokens.ReplaceAllString(source, "{{contact.email}}")
+}
+
+func hasContactTokensJSON(source []byte) (bool, error) {
+	var value any
+	if err := json.Unmarshal(source, &value); err != nil {
+		return false, err
+	}
+	var has func(any) bool
+	has = func(value any) bool {
+		switch node := value.(type) {
+		case string:
+			return ContactEmailText(node) != node
+		case []any:
+			for _, item := range node {
+				if has(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			for _, item := range node {
+				if has(item) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return has(value), nil
+}
 
 func ContactRichJSON(source []byte) ([]byte, error) {
 	return contactJSON(source, false)
