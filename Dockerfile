@@ -27,11 +27,14 @@ FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e9
 WORKDIR /app/media/og
 RUN npm install --global pnpm@12.9.1
 COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml media/og/.npmrc ./
-RUN --mount=type=secret,id=private_deps_token,env=NODE_AUTH_TOKEN,required=true \
+# pnpm ignores environment-backed auth in the repository .npmrc; pass it as pnpm config.
+RUN --mount=type=secret,id=private_deps_token,required=true \
+    env "pnpm_config_//npm.pkg.github.com/:_authToken=$(cat /run/secrets/private_deps_token)" \
     pnpm install --frozen-lockfile
 COPY media/og/ ./
-RUN --mount=type=secret,id=private_deps_token,env=NODE_AUTH_TOKEN,required=true \
-    pnpm typecheck && pnpm build && pnpm prune --prod
+RUN --mount=type=secret,id=private_deps_token,required=true \
+    env "pnpm_config_//npm.pkg.github.com/:_authToken=$(cat /run/secrets/private_deps_token)" \
+    sh -c 'pnpm typecheck && pnpm build && pnpm prune --prod'
 
 FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS mesh-builder
 WORKDIR /app/media/asset-optimizer
