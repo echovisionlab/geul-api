@@ -105,7 +105,7 @@ func TestPackageGoTestArgumentsPreserveDefaultAndApplyOptionalRun(t *testing.T) 
 	t.Parallel()
 
 	packagePath := "./internal/filemedia"
-	withoutFilter := packageGoTestArguments(packagePath, "")
+	withoutFilter := packageGoTestArguments(packagePath, "", integrationRuntimeExclusive, 3)
 	wantWithoutFilter := []string{
 		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",
 		"-count=1", "-tags=integration", packagePath,
@@ -120,7 +120,7 @@ func TestPackageGoTestArgumentsPreserveDefaultAndApplyOptionalRun(t *testing.T) 
 	}
 
 	filter := "^(TestFileDownloadAudiencePolicyIntegration|TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration)$"
-	withFilter := packageGoTestArguments(packagePath, filter)
+	withFilter := packageGoTestArguments(packagePath, filter, integrationRuntimeExclusive, 3)
 	wantWithFilter := []string{
 		"test", "-p", "1", "-parallel", "1", "-timeout", "30m",
 		"-count=1", "-tags=integration", "-run", filter, packagePath,
@@ -132,6 +132,36 @@ func TestPackageGoTestArgumentsPreserveDefaultAndApplyOptionalRun(t *testing.T) 
 		if withFilter[index] != wantWithFilter[index] {
 			t.Fatalf("filtered argument %d = %q, want %q", index, withFilter[index], wantWithFilter[index])
 		}
+	}
+}
+
+func TestSelectedPackageTestConcurrencyMatchesOwnedResources(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		packagePath  string
+		wantParallel string
+	}{
+		{packagePath: "./internal/mq", wantParallel: "2"},
+		{packagePath: "./internal/telemetry", wantParallel: "2"},
+		{packagePath: "./internal/transcode/application", wantParallel: "2"},
+		{packagePath: "./internal/member", wantParallel: "1"},
+		{packagePath: "./internal/filemedia", wantParallel: "1"},
+		{packagePath: "./internal/testutil", wantParallel: "1"},
+	} {
+		t.Run(testCase.packagePath, func(t *testing.T) {
+			t.Parallel()
+			bands, err := selectedIntegrationBands("", testCase.packagePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			arguments := packageGoTestArguments(testCase.packagePath, "^TestSelected$", bands[0].Resources, 2)
+			if arguments[2] != "1" || arguments[4] != testCase.wantParallel {
+				t.Fatalf("package/test concurrency = %q/%q, want 1/%s", arguments[2], arguments[4], testCase.wantParallel)
+			}
+			if arguments[len(arguments)-3] != "-run" || arguments[len(arguments)-2] != "^TestSelected$" || arguments[len(arguments)-1] != testCase.packagePath {
+				t.Fatalf("selected package/filter changed: %q", arguments)
+			}
+		})
 	}
 }
 

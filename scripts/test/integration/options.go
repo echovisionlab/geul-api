@@ -127,11 +127,15 @@ func bandGoTestArguments(band integrationBand, jobs int) []string {
 	}, band.Packages...)
 }
 
-func packageGoTestArguments(packagePath, run string) []string {
+func packageGoTestArguments(packagePath, run string, resources integrationResourceMode, jobs int) []string {
+	parallelTests := 1
+	if resources == integrationPostgresOnly {
+		parallelTests = jobs
+	}
 	arguments := []string{
 		"test",
 		"-p", "1",
-		"-parallel", "1",
+		"-parallel", strconv.Itoa(parallelTests),
 		"-timeout", "30m",
 		"-count=1",
 		"-tags=integration",

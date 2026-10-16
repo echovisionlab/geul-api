@@ -113,6 +113,7 @@ for registry authentication.
    ([pnpm registry-switch issue](https://github.com/pnpm/pnpm/issues/7579)).
    Do not guess the URLs or remove integrity checks. This step requires the
    packages to exist and is a prerequisite to the cutover.
+
 5. Retain `HARBOR_REGISTRY_USERNAME` and `HARBOR_REGISTRY_PASSWORD` with push
    access to the `echovisionlab` project at `registry.rawsector.com`. Developers
    and deployment hosts must run `docker login registry.rawsector.com` with
@@ -330,6 +331,11 @@ reviewed schema checkout and the pinned PostgreSQL image:
 make test-integration-db
 ```
 
+For a CI-only check of the changed PostgreSQL fixtures, dispatch `CI` with
+`integration_smoke=true`. It uses the pinned schema and test image, verifies
+clone/cleanup isolation, and runs MQ, durable telemetry, and transcode application
+contracts with two test workers. Pull requests keep the ordinary fast gates.
+
 Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
 local inputs. The runner starts its own PostgreSQL container and creates
 disposable databases.
@@ -439,7 +445,10 @@ PAT verifiers use the existing constant-time SHA-256 comparison.
 Success returns `200` JSON:
 
 ```json
-{"subject":"<member id>","extra":{"member_id":"<member id>","token_id":"<selector>"}}
+{
+  "subject": "<member id>",
+  "extra": { "member_id": "<member id>", "token_id": "<selector>" }
+}
 ```
 
 Missing, malformed or invalid credentials return `401 {"error":"Unauthorized"}`.

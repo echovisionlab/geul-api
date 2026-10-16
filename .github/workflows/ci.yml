@@ -4,9 +4,16 @@ on:
   pull_request:
     branches: [main]
     paths-ignore:
-      - '.release-please-manifest.json'
-      - 'CHANGELOG.md'
-      - 'release-please-config.json'
+      - ".release-please-manifest.json"
+      - "CHANGELOG.md"
+      - "release-please-config.json"
+  workflow_dispatch:
+    inputs:
+      integration_smoke:
+        description: Run focused PostgreSQL integration smoke tests
+        type: boolean
+        default: true
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -64,7 +71,7 @@ jobs:
       - name: Set up Node for process tests
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.21.0'
+          node-version: "24.21.0"
 
       - name: Test
         run: make test
@@ -98,11 +105,11 @@ jobs:
       - name: Set up media tools
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.21.0'
+          node-version: "24.21.0"
           # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
           # environment-backed auth in the repository .npmrc.
           registry-url: https://npm.pkg.github.com
-          scope: '@echovisionlab'
+          scope: "@echovisionlab"
 
       - name: Build and test media tools
         env:
@@ -111,16 +118,109 @@ jobs:
           npm install --global pnpm@12.9.1
           make media-test
 
+  integration-smoke:
+    name: PostgreSQL integration smoke
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.integration_smoke }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOPRIVATE: github.com/echovisionlab/*
+      GOWORK: "off"
+      INTEGRATION_SCHEMA_REVISION: 85bb344cf6232336c88029e667e5c75d37c59046
+      INTEGRATION_POSTGRES_IMAGE: registry.rawsector.com/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout reviewed schema
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: echovisionlab/geul-schema
+          ref: ${{ env.INTEGRATION_SCHEMA_REVISION }}
+          path: .integration-schema
+          token: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Configure private Go dependencies
+        env:
+          TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+        run: |
+          : "${TOKEN:?Set the PRIVATE_DEPS_TOKEN repository secret}"
+          config="$RUNNER_TEMP/geul-private-deps.gitconfig"
+          git config --file "$config" url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          echo "GIT_CONFIG_GLOBAL=$config" >> "$GITHUB_ENV"
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Join the tailnet for the test image registry
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Resolve the test image registry
+        env:
+          REGISTRY_INTERNAL_ADDRESS: ${{ vars.REGISTRY_INTERNAL_ADDRESS }}
+        run: |
+          : "${REGISTRY_INTERNAL_ADDRESS:?Set the REGISTRY_INTERNAL_ADDRESS repository variable}"
+          echo "${REGISTRY_INTERNAL_ADDRESS} registry.rawsector.com" | sudo tee -a /etc/hosts >/dev/null
+
+      - name: Log in to the test image registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: registry.rawsector.com
+          username: ${{ secrets.HARBOR_REGISTRY_USERNAME }}
+          password: ${{ secrets.HARBOR_REGISTRY_PASSWORD }}
+
+      - name: Pull reviewed PostgreSQL image
+        run: docker pull "$INTEGRATION_POSTGRES_IMAGE"
+
+      - name: Verify isolated PostgreSQL fixtures and integration contracts
+        run: |
+          # Each native runner invocation first verifies distinct logical databases,
+          # committed-row isolation, independent cleanup, and database removal.
+          # Only the selected DB package runs; Ory/runtime backends are not started.
+          for package in ./internal/mq ./internal/telemetry ./internal/transcode/application; do
+            go run -tags=integration ./scripts/test/integration \
+              --schema-root "$GITHUB_WORKSPACE/.integration-schema" \
+              --postgres-image "$INTEGRATION_POSTGRES_IMAGE" \
+              --jobs 2 --package "$package"
+          done
+
+      - name: Remove private Git credentials
+        if: ${{ always() }}
+        run: rm -f "$GIT_CONFIG_GLOBAL"
+
   validate:
-    # Keep the existing required check and fail closed if either job is skipped,
-    # cancelled, or fails. Both independent suites must still pass.
+    # PRs require both ordinary suites. A requested dispatch smoke must also pass;
+    # a skipped smoke is accepted only when it was not requested.
     name: Validate
     runs-on: ubuntu-latest
-    needs: [go-checks, media-tools]
+    needs: [go-checks, media-tools, integration-smoke]
     if: ${{ always() }}
     steps:
       - name: Require every validation job
         env:
           GO_RESULT: ${{ needs.go-checks.result }}
           MEDIA_RESULT: ${{ needs.media-tools.result }}
-        run: test "$GO_RESULT" = success && test "$MEDIA_RESULT" = success
+          SMOKE_REQUIRED: ${{ github.event_name == 'workflow_dispatch' && inputs.integration_smoke }}
+          SMOKE_RESULT: ${{ needs.integration-smoke.result }}
+        run: |
+          test "$GO_RESULT" = success
+          test "$MEDIA_RESULT" = success
+          if [ "$SMOKE_REQUIRED" = true ]; then
+            test "$SMOKE_RESULT" = success
+          else
+            test "$SMOKE_RESULT" = skipped
+          fi
