@@ -81,6 +81,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 
 	for {
 		tokenType := tokenizer.Next()
+		raw := string(tokenizer.Raw())
 		switch tokenType {
 		case html.ErrorToken:
 			if !errors.Is(tokenizer.Err(), io.EOF) {
@@ -111,7 +112,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if err := flushEmptyText(); err != nil {
 				return "", err
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		case html.StartTagToken, html.SelfClosingTagToken:
 			if pending != nil && pending.Kind == layoutTextMarker {
 				if err := flushEmptyText(); err != nil {
@@ -130,7 +131,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if marker != nil {
 				output.WriteString(formatLayoutUnitMarker(*marker))
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 			if tokenType == html.StartTagToken && isExcluded {
 				excludedDepth++
 			}
@@ -142,7 +143,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if translation.IsExcludedHTMLElement(token.DataAtom) && excludedDepth > 0 {
 				excludedDepth--
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		case html.TextToken:
 			text := string(tokenizer.Text())
 			eligible := excludedDepth == 0 && (layoutTextIsTranslatable(text) || (pending != nil && pending.Kind == layoutTextMarker))
@@ -159,12 +160,12 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 			if marker != nil {
 				output.WriteString(formatLayoutUnitMarker(*marker))
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		default:
 			if err := flushEmptyText(); err != nil {
 				return "", err
 			}
-			output.Write(tokenizer.Raw())
+			output.WriteString(raw)
 		}
 	}
 }
@@ -630,6 +631,7 @@ func StripLayoutPrivateMarkers(content string) (string, error) {
 	textUnit := false
 	for {
 		tokenType := tokenizer.Next()
+		raw := string(tokenizer.Raw())
 		if tokenType == html.ErrorToken {
 			if errors.Is(tokenizer.Err(), io.EOF) {
 				return output.String(), nil
@@ -667,7 +669,7 @@ func StripLayoutPrivateMarkers(content string) (string, error) {
 			}
 		}
 		textUnit = false
-		output.Write(tokenizer.Raw())
+		output.WriteString(raw)
 	}
 }
 

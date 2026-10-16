@@ -188,17 +188,9 @@ func (emailTemplateRuntimeFixture) ResolveLocalizedTemplate(ctx context.Context,
 	return resolved, err
 }
 
-func (emailTemplateRuntimeFixture) RenderVariables(value string, data map[string]string) string {
-	return email.RenderVars(value, data)
-}
-
-func (emailTemplateRuntimeFixture) WrapWithLayout(ctx context.Context, db *gorm.DB, layoutID, locale, content string, data map[string]string) (string, error) {
-	rendered, _, err := email.WrapWithLayoutForLocaleStrict(ctx, db, layoutID, locale, content, data)
-	return rendered, err
-}
-
-func (emailTemplateRuntimeFixture) NormalizeRenderedHTML(value string) string {
-	return email.NormalizeRenderedHTML(value)
+func (emailTemplateRuntimeFixture) ResolveLayoutHTML(ctx context.Context, db *gorm.DB, layoutID, locale string) (string, error) {
+	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, locale)
+	return layout, err
 }
 
 func (emailTemplateRuntimeFixture) NormalizeSupportedLocale(value string) *string {

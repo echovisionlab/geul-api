@@ -140,7 +140,7 @@ func renderStoredTemplate(
 
 	html := ""
 	if localizedTemplate.ContentHTML != nil {
-		html = NormalizeEmailContentHTML(*localizedTemplate.ContentHTML)
+		html = *localizedTemplate.ContentHTML
 	}
 
 	// Add subject to data for layout rendering
@@ -164,7 +164,7 @@ func renderStoredTemplate(
 			displayedLocale = layoutLocale
 		}
 	} else {
-		html, err = RenderHTMLVarsStrict(html, data)
+		html, err = RenderEmailHTML(html, "", data)
 		if err != nil {
 			return nil, fmt.Errorf("render email HTML: %w", err)
 		}
@@ -200,7 +200,7 @@ func RenderCampaignSnapshotForLocale(
 	if err != nil {
 		return nil, fmt.Errorf("render delivery snapshot subject: %w", err)
 	}
-	html := NormalizeEmailContentHTML(content.ContentHTML)
+	html := content.ContentHTML
 
 	data["subject"] = subject
 
@@ -209,16 +209,11 @@ func RenderCampaignSnapshotForLocale(
 	if layoutLocale != "" {
 		displayedLocale = layoutLocale
 	}
-	if strings.TrimSpace(layoutHTML) != "" {
-		layoutHTML = NormalizeTemplatePlaceholders(layoutHTML)
-		html = strings.ReplaceAll(layoutHTML, "{{content}}", html)
-	}
-	html, err = RenderHTMLVarsStrict(html, data)
+	html, err = RenderEmailHTML(html, layoutHTML, data)
 	if err != nil {
 		return nil, fmt.Errorf("render delivery snapshot HTML: %w", err)
 	}
 
-	html = NormalizeRenderedHTML(html)
 	return &RenderedEmail{
 		Subject:            subject,
 		HTML:               html,
@@ -381,17 +376,14 @@ func WrapWithLayoutForLocaleStrict(
 	if err != nil {
 		return "", displayedLocale, err
 	}
+	rendered, err := RenderEmailHTML(content, layoutHTML, data)
 	if strings.TrimSpace(layoutHTML) == "" {
-		rendered, err := RenderHTMLVarsStrict(content, data)
 		return rendered, "", err
 	}
-	layoutHTML = NormalizeTemplatePlaceholders(layoutHTML)
-	result := strings.ReplaceAll(layoutHTML, "{{content}}", content)
-	result, err = RenderHTMLVarsStrict(result, data)
 	if err != nil {
 		return "", "", err
 	}
-	return NormalizeRenderedHTML(result), displayedLocale, nil
+	return rendered, displayedLocale, nil
 }
 
 // RenderVars replaces {{key}} placeholders with HTML-escaped values.

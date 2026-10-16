@@ -75,43 +75,24 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 	// so preview can render unknown/custom variables instead of leaving braces.
 	fillMissingPreviewVariables(sampleData, previewSubject, html)
 
-	renderedSubject, err := email.RenderSubjectVarsStrict(previewSubject, sampleData)
+	layoutHTML := ""
+	if layoutID := resolveEmailTemplatePreviewLayoutID(req.Msg, localizedTemplate); layoutID != nil {
+		layoutHTML, err = s.runtime.ResolveLayoutHTML(ctx, s.db, *layoutID, requestedLocale)
+		if err != nil {
+			return nil, errs.FailedPrecondition("email layout preview failed: " + err.Error())
+		}
+	}
+	rendered, err := email.RenderDraftEmail(ctx, email.DraftEmail{
+		Subject: previewSubject, ContentHTML: html, LayoutHTML: layoutHTML,
+		Variables: sampleData, Locale: requestedLocale,
+	})
 	if err != nil {
 		return nil, errs.FailedPrecondition(err.Error())
 	}
-	renderedHTML := html
-
-	// Add subject to sampleData for layout rendering
-	sampleData["subject"] = renderedSubject
-
-	// Determine layout ID: request param takes precedence over saved value
-	layoutID := resolveEmailTemplatePreviewLayoutID(req.Msg, localizedTemplate)
-
-	// Wrap with layout if configured
-	if layoutID != nil {
-		var layoutErr error
-		renderedHTML, layoutErr = s.runtime.WrapWithLayout(
-			ctx,
-			s.db,
-			*layoutID,
-			requestedLocale,
-			renderedHTML,
-			sampleData,
-		)
-		if layoutErr != nil {
-			return nil, errs.FailedPrecondition("email layout preview failed: " + layoutErr.Error())
-		}
-	} else {
-		renderedHTML, err = email.RenderHTMLVarsStrict(renderedHTML, sampleData)
-		if err != nil {
-			return nil, errs.FailedPrecondition(err.Error())
-		}
-	}
-	renderedHTML = s.runtime.NormalizeRenderedHTML(renderedHTML)
 
 	return connect.NewResponse(&managev1.PreviewEmailTemplateResponse{
-		Subject: renderedSubject,
-		Html:    renderedHTML,
+		Subject: rendered.Subject,
+		Html:    rendered.HTML,
 	}), nil
 }
 
@@ -142,7 +123,7 @@ func resolveEmailTemplatePreviewHTML(
 	}
 
 	if emailTemplate.ContentHTML != nil {
-		return email.NormalizeEmailContentHTML(*emailTemplate.ContentHTML), nil
+		return *emailTemplate.ContentHTML, nil
 	}
 
 	return "", nil

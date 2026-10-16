@@ -1301,7 +1301,7 @@ func (s *CampaignService) PreviewCampaign(
 	}
 
 	if layoutID == nil {
-		htmlContent, err = email.RenderHTMLVarsStrict(htmlContent, sampleData)
+		htmlContent, err = email.RenderEmailHTML(htmlContent, "", sampleData)
 		if err != nil {
 			return nil, errs.InvalidArgument("document", err.Error())
 		}

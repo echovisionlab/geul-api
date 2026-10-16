@@ -918,17 +918,11 @@ func (s *EmailLayoutService) PreviewEmailLayoutContent(
 // renderLayoutPreviewHTML mirrors production layout rendering:
 // 1) inject raw HTML into {{content}}, 2) render remaining escaped variables.
 func renderLayoutPreviewHTML(layoutHTML, contentHTML string, data map[string]string) (string, error) {
-	layoutHTML = email.NormalizeTemplatePlaceholders(layoutHTML)
-	canonical, err := email.CanonicalizeLayoutSourceMarkers(layoutHTML)
+	prepared, err := email.PrepareDraftLayoutHTML(layoutHTML)
 	if err != nil {
 		return "", err
 	}
-	layoutHTML, err = email.ResolveLayoutLocaleMarkup(canonical, nil)
-	if err != nil {
-		return "", err
-	}
-	rendered := strings.ReplaceAll(layoutHTML, "{{content}}", contentHTML)
-	return email.NormalizeRenderedHTML(email.RenderVars(rendered, data)), nil
+	return email.RenderEmailHTML(contentHTML, prepared, data)
 }
 
 func (s *EmailLayoutService) sampleLayoutPreviewData(

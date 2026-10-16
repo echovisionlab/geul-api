@@ -168,10 +168,7 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 	}
 	html := ""
 	if localized.ContentHTML != nil {
-		html, err = email.RenderHTMLVarsStrict(*localized.ContentHTML, data)
-		if err != nil {
-			return nil, fmt.Errorf("render Campaign email HTML: %w", err)
-		}
+		html = *localized.ContentHTML
 	}
 	data["subject"] = subject
 
@@ -186,6 +183,12 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 		}
 		if layoutLocale != "" {
 			displayedLocale = layoutLocale
+		}
+	}
+	if localized.LayoutID == nil {
+		html, err = email.RenderEmailHTML(html, "", data)
+		if err != nil {
+			return nil, fmt.Errorf("render Campaign email HTML: %w", err)
 		}
 	}
 	html = email.NormalizeRenderedHTML(html)
