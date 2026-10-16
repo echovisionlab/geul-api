@@ -59,7 +59,7 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 	owner := &recordingAdminSettingsApplication{settings: &managev1.AllSettings{
 		Public: &managev1.PublicSettings{
 			SiteTitle: "Site", CompanyName: "Company", CompanyAddress: "Address", TaxId: "Tax",
-			LegalEmail: "legal@example.test", ContactEmail: "contact@example.test", SupportEmail: "contact@example.test", PrivacyEmail: "contact@example.test",
+			LegalEmail: "legal@example.test", ContactEmail: "contact@example.test",
 			MetaDescription: "Description", PrimaryColor: "#abcdef", DefaultCommentsEnabled: true, SocialLinks: social,
 			HomepagePageId: adminSettingsPointer(adminSettingsTestID), MenuHeaderId: adminSettingsPointer(adminSettingsTestID),
 			GoogleAnalyticsId: adminSettingsPointer("G-ABC"), DefaultMapThemeId: adminSettingsTestID,
@@ -78,12 +78,15 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 	settings := result.StructuredContent["settings"].(map[string]any)
 	for key, value := range map[string]any{
 		"site_title": "Site", "company_name": "Company", "company_address": "Address", "tax_id": "Tax", "meta_description": "Description",
-		"legal_email": "legal@example.test", "contact_email": "contact@example.test", "support_email": "contact@example.test", "privacy_email": "contact@example.test",
+		"legal_email": "legal@example.test", "contact_email": "contact@example.test",
 		"primary_color": "#abcdef", "default_comments_enabled": true, "homepage_page_id": adminSettingsTestID,
 		"menu_header_id": adminSettingsTestID, "google_analytics_id": "G-ABC", "default_map_theme_id": adminSettingsTestID,
 		"site_origin": "https://example.test", "logo_light_file_id": adminSettingsTestID,
 	} {
 		require.Equal(t, value, settings[key], key)
+	}
+	for _, key := range []string{"support_email", "privacy_email"} {
+		require.NotContains(t, settings, key)
 	}
 	require.Nil(t, settings["favicon_file_id"])
 	require.Nil(t, settings["menu_footer_id"])
@@ -418,4 +421,18 @@ func (owner *recordingAdminSettingsApplication) UpdateSender(ctx context.Context
 	owner.ctx, owner.sender = ctx, input
 	owner.calls++
 	return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: owner.adapter}), owner.err
+}
+
+func TestSiteSettingsUpdateRejectsLegacyContactKeys(t *testing.T) {
+	for _, key := range []string{"support_email", "privacy_email"} {
+		owner := &recordingAdminSettingsApplication{}
+		tools, err := NewAdminSettingsTools(owner, owner)
+		require.NoError(t, err)
+		_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolSiteSettingsUpdate,
+			toolArguments(t, `{"settings":{"`+key+`":"contact@example.test"}}`))
+		var executionErr *mcpserver.ToolExecutionError
+		require.ErrorAs(t, err, &executionErr)
+		require.Contains(t, executionErr.Message, "unsupported site setting: "+key)
+		require.Zero(t, owner.calls)
+	}
 }

@@ -24,9 +24,9 @@ func TestManifestProjectsRuntimeSiteOriginIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	require.NoError(t, db.Exec(`
 		UPDATE site_settings
-		SET legal_email = ?, contact_email = ?, support_email = ?, privacy_email = ?
+		SET legal_email = ?, contact_email = ?
 		WHERE id = 1
-	`, "legal@example.test", "contact@example.test", "support@example.test", "privacy@example.test").Error)
+	`, "legal@example.test", "contact@example.test").Error)
 	service := newManifestIntegrationService(t, db, "https://cdn.example.com", "https://www.example.test/")
 
 	response, err := service.Get(t.Context(), connect.NewRequest(&openv1.GetRequest{}))
@@ -34,8 +34,6 @@ func TestManifestProjectsRuntimeSiteOriginIntegration(t *testing.T) {
 	require.Equal(t, "https://www.example.test", response.Msg.GetSettings().GetSiteOrigin())
 	require.Equal(t, "legal@example.test", response.Msg.GetSettings().GetLegalEmail())
 	require.Equal(t, "contact@example.test", response.Msg.GetSettings().GetContactEmail())
-	require.Equal(t, "contact@example.test", response.Msg.GetSettings().GetSupportEmail())
-	require.Equal(t, "contact@example.test", response.Msg.GetSettings().GetPrivacyEmail())
 }
 
 func TestManifestProjectsCurrentSiteAssetsOnCanonicalStaticRoutesIntegration(t *testing.T) {

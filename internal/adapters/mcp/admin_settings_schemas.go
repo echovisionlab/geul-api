@@ -2,9 +2,7 @@ package mcp
 
 const adminSettingsEmptyInputJSONSchema = `{"type":"object","additionalProperties":false,"properties":{}}`
 
-// Advertise canonical authoring settings. SetManySettings also accepts legacy
-// contact aliases for old RPC clients. Value, reference and attachment checks
-// belong to that service.
+// Value, reference and attachment checks belong to the settings service.
 const siteSettingsMutablePropertiesJSONSchema = `
   "site_title":{"type":["string","null"]},
   "company_name":{"type":["string","null"]},
@@ -43,8 +41,6 @@ const siteSettingsUpdateInputJSONSchema = `{
 const siteSettingsGetOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["settings"],
   "properties":{"settings":{"type":"object","additionalProperties":false,"properties":{` + siteSettingsMutablePropertiesJSONSchema + `,
-    "support_email":{"type":"string","description":"Legacy read alias of contact_email."},
-    "privacy_email":{"type":"string","description":"Legacy read alias of contact_email."},
     "loader_file_ids":{"type":"array","items":{"type":"string"},"description":"Read-only ordered source File IDs."},
     "default_map_theme_id":{"type":"string","description":"Read-only here. Change with map_theme_set_default."},
     "site_origin":{"type":"string","description":"Read-only runtime origin."}

@@ -21,8 +21,6 @@ var defaultSettings = siteSettingObject{
 	"tax_id":                        "",
 	"legal_email":                   "",
 	"contact_email":                 "",
-	"support_email":                 "",
-	"privacy_email":                 "",
 	"social_links":                  siteSettingObject{},
 	"logo_light_file_id":            nil,
 	"logo_dark_file_id":             nil,
@@ -265,7 +263,7 @@ func settingValue(settings *model.SiteSettings, key string) (siteSettingValue, b
 		return settings.TaxID, true
 	case "legal_email":
 		return settings.LegalEmail, true
-	case "contact_email", "support_email", "privacy_email":
+	case "contact_email":
 		return settings.ContactEmail, true
 	case "social_links":
 		return jsonColumnToMap(settings.SocialLinks, "social_links", true), true
@@ -320,7 +318,7 @@ func (s *SiteSettingService) applySettingValue(settings *model.SiteSettings, key
 	switch key {
 	case "site_title", "company_name", "company_address", "tax_id", "meta_description":
 		return applyRequiredStringSiteSetting(settings, key, value)
-	case "legal_email", "contact_email", "support_email", "privacy_email":
+	case "legal_email", "contact_email":
 		return applyEmailSiteSetting(settings, key, value)
 	case "social_links":
 		v, err := parseJSONObjectBytes(value, false)
@@ -405,7 +403,7 @@ func applyEmailSiteSetting(settings *model.SiteSettings, key string, value siteS
 	switch key {
 	case "legal_email":
 		settings.LegalEmail = parsed
-	case "contact_email", "support_email", "privacy_email":
+	case "contact_email":
 		settings.ContactEmail = parsed
 	}
 	return nil

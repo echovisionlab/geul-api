@@ -212,8 +212,6 @@ func emailTemplateSampleData() map[string]string {
 		"identity_email":     "john@example.com",
 		"identity_name":      "John Doe",
 		"confirm_url":        "https://example.com/confirm/abc123",
-		"reset_link":         "https://example.com/reset/abc123",
-		"confirm_link":       "https://example.com/confirm/abc123",
 		"cancel_url":         "https://example.com/cancel/abc123",
 		"unsubscribe_link":   "https://example.com/unsubscribe/abc123",
 		"verification_code":  "123456",

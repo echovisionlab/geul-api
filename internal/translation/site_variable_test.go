@@ -40,15 +40,15 @@ func TestSiteVariableXLIFFOccurrencesAndMultiset(t *testing.T) {
 }
 
 func TestSiteTextTokensProtectedInRichTextAndLinkLabels(t *testing.T) {
-	tokens := "{{site.title}} {{site.url}} {{site.companyName}} {{contact.legalEmail}} {{contact.supportEmail}} {{contact.privacyEmail}} {{site.title}}"
+	tokens := "{{site.title}} {{site.url}} {{site.companyName}} {{contact.legalEmail}} {{contact.email}} {{site.title}}"
 	// Other double-brace text is protected too, as every translation placeholder always was.
-	others := " {{site.unknown}} {{site.Title}} {{site.title }} {{contact.email}} {{name}}"
+	others := " {{site.unknown}} {{site.Title}} {{site.title }} {{other.value}} {{name}}"
 	content := []*contentv1.RichTextInline{
 		{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: tokens + others}}},
 		{Value: &contentv1.RichTextInline_Link{Link: &contentv1.RichTextLink{Href: "/about", Content: []*contentv1.RichTextStyledText{{Text: tokens + others}}}}},
 	}
 	source, data, nodes := richTextSemanticInline(content)
-	require.Len(t, data, 30) // Six paired-code data entries and twenty-four placeholder occurrences.
+	require.Len(t, data, 28) // Six paired-code data entries and twenty-two placeholder occurrences.
 	var count int
 	var walk func([]XLIFFInline)
 	walk = func(nodes []XLIFFInline) {
@@ -62,11 +62,11 @@ func TestSiteTextTokensProtectedInRichTextAndLinkLabels(t *testing.T) {
 		}
 	}
 	walk(nodes)
-	require.Equal(t, 24, count)
+	require.Equal(t, 22, count)
 	document := XLIFFDocument{Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko", File: XLIFFFile{ID: "page:1", Groups: []XLIFFGroup{{ID: "body", TranslationUnit: []XLIFFUnit{{ID: "u1", Source: source, OriginalData: data, SourceInline: nodes}}}}}}
 	body, err := MarshalXLIFF(&document)
 	require.NoError(t, err)
-	require.Equal(t, 24, strings.Count(string(body), "<ph "))
+	require.Equal(t, 22, strings.Count(string(body), "<ph "))
 	decoded, err := UnmarshalXLIFF(body)
 	require.NoError(t, err)
 	require.Equal(t, source, decoded.File.Groups[0].TranslationUnit[0].Source)
@@ -86,7 +86,7 @@ func TestSiteTextTokensProtectedInRichTextAndLinkLabels(t *testing.T) {
 }
 
 func TestTextTemplateTokenXLIFFRoundTripAndMultiset(t *testing.T) {
-	source := "{{site.title}} {{site.url}} {{site.companyName}} {{contact.legalEmail}} {{contact.supportEmail}} {{contact.privacyEmail}} {{site.title}} {{unknown}}"
+	source := "{{site.title}} {{site.url}} {{site.companyName}} {{contact.legalEmail}} {{contact.email}} {{site.title}} {{unknown}}"
 	document := XLIFFDocument{Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko", File: XLIFFFile{
 		ID: "page:1", Groups: []XLIFFGroup{{ID: "meta", TranslationUnit: []XLIFFUnit{{ID: "title", Source: source}}}},
 	}}
@@ -95,7 +95,7 @@ func TestTextTemplateTokenXLIFFRoundTripAndMultiset(t *testing.T) {
 	document.File.Groups[0].TranslationUnit[0].Target = &target
 	body, err := MarshalXLIFF(&document)
 	require.NoError(t, err)
-	require.Equal(t, 16, strings.Count(string(body), "<ph "))
+	require.Equal(t, 14, strings.Count(string(body), "<ph "))
 	require.Contains(t, string(body), "{{unknown}}")
 	decoded, err := UnmarshalXLIFF(body)
 	require.NoError(t, err)
@@ -126,4 +126,9 @@ func TestEmailTemplateStillProtectsArbitraryPlaceholders(t *testing.T) {
 			require.Error(t, ValidateXLIFFDocument(&document, true))
 		})
 	}
+}
+
+func TestSiteTokenPatternUsesOnlyCanonicalKeys(t *testing.T) {
+	source := "{{site.title}} {{site.url}} {{site.companyName}} {{contact.legalEmail}} {{contact.email}} {{contact.supportEmail}} {{contact.privacyEmail}}"
+	require.Equal(t, []string{"{{site.title}}", "{{site.url}}", "{{site.companyName}}", "{{contact.legalEmail}}", "{{contact.email}}"}, siteTokenPattern.FindAllString(source, -1))
 }

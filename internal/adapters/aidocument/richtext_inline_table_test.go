@@ -304,7 +304,7 @@ func TestRichTextCodecSparseTableCellsPersistThroughTargetAndSourceEdits(t *test
 }
 
 func TestSiteVariableCompactGeneratedRoundTrip(t *testing.T) {
-	items := []core.InlineItem{core.Bold(core.SiteVariable("site.title", false)), core.SiteVariable("contact.supportEmail", true), core.SiteVariable("contact.supportEmail", true)}
+	items := []core.InlineItem{core.Bold(core.SiteVariable("site.title", false)), core.SiteVariable("contact.email", true), core.SiteVariable("contact.email", true)}
 	generated, err := inlineToGenerated(items)
 	require.NoError(t, err)
 	locale := &contentv1.ParagraphBlockLocale{Content: generated}

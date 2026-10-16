@@ -89,7 +89,7 @@ func (s *SiteSettingService) applyRequestedSiteSettings(
 	settings *model.SiteSettings,
 	requested []*managev1.SiteSetting,
 ) error {
-	if err := validateContactEmailAliases(requested); err != nil {
+	if err := validateSiteSettingKeys(requested); err != nil {
 		return err
 	}
 	for _, setting := range requested {
@@ -103,28 +103,6 @@ func (s *SiteSettingService) applyRequestedSiteSettings(
 				fmt.Sprintf("invalid value for key %s: %v", setting.Key, err),
 			)
 		}
-	}
-	return nil
-}
-
-func validateContactEmailAliases(requested []*managev1.SiteSetting) error {
-	var previous *string
-	for _, setting := range requested {
-		if setting.Key != "contact_email" && setting.Key != "support_email" && setting.Key != "privacy_email" {
-			continue
-		}
-		var value structured.Value
-		if setting.Value != nil {
-			value = setting.Value.AsInterface()
-		}
-		email, err := parseString(value)
-		if err != nil {
-			return errs.InvalidArgument("value", fmt.Sprintf("invalid value for key %s: %v", setting.Key, err))
-		}
-		if previous != nil && *previous != email {
-			return errs.InvalidArgument("settings", "contact_email and its legacy aliases must have the same value")
-		}
-		previous = &email
 	}
 	return nil
 }

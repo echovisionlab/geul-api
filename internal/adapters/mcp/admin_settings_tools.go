@@ -216,7 +216,7 @@ func projectSiteSettings(settings *managev1.AllSettings) map[string]any {
 	}
 	return map[string]any{
 		"site_title": public.GetSiteTitle(), "company_name": public.GetCompanyName(), "company_address": public.GetCompanyAddress(), "tax_id": public.GetTaxId(),
-		"legal_email": public.GetLegalEmail(), "contact_email": public.GetContactEmail(), "support_email": public.GetSupportEmail(), "privacy_email": public.GetPrivacyEmail(),
+		"legal_email": public.GetLegalEmail(), "contact_email": public.GetContactEmail(),
 		"social_links": public.GetSocialLinks().AsMap(), "primary_color": public.GetPrimaryColor(), "default_comments_enabled": public.GetDefaultCommentsEnabled(),
 		"homepage_page_id": public.HomepagePageId, "menu_header_id": public.MenuHeaderId, "menu_secondary_id": public.MenuSecondaryId,
 		"menu_footer_id": public.MenuFooterId, "menu_avatar_dropdown_id": public.MenuAvatarDropdownId,

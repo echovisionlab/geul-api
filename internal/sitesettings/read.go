@@ -52,8 +52,6 @@ func (s *SiteSettingService) GetSettings(
 		TaxId:                  settings.TaxID,
 		LegalEmail:             settings.LegalEmail,
 		ContactEmail:           settings.ContactEmail,
-		SupportEmail:           settings.ContactEmail,
-		PrivacyEmail:           settings.ContactEmail,
 		PrimaryColor:           settings.PrimaryColor,
 		DefaultCommentsEnabled: settings.DefaultCommentsEnabled,
 		DefaultMapThemeId:      settings.DefaultMapThemeID,

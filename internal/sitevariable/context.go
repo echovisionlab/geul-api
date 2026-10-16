@@ -15,14 +15,12 @@ import (
 )
 
 type Context struct {
-	SiteTitle, SiteURL, CompanyName        string
-	LegalEmail, SupportEmail, PrivacyEmail string
-	// ContactEmail distinguishes an explicit empty unified value from older contexts.
-	ContactEmail *string
+	SiteTitle, SiteURL, CompanyName string
+	LegalEmail, ContactEmail        string
 }
 
 func FromSettings(settings model.SiteSettings, origin string) Context {
-	return Context{SiteTitle: settings.SiteTitle, SiteURL: strings.TrimRight(strings.TrimSpace(origin), "/"), CompanyName: settings.CompanyName, LegalEmail: settings.LegalEmail, ContactEmail: &settings.ContactEmail}
+	return Context{SiteTitle: settings.SiteTitle, SiteURL: strings.TrimRight(strings.TrimSpace(origin), "/"), CompanyName: settings.CompanyName, LegalEmail: settings.LegalEmail, ContactEmail: settings.ContactEmail}
 }
 
 func Load(ctx context.Context, db *gorm.DB, origin string) (Context, error) {
@@ -41,15 +39,7 @@ func LoadRuntime(ctx context.Context, db *gorm.DB) (Context, error) {
 }
 
 func (c Context) Values() map[string]string {
-	contact := c.SupportEmail
-	if contact == "" {
-		contact = c.PrivacyEmail
-	}
-	support, privacy := c.SupportEmail, c.PrivacyEmail
-	if c.ContactEmail != nil {
-		contact, support, privacy = *c.ContactEmail, *c.ContactEmail, *c.ContactEmail
-	}
-	return map[string]string{"site.title": c.SiteTitle, "site.url": c.SiteURL, "site.companyName": c.CompanyName, "contact.legalEmail": c.LegalEmail, "contact.email": contact, "contact.supportEmail": support, "contact.privacyEmail": privacy}
+	return map[string]string{"site.title": c.SiteTitle, "site.url": c.SiteURL, "site.companyName": c.CompanyName, "contact.legalEmail": c.LegalEmail, "contact.email": c.ContactEmail}
 }
 
 func (c Context) Resolve(key string) (string, error) {
@@ -88,6 +78,5 @@ func ResolvePublicText(ctx context.Context, db *gorm.DB, source string) (string,
 
 // TemplateContext keeps email projections dynamic until trusted delivery data is bound.
 func TemplateContext() Context {
-	contact := "{{contact.email}}"
-	return Context{SiteTitle: "{{site.title}}", SiteURL: "{{site.url}}", CompanyName: "{{site.companyName}}", LegalEmail: "{{contact.legalEmail}}", ContactEmail: &contact}
+	return Context{SiteTitle: "{{site.title}}", SiteURL: "{{site.url}}", CompanyName: "{{site.companyName}}", LegalEmail: "{{contact.legalEmail}}", ContactEmail: "{{contact.email}}"}
 }
