@@ -35,7 +35,7 @@ var documentTools = []mcpserver.Tool{
 	},
 	{
 		Name: ToolDocumentRead, Title: "Read AI document",
-		Description: "Read a compact outline, selected blocks, or selected fields by stable handles. " +
+		Description: "Read a compact outline, selected blocks, or selected fields by stable handles. Site variable atoms use [\"siteVariable\",key] or [\"siteVariable\",key,true]; discover the six keys and permitted links in document schemas. " +
 			"outline accepts no selectors; blocks requires non-empty b and no f; fields requires non-empty f and no b. " +
 			"Pass the canonical document UUID d returned by document_list or document_open." + syncRequiredGuidance,
 		InputSchema: readInputSchema(), OutputSchema: projectionOutputSchema(),

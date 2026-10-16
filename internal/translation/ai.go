@@ -202,7 +202,7 @@ func translationAISystemPrompt(req ProviderRequest) string {
 	if len(profile.ProtectedTerms) > 0 {
 		protectedTermsInstruction = "ProtectedTerms lists names or canonical labels that must preserve their original " +
 			"source form exactly. Do not replace them with translated or transliterated forms, do not normalize their " +
-			"casing, and keep their whitespace exactly as provided. If reader comprehension genuinely requires a " +
+			"casing, and keep their whitespace and occurrence counts exactly as provided. If reader comprehension genuinely requires a " +
 			"localized rendering, keep the original source form first and add the localized form only once in " +
 			"parentheses immediately after it."
 	}
@@ -281,7 +281,7 @@ func buildTranslationAIUserPrompt(req ProviderRequest) (string, error) {
 			Units:         make([]translationAIUnitPayload, 0, len(bundle.TranslationUnit)),
 		}
 		for _, unit := range bundle.TranslationUnit {
-			payloadUnit, err := translationAIUnitFromXLIFF(unit)
+			payloadUnit, err := translationAIUnitFromXLIFF(unit, isEmailTemplateFile(req.Document.File.ID))
 			if err != nil {
 				return "", err
 			}
@@ -309,7 +309,7 @@ func parseTranslationProviderResponse(req ProviderRequest, text string) (*Provid
 		return nil, ErrProviderResponseInvalid
 	}
 	raw := ProviderResponse{Document: providerDocument}
-	validation := ValidateResponse(req.Document, raw)
+	validation := ValidateResponse(req.Document, raw, req.Profile.ProtectedTerms...)
 	if !validation.Passed {
 		return nil, ErrProviderResponseInvalid
 	}
@@ -356,6 +356,7 @@ func xliffProviderResponseFromAI(source XLIFFDocument, envelope translationJSONE
 func ValidateResponse(
 	expected XLIFFDocument,
 	actual ProviderResponse,
+	protectedTerms ...string,
 ) HardValidationResult {
 	expectedUnits := map[string]struct{}{}
 	expectedUnitTexts := map[string]string{}
@@ -364,7 +365,7 @@ func ValidateResponse(
 		for _, unit := range bundle.TranslationUnit {
 			expectedUnits[unit.ID] = struct{}{}
 			expectedUnitTexts[unit.ID] = unit.Source
-			for _, placeholder := range ExtractPlaceholders(unit.Source) {
+			for _, placeholder := range documentPlaceholders(expected, unit.Source) {
 				expectedPlaceholders[placeholder]++
 			}
 		}
@@ -394,17 +395,23 @@ func ValidateResponse(
 				if strings.TrimSpace(*unit.Target) == "" && strings.TrimSpace(expectedUnitTexts[unit.ID]) != "" {
 					parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q target is empty", unit.ID))
 				}
-				if err := validateXLIFFUnitInline(unit, true); err != nil {
+				if err := validateXLIFFUnitInline(unit, true, isEmailTemplateFile(expected.File.ID)); err != nil {
 					parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q inline structure changed", unit.ID))
 				}
 				if CountLineBreaks(expectedUnitTexts[unit.ID]) != CountLineBreaks(*unit.Target) {
 					lineBreakMismatchUnits = append(lineBreakMismatchUnits, unit.ID)
 				}
-				if !SamePlaceholders(expectedUnitTexts[unit.ID], *unit.Target) {
+				for _, term := range protectedTerms {
+					if term != "" && strings.Count(expectedUnitTexts[unit.ID], term) != strings.Count(*unit.Target, term) {
+						parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q protected term count changed", unit.ID))
+						break
+					}
+				}
+				if !sameDocumentPlaceholders(expected, expectedUnitTexts[unit.ID], *unit.Target) {
 					placeholderMismatchUnitIDs = append(placeholderMismatchUnitIDs, unit.ID)
 				}
 			}
-			for _, placeholder := range ExtractPlaceholders(*unit.Target) {
+			for _, placeholder := range documentPlaceholders(expected, *unit.Target) {
 				actualPlaceholders[placeholder]++
 			}
 		}
@@ -515,8 +522,8 @@ func FlattenResponse(result ProviderResponse) map[string]UnitResult {
 	return XLIFFTargets(result.Document)
 }
 
-func translationAIUnitFromXLIFF(unit XLIFFUnit) (translationAIUnitPayload, error) {
-	normalized, err := normalizeXLIFFUnitInline(unit)
+func translationAIUnitFromXLIFF(unit XLIFFUnit, emailTemplate ...bool) (translationAIUnitPayload, error) {
+	normalized, err := normalizeXLIFFUnitInline(unit, emailTemplate...)
 	if err != nil {
 		return translationAIUnitPayload{}, err
 	}
@@ -534,6 +541,10 @@ func translationAIUnitFromXLIFF(unit XLIFFUnit) (translationAIUnitPayload, error
 func SamePlaceholders(sourceText string, translatedText string) bool {
 	source := ExtractPlaceholders(sourceText)
 	translated := ExtractPlaceholders(translatedText)
+	return samePlaceholderMultiset(source, translated)
+}
+
+func samePlaceholderMultiset(source, translated []string) bool {
 	if len(source) != len(translated) {
 		return false
 	}

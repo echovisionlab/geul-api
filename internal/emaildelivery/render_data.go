@@ -8,10 +8,16 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"gorm.io/gorm"
 )
 
 type emailSiteSettings struct {
+	CompanyName     string  `gorm:"column:company_name"`
+	LegalEmail      string  `gorm:"column:legal_email"`
+	SupportEmail    string  `gorm:"column:support_email"`
+	PrivacyEmail    string  `gorm:"column:privacy_email"`
 	SiteTitle       string  `gorm:"column:site_title"`
 	LogoEmailFileID *string `gorm:"column:logo_email_file_id"`
 }
@@ -53,7 +59,7 @@ func loadEmailRenderDefaults(
 	var settings emailSiteSettings
 	err := db.WithContext(ctx).
 		Table("site_settings").
-		Select("site_title, logo_email_file_id").
+		Select("site_title, company_name, legal_email, support_email, privacy_email, logo_email_file_id").
 		Where("id = 1").
 		Take(&settings).Error
 	if err != nil {
@@ -88,6 +94,20 @@ func buildEmailRenderDataWithDefaults(
 		}
 	}
 
+	// Remove case aliases before binding the reserved namespace to trusted values.
+	for key := range data {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "site.") || strings.HasPrefix(lower, "contact.") {
+			delete(data, key)
+		}
+	}
+	trusted := model.SiteSettings{}
+	if settings != nil {
+		trusted = model.SiteSettings{SiteTitle: settings.SiteTitle, CompanyName: settings.CompanyName, LegalEmail: settings.LegalEmail, SupportEmail: settings.SupportEmail, PrivacyEmail: settings.PrivacyEmail}
+	}
+	for key, value := range sitevariable.FromSettings(trusted, siteOrigin).Values() {
+		data[key] = value
+	}
 	data["site_origin"] = strings.TrimRight(strings.TrimSpace(siteOrigin), "/")
 
 	// Prevent unresolved placeholders in rendered emails.

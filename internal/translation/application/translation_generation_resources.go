@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -23,10 +24,20 @@ func loadTranslationGenerationResources(
 	if err != nil {
 		return translation.ProviderRequest{}, err
 	}
+	var siteSettings model.SiteSettings
+	if err := db.WithContext(ctx).Select("site_title", "company_name").Where("id = 1").Take(&siteSettings).Error; err != nil {
+		return translation.ProviderRequest{}, err
+	}
 	request.Profile.ProtectedTerms = translation.NormalizeProtectedTerms(append(
 		request.Profile.ProtectedTerms,
 		matchingTranslationProtectedTerms(request.Document, settings.ProtectedTerms)...,
 	))
+	// Settings values are literal spellings; retain even their edge whitespace.
+	for _, term := range matchingTranslationProtectedTerms(request.Document, []string{siteSettings.SiteTitle, siteSettings.CompanyName}) {
+		if strings.TrimSpace(term) != "" && !slices.Contains(request.Profile.ProtectedTerms, term) {
+			request.Profile.ProtectedTerms = append(request.Profile.ProtectedTerms, term)
+		}
+	}
 	if err := translation.ProtectXLIFFTerms(&request.Document, request.Profile.ProtectedTerms); err != nil {
 		return translation.ProviderRequest{}, err
 	}

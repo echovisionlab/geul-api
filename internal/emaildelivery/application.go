@@ -118,7 +118,12 @@ type DeliveryResult struct {
 func (a *DeliveryApplication) Deliver(
 	ctx context.Context,
 	job *managev1.SendEmailEvent,
-) (DeliveryResult, error) {
+) (deliveryResult DeliveryResult, deliveryErr error) {
+	defer func() {
+		if deliveryErr != nil {
+			LogDeliveryFailure(ctx, "mail.delivery.operation_failed", job, deliveryErr)
+		}
+	}()
 	if job == nil || strings.TrimSpace(job.GetMessageId()) == "" {
 		return DeliveryResult{}, fmt.Errorf("email message id is required")
 	}
@@ -177,12 +182,12 @@ func (a *DeliveryApplication) Deliver(
 	rendered, err := a.renderer.Render(ctx, job)
 	if err != nil {
 		errorType := managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String()
+		LogDeliveryFailure(ctx, "mail.delivery.render_failed", job, err, "reason", "render_failed", "error_type", errorType)
 		if markErr := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", errorType); markErr != nil {
 			return DeliveryResult{}, fmt.Errorf("persist terminal render failure: %w", markErr)
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
 		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusBlocked)
-		logDeliveryLifecycle(ctx, slog.LevelError, "mail.delivery.render_failed", job, "failed", "render_failed", errorType)
 		return DeliveryResult{Outcome: DeliveryRenderFailed}, nil
 	}
 	if rendered == nil {
@@ -216,6 +221,7 @@ func (a *DeliveryApplication) Deliver(
 		Template: job.GetTemplateType(), To: job.GetRecipient(),
 		Subject: rendered.Subject, HTML: rendered.HTML, Text: rendered.Text,
 	}
+	ctx = context.WithValue(ctx, deliveryRenderContextKey{}, rendered)
 	providerMessageID, failures, lastErr, expired, err := a.sendThroughProviders(ctx, job, adapters, message)
 	if err != nil {
 		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
@@ -243,14 +249,14 @@ func (a *DeliveryApplication) Deliver(
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
 		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), status)
-		logDeliveryLifecycle(ctx, slog.LevelError, "mail.delivery.failed", job, "failed", status, errorType)
+		LogDeliveryFailure(ctx, "mail.delivery.failed", job, failureErr, "reason", status, "error_type", errorType)
 		if errorType == managev1.EmailErrorType_EMAIL_ERROR_TYPE_INVALID_RECIPIENT.String() {
 			if suppressErr := a.suppressions.Suppress(ctx, SuppressionRequest{
 				Email: job.GetRecipient(), Reason: EmailSuppressionReasonInvalidRecipient,
 				Source:      EmailSuppressionSourceEmailWorker,
 				ReferenceID: job.GetReferenceId(), ErrorType: failureErr.Error(),
 			}); suppressErr != nil {
-				logDeliveryLifecycle(ctx, slog.LevelError, "mail.delivery.suppression_write_failed", job, "failed", "suppression_write_failed", "database_error")
+				LogDeliveryFailure(ctx, "mail.delivery.suppression_write_failed", job, suppressErr, "reason", "suppression_write_failed", "error_type", "database_error")
 			}
 		}
 	}
@@ -359,13 +365,14 @@ func (a *DeliveryApplication) sendThroughProviders(
 			logDeliveryLifecycle(ctx, slog.LevelInfo, "mail.adapter.accepted", job, "accepted", "", "", "adapter_id", adapter.ID(), "adapter_name", adapter.Name(), "provider_message_id", messageID)
 			return messageID, failures, lastErr, false, nil
 		}
-		if ctx.Err() != nil {
-			return "", failures, lastErr, false, ctx.Err()
-		}
+
 		lastErr = err
 		errorType, retryable := ProviderErrorDecision(err)
-		logDeliveryLifecycle(ctx, slog.LevelError, "mail.adapter.failed", job, "failed", "adapter_send_failed", errorType, "adapter_id", adapter.ID(), "adapter_name", adapter.Name())
+		LogDeliveryFailure(ctx, "mail.adapter.failed", job, err, "reason", "adapter_send_failed", "error_type", errorType, "adapter_id", adapter.ID(), "adapter_name", adapter.Name())
 		failures = append(failures, ProviderFailure{Err: err, ErrorType: errorType})
+		if ctx.Err() != nil {
+			return "", failures, err, false, errors.Join(err, ctx.Err())
+		}
 		if !retryable {
 			break
 		}
@@ -383,6 +390,8 @@ func (a *DeliveryApplication) sendThroughProvider(
 	deadline := now.Add(a.sendTimeout)
 	expiresAt, authCommand, err := EmailCommandExpiresAt(job)
 	if err != nil {
+		// An unreadable expiry is treated as expired, as before; only the cause is new.
+		LogDeliveryFailure(ctx, "mail.delivery.expiry_invalid", job, err, "reason", "expiry_invalid", "adapter_id", adapter.ID())
 		return "", true, nil
 	}
 	if authCommand {
@@ -399,6 +408,7 @@ func (a *DeliveryApplication) sendThroughProvider(
 	cancel()
 	if sendErr != nil {
 		if authCommand && errors.Is(sendContextErr, context.DeadlineExceeded) && !a.now().UTC().Before(expiresAt) {
+			LogDeliveryFailure(ctx, "mail.adapter.expired", job, sendErr, "reason", "expired", "adapter_id", adapter.ID())
 			return "", true, nil
 		}
 		return "", false, sendErr

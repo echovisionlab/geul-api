@@ -302,3 +302,14 @@ func TestRichTextCodecSparseTableCellsPersistThroughTargetAndSourceEdits(t *test
 	require.NoError(t, err)
 	require.Len(t, stored.LocaleOverlay.Blocks[0].GetTable().Content.Rows[0].Cells, 2)
 }
+
+func TestSiteVariableCompactGeneratedRoundTrip(t *testing.T) {
+	items := []core.InlineItem{core.Bold(core.SiteVariable("site.title", false)), core.SiteVariable("contact.supportEmail", true), core.SiteVariable("contact.supportEmail", true)}
+	generated, err := inlineToGenerated(items)
+	require.NoError(t, err)
+	locale := &contentv1.ParagraphBlockLocale{Content: generated}
+	projected, err := projectInlineList(locale.ProtoReflect().Get(findMessageField(locale.ProtoReflect(), "content")).List())
+	require.NoError(t, err)
+	require.Equal(t, items, projected)
+	require.Len(t, generated, 3)
+}

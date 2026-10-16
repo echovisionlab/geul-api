@@ -43,6 +43,10 @@ func projectInlineList(list protoreflect.List) ([]core.InlineItem, error) {
 			return nil, errors.New("generated inline type mismatch")
 		}
 		switch {
+		case inline.GetSiteVariable() != nil:
+			variable := inline.GetSiteVariable()
+			item := core.SiteVariable(variable.GetKey(), variable.GetLinked())
+			result = append(result, projectStyledItem(item, variable.GetStyles()))
 		case inline.GetText() != nil:
 			result = append(result, projectStyledText(inline.GetText()))
 		case inline.GetHardBreak() != nil:
@@ -64,7 +68,10 @@ func projectInlineList(list protoreflect.List) ([]core.InlineItem, error) {
 
 func projectStyledText(value *contentv1.RichTextStyledText) core.InlineItem {
 	item := core.InlineText(value.GetText())
-	styles := value.GetStyles()
+	return projectStyledItem(item, value.GetStyles())
+}
+
+func projectStyledItem(item core.InlineItem, styles *contentv1.RichTextStyle) core.InlineItem {
 	if styles == nil {
 		return item
 	}
@@ -135,6 +142,14 @@ func inlineItemToGenerated(
 	insideLink bool,
 ) ([]*contentv1.RichTextInline, error) {
 	switch item.Kind {
+	case core.InlineKindSiteVariable:
+		if insideLink {
+			return nil, errors.New("siteVariable atoms cannot be nested in text-only links")
+		}
+		if err := core.ValidateInlineItems([]core.InlineItem{item}); err != nil {
+			return nil, err
+		}
+		return []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_SiteVariable{SiteVariable: &contentv1.RichTextSiteVariable{Key: item.Text, Linked: item.Linked, Styles: generatedStyledText("", style).GetStyles()}}}}, nil
 	case core.InlineKindText:
 		return []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{Text: generatedStyledText(item.Text, style)}}}, nil
 	case core.InlineKindBold, core.InlineKindItalic, core.InlineKindUnderline, core.InlineKindStrike,

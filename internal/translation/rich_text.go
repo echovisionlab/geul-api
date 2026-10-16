@@ -2,6 +2,7 @@ package translation
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -36,7 +37,7 @@ func ExtractRichTextUnits(block *contentv1.RichTextBlockLocale, scope RichTextUn
 
 	units := make([]Unit, 0)
 	for _, segment := range richTextSemanticSegments(block) {
-		sourceText, originalData, sourceInline := richTextSemanticInline(segment.content)
+		sourceText, originalData, sourceInline := richTextSemanticInline(segment.content, scope.EntityType == "email_template" || scope.EntityType == "email_layout")
 		units = append(units, Unit{
 			UnitID:        richTextUnitID(scope.UnitPrefix, segment.path),
 			EntityType:    scope.EntityType,
@@ -179,7 +180,7 @@ func richTextSemanticSegments(block *contentv1.RichTextBlockLocale) []richTextSe
 	return segments
 }
 
-func richTextSemanticInline(content []*contentv1.RichTextInline) (string, []XLIFFOriginalData, []XLIFFInline) {
+func richTextSemanticInline(content []*contentv1.RichTextInline, emailTemplate ...bool) (string, []XLIFFOriginalData, []XLIFFInline) {
 	data := make([]XLIFFOriginalData, 0)
 	nodes := make([]XLIFFInline, 0, len(content))
 	runIndex := 0
@@ -192,7 +193,7 @@ func richTextSemanticInline(content []*contentv1.RichTextInline) (string, []XLIF
 	styledNode := func(text *contentv1.RichTextStyledText) XLIFFInline {
 		runIndex++
 		start, end := appendData(""), appendData("")
-		nextData, children := XLIFFInlineFromText(text.GetText(), data)
+		nextData, children := XLIFFInlineFromText(text.GetText(), data, emailTemplate...)
 		data = nextData
 		return XLIFFInline{
 			Kind: XLIFFInlinePairedCode, ID: "r" + strconv.Itoa(runIndex),
@@ -224,6 +225,10 @@ func richTextSemanticInline(content []*contentv1.RichTextInline) (string, []XLIF
 				Kind: XLIFFInlinePlaceholder, ID: "h" + strconv.Itoa(codeIndex),
 				DataRef: ref, CanCopy: "no", CanDelete: "no",
 			})
+		case item.GetSiteVariable() != nil:
+			codeIndex++
+			ref := appendData("{{" + item.GetSiteVariable().GetKey() + "}}")
+			nodes = append(nodes, XLIFFInline{Kind: XLIFFInlinePlaceholder, ID: "v" + strconv.Itoa(codeIndex), DataRef: ref, CanCopy: "no", CanDelete: "no"})
 		case item.GetMathInline() != nil:
 			codeIndex++
 			ref := appendData(item.GetMathInline().GetSource())
@@ -274,7 +279,16 @@ func richTextUnitID(prefix string, path []string) string {
 }
 
 func applyRichTextSemanticResult(content []*contentv1.RichTextInline, result UnitResult) ([]*contentv1.RichTextInline, error) {
+	sourceText, _, _ := richTextSemanticInline(content)
+	if !samePlaceholderMultiset(siteTokenPattern.FindAllString(sourceText, -1), siteTokenPattern.FindAllString(result.TranslatedText, -1)) {
+		return nil, fmt.Errorf("translation changed site token multiset")
+	}
 	if len(result.TargetInline) == 0 {
+		for _, item := range content {
+			if item.GetSiteVariable() != nil {
+				return nil, fmt.Errorf("siteVariable placeholders must be preserved")
+			}
+		}
 		runCount := 0
 		for _, item := range content {
 			if item.GetText() != nil {
@@ -319,6 +333,20 @@ func rebuildRichTextInline(source []*contentv1.RichTextInline, result UnitResult
 		}
 		rebuilt = append(rebuilt, item)
 	}
+	sourceKeys, targetKeys := map[string]int{}, map[string]int{}
+	for _, item := range source {
+		if atom := item.GetSiteVariable(); atom != nil {
+			sourceKeys[atom.GetKey()]++
+		}
+	}
+	for _, item := range rebuilt {
+		if atom := item.GetSiteVariable(); atom != nil {
+			targetKeys[atom.GetKey()]++
+		}
+	}
+	if !maps.Equal(sourceKeys, targetKeys) {
+		return nil, fmt.Errorf("translation changed siteVariable key multiset")
+	}
 	visible, err := richTextVisibleText(rebuilt)
 	if err != nil {
 		return nil, err
@@ -355,6 +383,9 @@ func indexRichTextInlineAuthority(source []*contentv1.RichTextInline) richTextIn
 		case item.GetHardBreak() != nil:
 			codeIndex++
 			authority.placeholders["h"+strconv.Itoa(codeIndex)] = proto.Clone(item).(*contentv1.RichTextInline)
+		case item.GetSiteVariable() != nil:
+			codeIndex++
+			authority.placeholders["v"+strconv.Itoa(codeIndex)] = proto.Clone(item).(*contentv1.RichTextInline)
 		case item.GetMathInline() != nil:
 			codeIndex++
 			authority.placeholders["m"+strconv.Itoa(codeIndex)] = proto.Clone(item).(*contentv1.RichTextInline)

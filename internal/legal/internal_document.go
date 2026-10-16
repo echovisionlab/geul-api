@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -305,12 +306,22 @@ func (s internalLegalDocumentService) refreshDerivedContentProjectionsWithDB(
 		seen[locale] = struct{}{}
 		locales = append(locales, locale)
 	}
+	var variables sitevariable.Context
+	// Existing variable-free fixtures need no settings table. Settings failures
+	// still fail closed whenever the canonical document contains references.
+	if snapshotHasSiteVariables(snapshot) {
+		var err error
+		variables, err = sitevariable.LoadRuntime(ctx, tx)
+		if err != nil {
+			return err
+		}
+	}
 	for _, locale := range locales {
 		document, err := contentblock.MaterializeSnapshotRichTextLocale(snapshot, locale)
 		if err != nil {
 			return err
 		}
-		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil)
+		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, variables)
 		if err != nil {
 			return err
 		}

@@ -44,7 +44,7 @@ var fileTools = []mcpserver.Tool{
 	},
 	{
 		Name: ToolFileUpload, Title: "Upload a chat attachment",
-		Description: "Import one uploaded chat attachment as a standalone DSUB File. Pass the connector-resolved file descriptor and a stable correlation_id reused on retry. File bytes are streamed, verified, and processed by existing File authority. MIME is sniffed from bytes; no document or Track association is created. Use file_transfer for Track audio.",
+		Description: "Import one uploaded chat attachment as a standalone rawsector File. Pass the connector-resolved file descriptor and a stable correlation_id reused on retry. File bytes are streamed, verified, and processed by existing File authority. MIME is sniffed from bytes; no document or Track association is created. Use file_transfer for Track audio.",
 		InputSchema: json.RawMessage(fileUploadInputJSONSchema), OutputSchema: fileReadOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, true),
 		Meta: fileUploadMeta(),

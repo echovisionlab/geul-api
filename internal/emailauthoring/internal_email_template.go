@@ -3,6 +3,7 @@ package emailauthoring
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 	"time"
 
@@ -215,7 +216,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 			if applyErr != nil {
 				return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, applyErr)
 			}
-			projection, applyErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil)
+			projection, applyErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 			if applyErr != nil {
 				return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, applyErr)
 			}

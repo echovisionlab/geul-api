@@ -3,12 +3,14 @@ package emailauthoring
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -96,8 +98,11 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 	// so preview can render unknown/custom variables instead of leaving braces.
 	fillMissingPreviewVariables(sampleData, previewSubject, html)
 
-	renderedSubject := s.runtime.RenderVariables(previewSubject, sampleData)
-	renderedHTML := s.runtime.RenderVariables(html, sampleData)
+	renderedSubject, err := email.RenderSubjectVarsStrict(previewSubject, sampleData)
+	if err != nil {
+		return nil, errs.FailedPrecondition(err.Error())
+	}
+	renderedHTML := html
 
 	// Add subject to sampleData for layout rendering
 	sampleData["subject"] = renderedSubject
@@ -119,10 +124,12 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 		if layoutErr != nil {
 			return nil, errs.FailedPrecondition("email layout preview failed: " + layoutErr.Error())
 		}
-		fillMissingPreviewVariables(sampleData, renderedHTML)
+	} else {
+		renderedHTML, err = email.RenderHTMLVarsStrict(renderedHTML, sampleData)
+		if err != nil {
+			return nil, errs.FailedPrecondition(err.Error())
+		}
 	}
-
-	renderedHTML = s.runtime.RenderVariables(renderedHTML, sampleData)
 	renderedHTML = s.runtime.NormalizeRenderedHTML(renderedHTML)
 
 	return connect.NewResponse(&managev1.PreviewEmailTemplateResponse{
@@ -150,7 +157,7 @@ func resolveEmailTemplatePreviewHTML(
 	emailTemplate model.EmailTemplate,
 ) (string, error) {
 	if req.GetDocument() != nil {
-		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, req.GetDocument(), nil)
+		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, req.GetDocument(), nil, sitevariable.TemplateContext())
 		if err != nil {
 			return "", errs.InvalidArgument("document", err.Error())
 		}
@@ -191,6 +198,9 @@ func fillMissingPreviewVariables(sampleData map[string]string, templateTexts ...
 			}
 			key := strings.TrimSpace(match[1])
 			if key == "" {
+				continue
+			}
+			if strings.HasPrefix(key, "site.") || strings.HasPrefix(key, "contact.") {
 				continue
 			}
 			if _, exists := sampleData[key]; exists {

@@ -3,6 +3,7 @@ package publiccontent
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"slices"
 	"strings"
 
@@ -118,6 +119,13 @@ func ResolveWithPolicy(
 	available, availableErr := AvailableLocales(ctx, db, spec, entityID, sourceLocale, settings)
 	if availableErr == nil {
 		selection.AvailableLocales = available
+	}
+	if selection.Summary != nil {
+		resolved, err := sitevariable.ResolvePublicText(ctx, db, *selection.Summary)
+		if err != nil {
+			return Selection{}, err
+		}
+		selection.Summary = &resolved
 	}
 	return selection, nil
 }
@@ -240,6 +248,13 @@ func ResolveBatchWithPolicy(
 			sourceByID[entityID], availableByID[entityID],
 			localization.ServingPolicy{DefaultLocale: settings.DefaultLocale},
 		)
+		if selection.Summary != nil {
+			resolved, err := sitevariable.ResolvePublicText(ctx, db, *selection.Summary)
+			if err != nil {
+				return nil, err
+			}
+			selection.Summary = &resolved
+		}
 		selections[entityID] = selection
 	}
 	return selections, nil

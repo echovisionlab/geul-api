@@ -2,6 +2,7 @@ package publiccontent
 
 import (
 	"context"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -85,6 +86,13 @@ func fallbackOGSelection(
 	if source, ok := rows[selection.SourceLocale]; ok {
 		applyRow(&fallback, source, selection.SourceLocale)
 		fallback.IsOriginal = true
+	}
+	if fallback.Summary != nil {
+		resolved, err := sitevariable.ResolvePublicText(ctx, db, *fallback.Summary)
+		if err != nil {
+			return Selection{}, err
+		}
+		fallback.Summary = &resolved
 	}
 	return fallback, nil
 }

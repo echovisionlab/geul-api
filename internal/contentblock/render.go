@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"unicode"
 
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -52,12 +54,13 @@ func (s *Store) LoadAndMaterializeRichTextLocale(
 	sourceLocale string,
 	locale string,
 	resolver FileRenderResolver,
+	variables ...sitevariable.Context,
 ) (MaterializedContent, error) {
 	snapshot, err := s.LoadSnapshot(ctx, db, documentID, sourceLocale)
 	if err != nil {
 		return MaterializedContent{}, err
 	}
-	return materializeSnapshotLocale(ctx, snapshot, locale, resolver)
+	return materializeSnapshotLocale(ctx, snapshot, locale, resolver, variables...)
 }
 
 func (s *Store) LoadAndMaterializeRichTextLocaleInTransaction(
@@ -67,12 +70,13 @@ func (s *Store) LoadAndMaterializeRichTextLocaleInTransaction(
 	sourceLocale string,
 	locale string,
 	resolver FileRenderResolver,
+	variables ...sitevariable.Context,
 ) (MaterializedContent, error) {
 	snapshot, err := s.LoadSnapshotInTransaction(ctx, tx, documentID, sourceLocale)
 	if err != nil {
 		return MaterializedContent{}, err
 	}
-	return materializeSnapshotLocale(ctx, snapshot, locale, resolver)
+	return materializeSnapshotLocale(ctx, snapshot, locale, resolver, variables...)
 }
 
 func materializeSnapshotLocale(
@@ -80,12 +84,13 @@ func materializeSnapshotLocale(
 	snapshot Snapshot,
 	locale string,
 	resolver FileRenderResolver,
+	variables ...sitevariable.Context,
 ) (MaterializedContent, error) {
 	document, err := MaterializeSnapshotRichTextLocale(snapshot, locale)
 	if err != nil {
 		return MaterializedContent{}, err
 	}
-	return MaterializeLocalizedRichTextDocument(ctx, document, resolver)
+	return MaterializeLocalizedRichTextDocument(ctx, document, resolver, variables...)
 }
 
 // MaterializeSnapshotRichTextLocale builds the public read projection for one
@@ -108,6 +113,7 @@ func MaterializeLocalizedRichTextDocument(
 	ctx context.Context,
 	document *contentv1.LocalizedRichTextDocument,
 	resolver FileRenderResolver,
+	variables ...sitevariable.Context,
 ) (MaterializedContent, error) {
 	if document == nil {
 		return MaterializedContent{}, fmt.Errorf("%w: localized Rich Text document is required", ErrInvalidMutation)
@@ -124,6 +130,10 @@ func MaterializeLocalizedRichTextDocument(
 		contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT,
 	); err != nil {
 		return MaterializedContent{}, fmt.Errorf("%w: validate localized Rich Text document: %v", ErrInvalidMutation, err)
+	}
+	document = proto.Clone(document).(*contentv1.LocalizedRichTextDocument)
+	if err := projectSiteVariables(document, variables); err != nil {
+		return MaterializedContent{}, err
 	}
 	localized := make(map[string]*contentv1.RichTextBlockLocale, len(document.GetLocaleOverlay().GetBlocks()))
 	for _, block := range document.GetLocaleOverlay().GetBlocks() {
@@ -567,7 +577,20 @@ func renderInline(content []*contentv1.RichTextInline) (MaterializedContent, err
 }
 
 func safeLink(value string) (string, error) {
+	if strings.Contains(value, "\\") || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%w: unsafe link characters", ErrInvalidMutation)
+	}
+	decoded, decodeErr := url.PathUnescape(value)
+	if decodeErr != nil || strings.IndexFunc(decoded, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%w: unsafe link encoding", ErrInvalidMutation)
+	}
 	parsed, err := url.Parse(value)
+	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") && !strings.ContainsAny(value, "\\\r\n\t") {
+		return value, nil
+	}
+	if value == "{{site.url}}" {
+		return value, nil
+	}
 	if err != nil || parsed.Scheme == "" {
 		return "", fmt.Errorf("%w: link requires an absolute URI", ErrInvalidMutation)
 	}

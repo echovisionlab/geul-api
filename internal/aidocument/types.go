@@ -5,6 +5,7 @@ package aidocument
 import (
 	"errors"
 	"fmt"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"math"
 	"sort"
 	"strconv"
@@ -216,27 +217,33 @@ func ObjectValue(field FieldID, value Value) ObjectField {
 type InlineKind string
 
 const (
-	InlineKindText        InlineKind = "t"
-	InlineKindBold        InlineKind = "b"
-	InlineKindItalic      InlineKind = "em"
-	InlineKindUnderline   InlineKind = "u"
-	InlineKindStrike      InlineKind = "s"
-	InlineKindCode        InlineKind = "code"
-	InlineKindTextColor   InlineKind = "fg"
-	InlineKindBackground  InlineKind = "bg"
-	InlineKindLink        InlineKind = "a"
-	InlineKindHardBreak   InlineKind = "br"
-	InlineKindMath        InlineKind = "math"
-	InlineKindPlaceholder InlineKind = "ph"
+	InlineKindSiteVariable InlineKind = "siteVariable"
+	InlineKindText         InlineKind = "t"
+	InlineKindBold         InlineKind = "b"
+	InlineKindItalic       InlineKind = "em"
+	InlineKindUnderline    InlineKind = "u"
+	InlineKindStrike       InlineKind = "s"
+	InlineKindCode         InlineKind = "code"
+	InlineKindTextColor    InlineKind = "fg"
+	InlineKindBackground   InlineKind = "bg"
+	InlineKindLink         InlineKind = "a"
+	InlineKindHardBreak    InlineKind = "br"
+	InlineKindMath         InlineKind = "math"
+	InlineKindPlaceholder  InlineKind = "ph"
 )
 
 // InlineItem is the closed compact rich-text vocabulary. It preserves common
 // inline semantics without exposing an editor-native document representation.
 type InlineItem struct {
+	Linked   bool
 	Kind     InlineKind
 	Text     string
 	Target   string
 	Children []InlineItem
+}
+
+func SiteVariable(key string, linked bool) InlineItem {
+	return InlineItem{Kind: InlineKindSiteVariable, Text: key, Linked: linked}
 }
 
 func InlineText(value string) InlineItem { return InlineItem{Kind: InlineKindText, Text: value} }
@@ -379,7 +386,18 @@ func (i InlineItem) validate(depth int) error {
 		}
 		return nil
 	}
+	if i.Linked && i.Kind != InlineKindSiteVariable {
+		return errors.New("linked is only valid for siteVariable")
+	}
 	switch i.Kind {
+	case InlineKindSiteVariable:
+		if !contentv1.IsSiteVariableKey(i.Text) || i.Target != "" || len(i.Children) != 0 {
+			return errors.New("siteVariable requires one of the six catalog keys")
+		}
+		if i.Linked && i.Text != "site.url" && !strings.HasPrefix(i.Text, "contact.") {
+			return errors.New("siteVariable key cannot be linked")
+		}
+		return nil
 	case InlineKindText:
 		if i.Target != "" || len(i.Children) != 0 {
 			return errors.New("inline text cannot contain a target or children")

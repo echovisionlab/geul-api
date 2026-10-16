@@ -3,6 +3,8 @@ package campaign
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"regexp"
 	"strings"
 	"time"
@@ -1130,7 +1132,7 @@ func (s *CampaignService) PreviewCampaign(
 		localizedCampaign.Subject = *req.Msg.Subject
 	}
 	if req.Msg.GetDocument() != nil {
-		materialized, materializeErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, req.Msg.GetDocument(), nil)
+		materialized, materializeErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, req.Msg.GetDocument(), nil, sitevariable.TemplateContext())
 		if materializeErr != nil {
 			return nil, errs.InvalidArgument("document", materializeErr.Error())
 		}
@@ -1138,10 +1140,13 @@ func (s *CampaignService) PreviewCampaign(
 	}
 
 	// Render subject and content with variables
-	subject := s.emailRendering.RenderVariables(localizedCampaign.Subject, sampleData)
+	subject, err := email.RenderSubjectVarsStrict(localizedCampaign.Subject, sampleData)
+	if err != nil {
+		return nil, errs.InvalidArgument("subject", err.Error())
+	}
 	htmlContent := ""
 	if localizedCampaign.ContentHTML != nil {
-		htmlContent = s.emailRendering.RenderVariables(*localizedCampaign.ContentHTML, sampleData)
+		htmlContent = *localizedCampaign.ContentHTML
 	}
 
 	// Add subject to sampleData for layout rendering
@@ -1172,6 +1177,12 @@ func (s *CampaignService) PreviewCampaign(
 		}
 	}
 
+	if layoutID == nil {
+		htmlContent, err = email.RenderHTMLVarsStrict(htmlContent, sampleData)
+		if err != nil {
+			return nil, errs.InvalidArgument("document", err.Error())
+		}
+	}
 	htmlContent = s.emailRendering.NormalizeHTML(htmlContent)
 
 	// Generate plain text from HTML

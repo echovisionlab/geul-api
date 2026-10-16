@@ -347,7 +347,7 @@ func validateTranslatedXLIFFIdentity(source XLIFFDocument, translated XLIFFDocum
 		}
 		for unitIndex, sourceUnit := range sourceGroup.TranslationUnit {
 			translatedUnit := translatedGroup.TranslationUnit[unitIndex]
-			normalizedSource, err := normalizeXLIFFUnitInline(sourceUnit)
+			normalizedSource, err := normalizeXLIFFUnitInline(sourceUnit, isEmailTemplateFile(source.File.ID))
 			if err != nil {
 				return err
 			}

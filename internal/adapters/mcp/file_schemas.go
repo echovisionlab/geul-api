@@ -12,7 +12,7 @@ const fileUploadInputJSONSchema = `{
  "properties":{
   "file":{"type":"object","additionalProperties":false,"required":["download_url","file_id"],"properties":{
    "download_url":{"type":"string","format":"uri","pattern":"^https://.+$","minLength":1,"maxLength":4096,"description":"Connector-resolved HTTPS download URL. Never echo or persist this signed source URL."},
-   "file_id":{"type":"string","minLength":1,"description":"Opaque ChatGPT attachment ID, not a DSUB File UUID."},
+   "file_id":{"type":"string","minLength":1,"description":"Opaque ChatGPT attachment ID, not a rawsector File UUID."},
    "file_name":{"type":"string","maxLength":512,"description":"Original filename hint; safe basename and verified MIME extension are retained."},
    "mime_type":{"type":"string","maxLength":255,"description":"Untrusted attachment MIME hint; verified bytes determine stored MIME."}
   }},

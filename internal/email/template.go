@@ -35,6 +35,7 @@ type RenderedEmail struct {
 	Text               string
 	DisplayedLocale    string
 	TemplateLocale     string
+	LayoutID           string
 	LayoutLocale       string
 	ResolvedByFallback bool
 	LayoutUsedFallback bool
@@ -112,8 +113,22 @@ func renderStoredTemplate(
 	tmpl model.EmailTemplate,
 	requestedLocale string,
 	data map[string]string,
-) (*RenderedEmail, error) {
+) (result *RenderedEmail, renderErr error) {
+	layoutID := ""
+	renderLocale := requestedLocale
+	if tmpl.LayoutID != nil {
+		layoutID = *tmpl.LayoutID
+	}
+	defer func() {
+		if renderErr != nil {
+			renderErr = &RenderError{LayoutID: layoutID, Locale: renderLocale, Err: renderErr}
+		}
+	}()
+
 	localizedTemplate, templateLocale, err := ResolveLocalizedEmailTemplate(ctx, db, tmpl, requestedLocale)
+	if renderLocale == "" {
+		renderLocale = templateLocale
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve localized template: %w", err)
 	}
@@ -125,10 +140,7 @@ func renderStoredTemplate(
 
 	html := ""
 	if localizedTemplate.ContentHTML != nil {
-		html, err = RenderHTMLVarsStrict(*localizedTemplate.ContentHTML, data)
-		if err != nil {
-			return nil, fmt.Errorf("render email HTML: %w", err)
-		}
+		html = *localizedTemplate.ContentHTML
 	}
 
 	// Add subject to data for layout rendering
@@ -141,12 +153,20 @@ func renderStoredTemplate(
 	if localizedTemplate.LayoutID != nil {
 		var resolvedLayoutLocale string
 		html, resolvedLayoutLocale, err = WrapWithLayoutForLocaleStrict(ctx, db, *localizedTemplate.LayoutID, requestedLocale, html, data)
+		if resolvedLayoutLocale != "" {
+			renderLocale = resolvedLayoutLocale
+		}
 		if err != nil {
 			return nil, fmt.Errorf("render email layout: %w", err)
 		}
 		layoutLocale = resolvedLayoutLocale
 		if layoutLocale != "" {
 			displayedLocale = layoutLocale
+		}
+	} else {
+		html, err = RenderHTMLVarsStrict(html, data)
+		if err != nil {
+			return nil, fmt.Errorf("render email HTML: %w", err)
 		}
 	}
 
@@ -158,6 +178,7 @@ func renderStoredTemplate(
 		Text:               StripHTML(html),
 		DisplayedLocale:    displayedLocale,
 		TemplateLocale:     templateLocale,
+		LayoutID:           layoutID,
 		LayoutLocale:       layoutLocale,
 		ResolvedByFallback: templateLocale != "" && requestedLocale != "" && templateLocale != requestedLocale,
 		LayoutUsedFallback: layoutLocale != "" && requestedLocale != "" && layoutLocale != requestedLocale,
@@ -179,10 +200,7 @@ func RenderCampaignSnapshotForLocale(
 	if err != nil {
 		return nil, fmt.Errorf("render delivery snapshot subject: %w", err)
 	}
-	html, err := RenderHTMLVarsStrict(content.ContentHTML, data)
-	if err != nil {
-		return nil, fmt.Errorf("render delivery snapshot HTML: %w", err)
-	}
+	html := content.ContentHTML
 
 	data["subject"] = subject
 
@@ -194,10 +212,10 @@ func RenderCampaignSnapshotForLocale(
 	if strings.TrimSpace(layoutHTML) != "" {
 		layoutHTML = NormalizeTemplatePlaceholders(layoutHTML)
 		html = strings.ReplaceAll(layoutHTML, "{{content}}", html)
-		html, err = RenderHTMLVarsStrict(html, data)
-		if err != nil {
-			return nil, fmt.Errorf("render delivery snapshot layout: %w", err)
-		}
+	}
+	html, err = RenderHTMLVarsStrict(html, data)
+	if err != nil {
+		return nil, fmt.Errorf("render delivery snapshot HTML: %w", err)
 	}
 
 	html = NormalizeRenderedHTML(html)
@@ -361,10 +379,11 @@ func WrapWithLayoutForLocaleStrict(
 ) (string, string, error) {
 	layoutHTML, displayedLocale, err := ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, requestedLocale)
 	if err != nil {
-		return "", "", err
+		return "", displayedLocale, err
 	}
 	if strings.TrimSpace(layoutHTML) == "" {
-		return content, "", nil
+		rendered, err := RenderHTMLVarsStrict(content, data)
+		return rendered, "", err
 	}
 	layoutHTML = NormalizeTemplatePlaceholders(layoutHTML)
 	result := strings.ReplaceAll(layoutHTML, "{{content}}", content)
@@ -421,7 +440,14 @@ func RenderSubjectVarsStrict(tmplStr string, data map[string]string) (string, er
 }
 
 func RenderHTMLVarsStrict(tmplStr string, data map[string]string) (string, error) {
-	return renderVarsStrict(tmplStr, data, html.EscapeString)
+	if err := ValidateSiteVariableHrefs(NormalizeTemplatePlaceholders(tmplStr)); err != nil {
+		return "", err
+	}
+	rendered, err := renderVarsStrict(tmplStr, data, html.EscapeString)
+	if err != nil {
+		return "", err
+	}
+	return resolveEmailHrefs(rendered, data)
 }
 
 func renderVarsStrict(

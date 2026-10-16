@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"strings"
 	"time"
@@ -339,7 +340,7 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 				if err != nil {
 					return AIDocumentMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 				}
-				projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil)
+				projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil, sitevariable.TemplateContext())
 				if err != nil {
 					return AIDocumentMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 				}

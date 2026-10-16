@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"sort"
 	"strings"
 	"time"
@@ -422,7 +423,7 @@ func projectEmailTemplateTargetMaterializedContent(
 	if err != nil {
 		return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 	}
-	projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil)
+	projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 	if err != nil {
 		return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 	}

@@ -109,6 +109,8 @@ func TestParseTranslationProviderResponseRejectsRawContractViolations(t *testing
 			{ID: "entity:body", Source: "Welcome"},
 		}},
 	)
+	request.Document.File.ID = "email_template:1"
+
 	tests := []struct {
 		name      string
 		response  string

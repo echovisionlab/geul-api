@@ -3,6 +3,7 @@ package programevent
 import (
 	"context"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 	"time"
 
@@ -296,7 +297,14 @@ func loadProgramEventLocales(
 		if err != nil {
 			return nil, normalizeProgramEventContentBlockError(err)
 		}
-		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, resolver)
+		var variables sitevariable.Context
+		if contentblock.HasSiteVariables(document) {
+			variables, err = sitevariable.LoadRuntime(ctx, db)
+			if err != nil {
+				return nil, err
+			}
+		}
+		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, resolver, variables)
 		if err != nil {
 			return nil, normalizeProgramEventContentBlockError(err)
 		}

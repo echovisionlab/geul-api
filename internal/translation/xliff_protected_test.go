@@ -1,6 +1,7 @@
 package translation
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -98,4 +99,38 @@ func TestProtectXLIFFTermsRejectsInsertedTextBetweenPartsAndHandlesRepeatedOccur
 	unit.Target = &target
 	unit.TargetInline = targetInline
 	require.ErrorContains(t, validateXLIFFUnitInline(unit, true), "inline code identity or nesting changed")
+}
+
+func TestProtectedSiteNamesPreserveSpellingAndRejectExtraLiteralOccurrences(t *testing.T) {
+	terms := []string{"Harbor", "Harbor Company", " Spaced Name "}
+	document := XLIFFDocument{Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko", File: XLIFFFile{
+		ID: "post:1", Groups: []XLIFFGroup{{ID: "body", TranslationUnit: []XLIFFUnit{{ID: "u1", Source: "Visit Harbor and Harbor Company, harbor, and Spaced Name today {{site.title}}"}}}},
+	}}
+	require.NoError(t, ProtectXLIFFTerms(&document, terms))
+	unit := document.File.Groups[0].TranslationUnit[0]
+	require.Contains(t, unit.OriginalData, XLIFFOriginalData{ID: "protectedData3Part1", Value: " Spaced Name "})
+	body, err := MarshalXLIFF(&document)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "harbor")
+	require.Equal(t, 4, strings.Count(string(body), "<ph ")) // Three names and one site token.
+	target := unit.Source
+	response := ProviderResponse{Document: XLIFFWithTargets(document, map[string]UnitResult{"u1": {TranslatedText: target, TargetInline: unit.SourceInline}})}
+	require.True(t, ValidateResponse(document, response, terms...).Passed)
+	candidate := &response.Document.File.Groups[0].TranslationUnit[0]
+	extra := target + " Harbor"
+	candidate.Target = &extra
+	candidate.TargetInline = append(append([]XLIFFInline(nil), unit.SourceInline...), XLIFFInline{Kind: XLIFFInlineText, Text: " Harbor"})
+	require.NoError(t, validateXLIFFUnitInline(*candidate, true)) // Inline identity alone allows extra literal text.
+	validation := ValidateResponse(document, response, terms...)
+	require.False(t, validation.Passed)
+	require.Contains(t, *validation.ParseError, "protected term count changed")
+}
+
+func TestProtectedTermsCoexistWithSiteTokenPlaceholders(t *testing.T) {
+	document := XLIFFDocument{File: XLIFFFile{ID: "post:1", Groups: []XLIFFGroup{{TranslationUnit: []XLIFFUnit{{ID: "u1", Source: "site {{site.title}}"}}}}}}
+	require.NoError(t, ProtectXLIFFTerms(&document, []string{"site"}))
+	unit := document.File.Groups[0].TranslationUnit[0]
+	require.Equal(t, "site {{site.title}}", unit.Source)
+	require.Len(t, unit.OriginalData, 2)
+	require.Equal(t, "site", unit.OriginalData[1].Value)
 }

@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
 
@@ -133,7 +134,7 @@ func (s *ManifestService) checkCurrentPlatformCan(ctx context.Context, can polic
 
 func (s *ManifestService) buildSettings(ctx context.Context, settings *model.SiteSettings) (*openv1.SiteSettings, error) {
 	result := &openv1.SiteSettings{
-		SiteTitle: settings.SiteTitle, MetaDescription: settings.MetaDescription,
+		SiteTitle: settings.SiteTitle, MetaDescription: sitevariable.FromSettings(*settings, s.siteOrigin).ResolveText(settings.MetaDescription),
 		PrimaryColor: settings.PrimaryColor, CompanyName: settings.CompanyName,
 		CompanyAddress: settings.CompanyAddress, TaxId: settings.TaxID,
 		LegalEmail: settings.LegalEmail, SupportEmail: settings.SupportEmail,

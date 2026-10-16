@@ -222,7 +222,7 @@ func validateXLIFFDocument(document *XLIFFDocument, requireTargets, allowEmptyTa
 			unitIDs[unit.ID] = struct{}{}
 			if unit.Target == nil {
 				if !requireTargets {
-					if err := validateXLIFFUnitInline(unit, false); err != nil {
+					if err := validateXLIFFUnitInline(unit, false, isEmailTemplateFile(document.File.ID)); err != nil {
 						return fmt.Errorf("XLIFF unit %q: %w", unit.ID, err)
 					}
 					continue
@@ -234,13 +234,13 @@ func validateXLIFFDocument(document *XLIFFDocument, requireTargets, allowEmptyTa
 			if targetEmpty && !allowEmptyTargets && !sourceEmpty {
 				return fmt.Errorf("XLIFF unit %q target is required", unit.ID)
 			}
-			if !SamePlaceholders(unit.Source, *unit.Target) {
+			if !sameDocumentPlaceholders(*document, unit.Source, *unit.Target) {
 				return fmt.Errorf("XLIFF unit %q placeholder set changed", unit.ID)
 			}
 			if !targetEmpty && CountLineBreaks(unit.Source) != CountLineBreaks(*unit.Target) {
 				return fmt.Errorf("XLIFF unit %q line-break structure changed", unit.ID)
 			}
-			if err := validateXLIFFUnitInline(unit, true); err != nil {
+			if err := validateXLIFFUnitInline(unit, true, isEmailTemplateFile(document.File.ID)); err != nil {
 				return fmt.Errorf("XLIFF unit %q: %w", unit.ID, err)
 			}
 		}
@@ -310,7 +310,7 @@ func MarshalXLIFF(document *XLIFFDocument) ([]byte, error) {
 		return nil, err
 	}
 	for _, group := range document.File.Groups {
-		if err := encodeXLIFFGroup(encoder, group); err != nil {
+		if err := encodeXLIFFGroup(encoder, group, isEmailTemplateFile(document.File.ID)); err != nil {
 			return nil, err
 		}
 	}
@@ -326,7 +326,7 @@ func MarshalXLIFF(document *XLIFFDocument) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func encodeXLIFFGroup(encoder *xml.Encoder, group XLIFFGroup) error {
+func encodeXLIFFGroup(encoder *xml.Encoder, group XLIFFGroup, emailTemplate bool) error {
 	start := xml.StartElement{Name: xml.Name{Local: "group"}, Attr: []xml.Attr{{Name: xml.Name{Local: "id"}, Value: group.ID}}}
 	if err := encoder.EncodeToken(start); err != nil {
 		return err
@@ -338,15 +338,15 @@ func encodeXLIFFGroup(encoder *xml.Encoder, group XLIFFGroup) error {
 		}
 	}
 	for _, unit := range group.TranslationUnit {
-		if err := encodeXLIFFUnit(encoder, unit); err != nil {
+		if err := encodeXLIFFUnit(encoder, unit, emailTemplate); err != nil {
 			return err
 		}
 	}
 	return encoder.EncodeToken(start.End())
 }
 
-func encodeXLIFFUnit(encoder *xml.Encoder, unit XLIFFUnit) error {
-	normalized, err := normalizeXLIFFUnitInline(unit)
+func encodeXLIFFUnit(encoder *xml.Encoder, unit XLIFFUnit, emailTemplate bool) error {
+	normalized, err := normalizeXLIFFUnitInline(unit, emailTemplate)
 	if err != nil {
 		return err
 	}

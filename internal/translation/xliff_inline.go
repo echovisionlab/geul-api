@@ -3,27 +3,28 @@ package translation
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-func normalizeXLIFFUnitInline(unit XLIFFUnit) (XLIFFUnit, error) {
+func normalizeXLIFFUnitInline(unit XLIFFUnit, emailTemplate ...bool) (XLIFFUnit, error) {
 	normalized := unit
 	if len(normalized.SourceInline) == 0 {
-		data, inline := xliffInlineFromPlaceholderText(normalized.Source, nil)
+		data, inline := xliffInlineFromPlaceholderText(normalized.Source, nil, emailTemplate...)
 		normalized.OriginalData = data
 		normalized.SourceInline = inline
 	}
 	if unit.Target != nil && len(normalized.TargetInline) == 0 {
-		_, inline := xliffInlineFromPlaceholderText(*unit.Target, normalized.OriginalData)
+		_, inline := xliffInlineFromPlaceholderText(*unit.Target, normalized.OriginalData, emailTemplate...)
 		normalized.TargetInline = inline
 	}
 	return normalized, validateNormalizedXLIFFUnitInline(normalized, unit.Target != nil)
 }
 
-func validateXLIFFUnitInline(unit XLIFFUnit, requireTarget bool) error {
-	normalized, err := normalizeXLIFFUnitInline(unit)
+func validateXLIFFUnitInline(unit XLIFFUnit, requireTarget bool, emailTemplate ...bool) error {
+	normalized, err := normalizeXLIFFUnitInline(unit, emailTemplate...)
 	if err != nil {
 		return err
 	}
@@ -179,17 +180,24 @@ func validateXLIFFTextParents(nodes []XLIFFInline, parent string, allowed map[st
 	return nil
 }
 
-func xliffInlineFromPlaceholderText(value string, existing []XLIFFOriginalData) ([]XLIFFOriginalData, []XLIFFInline) {
+func xliffInlineFromPlaceholderText(value string, existing []XLIFFOriginalData, emailTemplate ...bool) ([]XLIFFOriginalData, []XLIFFInline) {
+	return xliffInlineFromText(value, existing, true, emailTemplate...)
+}
+
+func xliffInlineFromText(value string, existing []XLIFFOriginalData, reuse bool, emailTemplate ...bool) ([]XLIFFOriginalData, []XLIFFInline) {
 	data := append([]XLIFFOriginalData(nil), existing...)
 	available := make(map[string][]XLIFFOriginalData)
 	for _, original := range existing {
+		if !reuse {
+			break
+		}
 		available[original.Value] = append(available[original.Value], original)
 	}
 	used := make(map[string]int)
 	inline := make([]XLIFFInline, 0, len(ExtractPlaceholders(value))*2+1)
 	remaining := value
 	for len(remaining) > 0 {
-		location := translationPlaceholderPattern.FindStringIndex(remaining)
+		location := placeholderPattern(emailTemplate...).FindStringIndex(remaining)
 		if location == nil {
 			inline = appendXLIFFText(inline, remaining)
 			break
@@ -218,9 +226,10 @@ func xliffInlineFromPlaceholderText(value string, existing []XLIFFOriginalData) 
 }
 
 // XLIFFInlineFromText protects placeholders while constructing typed inline
-// content owned by a domain extractor.
-func XLIFFInlineFromText(value string, existing []XLIFFOriginalData) ([]XLIFFOriginalData, []XLIFFInline) {
-	return xliffInlineFromPlaceholderText(value, existing)
+// content owned by a domain extractor. Pass true for email templates to retain
+// their arbitrary placeholder vocabulary. Every source occurrence gets a new ID.
+func XLIFFInlineFromText(value string, existing []XLIFFOriginalData, emailTemplate ...bool) ([]XLIFFOriginalData, []XLIFFInline) {
+	return xliffInlineFromText(value, existing, false, emailTemplate...)
 }
 
 // ProjectXLIFFInline returns the visible text represented by typed inline
@@ -335,4 +344,25 @@ func validateXLIFFInlineID(node XLIFFInline, seen map[string]struct{}) error {
 	}
 	seen[node.ID] = struct{}{}
 	return nil
+}
+
+// siteTokenPattern matches the six exact site variable tokens; translations must keep their count.
+var siteTokenPattern = regexp.MustCompile(`\{\{(?:site\.(?:title|url|companyName)|contact\.(?:legalEmail|supportEmail|privacyEmail))\}\}`)
+
+// Every translated document protects `{{...}}` placeholders, which include the
+// six site variable tokens; email templates keep their arbitrary vocabulary.
+func placeholderPattern(_ ...bool) *regexp.Regexp {
+	return translationPlaceholderPattern
+}
+
+func isEmailTemplateFile(id string) bool {
+	return strings.HasPrefix(id, "email_template:") || strings.HasPrefix(id, "email_layout:")
+}
+
+func documentPlaceholders(document XLIFFDocument, text string) []string {
+	return placeholderPattern(isEmailTemplateFile(document.File.ID)).FindAllString(text, -1)
+}
+
+func sameDocumentPlaceholders(document XLIFFDocument, source, target string) bool {
+	return samePlaceholderMultiset(documentPlaceholders(document, source), documentPlaceholders(document, target))
 }

@@ -3,7 +3,6 @@ package emaildelivery
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -132,12 +131,7 @@ func (a *BulkApplication) Run(
 				continue
 			}
 			if err := a.publisher.PublishSendEmail(ctx, delivery.Command); err != nil {
-				slog.Error(
-					"Failed to publish campaign recipient command",
-					"domain", "mail", "event", "mail.delivery.command_publish_failed",
-					"outcome", "failed", "run_id", runID,
-					"delivery_recipient_id", delivery.RecipientID,
-				)
+				LogDeliveryFailure(ctx, "mail.delivery.command_publish_failed", delivery.Command, err, "run_id", runID, "delivery_recipient_id", delivery.RecipientID)
 				return err
 			}
 		}
