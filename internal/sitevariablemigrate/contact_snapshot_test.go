@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -51,8 +52,49 @@ func TestContactHistoryConvertsReviewedCatalogsBeforeStrictValidation(t *testing
 		_, err := ContactSnapshotJSON([]byte(contactVersionFixture("post", fingerprint)), "post")
 		require.ErrorContains(t, err, "unreviewed")
 	}
-	_, err := ContactSnapshotJSON([]byte(contactVersionFixture("post", contactTargetCatalog)), "work")
+	_, err := ContactSnapshotJSON([]byte(contactVersionFixture("post", strings.Repeat("a", 64))), "post")
+	require.ErrorContains(t, err, "unreviewed")
+	invalidShape := strings.Replace(contactVersionFixture("post", "5afc20ddc15f7c6099873f33dae6557c5f263e668f12e0babb0186f051a52977"), `"paragraph":{"props":{}}`, `"paragraph":{"props":{"unreviewedField":true}}`, 1)
+	_, err = ContactSnapshotJSON([]byte(invalidShape), "post")
+	require.Error(t, err, "an observed fingerprint must never bypass current shape validation")
+	_, err = ContactSnapshotJSON([]byte(contactVersionFixture("post", contactTargetCatalog)), "work")
 	require.ErrorContains(t, err, "profile")
+}
+
+func TestContactSnapshotDeltaPreservesUnrelatedPayload(t *testing.T) {
+	before := []byte(`{"schemaVersion":1,"sourceLocale":"en","title":"Title {{contact.supportEmail}}","summary":null,"document":{"blockCatalogFingerprint":"1b0b80933dd4e3a92f66d8f85d25c915d74410ee47bb6cf6ec3adffcfe964bc8","nodes":[{"id":"first","text":"Before {{contact.privacyEmail}} after","styles":{"bold":true},"number":9007199254740993},{"id":"second","href":"mailto:{{contact.supportEmail}}?subject=hello"}]}}`)
+	after := []byte(strings.NewReplacer("1b0b80933dd4e3a92f66d8f85d25c915d74410ee47bb6cf6ec3adffcfe964bc8", contactTargetCatalog, "contact.supportEmail", "contact.email", "contact.privacyEmail", "contact.email").Replace(string(before)))
+	require.NoError(t, validateContactSnapshotDelta(before, after))
+	for name, edit := range map[string][2]string{
+		"id":             {`"id":"first"`, `"id":"changed"`},
+		"style":          {`"bold":true`, `"bold":false`},
+		"numeric_value":  {`9007199254740993`, `9007199254740992`},
+		"title_literal":  {`Title `, `Other `},
+		"text_literal":   {`Before `, `Other `},
+		"href_parameter": {`?subject=hello`, `?subject=changed`},
+		"missing_key":    {`"summary":null,`, ``},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := []byte(strings.Replace(string(after), edit[0], edit[1], 1))
+			require.ErrorContains(t, validateContactSnapshotDelta(before, changed), "unrelated data")
+		})
+	}
+	var reordered map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(after))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&reordered))
+	nodes := reordered["document"].(map[string]any)["nodes"].([]any)
+	nodes[0], nodes[1] = nodes[1], nodes[0]
+	changedOrder, err := json.Marshal(reordered)
+	require.NoError(t, err)
+	require.ErrorContains(t, validateContactSnapshotDelta(before, changedOrder), "unrelated data")
+	// Contact JSON must preserve large integers, not round through float64.
+	preserved, err := ContactRichJSON([]byte(`{"count":9007199254740993,"text":"{{contact.supportEmail}}"}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"count":9007199254740993,"text":"{{contact.email}}"}`, string(preserved))
+	require.Contains(t, string(preserved), "9007199254740993")
+	_, err = ContactRichJSON([]byte(`{} {}`))
+	require.Error(t, err)
 }
 
 func expectContactHistoryInventory(mock sqlmock.Sqlmock, source string) {

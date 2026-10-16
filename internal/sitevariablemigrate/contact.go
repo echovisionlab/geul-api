@@ -1,7 +1,9 @@
 package sitevariablemigrate
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -55,8 +57,13 @@ func ContactMenuJSON(source []byte) ([]byte, error) {
 }
 
 func contactJSON(source []byte, menu bool) ([]byte, error) {
+	if !json.Valid(source) {
+		return nil, fmt.Errorf("invalid contact JSON")
+	}
 	var value any
-	if err := json.Unmarshal(source, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(source))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		return nil, err
 	}
 	var walk func(any)
