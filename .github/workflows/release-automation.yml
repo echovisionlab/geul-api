@@ -1,0 +1,105 @@
+name: Release automation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-automation.yml"
+
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  access:
+    name: Verify existing automation access
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check publication evidence helper syntax
+        run: python3 -c 'from pathlib import Path; p = Path(".github/scripts/release-publication.py"); compile(p.read_text(), str(p), "exec")'
+      - name: Read existing receiver access
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          if not os.environ.get("GH_TOKEN"):
+              raise SystemExit("Existing PRIVATE_DEPS_TOKEN is not configured")
+          response = subprocess.check_output(
+              ["gh", "api", "--include", "repos/echovisionlab/deployment"], text=True
+          ).replace("\r\n", "\n")
+          headers, body = response.split("\n\n", 1)
+          scopes = next(
+              (line.split(":", 1)[1].strip().split(", ")
+               for line in headers.splitlines()
+               if line.lower().startswith("x-oauth-scopes:")), []
+          )
+          if "repo" not in scopes or not json.loads(body)["permissions"]["push"]:
+              raise SystemExit("Existing credential does not prove receiver dispatch access")
+          for workflow in ("release-pr-maintenance.yml", "image-discovery.yml"):
+              metadata = json.loads(subprocess.check_output(
+                  ["gh", "api", f"repos/echovisionlab/deployment/actions/workflows/{workflow}"],
+                  text=True,
+              ))
+              if metadata["state"] != "active":
+                  raise SystemExit("Existing receiver is not active")
+          print("Existing repository credential can access both active automation receivers.")
+          PY
+
+  notify:
+    name: Notify existing release controllers
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+    steps:
+      - name: Checkout publication evidence helper
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check actual publication evidence
+        if: github.event_name == 'workflow_run'
+        id: publication
+        env:
+          RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 .github/scripts/release-publication.py
+      - name: Notify source PR maintenance or tagged branch cleanup
+        if: github.event_name == 'push' || steps.publication.outputs.tagged_release == 'true'
+        run: |
+          gh workflow run release-pr-maintenance.yml \
+            --repo echovisionlab/deployment --ref main \
+            -f repository="${GITHUB_REPOSITORY}"
+      - name: Notify discovery after verified publication
+        if: steps.publication.outputs.published == 'true'
+        run: |
+          gh workflow run image-discovery.yml \
+            --repo echovisionlab/deployment --ref main \
+            -f repository="${GITHUB_REPOSITORY}"
