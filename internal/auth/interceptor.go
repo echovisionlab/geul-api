@@ -15,6 +15,7 @@ import (
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/requestip"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -204,6 +205,12 @@ func (ai *AuthInterceptor) handleOathkeeperSession(
 	// assertion represents an active identity.
 	user, err := ai.userFromOathkeeperAssertion(ctx, req)
 	if err != nil {
+		level := slog.LevelError
+		if errors.Is(err, ErrSessionPrincipalInvalid) {
+			level = slog.LevelWarn
+		}
+		cause := failurecause.Message(err)
+		slog.Log(ctx, level, "Authentication principal resolution failed", "reason", "gateway_principal_resolution_failed", "failure_cause", cause)
 		if errors.Is(err, ErrSessionPrincipalInvalid) {
 			return nil, errs.InvalidSession()
 		}
@@ -321,7 +328,6 @@ func (ai *AuthInterceptor) resolveUserWithError(ctx context.Context, authCred st
 	// Call Kratos whoami
 	session, err := ai.checkSession(ctx, authCred)
 	if err != nil {
-		slog.Warn("Kratos session check failed", "error", err)
 		if errors.Is(err, ErrSessionPrincipalInvalid) {
 			ai.cacheInvalidCredential(authCred)
 		}
@@ -335,7 +341,12 @@ func (ai *AuthInterceptor) resolveUserWithError(ctx context.Context, authCred st
 	// Extract user info from Kratos session
 	user, err := ResolveAuthenticatedPrincipalBySessionID(ctx, ai.db, session.ID)
 	if err != nil {
-		slog.Warn("Authenticated session principal validation failed", "error", err)
+		level := slog.LevelError
+		if errors.Is(err, ErrSessionPrincipalInvalid) {
+			level = slog.LevelWarn
+		}
+		cause := failurecause.Message(err)
+		slog.Log(ctx, level, "Authentication principal resolution failed", "reason", "principal_validation_failed", "failure_cause", cause)
 		if errors.Is(err, ErrSessionPrincipalInvalid) {
 			ai.cacheInvalidCredential(authCred)
 		}
@@ -348,6 +359,7 @@ func (ai *AuthInterceptor) resolveUserWithError(ctx context.Context, authCred st
 func (ai *AuthInterceptor) checkSession(ctx context.Context, authCred string) (*kratosSession, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ai.kratosPublicURL+"/sessions/whoami", nil)
 	if err != nil {
+		slog.ErrorContext(ctx, "Create Kratos session request failed", failurecause.Attr(err, authCred))
 		return nil, err
 	}
 
@@ -355,25 +367,42 @@ func (ai *AuthInterceptor) checkSession(ctx context.Context, authCred string) (*
 	if len(authCred) > 7 && authCred[:7] == "cookie:" {
 		req.Header.Set("Cookie", authCred[7:])
 	} else {
-		return nil, fmt.Errorf("%w: invalid auth credential format", ErrSessionPrincipalInvalid)
+		err := fmt.Errorf("%w: invalid auth credential format", ErrSessionPrincipalInvalid)
+		slog.WarnContext(ctx, "Kratos session check rejected", failurecause.Attr(err, authCred))
+		return nil, err
 	}
 
+	privateValues := []string{authCred, strings.TrimPrefix(authCred, "cookie:")}
+	for _, cookie := range req.Cookies() {
+		privateValues = append(privateValues, cookie.Value)
+	}
 	resp, err := ai.httpClient.Do(req)
 	if err != nil {
+		slog.ErrorContext(ctx, "Kratos session request failed", failurecause.Attr(err, privateValues...))
 		return nil, fmt.Errorf("kratos request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("%w: session not valid", ErrSessionPrincipalInvalid)
+		err := fmt.Errorf("%w: session not valid", ErrSessionPrincipalInvalid)
+		slog.WarnContext(ctx, "Kratos session check rejected", failurecause.Attr(err))
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("kratos returned %d: %s", resp.StatusCode, string(body))
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			slog.ErrorContext(ctx, "Read Kratos session error response failed", failurecause.Attr(readErr, privateValues...))
+		}
+		err := fmt.Errorf("kratos returned %d: %s", resp.StatusCode, string(body))
+		privateValues = append(privateValues, string(body))
+		cause := failurecause.Message(err, privateValues...)
+		slog.ErrorContext(ctx, "Kratos session check failed", "failure_cause", cause, "status_code", resp.StatusCode)
+		return nil, err
 	}
 
 	var session kratosSession
 	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		slog.ErrorContext(ctx, "Decode Kratos session response failed", failurecause.Attr(err, privateValues...))
 		return nil, fmt.Errorf("failed to decode kratos response: %w", err)
 	}
 	return &session, nil

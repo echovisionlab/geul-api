@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -145,7 +146,19 @@ func withPublicPostStatusFence(query *gorm.DB) *gorm.DB {
 func (s *PostService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPostRequest],
-) (*connect.Response[openv1.GetPostResponse], error) {
+) (_ *connect.Response[openv1.GetPostResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
+	}()
+
 	projection, err := s.loadPublicPostSnapshot(ctx, req)
 	if err != nil {
 		return nil, err
@@ -254,7 +267,7 @@ func (s *PostService) loadPublicPostSnapshot(
 			ctx, tx, "post", post.ID, req.Header().Get("Accept-Language"), true,
 		)
 		if localizationErr != nil {
-			slog.Warn("failed to resolve post localization", "postId", post.ID, "error", localizationErr)
+			slog.ErrorContext(ctx, "failed to resolve post localization", "postId", post.ID, "failure_cause", failurecause.Message(localizationErr))
 		}
 		localization, localizationErr = s.localizer.ResolveOgConsistency(
 			ctx, tx, s.cdnDomain, "post", post.ID, localization,
@@ -286,7 +299,19 @@ func (s *PostService) loadPublicPostSnapshot(
 func (s *PostService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListPostsRequest],
-) (*connect.Response[openv1.ListPostsResponse], error) {
+) (_ *connect.Response[openv1.ListPostsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.List", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	var posts []model.Post
 	var total int64
 
@@ -332,7 +357,7 @@ func (s *PostService) List(
 		true,
 	)
 	if err != nil {
-		slog.Warn("failed to resolve post summary localizations", "error", err)
+		slog.ErrorContext(ctx, "failed to resolve post summary localizations", "failure_cause", failurecause.Message(err))
 	}
 	authorMembers, err := s.loadPostAuthorMembers(ctx, collectPostIDs(posts))
 	if err != nil {
@@ -411,7 +436,19 @@ func (s *PostService) applyPublicPostFilters(
 func (s *PostService) ListMapFeatures(
 	ctx context.Context,
 	req *connect.Request[openv1.ListPostMapFeaturesRequest],
-) (*connect.Response[openv1.ListPostMapFeaturesResponse], error) {
+) (_ *connect.Response[openv1.ListPostMapFeaturesResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.ListMapFeatures", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	viewport, err := normalizePostMapViewport(req.Msg.Viewport)
 	if err != nil {
 		return nil, err
@@ -482,7 +519,7 @@ func (s *PostService) ListMapFeatures(
 		true,
 	)
 	if err != nil {
-		slog.Warn("failed to resolve post map localizations", "error", err)
+		slog.ErrorContext(ctx, "failed to resolve post map localizations", "failure_cause", failurecause.Message(err))
 	}
 	placeGroups := buildPostMapPlaceGroups(rows, localizedSelections)
 	clusters, items := clusterPostMapPlaceGroups(placeGroups, viewport)
@@ -677,7 +714,19 @@ func postMapItem(group *postMapPlaceGroup) *openv1.PostMapItem {
 func (s *PostService) Search(
 	ctx context.Context,
 	req *connect.Request[openv1.SearchPostsRequest],
-) (*connect.Response[openv1.SearchPostsResponse], error) {
+) (_ *connect.Response[openv1.SearchPostsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.Search", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	query := req.Msg.Query
 	if len(query) < 2 {
 		return connect.NewResponse(&openv1.SearchPostsResponse{
@@ -717,7 +766,7 @@ func (s *PostService) Search(
 		true,
 	)
 	if err != nil {
-		slog.Warn("failed to resolve post search localizations", "error", err)
+		slog.ErrorContext(ctx, "failed to resolve post search localizations", "failure_cause", failurecause.Message(err))
 	}
 	authorMembers, err := s.loadPostAuthorMembers(ctx, collectPostIDs(posts))
 	if err != nil {

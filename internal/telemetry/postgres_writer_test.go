@@ -1,8 +1,11 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strings"
@@ -251,4 +254,16 @@ func TestDurableWriterRequiresPersistenceBoundariesForValidRecords(t *testing.T)
 	writer := NewDurableWriter(nil)
 	require.ErrorContains(t, writer.AppendDomainAuditInTransaction(context.Background(), nil, audit), "transaction is required")
 	require.ErrorContains(t, writer.AppendSecurityAccess(context.Background(), access), "database is required")
+}
+
+func TestAuditAppendFailureRetainsSanitizedCause(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	ReportDomainAuditAppendFailure(t.Context(), sharedtelemetry.AuditPostCreated, sharedtelemetry.AuditAppendFailurePersistenceFailed, errors.New("insert audit: database unavailable for person@example.test"))
+	entry := decodeSingleLogEntry(t, output.Bytes())
+	require.Contains(t, entry["failure_cause"], "insert audit: database unavailable")
+	require.Equal(t, "post.created", entry["action"])
+	require.NotContains(t, output.String(), "person@example.test")
 }

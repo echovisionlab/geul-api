@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -28,8 +29,13 @@ var (
 
 // HandleTranscodeComplete handles transcode completion events from the transcoder service.
 // It stores derivative files (thumbnails, HLS manifests, audio sidecars) in the file_derivative table.
-func (h *Handlers) HandleTranscodeComplete(ctx context.Context, body []byte) error {
+func (h *Handlers) HandleTranscodeComplete(ctx context.Context, body []byte) (resultErr error) {
 	event, err := parseTranscodeCompleteEvent(body)
+	defer func() {
+		if resultErr != nil {
+			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeComplete", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
+		}
+	}()
 	if err != nil {
 		return err
 	}
@@ -527,7 +533,7 @@ func (h *Handlers) publishWaveformGenerate(
 
 	if err := h.publisher.PublishWaveformGenerate(ctx, job); err != nil {
 		if markErr := h.markWaveformJobFailed(ctx, job.EventId, err.Error()); markErr != nil {
-			slog.Warn("Failed to mark waveform job publish failure", "eventId", job.EventId, "error", markErr)
+			slog.Error("Failed to mark waveform job publish failure", "eventId", job.EventId, failurecause.Attr(markErr))
 		}
 		return err
 	}

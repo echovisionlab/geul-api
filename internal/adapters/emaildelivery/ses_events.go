@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -135,21 +137,36 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSNSMessageBytes))
 	if err != nil {
+		slog.WarnContext(r.Context(), "Failed to read SES callback", "failure_cause", failurecause.Message(err))
 		http.Error(w, "invalid SNS message body", http.StatusBadRequest)
 		return
 	}
+	var private []string
 	var envelope snsEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		var timeErr *time.ParseError
+		if errors.As(err, &typeErr) {
+			if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+				private = append(private, value)
+			}
+		}
+		if errors.As(err, &timeErr) {
+			private = append(private, timeErr.Value, timeErr.ValueElem)
+		}
+
+		slog.WarnContext(r.Context(), "Failed to decode SES callback", "failure_cause", failurecause.Message(err, private...))
 		http.Error(w, "invalid SNS message", http.StatusBadRequest)
 		return
 	}
+	private = append(private, envelope.Token, envelope.Signature, envelope.Message, envelope.Subject)
 	if headerType := strings.TrimSpace(r.Header.Get("x-amz-sns-message-type")); headerType != "" && headerType != envelope.Type {
 		http.Error(w, "SNS message type mismatch", http.StatusBadRequest)
 		return
 	}
 	if err := h.verifier.Verify(r.Context(), envelope); err != nil {
 		h.metrics.record(r.Context(), envelope.Type, "rejected")
-		slog.Warn("Rejected unauthenticated SES callback", "domain", "mail", "event", "mail.provider.callback_rejected", "outcome", "blocked", "reason", "sns_verification_failed")
+		slog.WarnContext(r.Context(), "Rejected unauthenticated SES callback", "failure_cause", failurecause.Message(err, private...), "message_id", envelope.MessageID, "domain", "mail", "event", "mail.provider.callback_rejected", "outcome", "blocked", "reason", "sns_verification_failed")
 		http.Error(w, "invalid SNS signature", http.StatusUnauthorized)
 		return
 	}
@@ -162,7 +179,7 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := h.confirmer.Confirm(r.Context(), envelope.SubscribeURL); err != nil {
 			h.metrics.record(r.Context(), envelope.Type, "failed")
-			slog.Error("SES callback subscription confirmation failed", "domain", "mail", "event", "mail.provider.subscription_confirmation_failed", "outcome", "failed", "message_id", envelope.MessageID)
+			slog.ErrorContext(r.Context(), "SES callback subscription confirmation failed", "failure_cause", failurecause.Message(err, private...), "domain", "mail", "event", "mail.provider.subscription_confirmation_failed", "outcome", "failed", "message_id", envelope.MessageID)
 			http.Error(w, "SNS subscription confirmation failed", http.StatusBadGateway)
 			return
 		}
@@ -171,18 +188,42 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "Notification":
 		var notification sesNotification
 		if err := json.Unmarshal([]byte(envelope.Message), &notification); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			var timeErr *time.ParseError
+			if errors.As(err, &typeErr) {
+				if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+					private = append(private, value)
+				}
+			}
+			if errors.As(err, &timeErr) {
+				private = append(private, timeErr.Value, timeErr.ValueElem)
+			}
+
+			slog.WarnContext(r.Context(), "Rejected invalid SES notification", "failure_cause", failurecause.Message(err, private...), "message_id", envelope.MessageID)
 			http.Error(w, "invalid SES notification", http.StatusBadRequest)
 			return
 		}
 		providerNotification, err := toProviderNotification(notification)
 		if err != nil {
+			var typeErr *json.UnmarshalTypeError
+			var timeErr *time.ParseError
+			if errors.As(err, &typeErr) {
+				if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+					private = append(private, value)
+				}
+			}
+			if errors.As(err, &timeErr) {
+				private = append(private, timeErr.Value, timeErr.ValueElem)
+			}
+
 			h.metrics.record(r.Context(), typeNameForSESMetric(notification), "failed")
+			slog.WarnContext(r.Context(), "Rejected invalid SES notification", "failure_cause", failurecause.Message(err, private...), "message_id", envelope.MessageID)
 			http.Error(w, "invalid SES notification", http.StatusBadRequest)
 			return
 		}
 		if err := h.processor.ProcessProviderNotification(r.Context(), providerNotification); err != nil {
 			h.metrics.record(r.Context(), typeNameForSESMetric(notification), "failed")
-			slog.Error("SES callback processing failed", "domain", "mail", "event", "mail.provider.callback_failed", "outcome", "failed", "message_id", envelope.MessageID)
+			slog.ErrorContext(r.Context(), "SES callback processing failed", "failure_cause", failurecause.Message(err, private...), "domain", "mail", "event", "mail.provider.callback_failed", "outcome", "failed", "message_id", envelope.MessageID)
 			http.Error(w, "SES callback processing failed", http.StatusInternalServerError)
 			return
 		}
@@ -207,7 +248,7 @@ func newSESEventMetrics() sesEventMetrics {
 		otelmetric.WithDescription("Counts authenticated mail provider callbacks by type and result."),
 	)
 	if err != nil {
-		slog.Warn("Failed to create mail provider callback counter", "error", err)
+		slog.Warn("Failed to create mail provider callback counter", "failure_cause", failurecause.Message(err))
 		return sesEventMetrics{}
 	}
 	return sesEventMetrics{callbackCounter: counter}
@@ -505,7 +546,9 @@ func (c *awsSNSSubscriptionConfirmer) Confirm(ctx context.Context, rawURL string
 		return err
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10)); err != nil {
+		slog.ErrorContext(ctx, "Failed to drain SNS subscription confirmation response", "failure_cause", failurecause.Message(err))
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("SNS subscription confirmation returned HTTP %d", response.StatusCode)
 	}

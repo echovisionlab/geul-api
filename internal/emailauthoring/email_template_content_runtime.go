@@ -3,6 +3,7 @@ package emailauthoring
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -89,7 +91,13 @@ func requireCampaignEmailDocumentLoad(
 		return errs.AuthenticationRequired()
 	}
 	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
+	if err != nil && !errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "resolve_collaboration_principal", "outcome", "failed", failurecause.Attr(err, principal.GetSessionId()))
+	}
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) || resolved == nil || !resolved.Authenticated {
+		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+			slog.WarnContext(ctx, "Collaboration principal rejected", "domain", "emailauthoring", "event", "emailauthoring.principal_rejected", "outcome", "blocked", failurecause.Attr(err, principal.GetSessionId()))
+		}
 		return errs.AuthenticationRequired()
 	}
 	if err != nil {
@@ -114,6 +122,7 @@ func requireCampaignEmailDocumentLoad(
 	authorizationCtx := auth.WithUser(ctx, resolved)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation rejected", "domain", "emailauthoring", "event", "emailauthoring.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(authorizationCtx, decision)

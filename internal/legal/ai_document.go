@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -310,6 +312,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 func legalAIDocumentMutationAccessError(entityType, entityID string, err error) error {
 	switch connect.CodeOf(err) {
 	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
+		slog.Warn("Legal document access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
 		return errs.NotFound(entityType, entityID)
 	default:
 		return err
@@ -351,6 +354,7 @@ func validateCompiledLegalAIDocumentMutation(
 	); err != nil {
 		var targetConflict *translation.TargetRevisionConflict
 		if errors.As(err, &targetConflict) {
+			slog.Warn("Legal document target revision conflicted", failurecause.Attr(err), "entity_type", mutation.EntityType, "entity_id", mutation.EntityID)
 			var currentTargetRevision *string
 			if targetConflict.CurrentExists {
 				current := targetConflict.CurrentRevision

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -30,7 +31,7 @@ func Decode(
 	destination structured.Value, logMessage string,
 ) bool {
 	if err := json.NewDecoder(r.Body).Decode(destination); err != nil {
-		slog.ErrorContext(r.Context(), logMessage, "error", err, "error_code", "hook_payload_invalid")
+		slog.WarnContext(r.Context(), logMessage, "failure_cause", failurecause.Message(err), "error_code", "hook_payload_invalid")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return false
 	}
@@ -48,7 +49,7 @@ func RequirePost(w http.ResponseWriter, r *http.Request) bool {
 func WriteEmpty(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(structured.Fields{}); err != nil {
-		slog.Error("Failed to encode hook response", "error", err)
+		slog.Error("Failed to encode hook response", "failure_cause", failurecause.Message(err))
 	}
 }
 
@@ -72,6 +73,6 @@ func WriteError(w http.ResponseWriter, status int, message string, code string) 
 			},
 		},
 	}); err != nil {
-		slog.Error("Failed to encode Kratos hook error response", "error", err)
+		slog.Error("Failed to encode Kratos hook error response", "failure_cause", failurecause.Message(err))
 	}
 }

@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -82,7 +84,19 @@ func NewTagService(db *gorm.DB, menuTargets MenuTargets, spiceDB *auth.SpiceDBCl
 func (s *TagService) ListTags(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTagsRequest],
-) (*connect.Response[managev1.ListTagsResponse], error) {
+) (_ *connect.Response[managev1.ListTagsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListTags", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	tags, total, page, err := tagListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -102,7 +116,19 @@ func (s *TagService) ListTags(
 func (s *TagService) ListTagsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTagsAdminRequest],
-) (*connect.Response[managev1.ListTagsAdminResponse], error) {
+) (_ *connect.Response[managev1.ListTagsAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListTagsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Tag.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -144,7 +170,19 @@ func (s *TagService) ListTagsAdmin(
 func (s *TagService) CreateTag(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateTagRequest],
-) (*connect.Response[managev1.Tag], error) {
+) (_ *connect.Response[managev1.Tag], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateTag", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Tag.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -189,7 +227,19 @@ func (s *TagService) CreateTag(
 func (s *TagService) UpdateTag(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateTagRequest],
-) (*connect.Response[managev1.Tag], error) {
+) (_ *connect.Response[managev1.Tag], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateTag", "outcome", "failed", "tag_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Tag.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -236,7 +286,19 @@ func (s *TagService) UpdateTag(
 func (s *TagService) DeleteTag(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteTagRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteTag", "outcome", "failed", "tag_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Tag.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

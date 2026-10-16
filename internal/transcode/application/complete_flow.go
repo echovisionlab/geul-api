@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -78,12 +79,13 @@ func (h *Handlers) handleFailedTranscodeComplete(
 	}); err != nil {
 		return fmt.Errorf("failed to publish failed transcode lifecycle: %w", err)
 	}
-	slog.Warn(
-		"Transcode failed, skipping derivative storage",
-		"fileId",
-		event.FileId,
-		"error",
-		errMessage,
+	slog.ErrorContext(ctx, "Transcode failed, skipping derivative storage",
+		"fileId", event.FileId,
+		"eventId", event.EventId,
+		"entityType", event.EntityType.String(),
+		"entityId", event.EntityId,
+		"eventType", event.EventType.String(),
+		failurecause.Attr(errors.New(errMessage)),
 	)
 	return nil
 }

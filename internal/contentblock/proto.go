@@ -1,12 +1,15 @@
 package contentblock
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -24,6 +27,7 @@ func MutationContributor(memberIDs []string) (string, error) {
 	}
 	memberID := strings.TrimSpace(memberIDs[0])
 	if _, err := uuidutil.ParseCanonical(memberID, "contributor_member_ids"); err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.MutationContributor", "outcome", "failed", failurecause.Attr(err))
 		return "", errs.InvalidArgument(
 			"contributor_member_ids",
 			"must contain one canonical Member UUID",
@@ -402,6 +406,9 @@ func baseBlockFromStorage(row contentv1.ContentStorageRow) (BaseBlock, error) {
 func parseRequiredUUID(value, field string) (uuid.UUID, error) {
 	id, err := uuid.Parse(value)
 	if err != nil || id == uuid.Nil {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.parseRequiredUUID", "outcome", "failed", failurecause.Attr(err))
+		}
 		return uuid.Nil, invalidProtoMutation(field, fmt.Errorf("must be a UUID"))
 	}
 	return id, nil

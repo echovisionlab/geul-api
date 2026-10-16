@@ -2,6 +2,7 @@ package legal
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -9,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
@@ -61,7 +63,18 @@ func NewAuditedInternalTermsService(
 func (s *InternalTermsService) LoadTermsBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadTermsBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadTermsBlockDocumentResponse], error) {
+) (rpcResponse *connect.Response[intrav1.LoadTermsBlockDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "LoadTermsBlockDocument", "failure_cause", cause)
+		}
+	}()
 	result, err := s.legal.loadDocument(ctx, req.Msg.TermsId, req.Msg.Locale, req.Msg.Principal)
 	if err != nil {
 		return nil, err
@@ -91,7 +104,18 @@ func (s *InternalTermsService) LoadTermsBlockDocument(
 func (s *InternalTermsService) ApplyTermsBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyTermsBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyTermsBlockBatchResponse], error) {
+) (rpcResponse *connect.Response[intrav1.ApplyTermsBlockBatchResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "ApplyTermsBlockBatch", "failure_cause", cause)
+		}
+	}()
 	result, err := s.legal.applyDocumentMutation(
 		ctx, req.Msg.TermsId, req.Msg.Locale, req.Msg.ExpectedTargetRevision,
 		req.Msg.Batch, req.Msg.AffectedLocaleValues,
@@ -109,7 +133,18 @@ func (s *InternalTermsService) ApplyTermsBlockBatch(
 func (s *InternalTermsService) UpdateTermsLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateTermsLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdateTermsLocaleMetadataResponse], error) {
+) (rpcResponse *connect.Response[intrav1.UpdateTermsLocaleMetadataResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "method", "UpdateTermsLocaleMetadata", "failure_cause", cause)
+		}
+	}()
 	if req.Msg.Title == nil {
 		return nil, errs.InvalidArgument("title", "must be provided")
 	}

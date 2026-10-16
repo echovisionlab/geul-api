@@ -1,9 +1,12 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -101,6 +104,10 @@ func TestExecuteWorkerCompensatedTransactionCompensatesBeforeRollback(t *testing
 }
 
 func TestExecuteWorkerCompensatedTransactionPanicCompensatesBeforeRollback(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	db, pool := newWorkerBoundaryTestDB(t, false)
 	panicValue := captureWorkerTransactionPanic(func() {
 		_ = executeCompensatedTransaction(t.Context(), db, func(tx *gorm.DB, register registerTransactionCompensation) error {
@@ -113,6 +120,10 @@ func TestExecuteWorkerCompensatedTransactionPanicCompensatesBeforeRollback(t *te
 		})
 	})
 	require.Equal(t, "forced callback panic", panicValue)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+	require.Equal(t, "forced callback panic", entry["failure_cause"])
+	require.Contains(t, entry["panic_stack"], "executeCompensatedTransaction")
 	require.Equal(t, []string{"compensate", "rollback"}, pool.recordedEvents())
 
 	var count int64

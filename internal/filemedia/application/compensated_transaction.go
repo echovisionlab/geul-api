@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"gorm.io/gorm"
 )
 
@@ -77,6 +79,8 @@ func executeCompensatedTransaction(
 		if panicValue == nil {
 			return
 		}
+		cause, stack := failurecause.Panic(panicValue)
+		slog.ErrorContext(ctx, "File deletion transaction panicked", "failure_cause", cause, "cause", cause, "panic_stack", stack)
 		if commitStarted {
 			if compensation != nil {
 				authzmutation.RecordAuthorizationCommitUncertain(
@@ -92,10 +96,12 @@ func executeCompensatedTransaction(
 		panicErr := transactionPanicError(panicValue)
 		joined := false
 		if compensationErr := compensate(); compensationErr != nil {
+			slog.ErrorContext(ctx, "Failed to compensate panicked file deletion transaction", failurecause.Attr(compensationErr))
 			panicErr = errors.Join(panicErr, compensationErr)
 			joined = true
 		}
 		if rollbackErr := rollback(); rollbackErr != nil {
+			slog.ErrorContext(ctx, "Failed to rollback panicked file deletion transaction", failurecause.Attr(rollbackErr))
 			panicErr = errors.Join(panicErr, rollbackErr)
 			joined = true
 		}

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"log/slog"
 	"math"
 
 	"connectrpc.com/connect"
@@ -10,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -71,7 +73,17 @@ func checkAdminAccess(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 func (s *Service) GetDashboardStats(
 	ctx context.Context,
 	req *connect.Request[managev1.GetDashboardStatsRequest],
-) (*connect.Response[managev1.GetDashboardStatsResponse], error) {
+) (rpcResponse *connect.Response[managev1.GetDashboardStatsResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "RPC failed", "method", "GetDashboardStats", "failure_cause", failurecause.Message(returnErr))
+		}
+	}()
 	if err := checkAdminAccess(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

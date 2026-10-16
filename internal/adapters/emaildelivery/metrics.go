@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
@@ -29,28 +30,28 @@ func NewMetrics() Metrics {
 		otelmetric.WithDescription("Counts mail send attempts by template class."),
 	)
 	if err != nil {
-		slog.Warn("failed to create mail send attempt counter", "error", err)
+		slog.Warn("failed to create mail send attempt counter", "failure_cause", failurecause.Message(err))
 	}
 	metrics.sendResultCounter, err = meter.Int64Counter(
 		"mail_send_result_total",
 		otelmetric.WithDescription("Counts mail send results by template class and result."),
 	)
 	if err != nil {
-		slog.Warn("failed to create mail send result counter", "error", err)
+		slog.Warn("failed to create mail send result counter", "failure_cause", failurecause.Message(err))
 	}
 	metrics.recipientStatusCounter, err = meter.Int64Counter(
 		"mail_delivery_recipient_status_total",
 		otelmetric.WithDescription("Counts bulk mail recipient status transitions by template class and status."),
 	)
 	if err != nil {
-		slog.Warn("failed to create mail recipient status counter", "error", err)
+		slog.Warn("failed to create mail recipient status counter", "failure_cause", failurecause.Message(err))
 	}
 	metrics.runDurationHistogram, err = meter.Float64Histogram(
 		"mail_delivery_run_duration_seconds",
 		otelmetric.WithDescription("Records completed bulk mail delivery run duration by run kind and status."),
 	)
 	if err != nil {
-		slog.Warn("failed to create mail delivery run duration histogram", "error", err)
+		slog.Warn("failed to create mail delivery run duration histogram", "failure_cause", failurecause.Message(err))
 	}
 	return metrics
 }

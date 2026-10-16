@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
@@ -243,7 +244,18 @@ func NewAuditedWorkService(
 func (s *WorkService) GetWork(
 	ctx context.Context,
 	req *connect.Request[managev1.GetWorkRequest],
-) (*connect.Response[managev1.Work], error) {
+) (_ *connect.Response[managev1.Work], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "GetWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var work model.Work
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
@@ -282,7 +294,18 @@ func (s *WorkService) GetWork(
 func (s *WorkService) ListWorksAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListWorksAdminRequest],
-) (*connect.Response[managev1.ListWorksAdminResponse], error) {
+) (_ *connect.Response[managev1.ListWorksAdminResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListWorksAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	// Check admin role
 	if err := requireWorkList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -376,7 +399,7 @@ func (s *WorkService) ListWorksAdmin(
 			Where("work_id IN ?", workIDs).
 			Group("work_id").
 			Scan(&creditStats).Error; err != nil {
-			slog.Warn("Failed to get credit counts", "error", err)
+			slog.ErrorContext(ctx, "Failed to get credit counts", failurecause.Attr(err))
 		}
 		for _, stat := range creditStats {
 			creditCounts[stat.WorkID] = stat.Count
@@ -396,7 +419,7 @@ func (s *WorkService) ListWorksAdmin(
 			Where("work_id IN ?", workIDs).
 			Group("work_id").
 			Scan(&clientStats).Error; err != nil {
-			slog.Warn("Failed to get client counts", "error", err)
+			slog.ErrorContext(ctx, "Failed to get client counts", failurecause.Attr(err))
 		}
 		for _, stat := range clientStats {
 			clientCounts[stat.WorkID] = stat.Count
@@ -424,7 +447,18 @@ func (s *WorkService) ListWorksAdmin(
 func (s *WorkService) CreateWork(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateWorkRequest],
-) (*connect.Response[managev1.Work], error) {
+) (_ *connect.Response[managev1.Work], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
@@ -448,6 +482,7 @@ func (s *WorkService) CreateWork(
 			return nil, err
 		}
 		if strings.Contains(err.Error(), "duplicate key") {
+			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("work", "slug")
 		}
 		return nil, errs.Internal(err)
@@ -639,7 +674,18 @@ func (s *WorkService) loadCreatedWork(ctx context.Context, workID string) (model
 func (s *WorkService) DeleteWork(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteWorkRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
@@ -741,7 +787,18 @@ func (s *WorkService) DeleteWork(
 func (s *WorkService) PublishWork(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishWorkRequest],
-) (*connect.Response[managev1.WorkLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.WorkLifecycleMutationResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "PublishWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -818,7 +875,18 @@ func (s *WorkService) PublishWork(
 func (s *WorkService) UnpublishWork(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishWorkRequest],
-) (*connect.Response[managev1.WorkLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.WorkLifecycleMutationResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UnpublishWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -888,7 +956,18 @@ func (s *WorkService) UnpublishWork(
 func (s *WorkService) SetWorkFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetWorkFeaturedImageRequest],
-) (*connect.Response[managev1.SetWorkFeaturedImageResponse], error) {
+) (_ *connect.Response[managev1.SetWorkFeaturedImageResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "SetWorkFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	// Verify work exists.
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
@@ -974,7 +1053,18 @@ func (s *WorkService) SetWorkFeaturedImage(
 func (s *WorkService) DeleteWorkFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteWorkFeaturedImageRequest],
-) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
+) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var ogRunID *string
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

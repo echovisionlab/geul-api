@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
@@ -154,7 +155,18 @@ func classifyReleaseMutationError(err error, releaseID string) error {
 func (s *ReleaseService) GetRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.GetReleaseRequest],
-) (*connect.Response[managev1.Release], error) {
+) (_ *connect.Response[managev1.Release], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "GetRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := requireReleaseAction(ctx, s.spiceDB, req.Msg.Id, releaseActionView); err != nil {
 		return nil, err
 	}
@@ -188,7 +200,18 @@ func (s *ReleaseService) GetRelease(
 func (s *ReleaseService) ListReleasesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListReleasesAdminRequest],
-) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
+) (_ *connect.Response[managev1.ListReleasesAdminResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ListReleasesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := requireReleaseList(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -325,7 +348,18 @@ func (s *ReleaseService) ListReleasesAdmin(
 func (s *ReleaseService) CreateRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateReleaseRequest],
-) (*connect.Response[managev1.Release], error) {
+) (_ *connect.Response[managev1.Release], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
@@ -339,6 +373,7 @@ func (s *ReleaseService) CreateRelease(
 		var err error
 		requestedSourceLocale, err = normalizeReleaseDocumentLocale(requestedSourceLocale)
 		if err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("source_locale", "must be a supported canonical locale")
 		}
 	}
@@ -458,6 +493,7 @@ func (s *ReleaseService) CreateRelease(
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key") {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("release", "slug")
 		}
 		if connect.CodeOf(err) != connect.CodeUnknown {
@@ -518,7 +554,18 @@ func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, 
 func (s *ReleaseService) DeleteRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteReleaseRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
@@ -534,6 +581,7 @@ func (s *ReleaseService) DeleteRelease(
 	for range MaxTrackUploadCleanupPasses {
 		if err := s.cleanupReleaseTrackUploadSessions(ctx, req.Msg.Id); err != nil {
 			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
+				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(err))
 				return nil, errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release")
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -634,6 +682,7 @@ func (s *ReleaseService) DeleteRelease(
 			return s.appendReleaseDeletedAudit(ctx, tx, req.Msg.Id)
 		})
 		if errors.Is(err, ErrTrackUploadSessionsChanged) {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(err))
 			continue
 		}
 		if err != nil {
@@ -656,7 +705,7 @@ func (s *ReleaseService) DeleteRelease(
 		trackIDs,
 		managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
 	); err != nil {
-		slog.Warn("Failed to cancel waveform jobs for deleted release", "releaseId", req.Msg.Id, "error", err)
+		slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted release", "releaseId", req.Msg.Id, failurecause.Attr(err))
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{
 		Success: true,
@@ -671,7 +720,18 @@ func (s *ReleaseService) DeleteRelease(
 func (s *ReleaseService) PublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishReleaseRequest],
-) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.ReleaseLifecycleMutationResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "PublishRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -727,7 +787,18 @@ func (s *ReleaseService) PublishRelease(
 func (s *ReleaseService) UnpublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishReleaseRequest],
-) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.ReleaseLifecycleMutationResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UnpublishRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {

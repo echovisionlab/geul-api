@@ -14,6 +14,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/config"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -37,7 +38,11 @@ func run() int {
 	if err != nil {
 		return logStartupFailure("initialize telemetry", err)
 	}
-	defer otelResult.Shutdown(ctx)
+	defer func() {
+		if err := otelResult.Shutdown(ctx); err != nil {
+			slog.Error("Telemetry shutdown failed", "failure_cause", failurecause.Message(err))
+		}
+	}()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(
 		telemetry.NewFanoutHandler(stdoutHandler, otelResult.LogHandler),
 	)))
@@ -117,7 +122,7 @@ func run() int {
 	defer shutdownCancel()
 	shutdownComplete = true
 	if !runtime.Shutdown(shutdownCtx, server, mcpPrivateServer) {
-		slog.Error("Background worker shutdown timed out")
+		slog.Error("Background worker shutdown timed out", "failure_cause", failurecause.Message(shutdownCtx.Err()))
 	}
 	slog.Info("Server stopped")
 	if runtimeErr != nil {
@@ -127,7 +132,7 @@ func run() int {
 }
 
 func logStartupFailure(component string, err error) int {
-	slog.Error("Application startup failed", "component", component, "error", err)
+	slog.Error("Application startup failed", "component", component, "failure_cause", failurecause.Message(err))
 	return 1
 }
 
@@ -141,7 +146,13 @@ func registerHealthRoutes(mux *http.ServeMux, ready healthReadinessCheck) {
 	writeReady := func(writer http.ResponseWriter, request *http.Request) {
 		ctx, cancel := context.WithTimeout(request.Context(), healthReadinessTimeout)
 		defer cancel()
-		if ready == nil || ready(ctx) != nil {
+		if ready == nil {
+			slog.ErrorContext(ctx, "Readiness check unavailable", "reason", "check_missing")
+			http.Error(writer, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		if err := ready(ctx); err != nil {
+			slog.ErrorContext(ctx, "Readiness check failed", "failure_cause", failurecause.Message(err))
 			http.Error(writer, "not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -183,7 +194,7 @@ func logShutdownReason(signal os.Signal, runtimeErr error) {
 	case signal != nil:
 		slog.Info("Received signal, shutting down", "signal", signal)
 	case runtimeErr != nil:
-		slog.Error("Required runtime component failed; shutting down", "error", runtimeErr)
+		slog.Error("Required runtime component failed; shutting down", "failure_cause", failurecause.Message(runtimeErr))
 	default:
 		slog.Info("Context cancelled, shutting down")
 	}
@@ -220,6 +231,7 @@ func reportRuntimeFailure(failures chan<- error, err error) {
 	if err == nil {
 		return
 	}
+	slog.Error("Runtime component failed", "failure_cause", failurecause.Message(err))
 	select {
 	case failures <- err:
 	default:

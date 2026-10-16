@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -75,7 +76,19 @@ func NewLabelService(db *gorm.DB, dependencies Dependencies) *LabelService {
 func (s *LabelService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListLabelsRequest],
-) (*connect.Response[openv1.ListLabelsResponse], error) {
+) (_ *connect.Response[openv1.ListLabelsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label/public.List", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	// Base query - only published labels
 	query := s.db.WithContext(ctx).Model(&model.Label{}).Where("status = ?", managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String())
 
@@ -186,7 +199,19 @@ func (s *LabelService) List(
 func (s *LabelService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetLabelRequest],
-) (*connect.Response[openv1.GetLabelResponse], error) {
+) (_ *connect.Response[openv1.GetLabelResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
+	}()
+
 	slugOrID := req.Msg.Slug
 	shareToken := req.Msg.GetShareToken()
 	sharePassword := req.Msg.GetSharePassword()
@@ -270,7 +295,7 @@ func (s *LabelService) buildLabelResponseInTransaction(
 	*label = current
 	localization, err := publiccontent.Resolve(ctx, s.db, labelLocalizationSpec, labelID, acceptLanguage)
 	if err != nil {
-		slog.Warn("failed to resolve label localization", "labelId", labelID, "error", err)
+		slog.ErrorContext(ctx, "failed to resolve label localization", "labelId", labelID, "failure_cause", failurecause.Message(err))
 	}
 	content, err := s.content.LoadDocument(ctx, s.db, labelID, localization.DisplayedLocale)
 	if err != nil {
@@ -514,6 +539,7 @@ func (s *LabelService) getOptionalLabelImageAsset(ctx context.Context, fileID *s
 	}
 	assets, err := s.media.ReadyForSourceFiles(ctx, s.db, []string{*fileID}, "logo")
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "resolve_logo_asset", "outcome", "failed", failurecause.Attr(err), "file_id", *fileID)
 		return nil
 	}
 	return assets[*fileID]
@@ -554,6 +580,9 @@ func (s *LabelService) getParentLabel(ctx context.Context, parentLabelID string)
 		Scan(&parent).Error
 
 	if err != nil || parent.ID == "" {
+		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "load_parent_label", "outcome", "failed", failurecause.Attr(err), "label_id", parentLabelID)
+		}
 		return nil
 	}
 
@@ -566,7 +595,11 @@ func (s *LabelService) getParentLabel(ctx context.Context, parentLabelID string)
 	}
 	s.applyLabelSummaryImageAssets(ctx, summary, parent.LogoLightFileID, parent.LogoDarkFileID)
 	if labelHasEffectiveLogo(parent.LogoLightFileID, parent.LogoDarkFileID) {
-		summary.OgAsset, _ = s.media.ResolveOg(ctx, s.db, parent.OgAssetID)
+		var err error
+		summary.OgAsset, err = s.media.ResolveOg(ctx, s.db, parent.OgAssetID)
+		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "resolve_parent_og_asset", "outcome", "failed", failurecause.Attr(err), "label_id", parentLabelID)
+		}
 	}
 
 	return summary

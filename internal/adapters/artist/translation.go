@@ -3,11 +3,13 @@ package artist
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -24,7 +26,9 @@ func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB,
 	_ = identity
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
 		var preferred *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).Select("preferred_locale").Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).Scan(&preferred).Error; err == nil && preferred != nil {
+		if err := db.WithContext(ctx).Model(&model.Member{}).Select("preferred_locale").Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).Scan(&preferred).Error; err != nil {
+			slog.ErrorContext(ctx, "Failed to load preferred source locale", "failure_cause", failurecause.Message(err))
+		} else if preferred != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferred); locale != nil {
 				return *locale
 			}
@@ -33,7 +37,9 @@ func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB,
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(language); locale != nil {
 		return *locale
 	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
+	if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
+		slog.ErrorContext(ctx, "Failed to load source locale settings", "failure_cause", failurecause.Message(err))
+	} else {
 		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {
 			return *locale
 		}
@@ -45,7 +51,9 @@ func (*Translation) NormalizeInitialSourceLocale(ctx context.Context, db *gorm.D
 	if normalized := localization.NormalizeSupportedLocale(locale); normalized != nil {
 		return *normalized
 	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
+	if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
+		slog.ErrorContext(ctx, "Failed to load source locale settings", "failure_cause", failurecause.Message(err))
+	} else {
 		if normalized := localization.NormalizeSupportedLocale(settings.DefaultLocale); normalized != nil {
 			return *normalized
 		}

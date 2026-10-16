@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -10,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -38,7 +40,19 @@ func clientLogoColumnForVariant(variant managev1.ThemeAssetVariant) (string, err
 func (s *ClientService) SetClientLogo(
 	ctx context.Context,
 	req *connect.Request[managev1.SetClientLogoRequest],
-) (*connect.Response[managev1.SetClientLogoResponse], error) {
+) (_ *connect.Response[managev1.SetClientLogoResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SetClientLogo", "outcome", "failed", "client_id", req.Msg.GetClientId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Client.Edit(req.Msg.ClientId)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -146,7 +160,19 @@ func (s *ClientService) SetClientLogo(
 func (s *ClientService) DeleteClientLogo(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteClientLogoRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteClientLogo", "outcome", "failed", "client_id", req.Msg.GetClientId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Client.Edit(req.Msg.ClientId)
 	if err != nil {
 		return nil, errs.Internal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type campaignAIDocumentRoot struct {
@@ -56,6 +58,9 @@ func loadCampaignAIDocumentRoot(
 	}
 	documentID, err := uuid.Parse(strings.TrimSpace(*root.ContentDocumentID))
 	if err != nil || documentID == uuid.Nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "campaign", "event", "campaign.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(err))
+		}
 		return campaignAIDocumentRoot{}, uuid.Nil, errs.InternalMsg("Campaign content document ID is invalid")
 	}
 	return root, documentID, nil
@@ -86,10 +91,12 @@ func requireCampaignAIDocumentAuthority(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation rejected", "domain", "campaign", "event", "campaign.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
 		return uuid.Nil, errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "campaign", "event", "campaign.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

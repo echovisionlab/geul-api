@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -128,7 +129,15 @@ func EnqueueProtobuf(
 	startedAt := time.Now()
 	_, err = (eventpkg.PGMQ{}).Enqueue(ctx, executor, queue, envelope, InjectTraceContext(ctx), 0)
 	if err != nil {
-		emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), sharedtelemetry.QueueFailureEnqueueFailed)
+		cause := err
+		if job, ok := message.(*managev1.SendEmailEvent); ok {
+			private := []string{job.GetRecipient()}
+			for _, value := range job.GetTemplateData() {
+				private = append(private, value)
+			}
+			cause = fmt.Errorf("%s", failurecause.Message(err, private...))
+		}
+		emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), sharedtelemetry.QueueFailureEnqueueFailed, cause)
 		return err
 	}
 	emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), "")

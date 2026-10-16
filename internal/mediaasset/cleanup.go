@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -177,6 +178,9 @@ func lockDueUnreferencedRetiredGeneration(tx *gorm.DB, generationID string, now 
 	}
 	expectedPrefix, err := mediaauth.MediaHLSObjectPrefix(generation.FileID, generation.ID)
 	if err != nil || generation.ObjectPrefix != expectedPrefix {
+		if err != nil {
+			slog.ErrorContext(tx.Statement.Context, "Invalid retired media generation object prefix", failurecause.Attr(err), "generation_id", generation.ID, "file_id", generation.FileID)
+		}
 		return model.MediaGeneration{}, false, fmt.Errorf("media generation %s has invalid object prefix", generation.ID)
 	}
 	var references int64
@@ -231,7 +235,7 @@ func (s *Cleanup) CleanupOrphanHLSPrefixes(ctx context.Context, cutoff time.Time
 	deleted := 0
 	for _, prefix := range deletable {
 		if err := s.objects.DeletePrefix(ctx, prefix.Prefix); err != nil {
-			slog.Warn("Failed to delete orphan HLS prefix", "prefix", prefix.Prefix, "fileId", prefix.FileID, "error", err)
+			slog.Error("Failed to delete orphan HLS prefix", "prefix", prefix.Prefix, "fileId", prefix.FileID, failurecause.Attr(err))
 			continue
 		}
 		deleted++

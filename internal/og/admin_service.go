@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -58,7 +59,17 @@ func NewAdminService(
 func (s *AdminService) RegenerateOgImage(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateOgImageRequest],
-) (*connect.Response[managev1.RegenerateOgImageResponse], error) {
+) (_ *connect.Response[managev1.RegenerateOgImageResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "RegenerateOgImage", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if err := s.authorizer.RequireAuthenticated(ctx); err != nil {
 		return nil, err
 	}
@@ -102,7 +113,17 @@ func (s *AdminService) RegenerateOgImage(
 func (s *AdminService) RegenerateAllOgImages(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateAllOgImagesRequest],
-) (*connect.Response[managev1.RegenerateAllOgImagesResponse], error) {
+) (_ *connect.Response[managev1.RegenerateAllOgImagesResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "RegenerateAllOgImages", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if err := s.authorizer.RequireAdmin(ctx); err != nil {
 		return nil, err
 	}

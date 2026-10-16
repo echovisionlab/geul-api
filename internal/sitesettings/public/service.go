@@ -3,9 +3,11 @@ package public
 import (
 	"context"
 	"encoding/json"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
 
@@ -55,7 +57,19 @@ func NewManifestService(
 func (s *ManifestService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetRequest],
-) (*connect.Response[openv1.GetResponse], error) {
+) (_ *connect.Response[openv1.GetResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings/public.Get", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	user, err := s.getUserContext(ctx)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -158,7 +172,7 @@ func (s *ManifestService) buildSettings(ctx context.Context, settings *model.Sit
 	}
 	loaderAssets, err := s.projection.LoaderAssets(ctx)
 	if err != nil {
-		slog.Error("failed to load manifest loader URLs", "error", err)
+		slog.ErrorContext(ctx, "failed to load manifest loader URLs", "failure_cause", failurecause.Message(err))
 		return nil, err
 	}
 	result.LoaderAssets = loaderAssets
@@ -173,7 +187,7 @@ func manifestSocialLinks(raw []byte) map[string]string {
 	}
 	var values structured.Fields
 	if err := json.Unmarshal(raw, &values); err != nil {
-		slog.Warn("failed to unmarshal social_links for manifest", "error", err)
+		slog.WarnContext(context.Background(), "failed to unmarshal social_links for manifest", "failure_cause", failurecause.Message(err))
 		return result
 	}
 	for key, value := range values {

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -120,6 +122,7 @@ func notifyOgLifecycle(
 ) {
 	payload, err := newOgLifecycleEventPayload(generation, target, status, replacementID, asset, now)
 	if err != nil {
+		slog.ErrorContext(tx.Statement.Context, "Failed to encode OG lifecycle notification", failurecause.Attr(err), "generation_id", generation.ID, "run_id", generation.RunID, "status", status)
 		return
 	}
 	if tx.Dialector.Name() != "postgres" {
@@ -129,20 +132,24 @@ func notifyOgLifecycle(
 	if len(encoded) >= postgresNotifyPayloadLimit {
 		payload, err = newOgLifecycleEventPayload(generation, target, status, replacementID, nil, now)
 		if err != nil {
+			slog.ErrorContext(tx.Statement.Context, "Failed to encode compact OG lifecycle notification", failurecause.Attr(err), "generation_id", generation.ID, "run_id", generation.RunID, "status", status)
 			return
 		}
 		encoded = base64.StdEncoding.EncodeToString(payload)
 	}
 	if len(encoded) >= postgresNotifyPayloadLimit {
+		slog.ErrorContext(tx.Statement.Context, "OG lifecycle notification exceeds PostgreSQL limit", "generation_id", generation.ID, "run_id", generation.RunID, "status", status, "encoded_bytes", len(encoded))
 		return
 	}
 	publishPostgresNotificationBestEffort(tx, ogLifecycleNotifyChannel, encoded)
 }
 
 func publishPostgresNotificationBestEffort(tx *gorm.DB, channel string, payload string) {
-	_ = tx.Transaction(func(notifyTx *gorm.DB) error {
+	if err := tx.Transaction(func(notifyTx *gorm.DB) error {
 		return notifyTx.Exec("SELECT pg_notify(?, ?)", channel, payload).Error
-	})
+	}); err != nil {
+		slog.ErrorContext(tx.Statement.Context, "Failed to publish OG notification", failurecause.Attr(err, payload), "channel", channel)
+	}
 }
 
 func newOgLifecycleEventPayload(

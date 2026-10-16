@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/adapters/kratoswebhook"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // AfterLoginErrorResponse is returned when login should be rejected
@@ -82,11 +83,12 @@ func (h *HooksHandler) AfterLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, authentication.ErrLoginHookInput) {
+			slog.WarnContext(r.Context(), "Rejected invalid login hook input", "failure_cause", failurecause.Message(err))
 			http.Error(w, "Missing identity_id", http.StatusBadRequest)
 			return
 		}
 		operation, responseMessage := loginHookFailureResponse(err)
-		slog.ErrorContext(r.Context(), "After-login lifecycle failed", "operation", operation, "error", err, "identity_id", req.IdentityID)
+		slog.ErrorContext(r.Context(), "After-login lifecycle failed", "operation", operation, "failure_cause", failurecause.Message(err), "identity_id", req.IdentityID)
 		http.Error(w, responseMessage, http.StatusInternalServerError)
 		return
 	}
@@ -109,7 +111,7 @@ func (h *HooksHandler) RejectCredentialRegistration(w http.ResponseWriter, r *ht
 
 	var req CredentialRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.ErrorContext(r.Context(), "Failed to decode credential-registration policy request", "error", err)
+		slog.WarnContext(r.Context(), "Failed to decode credential-registration policy request", "failure_cause", failurecause.Message(err))
 		kratoswebhook.WriteError(w, http.StatusBadRequest, "Could not validate the registration method.", "registration_method_invalid")
 		return
 	}
@@ -120,6 +122,7 @@ func (h *HooksHandler) RejectCredentialRegistration(w http.ResponseWriter, r *ht
 	case err == nil:
 		kratoswebhook.WriteEmpty(w)
 	case errors.Is(err, authentication.ErrRegistrationPendingEmail):
+		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationPendingEmail", "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(
 			w,
 			http.StatusConflict,
@@ -127,16 +130,19 @@ func (h *HooksHandler) RejectCredentialRegistration(w http.ResponseWriter, r *ht
 			"registration_pending_email_forbidden",
 		)
 	case errors.Is(err, authentication.ErrRegistrationMethodDenied):
+		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationMethodDenied", "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(w, http.StatusConflict, "Use email verification or social sign-in to create an account.", "registration_method_denied")
 	case errors.Is(err, authentication.ErrRegistrationMethodUnknown):
+		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationMethodUnknown", "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(w, http.StatusForbidden, "This registration method is not available.", "registration_method_unknown")
 	case errors.Is(err, authentication.ErrRegistrationReuseHeld):
+		slog.WarnContext(r.Context(), "Registration policy rejected request", "failure_cause", failurecause.Message(err), "reason", "ErrRegistrationReuseHeld", "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(w, http.StatusConflict, "Registration could not be completed.", "registration_unavailable")
 	case errors.Is(err, authentication.ErrRegistrationUnavailable):
-		slog.ErrorContext(r.Context(), "Registration email reuse policy unavailable", "error", err, "method", req.Method, "flow_id", req.FlowID)
+		slog.ErrorContext(r.Context(), "Registration email reuse policy unavailable", "failure_cause", failurecause.Message(err), "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(w, http.StatusInternalServerError, "Registration could not be completed.", "registration_unavailable")
 	default:
-		slog.ErrorContext(r.Context(), "Registration policy failed", "error", err, "method", req.Method, "flow_id", req.FlowID)
+		slog.ErrorContext(r.Context(), "Registration policy failed", "failure_cause", failurecause.Message(err), "method", req.Method, "flow_id", req.FlowID)
 		kratoswebhook.WriteError(w, http.StatusInternalServerError, "Registration could not be completed.", "registration_unavailable")
 	}
 }
@@ -169,6 +175,10 @@ func writeBannedAfterLoginResponse(
 		Banned:    true,
 		BanReason: banReason,
 	}); err != nil {
-		slog.ErrorContext(r.Context(), "Failed to encode banned response", "error", err)
+		private := []string{}
+		if banReason != nil {
+			private = append(private, *banReason)
+		}
+		slog.ErrorContext(r.Context(), "Failed to encode banned response", "failure_cause", failurecause.Message(err, private...))
 	}
 }

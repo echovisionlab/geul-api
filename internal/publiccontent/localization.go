@@ -3,9 +3,12 @@ package publiccontent
 import (
 	"context"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"log/slog"
 	"slices"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -83,6 +86,7 @@ func Resolve(
 ) (Selection, error) {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	return ResolveWithPolicy(ctx, db, spec, entityID, acceptLanguage, settings)
@@ -119,6 +123,8 @@ func ResolveWithPolicy(
 	available, availableErr := AvailableLocales(ctx, db, spec, entityID, sourceLocale, settings)
 	if availableErr == nil {
 		selection.AvailableLocales = available
+	} else {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "entity_type", spec.EntityType, "entity_id", entityID)
 	}
 	if selection.Summary != nil {
 		resolved, err := sitevariable.ResolvePublicText(ctx, db, *selection.Summary)
@@ -141,6 +147,7 @@ func ResolveBatch(
 ) (map[string]Selection, error) {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	return ResolveBatchWithPolicy(ctx, db, spec, entityIDs, acceptLanguage, settings)

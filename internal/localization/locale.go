@@ -1,8 +1,10 @@
 package localization
 
 import (
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"golang.org/x/text/language"
 )
 
@@ -151,6 +153,8 @@ func InferPreferredLocaleFromAcceptLanguage(headerValue string) *string {
 				return locale
 			}
 		}
+	} else {
+		slog.Warn("Accept-Language parsing failed; using locale fallback", "domain", "localization", "event", "localization.accept_language.fallback", failurecause.Attr(err))
 	}
 	for segment := range strings.SplitSeq(headerValue, ",") {
 		candidate, _, _ := strings.Cut(strings.TrimSpace(segment), ";")

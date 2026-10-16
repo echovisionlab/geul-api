@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -303,6 +305,7 @@ func (s *FileService) openRemoteImportSourceWithClient(
 ) (*remoteImportSource, error) {
 	parsedURL, err := url.Parse(request.opts.sourceURL)
 	if err != nil {
+		slog.WarnContext(ctx, "Failed to parse remote import URL", failurecause.Attr(err, request.opts.fileName), "file_id", request.identity.fileID)
 		client.CloseIdleConnections()
 		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
 	}
@@ -323,6 +326,7 @@ func (s *FileService) openRemoteImportSourceWithClient(
 	}
 	response, err := client.Do(httpRequest)
 	if err != nil {
+		slog.ErrorContext(ctx, "Failed to download remote import source", failurecause.Attr(err, request.opts.fileName), "file_id", request.identity.fileID, "correlation_id", request.opts.correlationID)
 		client.CloseIdleConnections()
 		return nil, fail(errs.Internal(fmt.Errorf("failed to download: %w", remoteImportDownloadCause(err))))
 	}

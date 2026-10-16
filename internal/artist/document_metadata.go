@@ -3,6 +3,7 @@ package artist
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"slices"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -113,6 +115,7 @@ func buildArtistDocumentMetadataPlan(
 	if plan.parentArtistID.value != nil {
 		parsed, err := uuid.Parse(*plan.parentArtistID.value)
 		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "artist", "operation", "buildArtistDocumentMetadataPlan", failurecause.Attr(err))
 			return artistDocumentMetadataPlan{}, errs.InvalidArgument("parent_artist_id", "must be a valid Artist ID")
 		}
 		canonical := parsed.String()
@@ -145,6 +148,7 @@ func normalizeArtistLabelIDs(values []string) ([]string, error) {
 	for _, raw := range values {
 		parsed, err := uuid.Parse(strings.TrimSpace(raw))
 		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "artist", "operation", "normalizeArtistLabelIDs", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("label_ids", "must contain valid Label IDs")
 		}
 		id := parsed.String()
@@ -221,7 +225,18 @@ func replaceArtistLabelIDs(
 func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateArtistDocumentMetadataRequest],
-) (*connect.Response[intrav1.UpdateArtistDocumentMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdateArtistDocumentMetadataResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UpdateArtistDocumentMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Artist content Block store is not configured")
 	}
@@ -235,6 +250,7 @@ func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 	}
 	expectedRevision, err := uuid.Parse(req.Msg.ExpectedRevision)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "UpdateArtistDocumentMetadata", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("expected_revision", "must be a UUID")
 	}
 	documentID, err := loadCreativeContentDocumentID(ctx, s.db, artistContentEntity, req.Msg.ArtistId)

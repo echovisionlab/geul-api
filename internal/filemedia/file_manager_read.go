@@ -3,11 +3,13 @@ package filemedia
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -16,7 +18,17 @@ import (
 func (s *FileService) GetFile(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFileRequest],
-) (*connect.Response[managev1.GetFileResponse], error) {
+) (_ *connect.Response[managev1.GetFileResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetFile", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

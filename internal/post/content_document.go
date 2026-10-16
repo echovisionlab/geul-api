@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -33,6 +35,7 @@ type postContentDocumentRoot struct {
 
 func loadPostContentDocumentID(ctx context.Context, db *gorm.DB, postID string) (uuid.UUID, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadPostContentDocumentID", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, errs.InvalidArgument("post_id", "must be a canonical UUID")
 	}
 	var root postContentDocumentRoot
@@ -146,14 +149,17 @@ func authorizePostBlockBootstrap(
 	if root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
 		can, canErr := policyv1.Post.ViewArchived(postID)
 		if canErr != nil {
+			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(canErr))
 			return errs.InvalidArgument("post_id", "must be a canonical UUID")
 		}
 		decision, decisionErr := auth.AuthorizationDecision(principalContext, can)
 		if decisionErr != nil {
+			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(decisionErr))
 			return errs.AuthenticationRequired()
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(checkErr))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		if !allowed {
@@ -163,14 +169,17 @@ func authorizePostBlockBootstrap(
 	}
 	can, err := policyv1.Post.Edit(postID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidArgument("post_id", "must be a canonical UUID")
 	}
 	decision, err := auth.AuthorizationDecision(principalContext, can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -242,6 +251,7 @@ func loadPostContentDomainContext(
 func parsePostContentUUID(field, value string) (uuid.UUID, error) {
 	parsed, err := uuidutil.ParseCanonical(value, field)
 	if err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "post.parsePostContentUUID", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, errs.InvalidArgument(field, "must be a canonical UUID")
 	}
 	return parsed, nil
@@ -254,20 +264,25 @@ func normalizePostContentBlockError(err error) error {
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
 			"Post target locale changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.NotFoundMsg("Post content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 			"Post document changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("a Post Block File reference is not attachable")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())

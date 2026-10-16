@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -87,7 +89,19 @@ func (s *InternalPostService) requireContentBlockStore() error {
 func (s *InternalPostService) LoadPostBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPostBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadPostBlockDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadPostBlockDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadPostBlockDocument", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -200,7 +214,19 @@ func (s *InternalPostService) LoadPostBlockDocument(
 func (s *InternalPostService) ApplyPostBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyPostBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyPostBlockBatchResponse], error) {
+) (_ *connect.Response[intrav1.ApplyPostBlockBatchResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ApplyPostBlockBatch", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -368,7 +394,19 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 func (s *InternalPostService) UpdatePostLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePostLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdatePostLocaleMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdatePostLocaleMetadataResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePostLocaleMetadata", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -560,7 +598,19 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 func (s *InternalPostService) UpdatePostDocumentMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePostDocumentMetadataRequest],
-) (*connect.Response[intrav1.UpdatePostDocumentMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdatePostDocumentMetadataResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePostDocumentMetadata", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -659,7 +709,19 @@ func (s *InternalPostService) UpdatePostDocumentMetadata(
 func (s *InternalPostService) CreatePostVersionCheckpoint(
 	ctx context.Context,
 	req *connect.Request[intrav1.CreatePostVersionCheckpointRequest],
-) (*connect.Response[intrav1.CreatePostVersionCheckpointResponse], error) {
+) (_ *connect.Response[intrav1.CreatePostVersionCheckpointResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreatePostVersionCheckpoint", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}

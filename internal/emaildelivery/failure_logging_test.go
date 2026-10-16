@@ -35,7 +35,7 @@ func TestDeliveryLogsRenderCauseAndContextWithoutPrivateData(t *testing.T) {
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
 	require.Equal(t, "ERROR", entry["level"])
-	require.Equal(t, cause.Error(), entry["error"])
+	require.Equal(t, cause.Error(), entry["failure_cause"])
 	require.Equal(t, "template:test", entry["template_type"])
 	require.Equal(t, "ko", entry["locale"])
 	require.Equal(t, "layout-old", entry["layout_id"])
@@ -63,7 +63,7 @@ func TestProviderFailureLogsCauseBeforeWorkerRetryMapping(t *testing.T) {
 		}
 		found = true
 		require.Equal(t, "ERROR", entry["level"])
-		require.Contains(t, entry["error"], "provider throttled: quota exhausted")
+		require.Contains(t, entry["failure_cause"], "provider throttled: quota exhausted")
 		require.Equal(t, "layout-1", entry["layout_id"])
 		require.Equal(t, "ja", entry["locale"])
 	}
@@ -80,6 +80,27 @@ func TestFailureCauseRedactsCommandValuesAndCredentials(t *testing.T) {
 	for _, private := range []string{"private@example.test", "Private Name", "654321", "smtp-secret", "private-token", "user:pass"} {
 		require.NotContains(t, message, private)
 	}
+}
+
+func TestFailureCauseKeepsMarkupSQLIdentifiersAndURLPath(t *testing.T) {
+	const diagnostic = `render: element <img> is missing {unit}; relation "email_template"; https://provider.test/v1/send`
+	require.Equal(t, diagnostic, FailureCause(errors.New(diagnostic), nil))
+}
+
+func TestAdapterTestFailureLogsCauseWithoutChangingResponse(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	failure := errors.New("verification failed: mailbox@example.test token=secret-value")
+	response := sendAdapterTestEmail(t.Context(), deliveryAdapterStub{sendErr: failure}, "mailbox@example.test")
+	require.False(t, response.Msg.Success)
+	require.Equal(t, failure.Error(), response.Msg.GetError())
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+	require.Contains(t, entry["failure_cause"], "verification failed")
+	require.NotContains(t, output.String(), "mailbox@example.test")
+	require.NotContains(t, output.String(), "secret-value")
 }
 
 func TestFailureCauseRedactsQuotedProviderCredentials(t *testing.T) {

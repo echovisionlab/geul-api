@@ -1,6 +1,7 @@
 package sitesettings
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
@@ -91,9 +93,9 @@ func jsonColumnToMap(raw []byte, key string, emptyDefault bool) siteSettingObjec
 
 	var result siteSettingObject
 	if err := json.Unmarshal(raw, &result); err != nil {
-		slog.Warn("failed to unmarshal site setting JSON column",
+		slog.WarnContext(context.Background(), "failed to unmarshal site setting JSON column",
 			"key", key,
-			"error", err)
+			"failure_cause", failurecause.Message(err))
 		if emptyDefault {
 			return siteSettingObject{}
 		}
@@ -115,9 +117,9 @@ func jsonColumnToStruct(raw []byte, key string) *structpb.Struct {
 
 	st, err := structpb.NewStruct(m)
 	if err != nil {
-		slog.Warn("failed to convert site setting JSON to protobuf struct",
+		slog.WarnContext(context.Background(), "failed to convert site setting JSON to protobuf struct",
 			"key", key,
-			"error", err)
+			"failure_cause", failurecause.Message(err))
 		return nil
 	}
 
@@ -185,6 +187,7 @@ func parseJSONObjectBytes(value siteSettingValue, nullable bool) ([]byte, error)
 
 	var object siteSettingObject
 	if err := json.Unmarshal(payload, &object); err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "sitesettings.parseJSONObjectBytes", "outcome", "failed", failurecause.Attr(err))
 		return nil, fmt.Errorf("expected JSON object")
 	}
 
@@ -202,6 +205,9 @@ func parseOgImageConfigRoot(raw []byte) (siteSettingObject, error) {
 	root := siteSettingObject{}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &root); err != nil || root == nil {
+			if err != nil {
+				slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "decode_og_image_config", "outcome", "failed", failurecause.Attr(err))
+			}
 			return nil, fmt.Errorf("stored og_image_config must be a JSON object")
 		}
 	}
@@ -229,6 +235,9 @@ func applyOgImageConfigSection(settings *model.SiteSettings, section string, val
 	}
 	var object siteSettingObject
 	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "sitesettings.applyOgImageConfigSection", "outcome", "failed", failurecause.Attr(err))
+		}
 		return fmt.Errorf("og_image_config.%s must be a JSON object", section)
 	}
 	root, err := parseOgImageConfigRoot(settings.OGImageConfig)
@@ -298,6 +307,7 @@ func settingValue(settings *model.SiteSettings, key string) (siteSettingValue, b
 	case "og_image_config.home", "og_image_config.content":
 		root, err := parseOgImageConfigRoot(settings.OGImageConfig)
 		if err != nil {
+			slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "load_og_image_config_section", "outcome", "failed", failurecause.Attr(err), "key", key)
 			return nil, true
 		}
 		section := strings.TrimPrefix(key, "og_image_config.")

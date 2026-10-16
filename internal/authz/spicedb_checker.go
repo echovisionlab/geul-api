@@ -3,11 +3,13 @@ package authz
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -70,10 +72,12 @@ func (c *SpiceDBResourceChecker) Check(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	ok, err := c.spicedb.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !ok {
@@ -101,6 +105,7 @@ func (c *SpiceDBResourceChecker) CheckOrNotFound(
 	}
 	resource := can.Resource()
 	if exists, dbErr := c.resourceExists(ctx, resource.ID()); dbErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "operation", "CheckOrNotFound", failurecause.Attr(dbErr))
 		return errs.Internal(dbErr)
 	} else if !exists {
 		return errs.NotFound(resource.Type(), resource.ID())

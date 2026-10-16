@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -98,7 +99,26 @@ func (s *MailAdapterService) requireMailAdapterCan(
 func (s *MailAdapterService) Create(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMailAdapterRequest],
-) (*connect.Response[managev1.CreateMailAdapterResponse], error) {
+) (rpcResponse *connect.Response[managev1.CreateMailAdapterResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		private := []string{}
+		if cfg := req.Msg.GetSesConfig(); cfg != nil {
+			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
+		}
+		if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
+			private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Create", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
+	}()
+
 	mailAdapterCan, err := policyv1.MailAdapter.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -164,7 +184,26 @@ func (s *MailAdapterService) Create(
 func (s *MailAdapterService) Update(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMailAdapterRequest],
-) (*connect.Response[managev1.UpdateMailAdapterResponse], error) {
+) (rpcResponse *connect.Response[managev1.UpdateMailAdapterResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		private := []string{}
+		if cfg := req.Msg.GetSesConfig(); cfg != nil {
+			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
+		}
+		if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
+			private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Update", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
+	}()
+
 	mailAdapterCan, err := policyv1.MailAdapter.Update()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -296,7 +335,19 @@ func (s *MailAdapterService) Update(
 func (s *MailAdapterService) Delete(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMailAdapterRequest],
-) (*connect.Response[managev1.DeleteMailAdapterResponse], error) {
+) (rpcResponse *connect.Response[managev1.DeleteMailAdapterResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Delete", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	mailAdapterCan, err := policyv1.MailAdapter.Delete()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -341,7 +392,19 @@ func (s *MailAdapterService) Delete(
 func (s *MailAdapterService) ListMailAdaptersAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMailAdaptersAdminRequest],
-) (*connect.Response[managev1.ListMailAdaptersAdminResponse], error) {
+) (rpcResponse *connect.Response[managev1.ListMailAdaptersAdminResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "ListMailAdaptersAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, canErr := policyv1.MailAdapter.List()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -395,7 +458,27 @@ func (s *MailAdapterService) ListMailAdaptersAdmin(
 func (s *MailAdapterService) TestConfig(
 	ctx context.Context,
 	req *connect.Request[managev1.TestMailAdapterConfigRequest],
-) (*connect.Response[managev1.TestMailAdapterResponse], error) {
+) (rpcResponse *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
+	private := []string{}
+	if cfg := req.Msg.GetSesConfig(); cfg != nil {
+		private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
+	}
+	if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
+		private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
+	}
+	private = append(private, req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail))
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "TestConfig", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
+	}()
+
 	can, canErr := policyv1.MailAdapter.Test()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -428,6 +511,7 @@ func (s *MailAdapterService) TestConfig(
 	factory := email.NewAdapterFactory()
 	adapter, err := factory.Create(tempAdapter)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
 		return connect.NewResponse(&managev1.TestMailAdapterResponse{
 			Success: false,
@@ -435,14 +519,27 @@ func (s *MailAdapterService) TestConfig(
 		}), nil
 	}
 
-	return sendAdapterTestEmail(ctx, adapter, testEmail), nil
+	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
 }
 
 // Test tests a mail adapter by sending a test email
 func (s *MailAdapterService) Test(
 	ctx context.Context,
 	req *connect.Request[managev1.TestMailAdapterRequest],
-) (*connect.Response[managev1.TestMailAdapterResponse], error) {
+) (rpcResponse *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
+	private := []string{req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail)}
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Test", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
+	}()
+
 	can, canErr := policyv1.MailAdapter.Test()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -462,10 +559,18 @@ func (s *MailAdapterService) Test(
 		return nil, errs.Internal(err)
 	}
 
+	if cfg, err := dbAdapter.GetSESConfig(); err == nil {
+		private = append(private, cfg.AccessKeyID, cfg.SecretAccessKey, cfg.FromEmail, cfg.FromName)
+	}
+	if cfg, err := dbAdapter.GetSMTPConfig(); err == nil {
+		private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.FromName)
+	}
+
 	// Create adapter instance
 	factory := email.NewAdapterFactory()
 	adapter, err := factory.Create(&dbAdapter)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
 		return connect.NewResponse(&managev1.TestMailAdapterResponse{
 			Success: false,
@@ -473,7 +578,7 @@ func (s *MailAdapterService) Test(
 		}), nil
 	}
 
-	return sendAdapterTestEmail(ctx, adapter, testEmail), nil
+	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
 }
 
 // Helper functions
@@ -563,9 +668,15 @@ func sendAdapterTestEmail(
 	ctx context.Context,
 	sender email.Sender,
 	testEmail string,
+	private ...string,
 ) *connect.Response[managev1.TestMailAdapterResponse] {
 	result, err := sendVerificationEmail(ctx, sender, testEmail)
 	if err != nil {
+		private = append(private, testEmail)
+		if recipient, parseErr := mail.ParseAddress(testEmail); parseErr == nil {
+			private = append(private, recipient.Name)
+		}
+		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
 		return connect.NewResponse(&managev1.TestMailAdapterResponse{
 			Success: false,
@@ -712,6 +823,8 @@ func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.Mai
 				sesConfig.SecretAccessKey = cfg.SecretAccessKey
 			}
 			proto.Config = &managev1.MailAdapter_SesConfig{SesConfig: sesConfig}
+		} else {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_ses_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
 		}
 
 	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
@@ -731,6 +844,8 @@ func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.Mai
 				smtpConfig.Password = cfg.Password
 			}
 			proto.Config = &managev1.MailAdapter_SmtpConfig{SmtpConfig: smtpConfig}
+		} else {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_smtp_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
 		}
 	}
 

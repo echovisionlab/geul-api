@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -109,6 +111,7 @@ func authorizePageBlockBootstrap(
 		principalMessage.GetSessionId(),
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		slog.WarnContext(ctx, "Page collaboration principal rejected", "domain", "page", "operation", "resolve_collaboration_principal", "outcome", "failed", "page_id", pageID, failurecause.Attr(err, principalMessage.GetSessionId()))
 		return nil, errs.AuthenticationRequired()
 	}
 	if err != nil {
@@ -141,6 +144,7 @@ func authorizePageBlockBootstrap(
 	}
 	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, principalMessage.GetSessionId(), principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+			slog.WarnContext(ctx, "Page collaboration session rejected", "domain", "page", "operation", "authorize_collaboration_session", "outcome", "failed", failurecause.Attr(err, principalMessage.GetSessionId()))
 			return nil, errs.AuthenticationRequired()
 		}
 		return nil, errs.Internal(fmt.Errorf("lock Page collaboration session: %w", err))
@@ -230,6 +234,9 @@ func parsePageContentUUID(fieldName string, value string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.parsePageContentUUID", "outcome", "failed", failurecause.Attr(err))
+		}
 		return uuid.Nil, errs.InvalidArgument(fieldName, "must be a canonical UUID")
 	}
 	return parsed, nil
@@ -241,6 +248,7 @@ func normalizePageContentBlockError(err error) error {
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
 			"Page target translation changed since it was loaded; reload before saving", err,
@@ -248,15 +256,19 @@ func normalizePageContentBlockError(err error) error {
 	}
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.NotFoundMsg("page content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 			"Page document changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("a Page Block File reference is not attachable")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())

@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -63,7 +64,7 @@ func (s *SiteSettingService) getFileAsset(ctx context.Context, fileID string, ex
 	}
 	asset, err := s.assets.ReadyRef(ctx, s.db, fileID, expectedKind)
 	if err != nil {
-		slog.Warn("ready asset referenced in site setting not found", "file_id", fileID, "error", err)
+		slog.WarnContext(ctx, "ready asset referenced in site setting not found", "file_id", fileID, "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	return asset

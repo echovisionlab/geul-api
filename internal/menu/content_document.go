@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -69,6 +71,9 @@ func parseMenuContentDocumentUUID(value, field string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
+		if err != nil {
+			slog.ErrorContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.parseMenuContentDocumentUUID", "outcome", "failed", failurecause.Attr(err))
+		}
 		return uuid.Nil, errs.Internal(fmt.Errorf("invalid Menu %s: %s", field, normalized))
 	}
 	return parsed, nil

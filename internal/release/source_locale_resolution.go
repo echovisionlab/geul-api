@@ -2,8 +2,10 @@ package release
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -38,6 +40,9 @@ func memberPreferredSourceLocale(ctx context.Context, db *gorm.DB) *string {
 		Select("preferred_locale").
 		Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
 		Scan(&preferredLocale).Error; err != nil || preferredLocale == nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "memberPreferredSourceLocale", failurecause.Attr(err))
+		}
 		return nil
 	}
 	return localization.NormalizeSupportedLocale(*preferredLocale)
@@ -46,6 +51,7 @@ func memberPreferredSourceLocale(ctx context.Context, db *gorm.DB) *string {
 func translationRuntimeDefaultLocale(ctx context.Context, db *gorm.DB) *string {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "translationRuntimeDefaultLocale", failurecause.Attr(err))
 		return nil
 	}
 	return localization.NormalizeSupportedLocale(settings.DefaultLocale)

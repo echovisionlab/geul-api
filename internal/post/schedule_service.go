@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -19,11 +21,24 @@ import (
 func (s *PostService) SchedulePost(
 	ctx context.Context,
 	req *connect.Request[managev1.SchedulePostRequest],
-) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if req.Msg.ScheduledAt == nil {
 		return nil, errs.Required("scheduled_at")
 	}
 	if err := req.Msg.ScheduledAt.CheckValid(); err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("scheduled_at", "must be a valid timestamp")
 	}
 	scheduledAt := req.Msg.ScheduledAt.AsTime().UTC()
@@ -35,6 +50,7 @@ func (s *PostService) SchedulePost(
 		return nil, errs.Required("scheduled_time_zone")
 	}
 	if _, err := time.LoadLocation(timeZone); err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("scheduled_time_zone", "must be a valid IANA time zone")
 	}
 
@@ -88,7 +104,19 @@ func (s *PostService) SchedulePost(
 func (s *PostService) CancelPostSchedule(
 	ctx context.Context,
 	req *connect.Request[managev1.CancelPostScheduleRequest],
-) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CancelPostSchedule", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -137,7 +165,19 @@ func (s *PostService) CancelPostSchedule(
 func (s *PostService) RepublishPost(
 	ctx context.Context,
 	req *connect.Request[managev1.RepublishPostRequest],
-) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RepublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).

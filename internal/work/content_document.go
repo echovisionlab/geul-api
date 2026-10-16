@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -27,6 +29,9 @@ func parseWorkContentUUID(fieldName string, value string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
+		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "parseWorkContentUUID", failurecause.Attr(err))
+		}
 		return uuid.Nil, errs.InvalidArgument(fieldName, "must be a canonical UUID")
 	}
 	return parsed, nil
@@ -38,17 +43,22 @@ func normalizeWorkContentBlockError(err error) error {
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
+		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
+		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.NotFoundMsg("work content document not found")
 	case errors.Is(err, contentblock.ErrStaleRevision):
+		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "work content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
+		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.InvalidArgument("blocks", "a Block belongs to another document")
 	case errors.Is(err, contentblock.ErrFileReference):
+		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.FailedPrecondition("a Work Block File reference is not attachable")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
@@ -151,6 +161,7 @@ func requireWorkLoadPrincipal(
 		principalMessage.GetSessionId(),
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkLoadPrincipal", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	if err != nil {
@@ -178,6 +189,7 @@ func requireWorkLoadPrincipal(
 	}
 	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, principalMessage.GetSessionId(), principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkLoadPrincipal", failurecause.Attr(err))
 			return nil, errs.AuthenticationRequired()
 		}
 		return nil, errs.Internal(fmt.Errorf("lock Work collaboration session: %w", err))

@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
@@ -48,7 +50,18 @@ func NewTermsServiceWithContentBlocks(
 func (s *TermsService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetTermsRequest],
-) (*connect.Response[openv1.GetTermsResponse], error) {
+) (rpcResponse *connect.Response[openv1.GetTermsResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr, optionalStringValue(req.Msg.ShareToken), optionalStringValue(req.Msg.SharePassword))
+			slog.Log(ctx, level, "RPC failed", "service", "public.Terms", "method", "Get", "failure_cause", cause)
+		}
+	}()
 	result, err := getPublicLegalDocument(ctx, s.db, s.contentBlocks, s.media, s.publicLegalSpec(), publicLegalRequest{
 		requestedID:    optionalStringValue(req.Msg.Id),
 		shareToken:     optionalStringValue(req.Msg.ShareToken),
@@ -96,7 +109,18 @@ func (s *TermsService) publicLegalSpec() publicLegalSpec[model.Terms, openv1.Ter
 func (s *TermsService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListTermsRequest],
-) (*connect.Response[openv1.ListTermsResponse], error) {
+) (rpcResponse *connect.Response[openv1.ListTermsResponse], returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(returnErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			cause := failurecause.Message(returnErr)
+			slog.Log(ctx, level, "RPC failed", "service", "public.Terms", "method", "List", "failure_cause", cause)
+		}
+	}()
 	limit := req.Msg.Limit
 	if limit <= 0 {
 		limit = 10

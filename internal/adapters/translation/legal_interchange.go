@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -138,6 +140,7 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		var revisionConflict *legal.AIDocumentRevisionConflict
 		if errors.As(err, &revisionConflict) {
+			slog.WarnContext(ctx, "Legal translation import conflicted", "failure_cause", failurecause.Message(err), "entity_type", command.EntityType, "entity_id", command.EntityID, "locale", command.TargetLocale, "domain", "translation")
 			return application.TranslationInterchangeApplyResult{}, connect.NewError(
 				connect.CodeAborted,
 				errors.New("legal content changed; reload before importing"),

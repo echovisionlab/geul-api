@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -37,6 +39,7 @@ type deeplTranslationGenerator struct {
 
 type deeplTranslationSession struct {
 	generator *deeplTranslationGenerator
+	requestID string
 }
 
 type deeplDocumentHandleResponse struct {
@@ -61,6 +64,9 @@ func NewDeepLGenerator(apiKey string, baseURL string) (Generator, error) {
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if err != nil {
+			slog.Warn("DeepL provider URL rejected", "domain", "translation", "event", "translation.provider.config_rejected", failurecause.Attr(err, apiKey))
+		}
 		return nil, fmt.Errorf("invalid DeepL API base URL %q", baseURL)
 	}
 
@@ -81,7 +87,7 @@ func (g *deeplTranslationGenerator) StartSession(
 	if err := validateDeepLDocumentRequest(req); err != nil {
 		return nil, err
 	}
-	return &deeplTranslationSession{generator: g}, nil
+	return &deeplTranslationSession{generator: g, requestID: req.RequestID}, nil
 }
 
 func (g *deeplTranslationGenerator) StartDocumentSession(
@@ -91,7 +97,7 @@ func (g *deeplTranslationGenerator) StartDocumentSession(
 	if err := validateDeepLDocumentRequest(req); err != nil {
 		return nil, err
 	}
-	return &deeplTranslationSession{generator: g}, nil
+	return &deeplTranslationSession{generator: g, requestID: req.RequestID}, nil
 }
 
 // Translate keeps the common synchronous Generator contract for callers that
@@ -200,19 +206,27 @@ func (s *deeplTranslationSession) UploadDocument(
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	httpResp, err := s.generator.client.Do(httpReq)
 	if err != nil {
+		level := slog.LevelError
+		if errors.Is(err, context.Canceled) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "DeepL document upload failed", "domain", "translation", "event", "translation.provider.upload_failed", "provider", "deepl", "request_id", s.requestID, failurecause.Attr(err, s.generator.apiKey))
 		return ProviderDocumentHandle{}, deepLTransportError(err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 	if !isHTTPSuccess(httpResp.StatusCode) {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.http_failed", "outcome", "failed", failurecause.Attr(fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, http.StatusText(httpResp.StatusCode))), "provider", "deepl", "request_id", s.requestID)
 		return ProviderDocumentHandle{}, deepLHTTPError(httpResp.StatusCode)
 	}
 
 	var decoded deeplDocumentHandleResponse
 	if err := decodeDeepLJSON(httpResp.Body, &decoded); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.decode_failed", "outcome", "failed", failurecause.Attr(err), "provider", "deepl", "request_id", s.requestID)
 		return ProviderDocumentHandle{}, deepLResponseInvalid(llm.ProviderExceptionResponseDecode)
 	}
 	handle, err := NewProviderDocumentHandle(decoded.DocumentID, decoded.DocumentKey)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.handle_failed", "outcome", "failed", failurecause.Attr(err), "provider", "deepl", "request_id", req.RequestID)
 		return ProviderDocumentHandle{}, deepLResponseInvalid(llm.ProviderExceptionProviderResponse)
 	}
 	return handle, nil
@@ -235,18 +249,26 @@ func (s *deeplTranslationSession) CheckDocument(
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpResp, err := s.generator.client.Do(httpReq)
 	if err != nil {
+		level := slog.LevelError
+		if errors.Is(err, context.Canceled) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "DeepL document poll failed", "domain", "translation", "event", "translation.provider.poll_failed", "provider", "deepl", "request_id", s.requestID, failurecause.Attr(err, s.generator.apiKey, handle.DocumentKey()))
 		return ProviderDocumentCheck{}, deepLTransportError(err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 	if isDeepLDocumentNotFound(httpResp.StatusCode) {
+		slog.WarnContext(ctx, "DeepL document expired", "domain", "translation", "event", "translation.provider.document_expired", "outcome", "failed", failurecause.Attr(fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, http.StatusText(httpResp.StatusCode))), "provider", "deepl", "request_id", s.requestID)
 		return ProviderDocumentCheck{}, deepLDocumentNotFoundFailure()
 	}
 	if !isHTTPSuccess(httpResp.StatusCode) {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.http_failed", "outcome", "failed", failurecause.Attr(fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, http.StatusText(httpResp.StatusCode))), "provider", "deepl", "request_id", s.requestID)
 		return ProviderDocumentCheck{}, deepLHTTPError(httpResp.StatusCode)
 	}
 
 	var decoded deeplDocumentStatusResponse
 	if err := decodeDeepLJSON(httpResp.Body, &decoded); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.decode_failed", "outcome", "failed", failurecause.Attr(err), "provider", "deepl", "request_id", s.requestID)
 		return ProviderDocumentCheck{}, deepLResponseInvalid(llm.ProviderExceptionResponseDecode)
 	}
 	if strings.TrimSpace(decoded.DocumentID) != handle.DocumentID() {
@@ -290,17 +312,25 @@ func (s *deeplTranslationSession) DownloadDocument(
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpResp, err := s.generator.client.Do(httpReq)
 	if err != nil {
+		level := slog.LevelError
+		if errors.Is(err, context.Canceled) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "DeepL document download failed", "domain", "translation", "event", "translation.provider.download_failed", "provider", "deepl", "request_id", s.requestID, failurecause.Attr(err, s.generator.apiKey, handle.DocumentKey()))
 		return nil, deepLTransportError(err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 	if isDeepLDocumentNotFound(httpResp.StatusCode) {
+		slog.WarnContext(ctx, "DeepL document expired", "domain", "translation", "event", "translation.provider.document_expired", "outcome", "failed", failurecause.Attr(fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, http.StatusText(httpResp.StatusCode))), "provider", "deepl", "request_id", s.requestID)
 		return nil, deepLDocumentNotFoundFailure()
 	}
 	if !isHTTPSuccess(httpResp.StatusCode) {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.http_failed", "outcome", "failed", failurecause.Attr(fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, http.StatusText(httpResp.StatusCode))), "provider", "deepl", "request_id", s.requestID)
 		return nil, deepLHTTPError(httpResp.StatusCode)
 	}
 	xliff, err := io.ReadAll(io.LimitReader(httpResp.Body, deeplMaxDocumentBytes+1))
 	if err != nil {
+		slog.ErrorContext(ctx, "DeepL document response read failed", "domain", "translation", "event", "translation.provider.read_failed", "provider", "deepl", "request_id", s.requestID, failurecause.Attr(err, s.generator.apiKey, handle.DocumentKey()))
 		return nil, llm.NewProviderFailure(llm.ProviderFailureDetails{
 			Category:      llm.ProviderFailureUnavailable,
 			ExceptionType: llm.ProviderExceptionResponseRead,
@@ -311,10 +341,12 @@ func (s *deeplTranslationSession) DownloadDocument(
 	}
 	raw, err := NewProviderRawResponse("application/xliff+xml", xliff)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.response_failed", "outcome", "failed", failurecause.Attr(err), "provider", "deepl", "request_id", req.RequestID)
 		return nil, deepLResponseInvalid(llm.ProviderExceptionProviderResponse)
 	}
 	response, err := ParseTranslatedXLIFF(req.Document, xliff)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.decode_failed", "outcome", "failed", failurecause.Attr(err), "provider", "deepl", "request_id", req.RequestID)
 		return &ProviderResponse{Raw: raw}, deepLResponseInvalid(llm.ProviderExceptionResponseDecode)
 	}
 	response.Raw = raw
@@ -333,6 +365,7 @@ func (s *deeplTranslationSession) newRequest(
 	httpReq, err := http.NewRequestWithContext(requestCtx, method, s.generator.baseURL+path, body)
 	if err != nil {
 		cancel()
+		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.request_build_failed", "outcome", "failed", failurecause.Attr(err), "provider", "deepl", "request_id", s.requestID)
 		return nil, nil, fmt.Errorf("failed to build DeepL request")
 	}
 	httpReq.Header.Set("Authorization", "DeepL-Auth-Key "+s.generator.apiKey)

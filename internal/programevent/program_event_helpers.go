@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -291,6 +293,7 @@ func requireProgramEventMutationPermissionWithDB(
 	}
 	can, err := normal(eventID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventMutationPermissionWithDB", failurecause.Attr(err))
 		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
 	}
 	if err := requireActiveProgramEventPrincipal(ctx, db, can.Action().Name(), false); err != nil {
@@ -357,6 +360,7 @@ func RequireLockedView(
 		ctx, checker, eventID, programEventViewAction(event.Status),
 	); err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
+			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "RequireLockedView", failurecause.Attr(err))
 			return errs.NotFound("program event", eventID)
 		}
 		return err

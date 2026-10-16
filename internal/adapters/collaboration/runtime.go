@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -129,10 +131,12 @@ func (a resourceAuthorizer) check(
 ) (bool, error) {
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
+		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return false, errs.AuthenticationRequired()
 	}
 	allowed, err := a.checker.CheckActorCan(ctx, actor, can)
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return false, errs.DependencyUnavailable("SpiceDB")
 	}
 	return allowed, nil
@@ -344,6 +348,7 @@ func (contributorResolver) ResolveActiveSubjects(
 	for _, row := range rows {
 		subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(row.IdentityID))
 		if err != nil {
+			slog.ErrorContext(ctx, "Skipping invalid collaboration contributor identity", "failure_cause", failurecause.Message(err))
 			continue
 		}
 		subjects[row.MemberID] = subject

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 func emailTemplateAuthorizedAIDocumentFence(
@@ -53,10 +55,12 @@ func requireEmailTemplateAIDocumentAuthority(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation rejected", "domain", "emailauthoring", "event", "emailauthoring.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
 		return uuid.Nil, errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

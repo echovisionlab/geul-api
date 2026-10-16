@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -18,12 +19,23 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (*connect.Response[managev1.PrepareClientMediaUploadResponse], error) {
+func (s *FileService) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (_ *connect.Response[managev1.PrepareClientMediaUploadResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "PrepareClientMediaUpload", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if req == nil || req.Msg == nil {
 		return nil, errs.Required("request")
 	}
@@ -157,6 +169,12 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		status := clientArtifactHTTPStatus(err)
+		level := slog.LevelWarn
+		switch connect.CodeOf(err) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+			level = slog.LevelError
+		}
+		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadMediaArtifact", "code", connect.CodeOf(err).String())
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
@@ -167,9 +185,15 @@ func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, file
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
+		level := slog.LevelError
+		if err == gorm.ErrRecordNotFound {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Failed to load media artifact upload session", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
 		return session, nil, errs.NotFoundMsg("upload session not found")
 	}
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
+		slog.WarnContext(ctx, "authorizeMediaArtifact: PermissionDenied", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
 		return session, nil, errs.PermissionDenied("artifact upload permission denied")
 	}
 	writable, err := s.clientMediaArtifactWritable(ctx, session)
@@ -202,9 +226,16 @@ func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string,
 		return errs.Internal(err)
 	}
 	defer os.Remove(tmp.Name())
-	defer tmp.Close()
+	defer func() {
+		if err := tmp.Close(); err != nil {
+			slog.ErrorContext(request.Context(), "Failed to close staged media artifact", failurecause.Attr(err), "bundle_id", bundleID)
+		}
+	}()
 	size, digest, err := hashArtifactBody(request.Body, tmp, artifact.Size)
 	if err != nil || size != artifact.Size || digest != artifact.SHA256 {
+		if err != nil {
+			slog.WarnContext(request.Context(), "Failed to read media artifact", failurecause.Attr(err), "bundle_id", bundleID)
+		}
 		return errs.InvalidArgument("body", "artifact size or SHA256 mismatch")
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {

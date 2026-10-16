@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const unifiedAuthPath = "/login"
@@ -111,42 +113,46 @@ func (h *UnifiedAuthHandler) ServeHTTP(w http.ResponseWriter, request *http.Requ
 func (h *UnifiedAuthHandler) serveFlow(w http.ResponseWriter, request *http.Request) {
 	flowID := strings.TrimSpace(request.URL.Query().Get("id"))
 	if flowID == "" {
-		writeKratosProxyError(w, http.StatusBadRequest, "authentication flow id is required", 0)
+		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication flow id is required", 0)
 		return
 	}
 
 	_, response, err := h.resolveFlow(request, flowID)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
-	h.copyResponse(w, response)
+	h.copyResponse(request.Context(), w, response)
 }
 
 func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Request) {
 	flowID := strings.TrimSpace(request.URL.Query().Get("flow"))
 	if flowID == "" {
-		writeKratosProxyError(w, http.StatusBadRequest, "authentication flow id is required", 0)
+		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication flow id is required", 0)
 		return
 	}
 	body, err := readBoundedKratosBody(request.Body)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusRequestEntityTooLarge, "request body is too large", 0)
+		slog.WarnContext(request.Context(), "Operation failed", "reason", "read_request", "status_code", http.StatusRequestEntityTooLarge, failurecause.Attr(err))
+		writeKratosProxyError(request.Context(), w, http.StatusRequestEntityTooLarge, "request body is too large", 0)
 		return
 	}
 
 	kind, flowResponse, err := h.resolveFlow(request, flowID)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 	if flowResponse.StatusCode != http.StatusOK {
-		h.copyResponse(w, flowResponse)
+		h.copyResponse(request.Context(), w, flowResponse)
 		return
 	}
 	flow, err := decodeUnifiedAuthFlow(flowResponse.Body)
 	if err != nil {
-		writeKratosProxyError(w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		slog.ErrorContext(request.Context(), "Operation failed", "reason", "decode_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
 
@@ -166,12 +172,13 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 	if kind == unifiedAuthRegistrationFlow && strings.EqualFold(method, "code") {
 		body, err = buildRegistrationCodePayload(body, request.Header.Get("Content-Type"), flow, false)
 		if err != nil {
-			writeKratosProxyError(w, http.StatusBadRequest, "authentication code request is invalid", 0)
+			slog.WarnContext(request.Context(), "Operation failed", "reason", "build_registration_payload", "status_code", http.StatusBadRequest, failurecause.Attr(err))
+			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 			return
 		}
 		request.Header.Set("Content-Type", "application/json")
 	}
-	h.copyResponse(w, h.transport.capture(
+	h.copyResponse(request.Context(), w, h.transport.capture(
 		request,
 		request.Method,
 		path,

@@ -3,12 +3,14 @@ package work
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -55,10 +57,12 @@ func requireWorkGlobalAction(ctx context.Context, checker CollaborationPermissio
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkGlobalAction", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkGlobalAction", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -112,14 +116,17 @@ func requireWorkPermissionForCurrentActor(
 	}
 	can, err := action(workID)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkPermissionForCurrentActor", failurecause.Attr(err))
 		return errs.NotFound("work", workID)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkPermissionForCurrentActor", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkPermissionForCurrentActor", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

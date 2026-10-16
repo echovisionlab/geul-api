@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -32,7 +34,17 @@ func NewInternalFileIngestService(files *FileService) *InternalFileIngestService
 func (s *InternalFileIngestService) AttachTrackOriginalAudio(
 	ctx context.Context,
 	req *connect.Request[intrav1.AttachTrackOriginalAudioRequest],
-) (*connect.Response[intrav1.AttachTrackOriginalAudioResponse], error) {
+) (_ *connect.Response[intrav1.AttachTrackOriginalAudioResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AttachTrackOriginalAudio", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if req.Msg == nil {
 		return nil, errs.Required("request")
 	}
@@ -105,6 +117,7 @@ func (s *FileService) attachTrackOriginalAudio(
 			return errs.FailedPrecondition("File ingest attempt does not match")
 		}
 		if _, err := CanonicalMediaObjectTargetForFile(file); err != nil {
+			slog.ErrorContext(ctx, "Invalid verified file metadata", failurecause.Attr(err), "file_id", file.ID)
 			return errs.FailedPrecondition("verified File metadata is not canonical")
 		}
 		var binding model.FileIngestBinding

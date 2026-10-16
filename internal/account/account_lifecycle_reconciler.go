@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
@@ -32,7 +33,22 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 		)
 	}
 	if err := reconcile(); err != nil {
-		slog.Error("Initial account lifecycle identity reconciliation failed", "error", err)
+
+		var privateBodies []string
+		pending := []error{err}
+		for len(pending) > 0 {
+			current := pending[len(pending)-1]
+			pending = pending[:len(pending)-1]
+			if upstream, ok := current.(*auth.KratosHTTPError); ok {
+				privateBodies = append(privateBodies, upstream.Body)
+			}
+			if joined, ok := current.(interface{ Unwrap() []error }); ok {
+				pending = append(pending, joined.Unwrap()...)
+			} else if next := errors.Unwrap(current); next != nil {
+				pending = append(pending, next)
+			}
+		}
+		slog.ErrorContext(ctx, "Initial account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, privateBodies...))
 	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -42,7 +58,22 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := reconcile(); err != nil {
-				slog.Error("Account lifecycle identity reconciliation failed", "error", err)
+
+				var privateBodies []string
+				pending := []error{err}
+				for len(pending) > 0 {
+					current := pending[len(pending)-1]
+					pending = pending[:len(pending)-1]
+					if upstream, ok := current.(*auth.KratosHTTPError); ok {
+						privateBodies = append(privateBodies, upstream.Body)
+					}
+					if joined, ok := current.(interface{ Unwrap() []error }); ok {
+						pending = append(pending, joined.Unwrap()...)
+					} else if next := errors.Unwrap(current); next != nil {
+						pending = append(pending, next)
+					}
+				}
+				slog.ErrorContext(ctx, "Account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, privateBodies...))
 			}
 		}
 	}

@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -14,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -83,7 +86,18 @@ func NewAIDocumentService(internal *InternalWorkService) (*AIDocumentService, er
 	return &AIDocumentService{internal: internal}, nil
 }
 
-func (s *AIDocumentService) Load(ctx context.Context, workID, locale string) (AIDocumentState, error) {
+func (s *AIDocumentService) Load(ctx context.Context, workID, locale string) (_ AIDocumentState, terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "Load", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := validateWorkAIDocumentIdentity(workID, locale); err != nil {
 		return AIDocumentState{}, err
 	}
@@ -298,6 +312,9 @@ func loadWorkAIDocumentRoot(ctx context.Context, tx *gorm.DB, workID, lock strin
 	}
 	documentID, err := uuid.Parse(*root.ContentDocumentID)
 	if err != nil || documentID == uuid.Nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadWorkAIDocumentRoot", failurecause.Attr(err))
+		}
 		return model.Work{}, uuid.Nil, errs.InternalMsg("Work content document ID is invalid")
 	}
 	return root, documentID, nil
@@ -429,6 +446,9 @@ func lockWorkAIDocumentPrincipal(ctx context.Context, tx *gorm.DB) (*auth.UserIn
 func workAIContributorIDs(memberID string) []uuid.UUID {
 	parsed, err := uuid.Parse(memberID)
 	if err != nil || parsed == uuid.Nil {
+		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "parse_ai_contributor", failurecause.Attr(err))
+		}
 		return nil
 	}
 	return []uuid.UUID{parsed}

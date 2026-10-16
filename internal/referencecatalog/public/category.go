@@ -2,11 +2,13 @@ package public
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -28,7 +30,19 @@ func NewCategoryService(db *gorm.DB) *CategoryService {
 func (s *CategoryService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListCategoriesRequest],
-) (*connect.Response[openv1.ListCategoriesResponse], error) {
+) (_ *connect.Response[openv1.ListCategoriesResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.ListCategories", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	type CategoryResult struct {
 		ID          string
 		Name        string

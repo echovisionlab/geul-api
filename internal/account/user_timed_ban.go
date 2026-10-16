@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -155,5 +157,8 @@ func identityHasExpiredTimedBan(identity *auth.Identity, now time.Time) bool {
 		return false
 	}
 	expiresAt, err := time.Parse(time.RFC3339, expiresRaw)
+	if err != nil {
+		slog.Error("Invalid timed ban expiry", "identity_id", identity.ID, failurecause.Attr(err, expiresRaw))
+	}
 	return err == nil && !expiresAt.After(now)
 }

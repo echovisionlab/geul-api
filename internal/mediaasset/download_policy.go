@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -876,6 +878,7 @@ func restrictedFileDownloadMemberMatchesFilterSegment(
 	}
 	requested, err := normalizeFileDownloadAccountPermissions(config.AccountRoles)
 	if err != nil {
+		slog.Error("Invalid stored file download account permissions", failurecause.Attr(err))
 		return false
 	}
 	if len(requested) > 0 {
@@ -933,10 +936,12 @@ func resolveRestrictedFileDownloadPermissions(
 		}
 		decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 		if err != nil {
+			slog.WarnContext(ctx, "resolveRestrictedFileDownloadPermissions: AuthenticationRequired", failurecause.Attr(err))
 			return nil, errs.AuthenticationRequired()
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
+			slog.ErrorContext(ctx, "resolveRestrictedFileDownloadPermissions: DependencyUnavailable", failurecause.Attr(checkErr))
 			return nil, errs.DependencyUnavailable("SpiceDB")
 		}
 		resolved[permission] = allowed

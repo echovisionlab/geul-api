@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/transcoding/ffmpeg"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -84,6 +85,6 @@ func (p *sourcePreparer) withTranscodeTimeout(
 
 func (p *sourcePreparer) cleanupJobWorkDir(jobID string) {
 	if err := p.workDirs.CleanupJobWorkDir(jobID); err != nil {
-		slog.Warn("Failed to clean transcoder work directory", "job_id", jobID, "error", err)
+		slog.Error("Failed to clean transcoder work directory", "job_id", jobID, failurecause.Attr(err))
 	}
 }

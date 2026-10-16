@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -29,13 +30,7 @@ func (s *FileService) recordInterruptedMultipartUpload(
 	readErr error,
 ) {
 	fileKey, _ := uploadSessionObjectKey(session)
-	slog.Warn(
-		logMessage,
-		"error", readErr,
-		"fileKey", fileKey,
-		"uploadId", session.UploadID,
-		"partUploadId", uploadID,
-	)
+	slog.Warn(logMessage, failurecause.Attr(readErr), "fileKey", fileKey, "uploadId", session.UploadID, "partUploadId", uploadID)
 
 	cleanupCtx, cancel := newStorageCompensationContext(ctx)
 	defer cancel()
@@ -52,9 +47,8 @@ func (s *FileService) recordInterruptedMultipartUpload(
 			"last_activity_at": now,
 			"updated_at":       now,
 		}).Error; err != nil {
-		slog.Warn(
-			"Failed to refresh upload session activity after interruption",
-			"error", err,
+		slog.Error("Failed to refresh upload session activity after interruption",
+			failurecause.Attr(err),
 			"fileKey", fileKey,
 			"uploadId", session.UploadID,
 			"partUploadId", uploadID,

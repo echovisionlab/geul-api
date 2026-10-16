@@ -2,10 +2,13 @@ package work
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -167,6 +170,13 @@ func (r *Runtime) ResolveReadyAssetForSourceFile(
 ) *commonv1.AssetRef {
 	for _, kind := range kinds {
 		ref, err := r.ReadyPublicAssetRefForSourceFile(ctx, r.db, sourceFileID, kind)
+		if err != nil {
+			level := slog.LevelError
+			if connect.CodeOf(err) == connect.CodeNotFound {
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Failed to resolve Work public asset", "failure_cause", failurecause.Message(err), "file_id", sourceFileID, "kind", kind)
+		}
 		if err == nil && ref != nil {
 			return ref
 		}
@@ -182,6 +192,9 @@ func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) 
 		SELECT file_id FROM artist_file WHERE artist_id = ?
 		ORDER BY sort_order ASC LIMIT 1
 	`, artistID).Scan(&row).Error; err != nil || row.FileID == "" {
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to load Work artist image", "failure_cause", failurecause.Message(err), "artist_id", artistID)
+		}
 		return nil
 	}
 	return r.ResolveReadyAssetForSourceFile(ctx, row.FileID, "image")

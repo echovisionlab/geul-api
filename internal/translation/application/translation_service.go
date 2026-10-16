@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -153,7 +155,19 @@ func NewTranslationService(
 func (s *TranslationService) ListTranslationLocales(
 	ctx context.Context,
 	_ *connect.Request[managev1.ListTranslationLocalesRequest],
-) (*connect.Response[managev1.ListTranslationLocalesResponse], error) {
+) (_ *connect.Response[managev1.ListTranslationLocalesResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListTranslationLocales")
+		}
+	}()
 	user := auth.GetUser(ctx)
 	isAdmin := false
 	if user != nil && user.Authenticated {
@@ -191,7 +205,19 @@ func (s *TranslationService) ListTranslationLocales(
 func (s *TranslationService) GetTranslationOverview(
 	ctx context.Context,
 	_ *connect.Request[managev1.GetTranslationOverviewRequest],
-) (*connect.Response[managev1.GetTranslationOverviewResponse], error) {
+) (_ *connect.Response[managev1.GetTranslationOverviewResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetTranslationOverview")
+		}
+	}()
 	if err := requireTranslationAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -219,7 +245,19 @@ func (s *TranslationService) GetTranslationOverview(
 func (s *TranslationService) GetTranslationSettings(
 	ctx context.Context,
 	_ *connect.Request[managev1.GetTranslationSettingsRequest],
-) (*connect.Response[managev1.GetTranslationSettingsResponse], error) {
+) (_ *connect.Response[managev1.GetTranslationSettingsResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetTranslationSettings")
+		}
+	}()
 	can, canErr := policyv1.TranslationSettings.View()
 	if err := s.requireTranslationPlatformCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -248,7 +286,19 @@ func (s *TranslationService) GetTranslationSettings(
 func (s *TranslationService) UpdateTranslationSettings(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateTranslationSettingsRequest],
-) (*connect.Response[managev1.UpdateTranslationSettingsResponse], error) {
+) (_ *connect.Response[managev1.UpdateTranslationSettingsResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "UpdateTranslationSettings")
+		}
+	}()
 	settingsCan, err := policyv1.TranslationSettings.Update()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -348,7 +398,19 @@ func translationRuntimeSettingsChangedFields(current, requested translationRunti
 func (s *TranslationService) ListTranslationJobs(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTranslationJobsRequest],
-) (*connect.Response[managev1.ListTranslationJobsResponse], error) {
+) (_ *connect.Response[managev1.ListTranslationJobsResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListTranslationJobs")
+		}
+	}()
 	if err := s.authorizeTranslationJobList(ctx, req.Msg.Filters); err != nil {
 		return nil, err
 	}

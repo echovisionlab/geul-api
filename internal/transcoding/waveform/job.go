@@ -3,8 +3,10 @@ package waveform
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -28,7 +30,8 @@ func (p *Processor) HandleGenerateJob(ctx context.Context, event *apiv1.Waveform
 	if err != nil {
 		return p.failUnlessCancelled(session.Context, ctx, event, startedAt, err)
 	}
-	if session.Context.Err() != nil {
+	if err := session.Context.Err(); err != nil {
+		slog.WarnContext(session.Context, "Waveform result discarded after cancellation", failurecause.Attr(err), "job_id", event.GetEventId(), "file_id", event.GetFileId())
 		return nil
 	}
 	if err := p.publisher.PublishWaveformComplete(ctx, complete); err != nil {

@@ -3,10 +3,12 @@ package filemedia
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -75,10 +77,12 @@ func (a *contentBlockFileReuseAuthorizer) AuthorizeFileReuse(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "AuthorizeFileReuse: AuthenticationRequired", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := a.spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "AuthorizeFileReuse: DependencyUnavailable", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -173,6 +175,7 @@ func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
+		slog.Error("Invalid prepared client media manifest", failurecause.Attr(err), "upload_id", session.UploadID, "file_id", session.FileID)
 		return errs.FailedPrecondition("invalid prepared client media manifest")
 	}
 	if !strings.HasPrefix(verifiedMime, plan.Kind+"/") {

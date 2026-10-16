@@ -3,9 +3,11 @@ package collaboration
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"gorm.io/gorm"
 )
@@ -81,6 +83,7 @@ func (r *Registry) RequireForSubject(
 	subject auth.AccountIdentitySubject,
 ) error {
 	if _, err := auth.NewAccountIdentitySubject(subject.ID); err != nil {
+		slog.WarnContext(ctx, "Collaboration subject rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := r.Authorize(ctx, resourceType, resourceID, permission, subject)
@@ -105,6 +108,7 @@ func (r *Registry) RequireForSubjectInTx(
 		return errs.DependencyUnavailable("collaboration authorization transaction")
 	}
 	if _, err := auth.NewAccountIdentitySubject(subject.ID); err != nil {
+		slog.WarnContext(ctx, "Collaboration subject rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	authorizer, ok := r.authorizers[resourceType]
@@ -147,6 +151,7 @@ func (r *Registry) RequireCurrentEdit(
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
+		slog.WarnContext(ctx, "Collaboration principal rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	return r.RequireEditForSubject(ctx, resourceType, resourceID, subject)

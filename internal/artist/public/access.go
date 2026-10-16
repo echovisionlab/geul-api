@@ -2,12 +2,15 @@ package public
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -36,6 +39,9 @@ func requireOpaqueDraftShareLinkAccess(ctx context.Context, db *gorm.DB, token, 
 	}
 	var link model.ShareLink
 	if err := db.WithContext(ctx).Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", token, entityType.String(), entityID, time.Now()).Take(&link).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireOpaqueDraftShareLinkAccess", failurecause.Attr(err, token, password))
+		}
 		return errs.NotFoundMsg(entityName + " not found")
 	}
 	if link.PasswordHash == nil {
@@ -46,6 +52,7 @@ func requireOpaqueDraftShareLinkAccess(ctx context.Context, db *gorm.DB, token, 
 	}
 	match, err := crypto.NewPasswordHasher(nil).Verify(password, *link.PasswordHash)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireOpaqueDraftShareLinkAccess", failurecause.Attr(err, token, password, *link.PasswordHash))
 		return errs.NotFoundMsg(entityName + " not found")
 	}
 	if !match {

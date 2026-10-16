@@ -2,12 +2,14 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -34,7 +36,19 @@ var clientSortConfig = queryutil.SortConfig{
 func (s *ClientService) GetClient(
 	ctx context.Context,
 	req *connect.Request[managev1.GetClientRequest],
-) (*connect.Response[managev1.Client], error) {
+) (_ *connect.Response[managev1.Client], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var client model.Client
 	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -51,7 +65,19 @@ func (s *ClientService) GetClient(
 func (s *ClientService) ListClients(
 	ctx context.Context,
 	req *connect.Request[managev1.ListClientsRequest],
-) (*connect.Response[managev1.ListClientsResponse], error) {
+) (_ *connect.Response[managev1.ListClientsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListClients", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	var clients []model.Client
 	var total int64
 
@@ -109,7 +135,19 @@ func (s *ClientService) ListClients(
 func (s *ClientService) SearchClients(
 	ctx context.Context,
 	req *connect.Request[managev1.SearchClientsRequest],
-) (*connect.Response[managev1.SearchClientsResponse], error) {
+) (_ *connect.Response[managev1.SearchClientsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SearchClients", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	limit := int(req.Msg.Limit)
 	if limit <= 0 || limit > 50 {
 		limit = 10
@@ -146,7 +184,19 @@ func (s *ClientService) SearchClients(
 func (s *ClientService) ListClientsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListClientsAdminRequest],
-) (*connect.Response[managev1.ListClientsAdminResponse], error) {
+) (_ *connect.Response[managev1.ListClientsAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListClientsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Client.List()
 	if err != nil {
 		return nil, errs.Internal(err)

@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -110,7 +111,7 @@ func (s *FileService) resolveContentFileDeliveries(
 		result[file.ID] = delivery
 	}
 	if err := s.populateFileProcessingStatus(ctx, result); err != nil {
-		slog.Warn("Failed to populate content file processing status", "error", err, "fileCount", len(result))
+		slog.Error("Failed to populate content file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 	return result, nil
 }
@@ -121,7 +122,17 @@ const MaxMediaDeliveryBatchSize = 100
 func (s *FileService) GetMediaDelivery(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMediaDeliveryRequest],
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
+) (_ *connect.Response[managev1.GetMediaDeliveryResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetMediaDelivery", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	return s.getMediaDelivery(ctx, req, true)
 }
 
@@ -169,7 +180,17 @@ func (s *FileService) getMediaDelivery(
 func (s *FileService) GetBulkMediaDeliveries(
 	ctx context.Context,
 	req *connect.Request[managev1.GetBulkMediaDeliveriesRequest],
-) (*connect.Response[managev1.GetBulkMediaDeliveriesResponse], error) {
+) (_ *connect.Response[managev1.GetBulkMediaDeliveriesResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetBulkMediaDeliveries", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if len(req.Msg.FileIds) > MaxMediaDeliveryBatchSize {
 		return nil, errs.InvalidArgument(
 			"file_ids",
@@ -300,7 +321,7 @@ func (s *FileService) loadFileURLResponses(
 	}
 
 	if err := s.populateFileProcessingStatus(ctx, deliveries); err != nil {
-		slog.Warn("Failed to populate bulk file processing status", "error", err, "fileCount", len(result))
+		slog.Error("Failed to populate bulk file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 
 	return result, nil

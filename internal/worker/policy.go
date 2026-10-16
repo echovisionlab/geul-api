@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -166,7 +167,7 @@ func (h *Handlers) handleUnbanExpiredWith(
 			}
 			expires, err := time.Parse(time.RFC3339, expiresStr)
 			if err != nil {
-				slog.Warn("invalid ban_expires format", "user_id", identity.ID, "value", expiresStr)
+				slog.Warn("invalid ban_expires format", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
 				continue
 			}
 			if expires.After(now) {
@@ -175,7 +176,7 @@ func (h *Handlers) handleUnbanExpiredWith(
 
 			cleared, err := clearExpiredTimedBan(ctx, identity.ID, now)
 			if err != nil {
-				slog.Warn("failed to clear expired ban", "user_id", identity.ID, "error", err)
+				slog.ErrorContext(ctx, "failed to clear expired ban", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
 				continue
 			}
 			if cleared {

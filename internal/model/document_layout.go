@@ -2,11 +2,14 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
@@ -81,6 +84,9 @@ func (l *DocumentLayout) Scan(value structured.Value) error {
 		return fmt.Errorf("decode document layout: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err != nil {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "model", "operation", "decode_document_layout_trailing_value", failurecause.Attr(err))
+		}
 		return fmt.Errorf("decode document layout: multiple JSON values")
 	}
 	if err := decoded.Validate(); err != nil {

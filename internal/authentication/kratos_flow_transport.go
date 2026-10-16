@@ -2,10 +2,14 @@ package authentication
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // kratosFlowTransport is the single request clone, body, capture, header, and
@@ -64,14 +68,16 @@ func (t *kratosFlowTransport) capture(
 }
 
 func (t *kratosFlowTransport) copy(
+	ctx context.Context,
 	w http.ResponseWriter,
 	response bufferedKratosResponse,
 	project func([]byte) []byte,
 ) {
-	copyBufferedKratosResponse(w, response, project)
+	copyBufferedKratosResponse(ctx, w, response, project)
 }
 
 func copyBufferedKratosResponse(
+	ctx context.Context,
 	w http.ResponseWriter,
 	response bufferedKratosResponse,
 	project func([]byte) []byte,
@@ -89,7 +95,9 @@ func copyBufferedKratosResponse(
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write(body)
+	if _, err := w.Write(body); err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "reason", "write_authentication_response", "status_code", response.StatusCode, failurecause.Attr(err))
+	}
 }
 
 type bufferedKratosResponse struct {

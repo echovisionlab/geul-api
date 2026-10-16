@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -39,7 +40,7 @@ func (metadataAIProviderObserver) RequestStarted(_ context.Context, event llm.Re
 	)
 }
 
-func (metadataAIProviderObserver) RequestFailed(_ context.Context, event llm.RequestFailedEvent) {
+func (metadataAIProviderObserver) RequestFailed(ctx context.Context, event llm.RequestFailedEvent) {
 	details, ok := llm.ProviderFailureDetailsFromError(event.Err)
 	if !ok {
 		details = llm.ProviderFailureDetails{
@@ -48,6 +49,7 @@ func (metadataAIProviderObserver) RequestFailed(_ context.Context, event llm.Req
 		}
 	}
 	attrs := structured.Values{
+		"failure_cause", failurecause.Message(event.Err, event.Request.SystemPrompt, event.Request.UserPrompt),
 		"request_id", event.Request.RequestID,
 		"action", event.Request.Action,
 		"duration_ms", time.Since(event.StartedAt).Milliseconds(),
@@ -59,7 +61,11 @@ func (metadataAIProviderObserver) RequestFailed(_ context.Context, event llm.Req
 		attrs = append(attrs, "http_status_class", details.HTTPStatusClass)
 	}
 
-	slog.Error("AI provider request failed", attrs...)
+	level := slog.LevelError
+	if errors.Is(event.Err, context.Canceled) {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "AI provider request failed", attrs...)
 }
 
 func (metadataAIProviderObserver) ResponseReceived(_ context.Context, event llm.ResponseReceivedEvent) {

@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -14,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -34,7 +36,19 @@ type postParticipantRow struct {
 func (s *PostService) ListPostParticipants(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPostParticipantsRequest],
-) (*connect.Response[managev1.ListPostParticipantsResponse], error) {
+) (_ *connect.Response[managev1.ListPostParticipantsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
@@ -121,6 +135,7 @@ func (s *PostService) ListPostParticipants(
 			}
 			ok, checkErr := s.spiceDB.CheckActorCan(ctx, actor, can)
 			if checkErr != nil {
+				slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", failurecause.Attr(checkErr))
 				return nil, errs.DependencyUnavailable("SpiceDB")
 			}
 			effective = ok
@@ -140,7 +155,19 @@ func (s *PostService) ListPostParticipants(
 func (s *PostService) AddPostAuthor(
 	ctx context.Context,
 	req *connect.Request[managev1.AddPostAuthorRequest],
-) (*connect.Response[managev1.PostParticipant], error) {
+) (_ *connect.Response[managev1.PostParticipant], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	principal := auth.GetUser(ctx)
 	if principal == nil {
 		return nil, errs.AuthenticationRequired()
@@ -168,6 +195,7 @@ func (s *PostService) AddPostAuthor(
 		}
 		canAuthor, checkErr := s.spiceDB.CheckActorCan(ctx, targetActor, can)
 		if checkErr != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", failurecause.Attr(checkErr))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		if !canAuthor {
@@ -247,7 +275,19 @@ func (s *PostService) AddPostAuthor(
 func (s *PostService) RemovePostAuthor(
 	ctx context.Context,
 	req *connect.Request[managev1.RemovePostAuthorRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	principal := auth.GetUser(ctx)
 	if principal == nil {
 		return nil, errs.AuthenticationRequired()
@@ -315,7 +355,19 @@ func (s *PostService) RemovePostAuthor(
 func (s *PostService) AddPostCollaborator(
 	ctx context.Context,
 	req *connect.Request[managev1.AddPostCollaboratorRequest],
-) (*connect.Response[managev1.PostParticipant], error) {
+) (_ *connect.Response[managev1.PostParticipant], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	principal := auth.GetUser(ctx)
 	if principal == nil {
 		return nil, errs.AuthenticationRequired()
@@ -423,7 +475,19 @@ func (s *PostService) AddPostCollaborator(
 func (s *PostService) RemovePostCollaborator(
 	ctx context.Context,
 	req *connect.Request[managev1.RemovePostCollaboratorRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	principal := auth.GetUser(ctx)
 	if principal == nil {
 		return nil, errs.AuthenticationRequired()

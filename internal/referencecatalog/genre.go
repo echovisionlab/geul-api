@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -73,7 +75,19 @@ var genreCRUD = referenceCRUD[model.Genre]{
 func (s *GenreService) ListGenres(
 	ctx context.Context,
 	req *connect.Request[managev1.ListGenresRequest],
-) (*connect.Response[managev1.ListGenresResponse], error) {
+) (_ *connect.Response[managev1.ListGenresResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListGenres", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	genres, total, page, err := genreCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -90,7 +104,19 @@ func (s *GenreService) ListGenres(
 func (s *GenreService) ListGenresAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListGenresAdminRequest],
-) (*connect.Response[managev1.ListGenresAdminResponse], error) {
+) (_ *connect.Response[managev1.ListGenresAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListGenresAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Genre.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -122,7 +148,19 @@ func (s *GenreService) ListGenresAdmin(
 func (s *GenreService) CreateGenre(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateGenreRequest],
-) (*connect.Response[managev1.Genre], error) {
+) (_ *connect.Response[managev1.Genre], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateGenre", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Genre.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -164,7 +202,19 @@ func (s *GenreService) CreateGenre(
 func (s *GenreService) UpdateGenre(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateGenreRequest],
-) (*connect.Response[managev1.Genre], error) {
+) (_ *connect.Response[managev1.Genre], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateGenre", "outcome", "failed", "genre_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Genre.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -200,7 +250,19 @@ func (s *GenreService) UpdateGenre(
 func (s *GenreService) DeleteGenre(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteGenreRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteGenre", "outcome", "failed", "genre_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Genre.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

@@ -1,10 +1,13 @@
 package contentblock
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -297,6 +300,9 @@ func validatePageLocaleValueTarget(
 	blockID := value.GetBlockHandle()
 	parsed, err := uuid.Parse(blockID)
 	if err != nil || parsed.String() != blockID {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.validatePageLocaleValueTarget", "outcome", "failed", failurecause.Attr(err))
+		}
 		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("block handle must be a canonical UUID")
 	}
 	if value.GetFieldHandle() != pageLocaleDataField {
@@ -317,6 +323,9 @@ func validatePageLocaleValueTarget(
 	unitID := path[1].GetItemHandle()
 	parsedUnitID, err := uuid.Parse(unitID)
 	if err != nil || parsedUnitID.String() != unitID {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.validatePageLocaleValueTarget", "outcome", "failed", failurecause.Attr(err))
+		}
 		return nil, "", contentv1.ContentFieldDescriptor{}, "", fmt.Errorf("page immersive unit handle must be a canonical UUID")
 	}
 	field, ok := immersiveFields[path[3].GetFieldHandle()]
@@ -432,6 +441,9 @@ func requiredCanonicalUUIDString(object map[string]json.RawMessage, field string
 	}
 	parsed, err := uuid.Parse(value)
 	if err != nil || parsed.String() != value {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "contentblock.requiredCanonicalUUIDString", "outcome", "failed", failurecause.Attr(err))
+		}
 		return "", fmt.Errorf("%s must be a canonical UUID", field)
 	}
 	return parsed.String(), nil

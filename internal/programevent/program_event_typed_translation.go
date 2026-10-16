@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -155,6 +157,9 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 	if job.TargetLocale == sourceState.SourceLocale {
 		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 		if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+			if parseErr != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "applyProgramEventTypedTranslationCandidateWithDB", failurecause.Attr(parseErr), "job_id", job.ID, "event_id", job.EntityID, "locale", job.TargetLocale)
+			}
 			return errs.InternalMsg("Program Event translation audit requires requester Member")
 		}
 		batch.ContributorMemberIDs = []uuid.UUID{requesterID}

@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type ReadMode string
@@ -318,6 +321,9 @@ func (s *Service) Read(ctx context.Context, request ReadRequest) (Projection, er
 	if request.Cursor != "" {
 		offset, err = decodeCursor(request.Cursor, fingerprint)
 		if err != nil || offset > len(nodes) {
+			if err != nil {
+				slog.WarnContext(ctx, "AI document cursor rejected", "domain", "ai_document", "event", "ai_document.cursor.rejected", failurecause.Attr(err, string(request.Cursor)))
+			}
 			return Projection{}, &CursorError{
 				Code: "stale_cursor", CurrentDocumentRevision: document.DocumentRevision,
 				CurrentTargetRevision: cloneRevision(document.TargetRevision),
@@ -734,6 +740,10 @@ func decodeCursor(cursor Cursor, fingerprint string) (int, error) {
 	}
 	offset, err := strconv.Atoi(parts[1])
 	if err != nil || offset < 0 {
+		if err != nil {
+			// NumError includes the cursor offset, which is private input.
+			slog.Warn("AI document cursor offset rejected", "domain", "ai_document", "event", "ai_document.cursor.offset_rejected", failurecause.Attr(err, parts[1]))
+		}
 		return 0, errors.New("invalid cursor offset")
 	}
 	return offset, nil

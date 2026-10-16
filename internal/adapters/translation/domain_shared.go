@@ -3,11 +3,13 @@ package translationadapter
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/og"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -125,6 +127,7 @@ func requireJobEdit(factory func(string) (policyv1.Can, error)) func(context.Con
 		}
 		decision, err := auth.AuthorizationDecision(ctx, can)
 		if err != nil {
+			slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err), "entity_id", entityID)
 			return errs.AuthenticationRequired()
 		}
 		allowed, err := spiceDB.Can(ctx, decision)
@@ -238,10 +241,12 @@ func requireTranslationPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

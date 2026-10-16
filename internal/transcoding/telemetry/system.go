@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -19,7 +20,12 @@ func SystemMetadata(ctx context.Context, occurredAt time.Time) sharedtelemetry.S
 // EmitSystem emits a valid shared System record through the active logger.
 func EmitSystem(ctx context.Context, record sharedtelemetry.SystemRecord, buildErr error) error {
 	if buildErr != nil {
+		slog.ErrorContext(ctx, "Failed to build media system telemetry", failurecause.Attr(buildErr))
 		return buildErr
 	}
-	return sharedtelemetry.EmitSystem(ctx, slog.Default().Handler(), record)
+	err := sharedtelemetry.EmitSystem(ctx, slog.Default().Handler(), record)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to emit media system telemetry", failurecause.Attr(err))
+	}
+	return err
 }

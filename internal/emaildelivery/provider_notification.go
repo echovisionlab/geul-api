@@ -3,6 +3,7 @@ package emaildelivery
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"sort"
 	"strings"
@@ -90,6 +91,7 @@ func (p *ProviderNotificationProcessor) ProcessProviderNotification(
 		notification.OccurredAt, notification.ErrorType,
 	)
 	if err != nil {
+		slog.ErrorContext(ctx, "Failed to apply SES provider outcome", "domain", "mail", "event", "mail.provider.callback_failed", "outcome", "failed", "provider_message_id", providerMessageID, "provider_outcome", string(outcome), failurecause.Attr(err))
 		return err
 	}
 	if suppress {
@@ -110,6 +112,7 @@ func (p *ProviderNotificationProcessor) ProcessProviderNotification(
 				ReferenceID: providerMessageID,
 				ErrorType:   strings.TrimSpace(notification.ErrorType),
 			}); err != nil {
+				slog.ErrorContext(ctx, "Failed to persist SES recipient suppression", "domain", "mail", "event", "mail.provider.suppression_failed", "outcome", "failed", "provider_message_id", providerMessageID, "provider_outcome", string(outcome), "reason", reason, failurecause.Attr(err, recipient))
 				return err
 			}
 		}

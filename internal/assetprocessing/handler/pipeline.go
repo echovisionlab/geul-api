@@ -12,6 +12,7 @@ import (
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"github.com/echovisionlab/geul-api/internal/assetprocessing/optimizer"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type pipelineResult struct {
@@ -52,7 +53,7 @@ func (p *Processor) runPipeline(
 	}
 	defer func() {
 		if cleanupErr := p.workDirs.CleanupJobWorkDir(workDir); cleanupErr != nil {
-			slog.Warn("Failed to cleanup mesh optimization work dir", "jobId", spec.jobID, "workDir", workDir, "error", cleanupErr)
+			slog.ErrorContext(ctx, "Failed to cleanup mesh optimization work dir", "jobId", spec.jobID, "workDir", workDir, failurecause.Attr(cleanupErr))
 		}
 	}()
 

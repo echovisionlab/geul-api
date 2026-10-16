@@ -30,7 +30,7 @@ func BuildAndAppendSecurityAccess(
 		return errors.New("security access writer is required")
 	}
 	if err := actor.Validate(); err != nil {
-		ReportSecurityAccessAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid)
+		ReportSecurityAccessAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureActorInvalid, err)
 		return err
 	}
 	requestContext, ok := RequestContextFrom(ctx)
@@ -46,7 +46,7 @@ func BuildAndAppendSecurityAccess(
 		SourceIP:    requestContext.SourceIP,
 	})
 	if err != nil {
-		ReportSecurityAccessAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureRecordBuildFailed)
+		ReportSecurityAccessAppendFailure(ctx, action, sharedtelemetry.AuditAppendFailureRecordBuildFailed, err)
 		return err
 	}
 	return writer.AppendSecurityAccess(ctx, record)

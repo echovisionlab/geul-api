@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -13,6 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const (
@@ -121,6 +125,9 @@ type ToolDispatcher interface {
 // errors become a generic JSON-RPC internal error and are never returned raw.
 type ToolExecutionError struct {
 	Message string
+
+	// Cause is retained for server diagnostics only, never serialized to clients.
+	Cause error `json:"-"`
 }
 
 func (e *ToolExecutionError) Error() string {
@@ -247,6 +254,7 @@ func (h *handler) servePOST(response http.ResponseWriter, request *http.Request)
 
 	body, err := io.ReadAll(io.LimitReader(request.Body, h.maxBodyBytes+1))
 	if err != nil {
+		slog.WarnContext(request.Context(), "Failed to read MCP request", "failure_cause", failurecause.Message(err))
 		writeHTTPError(response, http.StatusBadRequest, "Bad Request")
 		return
 	}
@@ -257,6 +265,17 @@ func (h *handler) servePOST(response http.ResponseWriter, request *http.Request)
 
 	message, protocolErr := parseMessage(body)
 	if protocolErr != nil {
+		if protocolErr.cause != nil {
+			var private []string
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(protocolErr.cause, &typeErr) {
+				if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+					private = append(private, value)
+				}
+			}
+			cause := failurecause.Message(protocolErr.cause, private...)
+			slog.WarnContext(request.Context(), "Invalid MCP request", "failure_cause", cause)
+		}
 		writeRPCError(response, protocolErr.status, protocolErr.id, protocolErr.code, protocolErr.message)
 		return
 	}
@@ -314,6 +333,17 @@ func (h *handler) handleInitialize(ctx context.Context, response http.ResponseWr
 	}
 	if err := json.Unmarshal(message.params, &params); err != nil || params.ProtocolVersion == "" ||
 		params.ClientInfo.Name == "" || params.ClientInfo.Version == "" || !isJSONObject(params.Capabilities) {
+		if err != nil {
+			var private []string
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) {
+				if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+					private = append(private, value)
+				}
+			}
+			cause := failurecause.Message(err, private...)
+			slog.WarnContext(ctx, "Invalid MCP parameters", "method", message.method, "failure_cause", cause)
+		}
 		writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
 		return
 	}
@@ -324,6 +354,7 @@ func (h *handler) handleInitialize(ctx context.Context, response http.ResponseWr
 	if h.serverTitleSource != nil {
 		title, err := h.serverTitleSource.ServerTitle(ctx)
 		if err != nil {
+			slog.ErrorContext(ctx, "Failed to resolve MCP server title", "failure_cause", failurecause.Message(err), "method", "initialize")
 			writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 			return
 		}
@@ -349,6 +380,15 @@ func (h *handler) handleToolsList(response http.ResponseWriter, request *http.Re
 	if len(message.params) != 0 {
 		var params map[string]json.RawMessage
 		if err := json.Unmarshal(message.params, &params); err != nil {
+			var private []string
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) {
+				if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+					private = append(private, value)
+				}
+			}
+			cause := failurecause.Message(err, private...)
+			slog.WarnContext(request.Context(), "Invalid MCP parameters", "method", message.method, "failure_cause", cause)
 			writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
 			return
 		}
@@ -360,6 +400,7 @@ func (h *handler) handleToolsList(response http.ResponseWriter, request *http.Re
 
 	tools, err := h.listTools(request.Context(), principal)
 	if err != nil {
+		slog.ErrorContext(request.Context(), "Failed to list MCP tools", "failure_cause", failurecause.Message(err), "method", message.method)
 		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
@@ -375,6 +416,17 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 		Task      json.RawMessage `json:"task"`
 	}
 	if err := json.Unmarshal(message.params, &params); err != nil || params.Name == "" {
+		if err != nil {
+			var private []string
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) {
+				if _, value, ok := strings.Cut(typeErr.Value, " "); ok {
+					private = append(private, value)
+				}
+			}
+			cause := failurecause.Message(err, private...)
+			slog.WarnContext(request.Context(), "Invalid MCP parameters", "method", message.method, "failure_cause", cause)
+		}
 		writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
 		return
 	}
@@ -392,6 +444,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 
 	tools, err := h.listTools(request.Context(), principal)
 	if err != nil {
+		slog.ErrorContext(request.Context(), "Failed to list MCP tools", "failure_cause", failurecause.Message(err), "method", message.method)
 		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
@@ -400,18 +453,68 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 		return
 	}
 
+	// Redact private content and credentials echoed by validators, while keeping
+	// structural arguments (profiles, element names, IDs) useful for diagnosis.
+	var private []string
+	var collect func(any, bool)
+	collect = func(value any, sensitive bool) {
+		switch value := value.(type) {
+		case string:
+			if sensitive {
+				private = append(private, value)
+			}
+		case []any:
+			for _, child := range value {
+				collect(child, sensitive)
+			}
+		case map[string]any:
+			for key, child := range value {
+				childSensitive := sensitive
+				switch strings.ToLower(key) {
+				case "password", "share_password", "token", "page_token", "share_token", "access_token", "refresh_token", "secret", "api_key", "authorization", "cookie", "code", "recipient", "email", "name", "nickname", "display_name", "file_name", "title", "summary", "caption", "text", "value", "content", "body", "html", "subject", "description", "template_data":
+					childSensitive = true
+				}
+				collect(child, childSensitive)
+			}
+		}
+	}
+	values := make(map[string]any, len(arguments))
+	for key, raw := range arguments {
+		var value any
+		if json.Unmarshal(raw, &value) == nil {
+			values[key] = value
+			if key == "n" && (params.Name == "file_transfer" || params.Name == "file_upload") {
+				collect(value, true) // Compact File arguments use n for the private file name.
+			}
+		}
+	}
+	collect(values, false)
 	result, err := h.dispatcher.CallTool(request.Context(), principal, params.Name, arguments)
 	if err != nil {
 		if errors.Is(err, ErrUnknownTool) {
+			slog.WarnContext(request.Context(), "MCP tool no longer available", "failure_cause", failurecause.Message(err, private...), "tool", params.Name)
 			writeRPCError(response, http.StatusOK, message.id, -32602, "Unknown tool")
 			return
 		}
 		var executionErr *ToolExecutionError
 		if errors.As(err, &executionErr) {
 			if executionErr == nil {
+				slog.ErrorContext(request.Context(), "MCP dispatcher returned a nil execution error", "tool", params.Name, "error", "nil tool execution error")
 				writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 				return
 			}
+			cause := executionErr.Cause
+			if cause == nil {
+				cause = executionErr
+			}
+			level := slog.LevelWarn
+			switch connect.CodeOf(cause) {
+			case connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			// The normalizing handler converts error to error_type; error_cause
+			// retains the sanitized diagnostic text through that handler.
+			slog.Log(request.Context(), level, "MCP tool execution rejected", "failure_cause", failurecause.Message(cause, private...), "tool", params.Name)
 			messageText := executionErr.Message
 			if messageText == "" {
 				messageText = "Tool execution failed"
@@ -422,6 +525,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 			})
 			return
 		}
+		slog.ErrorContext(request.Context(), "MCP tool execution failed", "failure_cause", failurecause.Message(err, private...), "tool", params.Name)
 		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
@@ -429,6 +533,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 		result.Content = []ContentBlock{}
 	}
 	if !validContent(result.Content) {
+		slog.ErrorContext(request.Context(), "MCP tool returned invalid content", "tool", params.Name, "error", "invalid tool result content")
 		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
@@ -520,6 +625,7 @@ func (message incomingMessage) responseID() json.RawMessage {
 }
 
 type protocolError struct {
+	cause   error
 	code    int
 	message string
 	status  int
@@ -540,7 +646,7 @@ func parseMessage(body []byte) (incomingMessage, *protocolError) {
 
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return incomingMessage{}, &protocolError{code: -32600, message: "Invalid Request", status: http.StatusBadRequest}
+		return incomingMessage{}, &protocolError{cause: err, code: -32600, message: "Invalid Request", status: http.StatusBadRequest}
 	}
 	id, hasID := envelope["id"]
 	if hasID && !validRequestID(id) {
@@ -548,11 +654,11 @@ func parseMessage(body []byte) (incomingMessage, *protocolError) {
 	}
 	var version string
 	if err := json.Unmarshal(envelope["jsonrpc"], &version); err != nil || version != "2.0" {
-		return incomingMessage{}, &protocolError{code: -32600, message: "Invalid Request", status: http.StatusBadRequest, id: id}
+		return incomingMessage{}, &protocolError{cause: err, code: -32600, message: "Invalid Request", status: http.StatusBadRequest, id: id}
 	}
 	var method string
 	if err := json.Unmarshal(envelope["method"], &method); err != nil || method == "" {
-		return incomingMessage{}, &protocolError{code: -32600, message: "Invalid Request", status: http.StatusBadRequest, id: id}
+		return incomingMessage{}, &protocolError{cause: err, code: -32600, message: "Invalid Request", status: http.StatusBadRequest, id: id}
 	}
 
 	message := incomingMessage{method: method, params: envelope["params"], id: id, hasID: hasID}
@@ -650,6 +756,7 @@ func validateTool(tool Tool) error {
 		return errors.New("mcp: a read-only tool cannot be destructive")
 	}
 	if _, err := json.Marshal(tool); err != nil {
+		slog.Error("Failed to encode MCP tool definition", "failure_cause", failurecause.Message(err), "tool", tool.Name)
 		return errors.New("mcp: tool definition is not JSON encodable")
 	}
 	return nil
@@ -790,16 +897,19 @@ func writeRPCError(response http.ResponseWriter, status int, id json.RawMessage,
 }
 
 // writeJSON encodes the complete response before writing headers. Its error
-// reports encoding failure; network write failures remain with net/http.
+// reports encoding failure; network write failures are logged after headers commit.
 func writeJSON(response http.ResponseWriter, status int, value any) error {
 	encoded, err := json.Marshal(value)
 	if err != nil {
+		slog.ErrorContext(context.Background(), "Failed to encode MCP response", "failure_cause", failurecause.Message(err))
 		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
-	_, _ = response.Write(append(encoded, '\n'))
+	if _, err := response.Write(append(encoded, '\n')); err != nil {
+		slog.ErrorContext(context.Background(), "Failed to write MCP response", "failure_cause", failurecause.Message(err))
+	}
 	return nil
 }
 

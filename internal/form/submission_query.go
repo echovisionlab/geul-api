@@ -2,9 +2,11 @@ package form
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -15,7 +17,19 @@ import (
 func (s *FormService) ListFormSubmissions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormSubmissionsRequest],
-) (*connect.Response[managev1.ListFormSubmissionsResponse], error) {
+) (rpcResponse *connect.Response[managev1.ListFormSubmissionsResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "ListFormSubmissions", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	// Keep behavior consistent with other submission endpoints:
 	// unknown form IDs should return not_found (including admins).
 	var formCount int64
@@ -71,6 +85,7 @@ func (s *FormService) ListFormSubmissions(
 	}
 	if s.securityAccess != nil {
 		if err := s.securityAccess.AppendFormSubmissions(ctx, req.Msg.FormId); err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
 			return nil, securityAccessUnavailable()
 		}
 	}
@@ -90,7 +105,19 @@ func (s *FormService) ListFormSubmissions(
 func (s *FormService) GetFormSubmissionWithSchema(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFormSubmissionRequest],
-) (*connect.Response[managev1.FormSubmissionWithSchema], error) {
+) (rpcResponse *connect.Response[managev1.FormSubmissionWithSchema], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetFormSubmissionWithSchema", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	var submission model.FormSubmission
 	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -120,6 +147,7 @@ func (s *FormService) GetFormSubmissionWithSchema(
 	}
 	if s.securityAccess != nil {
 		if err := s.securityAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
 			return nil, securityAccessUnavailable()
 		}
 	}

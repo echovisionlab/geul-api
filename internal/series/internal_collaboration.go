@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -50,7 +52,18 @@ func NewInternalPostSeriesService(
 func (s *InternalPostSeriesService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPostSeriesDocumentRequest],
-) (*connect.Response[intrav1.LoadPostSeriesDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadPostSeriesDocumentResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "LoadDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -88,7 +101,18 @@ func (s *InternalPostSeriesService) LoadDocument(
 func (s *InternalPostSeriesService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SavePostSeriesDocumentRequest],
-) (*connect.Response[intrav1.SavePostSeriesDocumentResponse], error) {
+) (_ *connect.Response[intrav1.SavePostSeriesDocumentResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "SaveDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -228,6 +252,9 @@ func parseCanonicalPostSeriesUUID(value, field string) (uuid.UUID, error) {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(trimmed)
 	if err != nil || parsed == uuid.Nil || parsed.String() != trimmed || value != trimmed {
+		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "series", "operation", "parseCanonicalPostSeriesUUID", failurecause.Attr(err))
+		}
 		return uuid.Nil, errs.InvalidArgument(field, "must be a canonical UUID")
 	}
 	return parsed, nil

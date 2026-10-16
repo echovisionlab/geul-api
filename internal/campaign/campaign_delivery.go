@@ -3,6 +3,7 @@ package campaign
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"strings"
 	"time"
@@ -187,6 +188,7 @@ func (d *CampaignDeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Co
 		Order("scheduled_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error; err != nil {
+		slog.ErrorContext(ctx, "Failed to load email delivery runs", "domain", "campaign", "event", "campaign.delivery.failed", "outcome", "failed", "operation", "load_due_delivery_runs", failurecause.Attr(err))
 		return 0, errs.Internal(err)
 	}
 
@@ -217,6 +219,7 @@ func (d *CampaignDeliveryDispatcher) ResumeActiveEmailDeliveryRuns(ctx context.C
 		Order("updated_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error; err != nil {
+		slog.ErrorContext(ctx, "Failed to load email delivery runs", "domain", "campaign", "event", "campaign.delivery.failed", "outcome", "failed", "operation", "load_active_delivery_runs", failurecause.Attr(err))
 		return 0, errs.Internal(err)
 	}
 

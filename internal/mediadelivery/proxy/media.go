@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/minio/minio-go/v7"
 )
@@ -28,6 +29,7 @@ func newMediaProxy(store deliveryStore) *MediaProxy {
 func (p *MediaProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resolved, err := resolvedDeliveryFromRequest(r)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Missing media delivery context", failurecause.Attr(err))
 		http.NotFound(w, r)
 		return
 	}
@@ -41,14 +43,14 @@ func (p *MediaProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := p.store.Open(r.Context(), resolved.path.ObjectKey, nil)
 	if err != nil {
-		slog.Error("failed to open delivery object", "error", err, "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
+		slog.ErrorContext(r.Context(), "failed to open delivery object", failurecause.Attr(err), "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
 		http.Error(w, "Bad gateway", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = body.Close() }()
 	p.writeFullResponseHeaders(w, resolved)
 	if _, err := io.Copy(w, body); err != nil {
-		slog.Error("failed to stream delivery object", "error", err, "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
+		slog.ErrorContext(r.Context(), "failed to stream delivery object", failurecause.Attr(err), "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
 	}
 }
 
@@ -73,14 +75,14 @@ func (p *MediaProxy) serveRange(w http.ResponseWriter, r *http.Request, resolved
 	}
 	body, err := p.store.Open(r.Context(), objectKey, &byteRange{start: start, end: end})
 	if err != nil {
-		slog.Error("failed to open delivery range", "error", err, "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
+		slog.ErrorContext(r.Context(), "failed to open delivery range", failurecause.Attr(err), "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
 		http.Error(w, "Bad gateway", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = body.Close() }()
 	p.writeRangeResponseHeaders(w, resolved, start, end)
 	if _, err := io.Copy(w, body); err != nil {
-		slog.Error("failed to stream delivery range", "error", err, "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
+		slog.ErrorContext(r.Context(), "failed to stream delivery range", failurecause.Attr(err), "kind", resolved.path.Kind, "fileId", resolved.path.FileID, "assetId", resolved.path.AssetID)
 	}
 }
 

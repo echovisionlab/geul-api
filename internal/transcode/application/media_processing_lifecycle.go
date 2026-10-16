@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -76,10 +77,10 @@ func (h *Handlers) publishMediaProcessingLifecycle(
 	}
 
 	if err := h.publisher.PublishMediaProcessingLifecycle(ctx, event); err != nil {
-		slog.Warn("Failed to publish media processing lifecycle",
+		slog.Error("Failed to publish media processing lifecycle",
 			"fileId", options.FileID,
 			"status", event.Status.String(),
-			"error", err,
+			failurecause.Attr(err),
 		)
 		return err
 	}

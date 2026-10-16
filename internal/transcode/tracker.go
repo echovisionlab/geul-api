@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -374,7 +375,8 @@ func (t *Tracker) HandleTranscodeComplete(ctx context.Context, event *managev1.T
 		return err
 	}
 	if len(jobs) != 1 || !stringInSlice(jobs[0].Status, activeTranscodeStatuses()) {
-		slog.Warn("Skipped uncorrelated transcode failure completion",
+		slog.WarnContext(ctx, "Skipped uncorrelated transcode failure completion",
+			failurecause.Attr(errors.New(event.GetError())),
 			"entityType", event.EntityType.String(),
 			"entityId", event.EntityId,
 			"fileId", event.FileId,

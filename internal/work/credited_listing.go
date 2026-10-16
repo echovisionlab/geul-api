@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -34,7 +36,18 @@ type creditedWorkRow struct {
 func (s *WorkService) ListMyCreditedWorks(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMyCreditedWorksRequest],
-) (*connect.Response[managev1.ListMyCreditedWorksResponse], error) {
+) (_ *connect.Response[managev1.ListMyCreditedWorksResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListMyCreditedWorks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	principal := auth.GetUser(ctx)
 	if principal == nil || principal.MemberID == "" {
 		return nil, errs.AuthenticationRequired()

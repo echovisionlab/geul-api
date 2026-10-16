@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -38,6 +40,8 @@ func (repository *PersonalAccessTokenRepository) Create(
 	row := personalAccessTokenRowFromDomain(record)
 	if err := repository.db.WithContext(ctx).Table(personalAccessTokenTable).Create(&row).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
+			cause := failurecause.Message(err, string(row.SecretHash), fmt.Sprintf("%x", row.SecretHash))
+			slog.WarnContext(ctx, "Personal access token insert conflicted", "failure_cause", cause, "member_id", row.MemberID)
 			return memberpat.ErrTokenAlreadyExists
 		}
 		return fmt.Errorf("insert Member personal access token: %w", err)
@@ -202,6 +206,8 @@ func personalAccessTokenRowsToDomain(rows []personalAccessTokenRow) ([]memberpat
 func personalAccessTokenRowToDomain(row personalAccessTokenRow) (memberpat.StoredToken, error) {
 	verifier, err := memberpat.VerifierFromBytes(row.SecretHash)
 	if err != nil {
+		cause := failurecause.Message(err)
+		slog.Error("Stored personal access token verifier is invalid", "failure_cause", cause, "token_id", row.Selector)
 		return memberpat.StoredToken{}, memberpat.ErrInvalidStoredToken
 	}
 	return memberpat.StoredToken{

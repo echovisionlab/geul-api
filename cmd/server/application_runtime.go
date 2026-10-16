@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/httpadmission"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +14,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/config"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/httpadmission"
 	"github.com/echovisionlab/geul-api/internal/mediaruntime"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
@@ -92,7 +94,7 @@ func (r *applicationRuntime) startRequiredConsumers(
 	r.wg.Go(func() {
 		slog.Info("Consumer manager starting")
 		if err := r.consumerManager.StartWithReady(ctx, ready); err != nil {
-			slog.Error("Consumer manager error", "error", err)
+			slog.Error("Consumer manager error", "failure_cause", failurecause.Message(err))
 			reportRuntimeFailure(runtimeFailures, fmt.Errorf("consumer manager: %w", err))
 		}
 	})
@@ -228,7 +230,7 @@ func (r *applicationRuntime) startSubscriber(
 	r.wg.Go(func() {
 		slog.Info(name + " subscriber starting")
 		if err := subscriber.Start(ctx); err != nil {
-			slog.Error(name+" subscriber error", "error", err)
+			slog.Error(name+" subscriber error", "failure_cause", failurecause.Message(err))
 		}
 	})
 }
@@ -240,11 +242,13 @@ func (r *applicationRuntime) Shutdown(
 ) bool {
 	if r.ogProcess != nil {
 		if err := r.ogProcess.Shutdown(ctx); err != nil {
-			slog.Error("OG shutdown error", "error", err)
+			slog.Error("OG shutdown error", "failure_cause", failurecause.Message(err))
 		}
 	}
 	if r.mediaWorkers != nil {
-		_ = r.mediaWorkers.Close()
+		if err := r.mediaWorkers.Close(); err != nil {
+			slog.Error("Media workers close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 	if r.mediaServer != nil {
 		shutdownHTTPServer(ctx, "Media delivery", r.mediaServer)
@@ -255,7 +259,9 @@ func (r *applicationRuntime) Shutdown(
 		r.scheduler.Stop()
 	}
 	if r.consumerManager != nil {
-		r.consumerManager.Close()
+		if err := r.consumerManager.Close(); err != nil {
+			slog.Error("Consumer manager close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 	closeSubscriber(r.transcodeProgressSubscriber)
 	closeSubscriber(r.waveformProgressSubscriber)
@@ -266,30 +272,40 @@ func (r *applicationRuntime) Shutdown(
 
 func shutdownHTTPServer(ctx context.Context, name string, server *http.Server) {
 	if err := server.Shutdown(ctx); err != nil {
-		slog.Error(name+" shutdown error", "error", err)
+		slog.Error(name+" shutdown error", "failure_cause", failurecause.Message(err))
 	}
 }
 
 func (r *applicationRuntime) Close() {
 	if r.ogProcess != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = r.ogProcess.Shutdown(ctx)
+		if err := r.ogProcess.Shutdown(ctx); err != nil {
+			slog.Error("OG shutdown error", "failure_cause", failurecause.Message(err))
+		}
 		cancel()
 	}
 	if r.mediaWorkers != nil {
-		_ = r.mediaWorkers.Close()
+		if err := r.mediaWorkers.Close(); err != nil {
+			slog.Error("Media workers close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 	if r.mediaServer != nil {
-		_ = r.mediaServer.Close()
+		if err := r.mediaServer.Close(); err != nil {
+			slog.Error("Media delivery close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 	if r.mediaListener != nil {
-		_ = r.mediaListener.Close()
+		if err := r.mediaListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Error("Media listener close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 	if r.scheduler != nil {
 		r.scheduler.Stop()
 	}
 	if r.consumerManager != nil {
-		r.consumerManager.Close()
+		if err := r.consumerManager.Close(); err != nil {
+			slog.Error("Consumer manager close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 	closeSubscriber(r.transcodeProgressSubscriber)
 	closeSubscriber(r.waveformProgressSubscriber)
@@ -299,6 +315,8 @@ func (r *applicationRuntime) Close() {
 
 func closeSubscriber(subscriber *mq.BroadcastSubscriber) {
 	if subscriber != nil {
-		subscriber.Close()
+		if err := subscriber.Close(); err != nil {
+			slog.Error("Signal subscriber close failed", "failure_cause", failurecause.Message(err))
+		}
 	}
 }

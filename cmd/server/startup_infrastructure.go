@@ -9,6 +9,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/plugin/opentelemetry/tracing"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 func connectDatabase(dsn string, maxOpenConnections, maxIdleConnections int) (*gorm.DB, *sql.DB, error) {
@@ -25,11 +27,13 @@ func connectDatabase(dsn string, maxOpenConnections, maxIdleConnections int) (*g
 	sqlDB.SetMaxOpenConns(maxOpenConnections)
 	sqlDB.SetMaxIdleConns(maxIdleConnections)
 	if err := sqlDB.Ping(); err != nil {
-		sqlDB.Close()
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			slog.Error("Database close after failed ping failed", "failure_cause", failurecause.Message(closeErr))
+		}
 		return nil, nil, fmt.Errorf("ping database: %w", err)
 	}
 	if err := db.Use(newDatabaseTracingPlugin()); err != nil {
-		slog.Warn("Failed to enable GORM tracing", "error", err)
+		slog.Warn("Failed to enable GORM tracing", "failure_cause", failurecause.Message(err))
 	}
 	slog.Info("Connected to database")
 	return db, sqlDB, nil

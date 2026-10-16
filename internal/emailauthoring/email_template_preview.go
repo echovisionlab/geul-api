@@ -3,7 +3,9 @@ package emailauthoring
 import (
 	"context"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -21,7 +23,19 @@ import (
 func (s *EmailTemplateService) PreviewEmailTemplate(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewEmailTemplateRequest],
-) (*connect.Response[managev1.PreviewEmailTemplateResponse], error) {
+) (rpcResponse *connect.Response[managev1.PreviewEmailTemplateResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "PreviewEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
 	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err

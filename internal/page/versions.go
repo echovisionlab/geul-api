@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -26,7 +28,19 @@ import (
 func (s *PageService) ListPageVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPageVersionsRequest],
-) (*connect.Response[managev1.ListPageVersionsResponse], error) {
+) (_ *connect.Response[managev1.ListPageVersionsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ListPageVersions", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := requirePagePermission(ctx, s.spiceDB, req.Msg.PageId, policyv1.Page.View); err != nil {
 		return nil, err
 	}
@@ -92,7 +106,19 @@ func (s *PageService) ListPageVersions(
 func (s *PageService) RestorePageVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.RestorePageVersionRequest],
-) (*connect.Response[managev1.Page], error) {
+) (_ *connect.Response[managev1.Page], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.RestorePageVersion", "outcome", "failed", "page_id", req.Msg.GetPageId(), "version_id", req.Msg.GetVersionId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
@@ -111,6 +137,7 @@ func (s *PageService) RestorePageVersion(
 	}
 	versionSnapshot, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.RestorePageVersion", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.FailedPrecondition("Page version typed snapshot is invalid")
 	}
 
@@ -347,6 +374,7 @@ func (s *PageService) toProtoPageVersion(
 ) (*managev1.PageVersion, error) {
 	snapshot, err := DecodeVersionContentSnapshot(v.ContentSnapshot)
 	if err != nil {
+		slog.ErrorContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.toProtoPageVersion", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.FailedPrecondition("Page version typed snapshot is invalid")
 	}
 	contributors, err := toProtoVersionContributors(v.ContributorMemberIDs, contributorNames)

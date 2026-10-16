@@ -2,6 +2,7 @@ package page
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,7 +23,19 @@ import (
 func (s *PageService) SetPageFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetPageFeaturedImageRequest],
-) (*connect.Response[managev1.SetPageFeaturedImageResponse], error) {
+) (_ *connect.Response[managev1.SetPageFeaturedImageResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.SetPageFeaturedImage", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	var ogRunID *string
 
 	// Use transaction with row-level lock to prevent race conditions
@@ -110,7 +124,19 @@ func (s *PageService) SetPageFeaturedImage(
 func (s *PageService) DeletePageFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePageFeaturedImageRequest],
-) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
+) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.DeletePageFeaturedImage", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	var oldFileID *string
 	var ogRunID *string
 

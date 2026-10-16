@@ -2,11 +2,13 @@ package account
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 func (s *AccountEmailService) BackfillMemberEmailProjection(
@@ -40,7 +42,12 @@ func (s *AccountEmailService) BackfillMemberEmailProjection(
 			result.Processed++
 			if _, err := s.SyncMemberEmailProjection(ctx, identity.ID, nil, nil); err != nil {
 				result.Failed++
-				slog.Warn("failed to backfill Member email projection", "identity_id", identity.ID, "error", err)
+				var upstreamError *auth.KratosHTTPError
+				privateBody := ""
+				if errors.As(err, &upstreamError) {
+					privateBody = upstreamError.Body
+				}
+				slog.ErrorContext(ctx, "failed to backfill Member email projection", "identity_id", identity.ID, "failure_cause", failurecause.Message(err, privateBody))
 				continue
 			}
 			result.Synced++

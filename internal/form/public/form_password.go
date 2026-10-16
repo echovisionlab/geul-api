@@ -2,11 +2,14 @@ package public
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
@@ -15,7 +18,19 @@ import (
 func (s *FormService) VerifyPassword(
 	ctx context.Context,
 	req *connect.Request[openv1.VerifyFormPasswordRequest],
-) (*connect.Response[openv1.VerifyFormPasswordResponse], error) {
+) (rpcResponse *connect.Response[openv1.VerifyFormPasswordResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "VerifyPassword", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
 	if err != nil {
 		return nil, err
@@ -62,12 +77,17 @@ func (s *FormService) VerifyPassword(
 func (s *FormService) verifyFormPassword(password, hash string) bool {
 	// Check if it's a legacy bcrypt hash
 	if crypto.IsBcryptHash(hash) {
-		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+		if err != nil && !errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
+		}
+		return err == nil
 	}
 
 	// Otherwise, use argon2id
 	match, err := s.password.Verify(password, hash)
 	if err != nil {
+		slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
 		return false
 	}
 	return match

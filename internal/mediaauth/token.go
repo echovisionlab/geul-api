@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const (
@@ -146,6 +149,7 @@ func validateTokenAt(token, secret string, now time.Time) (*Claims, error) {
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(payloadEncoded)
 	if err != nil {
+		slog.Warn("Invalid media token encoding", failurecause.Attr(err, token))
 		return nil, ErrInvalidToken
 	}
 
@@ -153,9 +157,11 @@ func validateTokenAt(token, secret string, now time.Time) (*Claims, error) {
 	decoder.DisallowUnknownFields()
 	var claims Claims
 	if err := decoder.Decode(&claims); err != nil {
+		slog.Warn("Invalid media token claims", failurecause.Attr(err, token))
 		return nil, ErrInvalidToken
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		slog.Warn("Invalid trailing media token claims", failurecause.Attr(err, token))
 		return nil, ErrInvalidToken
 	}
 	if err := validateClaims(&claims); err != nil {

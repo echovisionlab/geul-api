@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image/png"
 	"io"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -84,6 +86,9 @@ func validateClientArtifactContent(path string, data []byte) error {
 	case "spectrogram.png":
 		cfg, err := png.DecodeConfig(bytes.NewReader(data))
 		if err != nil || cfg.Width != 1600 || cfg.Height != 224 {
+			if err != nil {
+				slog.Warn("Failed to decode client spectrogram", failurecause.Attr(err))
+			}
 			return fmt.Errorf("invalid spectrogram image")
 		}
 	case "thumbnail.webp":
@@ -99,6 +104,7 @@ func validateClientArtifactContent(path string, data []byte) error {
 func validateClientWaveform(data []byte) error {
 	var peaks [][]*float64
 	if err := json.Unmarshal(data, &peaks); err != nil {
+		slog.Warn("Failed to decode client waveform", failurecause.Attr(err))
 		return fmt.Errorf("invalid waveform JSON")
 	}
 	if len(peaks) < 1 || len(peaks) > 2 {

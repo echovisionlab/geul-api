@@ -3,6 +3,7 @@ package emailauthoring
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -254,7 +256,19 @@ func (s *EmailLayoutService) requireEmailLayoutCan(
 func (s *EmailLayoutService) GetEmailLayout(
 	ctx context.Context,
 	req *connect.Request[managev1.GetEmailLayoutRequest],
-) (*connect.Response[managev1.EmailLayout], error) {
+) (rpcResponse *connect.Response[managev1.EmailLayout], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "GetEmailLayout", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
 	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -286,7 +300,19 @@ func (s *EmailLayoutService) GetEmailLayout(
 func (s *EmailLayoutService) ListEmailLayoutsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListEmailLayoutsAdminRequest],
-) (*connect.Response[managev1.ListEmailLayoutsAdminResponse], error) {
+) (rpcResponse *connect.Response[managev1.ListEmailLayoutsAdminResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "ListEmailLayoutsAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, canErr := policyv1.EmailLayout.List()
 	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -406,7 +432,19 @@ func validateLayoutHTMLContent(content string) error {
 func (s *EmailLayoutService) CreateEmailLayout(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateEmailLayoutRequest],
-) (*connect.Response[managev1.EmailLayout], error) {
+) (rpcResponse *connect.Response[managev1.EmailLayout], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "CreateEmailLayout", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	layoutCan, err := policyv1.EmailLayout.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -491,7 +529,19 @@ func (s *EmailLayoutService) CreateEmailLayout(
 func (s *EmailLayoutService) UpdateEmailLayout(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateEmailLayoutRequest],
-) (*connect.Response[managev1.EmailLayout], error) {
+) (rpcResponse *connect.Response[managev1.EmailLayout], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "UpdateEmailLayout", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	layoutCan, err := policyv1.EmailLayout.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -644,7 +694,19 @@ func loadEmailLayoutForResponse(
 func (s *EmailLayoutService) DeleteEmailLayout(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteEmailLayoutRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (rpcResponse *connect.Response[managev1.DeleteResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "DeleteEmailLayout", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	layoutCan, err := policyv1.EmailLayout.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -687,6 +749,9 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 		}
 		documentID, parseErr := uuid.Parse(layout.ContentDocumentID)
 		if parseErr != nil || documentID == uuid.Nil {
+			if parseErr != nil {
+				slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "emailauthoring", "event", "emailauthoring.document_invalid", "outcome", "failed", "layout_id", layout.ID, failurecause.Attr(parseErr))
+			}
 			return errs.FailedPrecondition("Email Layout Content Document is not initialized")
 		}
 		if err := s.contentBlocks.DeleteDocument(
@@ -726,7 +791,19 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 func (s *EmailLayoutService) PreviewEmailLayout(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewEmailLayoutRequest],
-) (*connect.Response[managev1.PreviewEmailLayoutResponse], error) {
+) (rpcResponse *connect.Response[managev1.PreviewEmailLayoutResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "PreviewEmailLayout", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
 	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -775,7 +852,19 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 func (s *EmailLayoutService) PreviewEmailLayoutContent(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewEmailLayoutContentRequest],
-) (*connect.Response[managev1.PreviewEmailLayoutContentResponse], error) {
+) (rpcResponse *connect.Response[managev1.PreviewEmailLayoutContentResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "PreviewEmailLayoutContent", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	can, canErr := policyv1.EmailLayout.PreviewContent()
 	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err

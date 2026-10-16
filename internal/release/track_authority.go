@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -73,6 +75,7 @@ type TrackOriginalAudioAttachment struct {
 func (a *TrackAuthority) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
 	trackID = strings.TrimSpace(trackID)
 	if _, err := uuid.Parse(trackID); err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "LockExistsWithDB", failurecause.Attr(err))
 		return errs.InvalidArgument("track_id", "must be a UUID")
 	}
 	if err := lockTrackDownloadAudienceSegments(ctx, tx, trackID); err != nil {
@@ -112,14 +115,17 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 	input.TrackID = strings.TrimSpace(input.TrackID)
 	input.VerifiedFileID = strings.TrimSpace(input.VerifiedFileID)
 	if _, err := uuid.Parse(input.TrackID); err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "AttachOriginalWithDB", failurecause.Attr(err))
 		return TrackOriginalAudioAttachment{}, errs.InvalidArgument("track_id", "must be a UUID")
 	}
 	if _, err := uuid.Parse(input.VerifiedFileID); err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "AttachOriginalWithDB", failurecause.Attr(err))
 		return TrackOriginalAudioAttachment{}, errs.InvalidArgument("verified_file_id", "must be a UUID")
 	}
 	if input.ExpectedCurrentFileID != nil {
 		expected := strings.TrimSpace(*input.ExpectedCurrentFileID)
 		if _, err := uuid.Parse(expected); err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "AttachOriginalWithDB", failurecause.Attr(err))
 			return TrackOriginalAudioAttachment{}, errs.InvalidArgument("expected_current_file_id", "must be a UUID when present")
 		}
 		input.ExpectedCurrentFileID = &expected

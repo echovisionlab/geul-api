@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -9,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -32,7 +34,19 @@ func NewService(metadataAI *MetadataJobManager) *Service {
 func (s *Service) StartMetadataGeneration(
 	ctx context.Context,
 	req *connect.Request[managev1.StartMetadataGenerationRequest],
-) (*connect.Response[managev1.StartMetadataGenerationResponse], error) {
+) (_ *connect.Response[managev1.StartMetadataGenerationResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "ai", "event", "ai.rpc.failed", "outcome", "failed", failurecause.Attr(retErr, req.Msg.GetContext(), req.Msg.GetPrompt()), "operation", "StartMetadataGeneration")
+		}
+	}()
 	user := auth.GetUser(ctx)
 	job, err := s.metadataAI.StartJob(ctx, user, req.Msg)
 	if err != nil {
@@ -44,7 +58,19 @@ func (s *Service) StartMetadataGeneration(
 func (s *Service) GetMetadataGenerationJob(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMetadataGenerationJobRequest],
-) (*connect.Response[managev1.GetMetadataGenerationJobResponse], error) {
+) (_ *connect.Response[managev1.GetMetadataGenerationJobResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "ai", "event", "ai.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetMetadataGenerationJob")
+		}
+	}()
 	user := auth.GetUser(ctx)
 	job, err := s.metadataAI.GetJobForRequester(ctx, user, req.Msg.JobId)
 	if err != nil {
@@ -56,7 +82,19 @@ func (s *Service) GetMetadataGenerationJob(
 func (s *Service) ResolveMetadataGenerationJob(
 	ctx context.Context,
 	req *connect.Request[managev1.ResolveMetadataGenerationJobRequest],
-) (*connect.Response[managev1.ResolveMetadataGenerationJobResponse], error) {
+) (_ *connect.Response[managev1.ResolveMetadataGenerationJobResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "ai", "event", "ai.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ResolveMetadataGenerationJob")
+		}
+	}()
 	user := auth.GetUser(ctx)
 	job, err := s.metadataAI.ResolveJobForRequester(ctx, user, req.Msg.JobId, req.Msg.Resolution)
 	if err != nil {
@@ -97,12 +135,14 @@ func canUseAI(
 	case managev1.AIResourceType_AI_RESOURCE_TYPE_POST:
 		can, err := policyv1.Post.Edit(targetID)
 		if err != nil {
+			slog.WarnContext(ctx, "AI resource authorization rejected", "domain", "ai", "event", "ai.authorization.rejected", "failure_cause", failurecause.Message(err))
 			return false, nil
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
 	case managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST:
 		can, err := policyv1.Artist.Edit(targetID)
 		if err != nil {
+			slog.WarnContext(ctx, "AI resource authorization rejected", "domain", "ai", "event", "ai.authorization.rejected", "failure_cause", failurecause.Message(err))
 			return false, nil
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
@@ -133,6 +173,7 @@ func canManageAIResource(
 func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.DependencyUnavailable("SpiceDB")
 	}
 	return checkAICan(ctx, spiceDB, user, can)
@@ -141,6 +182,7 @@ func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.U
 func checkAIAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.DependencyUnavailable("SpiceDB")
 	}
 	return checkAICan(ctx, spiceDB, user, can)
@@ -158,10 +200,12 @@ func checkAICan(
 	authorizationCtx := auth.WithUser(ctx, user)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(authorizationCtx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "ai", "event", "ai.authorization.failed", "outcome", "failed", failurecause.Attr(err))
 		return false, errs.DependencyUnavailable("SpiceDB")
 	}
 	return allowed, nil

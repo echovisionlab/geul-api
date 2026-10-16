@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -49,10 +51,12 @@ func requireLabelGlobalAction(ctx context.Context, checker labelPermissionChecke
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelGlobalAction", "outcome", "failed", failurecause.Attr(err))
 		return errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelGlobalAction", "outcome", "failed", failurecause.Attr(err))
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -83,6 +87,7 @@ func requireLabelPermission(ctx context.Context, checker labelPermissionChecker,
 	}
 	allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, action, auth.GetUser(ctx))
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelPermission", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -94,6 +99,7 @@ func requireLabelPermission(ctx context.Context, checker labelPermissionChecker,
 func requireLabelView(ctx context.Context, checker labelPermissionChecker, labelID string) error {
 	allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, policyv1.Label.View, auth.GetUser(ctx))
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelView", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -134,6 +140,7 @@ func requireLockedLabelPermission(ctx context.Context, tx *gorm.DB, checker labe
 	}
 	allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, action, principal)
 	if err != nil {
+		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLockedLabelPermission", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
 		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
@@ -164,6 +171,7 @@ func labelAllowedActions(ctx context.Context, checker labelPermissionChecker, la
 	for _, check := range checks {
 		allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, check.can, principal)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.labelAllowedActions", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
 			return nil, errs.DependencyUnavailable("SpiceDB")
 		}
 		if allowed {
@@ -182,6 +190,7 @@ func mapLabelParticipantMutationError(err error) error {
 		return err
 	}
 	if isLabelLastOwnerConstraint(err) {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_participant_mutation_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.FailedPrecondition("a Label must retain at least one durable Owner")
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {

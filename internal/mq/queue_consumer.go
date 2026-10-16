@@ -9,8 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"google.golang.org/protobuf/proto"
 )
 
 const pgmqIdlePollInterval = 250 * time.Millisecond
@@ -93,7 +96,7 @@ func (c *QueueConsumer) runWorker(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Error("PGMQ read failed", "queue", c.config.Name, "error", err)
+			slog.ErrorContext(ctx, "PGMQ read failed", "queue", c.config.Name, "failure_cause", failurecause.Message(err))
 			if !waitForQueuePoll(ctx, c.closeCh, time.Second) {
 				return
 			}
@@ -129,10 +132,11 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 			messageID = fmt.Sprintf("invalid:%d", delivery.TransportID)
 		}
 		message := Message{TransportID: delivery.TransportID, Queue: c.config.Name, MessageID: messageID, CorrelationID: delivery.Envelope.CorrelationID, RetryCount: max(0, delivery.ReadCount-1), Timestamp: delivery.EnqueuedAt}
+		slog.WarnContext(parent, "Invalid PGMQ contract", "queue", c.config.Name, "message_id", messageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "failure_cause", failurecause.Message(fmt.Errorf("contract rejected: %s (message type %q, expected %q)", delivery.ContractError, delivery.Envelope.MessageType, c.config.MessageType)), "message_type", delivery.Envelope.MessageType, "expected_message_type", c.config.MessageType)
 		emitQueueDeliveryFailed(parent, c.config.Name, message, message.RetryCount, 0, sharedtelemetry.QueueFailureHandlerFailed)
 		if archiveErr := c.pgmq.DeadLetter(parent, c.db, c.config.Name, delivery.TransportID); archiveErr != nil {
 			emitQueueHandoff(parent, sharedtelemetry.EventQueueDLQFailed, c.config.Name, message, message.RetryCount, sharedtelemetry.QueueFailureArchiveFailed)
-			slog.Error("PGMQ contract-invalid archive failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", archiveErr)
+			slog.ErrorContext(parent, "PGMQ contract-invalid archive failed", "queue", c.config.Name, "message_id", messageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "failure_cause", failurecause.Message(archiveErr))
 			return
 		}
 		emitQueueHandoff(parent, sharedtelemetry.EventQueueDLQAccepted, c.config.Name, message, message.RetryCount, "")
@@ -140,8 +144,10 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 	}
 	body, err := delivery.Envelope.Payload()
 	if err != nil {
-		slog.Error("Invalid PGMQ envelope payload", "queue", c.config.Name, "message_id", delivery.TransportID, "error", err)
-		_ = c.pgmq.DeadLetter(parent, c.db, c.config.Name, delivery.TransportID)
+		slog.WarnContext(parent, "Invalid PGMQ envelope payload", "queue", c.config.Name, "message_id", delivery.Envelope.MessageID, "transport_id", delivery.TransportID, "command_id", delivery.Envelope.CorrelationID, "failure_cause", failurecause.Message(err))
+		if archiveErr := c.pgmq.DeadLetter(parent, c.db, c.config.Name, delivery.TransportID); archiveErr != nil {
+			slog.ErrorContext(parent, "Invalid PGMQ payload archive failed", "queue", c.config.Name, "message_id", delivery.Envelope.MessageID, "transport_id", delivery.TransportID, "command_id", delivery.Envelope.CorrelationID, "failure_cause", failurecause.Message(archiveErr))
+		}
 		return
 	}
 	retryCount := delivery.ReadCount - 1
@@ -163,6 +169,23 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 	defer span.End()
 	startedAt := time.Now()
 	err = c.handler(ctx, message)
+	if err != nil {
+		var private []string
+		if c.config.MessageType == "api.manage.v1.SendEmailEvent" {
+			var job managev1.SendEmailEvent
+			// Unmarshal may still populate sensitive fields in a malformed job.
+			_ = proto.Unmarshal(message.Body, &job)
+			private = append(private, job.GetRecipient())
+			for _, value := range job.GetTemplateData() {
+				private = append(private, value)
+			}
+		}
+		level := slog.LevelError
+		if parent.Err() != nil {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "PGMQ handler failed", "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount, "failure_cause", failurecause.Message(err, private...))
+	}
 	decision := decideQueueDelivery(parent.Err() != nil, err, retryCount, c.config.MaxRetries)
 	switch decision {
 	case queueDeliveryShutdownRetry:
@@ -170,7 +193,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		defer requeueCancel()
 		if retryErr := c.pgmq.Retry(requeueCtx, c.db, c.config.Name, delivery.TransportID, 0); retryErr != nil {
 			emitQueueHandoff(requeueCtx, sharedtelemetry.EventQueueRetryFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureVisibilityUpdateFailed)
-			slog.Error("PGMQ shutdown visibility reset failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", retryErr)
+			slog.ErrorContext(ctx, "PGMQ shutdown visibility reset failed", "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount, "failure_cause", failurecause.Message(retryErr))
 			return
 		}
 		emitQueueHandoff(requeueCtx, sharedtelemetry.EventQueueRetryAccepted, c.config.Name, message, retryCount, "")
@@ -179,7 +202,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 	case queueDeliveryComplete:
 		if completeErr := c.pgmq.Complete(parent, c.db, c.config.Name, delivery.TransportID); completeErr != nil {
 			RecordConsumerError(span, completeErr)
-			slog.Error("PGMQ delete failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", completeErr)
+			slog.ErrorContext(ctx, "PGMQ delete failed", "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount, "failure_cause", failurecause.Message(completeErr))
 			return
 		}
 		emitQueueDeliverySucceeded(parent, c.config.Name, message, retryCount, time.Since(startedAt))
@@ -188,7 +211,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		RecordConsumerError(span, err)
 		if archiveErr := c.pgmq.DeadLetter(parent, c.db, c.config.Name, delivery.TransportID); archiveErr != nil {
 			emitQueueHandoff(parent, sharedtelemetry.EventQueueDLQFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureArchiveFailed)
-			slog.Error("PGMQ archive failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", archiveErr)
+			slog.ErrorContext(ctx, "PGMQ archive failed", "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount, "failure_cause", failurecause.Message(archiveErr))
 			return
 		}
 		emitQueueHandoff(parent, sharedtelemetry.EventQueueDLQAccepted, c.config.Name, message, retryCount, "")
@@ -199,7 +222,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		delay := retryDelay(c.config, retryCount)
 		if retryErr := c.pgmq.Retry(parent, c.db, c.config.Name, delivery.TransportID, delay); retryErr != nil {
 			emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureVisibilityUpdateFailed)
-			slog.Error("PGMQ retry visibility update failed", "queue", c.config.Name, "message_id", delivery.TransportID, "error", retryErr)
+			slog.ErrorContext(ctx, "PGMQ retry visibility update failed", "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount, "failure_cause", failurecause.Message(retryErr))
 			return
 		}
 		emitQueueHandoff(parent, sharedtelemetry.EventQueueRetryAccepted, c.config.Name, message, retryCount+1, "")

@@ -15,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -23,7 +24,18 @@ import (
 
 func (s *MapThemeService) ListMapThemes(
 	ctx context.Context, _ *connect.Request[managev1.ListMapThemesRequest],
-) (*connect.Response[managev1.ListMapThemesResponse], error) {
+) (_ *connect.Response[managev1.ListMapThemesResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ListMapThemes", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var defaultID string
 	var themes []model.MapTheme
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -55,7 +67,18 @@ func (s *MapThemeService) ListMapThemes(
 
 func (s *MapThemeService) ResolveMapTheme(
 	ctx context.Context, req *connect.Request[managev1.ResolveMapThemeRequest],
-) (*connect.Response[managev1.ResolvedMapTheme], error) {
+) (_ *connect.Response[managev1.ResolvedMapTheme], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ResolveMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	scheme := req.Msg.Scheme
 	if scheme == "" {
 		scheme = "light"
@@ -95,7 +118,18 @@ func (s *MapThemeService) ResolveMapTheme(
 
 func (s *MapThemeService) GetMapTheme(
 	ctx context.Context, req *connect.Request[managev1.GetMapThemeRequest],
-) (*connect.Response[managev1.MapTheme], error) {
+) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "GetMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	id, err := normalizeMapThemeID(req.Msg.Id, "id")
 	if err != nil {
 		return nil, err
@@ -140,7 +174,18 @@ func createMapThemeFromSnapshot(tx *gorm.DB, snapshot mapThemeSnapshot) (*model.
 
 func (s *MapThemeService) CreateMapTheme(
 	ctx context.Context, req *connect.Request[managev1.CreateMapThemeRequest],
-) (*connect.Response[managev1.MapTheme], error) {
+) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "CreateMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	can, err := policyv1.MapTheme.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -179,7 +224,6 @@ func (s *MapThemeService) CreateMapTheme(
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
-		slog.Error("failed to create map theme", "error", err)
 		return nil, errs.Internal(err)
 	}
 	result, err := s.toProto(theme)
@@ -199,7 +243,18 @@ func isMapThemeDefaultDeleteViolation(err error) bool {
 
 func (s *MapThemeService) DeleteMapTheme(
 	ctx context.Context, req *connect.Request[managev1.DeleteMapThemeRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "DeleteMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	id, err := normalizeMapThemeID(req.Msg.Id, "id")
 	if err != nil {
 		return nil, err
@@ -242,6 +297,7 @@ func (s *MapThemeService) DeleteMapTheme(
 	})
 	if err != nil {
 		if isMapThemeDefaultDeleteViolation(err) {
+			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "DeleteMapTheme", failurecause.Attr(err))
 			return nil, errs.FailedPrecondition(
 				"the current default or last map theme cannot be deleted; select another default first",
 			)
@@ -259,7 +315,18 @@ func (s *MapThemeService) DeleteMapTheme(
 
 func (s *MapThemeService) CopyMapTheme(
 	ctx context.Context, req *connect.Request[managev1.CopyMapThemeRequest],
-) (*connect.Response[managev1.MapTheme], error) {
+) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "CopyMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	can, err := policyv1.MapTheme.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -325,7 +392,18 @@ func (s *MapThemeService) CopyMapTheme(
 
 func (s *MapThemeService) SetDefaultMapTheme(
 	ctx context.Context, req *connect.Request[managev1.SetDefaultMapThemeRequest],
-) (*connect.Response[managev1.SetDefaultMapThemeResponse], error) {
+) (_ *connect.Response[managev1.SetDefaultMapThemeResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "SetDefaultMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	themeID, err := normalizeMapThemeID(req.Msg.ThemeId, "theme_id")
 	if err != nil {
 		return nil, err

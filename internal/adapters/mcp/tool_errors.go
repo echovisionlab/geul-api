@@ -12,7 +12,12 @@ import (
 // expectedToolError turns safe, actionable application outcomes into MCP tool
 // errors. Unknown and internal failures remain generic JSON-RPC internal errors
 // so implementation details and credentials cannot leak to clients.
-func expectedToolError(err error) (mcpserver.ToolResult, error) {
+func expectedToolError(err error) (result mcpserver.ToolResult, resultErr error) {
+	defer func() {
+		if executionErr, ok := resultErr.(*mcpserver.ToolExecutionError); ok && executionErr != nil {
+			executionErr.Cause = err
+		}
+	}()
 	if err == nil {
 		return mcpserver.ToolResult{}, errors.New("MCP tool failed without an error")
 	}
@@ -53,5 +58,5 @@ func expectedToolError(err error) (mcpserver.ToolResult, error) {
 }
 
 func executionError(err error) (mcpserver.ToolResult, error) {
-	return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: err.Error()}
+	return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: err.Error(), Cause: err}
 }

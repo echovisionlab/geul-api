@@ -3,12 +3,14 @@ package legal
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -176,10 +178,12 @@ func legalAIDocumentResult(
 	case errors.As(err, &compilerErr):
 		return AIDocumentMutationResult{}, compilerErr.cause
 	case errors.As(err, &stale):
+		slog.Warn("Legal document revision conflicted", failurecause.Attr(err), "entity_type", entityType)
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflict{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: stale.CurrentRevision.String(),
 		}
 	case errors.As(err, &targetConflict):
+		slog.Warn("Legal document target revision conflicted", failurecause.Attr(err), "entity_type", entityType)
 		var currentTargetRevision *string
 		if targetConflict.CurrentExists {
 			current := targetConflict.CurrentRevision

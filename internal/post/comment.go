@@ -2,7 +2,9 @@ package post
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -49,7 +52,19 @@ func NewCommentService(db *gorm.DB, spiceDB *auth.SpiceDBClient, members MemberS
 func (s *CommentService) ListCommentsByPost(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCommentsByPostRequest],
-) (*connect.Response[managev1.ListCommentsByPostResponse], error) {
+) (_ *connect.Response[managev1.ListCommentsByPostResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListCommentsByPost", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
+	}()
+
 	// Require authentication for Secure API
 	user := auth.GetUser(ctx)
 	if user == nil {
@@ -213,7 +228,19 @@ func (s *CommentService) applyCommentCursor(
 func (s *CommentService) LoadMoreReplies(
 	ctx context.Context,
 	req *connect.Request[managev1.LoadMoreRepliesRequest],
-) (*connect.Response[managev1.LoadMoreRepliesResponse], error) {
+) (_ *connect.Response[managev1.LoadMoreRepliesResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadMoreReplies", "outcome", "failed", "comment_id", req.Msg.GetCommentId(), failurecause.Attr(returnErr))
+	}()
+
 	// Require authentication for Secure API
 	user := auth.GetUser(ctx)
 	if user == nil {
@@ -284,6 +311,8 @@ func (s *CommentService) LoadMoreReplies(
 			First(&cursorComment).Error; err == nil {
 			query = query.Where("c.created_at > ? OR (c.created_at = ? AND c.id > ?)",
 				cursorComment.CreatedAt, cursorComment.CreatedAt, *req.Msg.Cursor)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", req.Msg.CommentId, "cursor_id", *req.Msg.Cursor)
 		}
 	}
 
@@ -354,7 +383,19 @@ func (s *CommentService) LoadMoreReplies(
 func (s *CommentService) CreateComment(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateCommentRequest],
-) (*connect.Response[managev1.CreateCommentResponse], error) {
+) (_ *connect.Response[managev1.CreateCommentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreateComment", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	user := auth.GetUser(ctx)
 	if user == nil || user.MemberID.String() == "" {
 		return nil, errs.AuthenticationRequired()
@@ -491,7 +532,19 @@ func (s *CommentService) loadCommentWithAuthor(ctx context.Context, commentID st
 func (s *CommentService) UpdateComment(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateCommentRequest],
-) (*connect.Response[managev1.UpdateCommentResponse], error) {
+) (_ *connect.Response[managev1.UpdateCommentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdateComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	// Get authenticated user
 	user := auth.GetUser(ctx)
 	if user == nil || user.MemberID.String() == "" {
@@ -565,7 +618,19 @@ func (s *CommentService) UpdateComment(
 func (s *CommentService) DeleteComment(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteCommentRequest],
-) (*connect.Response[managev1.DeleteCommentResponse], error) {
+) (_ *connect.Response[managev1.DeleteCommentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeleteComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	// Get authenticated user
 	user := auth.GetUser(ctx)
 	if user == nil || user.MemberID.String() == "" {

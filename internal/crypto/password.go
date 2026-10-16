@@ -7,8 +7,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -117,6 +119,7 @@ func (h *PasswordHasher) Verify(password, encodedHash string) (bool, error) {
 func (h *PasswordHasher) NeedsRehash(encodedHash string) bool {
 	params, _, _, err := decodeHash(encodedHash)
 	if err != nil {
+		slog.Warn("Stored password hash requires repair", failurecause.Attr(err, encodedHash))
 		return true
 	}
 
@@ -140,6 +143,7 @@ func decodeHash(encodedHash string) (*Argon2idParams, []byte, []byte, error) {
 	var version int
 	_, err := fmt.Sscanf(parts[2], "v=%d", &version)
 	if err != nil {
+		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
 		return nil, nil, nil, ErrInvalidHash
 	}
 	if version != argon2.Version {
@@ -150,16 +154,19 @@ func decodeHash(encodedHash string) (*Argon2idParams, []byte, []byte, error) {
 	var parallelism uint8
 	_, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism)
 	if err != nil {
+		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
 		return nil, nil, nil, ErrInvalidHash
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
+		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
 		return nil, nil, nil, ErrInvalidHash
 	}
 
 	hash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
+		slog.Warn("Decode stored password hash failed", failurecause.Attr(err, encodedHash, parts[2], parts[3], parts[4], parts[5]))
 		return nil, nil, nil, ErrInvalidHash
 	}
 

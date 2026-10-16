@@ -2,9 +2,11 @@ package form
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -29,6 +31,7 @@ func ResolvePublicLocalization(
 ) (LocalizationSelection, error) {
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, db)
 	if settingsErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
 		settings = translation.DefaultRuntimeSettings()
 	}
 	requestedLocale := settings.DefaultLocale
@@ -100,6 +103,9 @@ func ResolvePublicLocalization(
 		}
 		sort.Strings(available)
 		selection.AvailableLocales = available
+	}
+	if availableErr != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr))
 	}
 	return selection, nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
@@ -88,7 +89,18 @@ func NewReleaseService(
 func (s *ReleaseService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetReleaseRequest],
-) (*connect.Response[openv1.GetReleaseResponse], error) {
+) (_ *connect.Response[openv1.GetReleaseResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	slugOrID := req.Msg.Slug
 	shareToken := req.Msg.ShareToken
 	sharePassword := req.Msg.GetSharePassword()
@@ -150,7 +162,18 @@ func (s *ReleaseService) Get(
 func (s *ReleaseService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListReleasesRequest],
-) (*connect.Response[openv1.ListReleasesResponse], error) {
+) (_ *connect.Response[openv1.ListReleasesResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var releases []model.Release
 	var total int64
 
@@ -302,7 +325,7 @@ func (s *ReleaseService) buildReleaseResponseInTransaction(
 	*release = current
 	localization, err := publiccontent.Resolve(ctx, s.db, releaseLocalizationSpec, releaseID, acceptLanguage)
 	if err != nil {
-		slog.Warn("failed to resolve release localization", "releaseId", releaseID, "error", err)
+		slog.ErrorContext(ctx, "failed to resolve release localization", "releaseId", releaseID, failurecause.Attr(err))
 	}
 	content, err := releasepkg.LoadPublicContentDocument(
 		ctx, s.db, s.contentBlocks, releaseID, localization.DisplayedLocale,

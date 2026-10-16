@@ -2,10 +2,13 @@ package referencecatalogadapter
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -88,6 +91,9 @@ func (a PublicAssets) ReadyRef(
 		query = query.Where("kind IN ?", kinds)
 	}
 	if err := query.Order("created_at DESC, id DESC").Take(&asset).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			slog.ErrorContext(ctx, "Failed to resolve public catalog asset", "failure_cause", failurecause.Message(err))
+		}
 		return nil
 	}
 	expectedExtension := model.GetExtensionFromMime(asset.MimeType)
@@ -98,6 +104,7 @@ func (a PublicAssets) ReadyRef(
 	}
 	ref, err := mediaasset.NewLifecycle(db, a.cdnDomain).AssetRef(asset)
 	if err != nil {
+		slog.ErrorContext(ctx, "Failed to resolve public catalog asset", "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	return ref

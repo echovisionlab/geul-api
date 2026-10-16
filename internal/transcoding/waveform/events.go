@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -60,14 +61,14 @@ func (p *Processor) publishProgress(
 	}
 
 	if err := p.publisher.PublishWaveformProgress(ctx, progressEvent); err != nil && !p.isCancelled(ctx, err) {
-		slog.Warn("Failed to publish waveform progress event",
+		slog.Error("Failed to publish waveform progress event",
 			"event_id", event.EventId,
 			"entity_type", event.EntityType.String(),
 			"entity_id", event.EntityId,
 			"file_id", event.FileId,
 			"progress", step.percent,
 			"stage", step.stage.String(),
-			"error", err,
+			failurecause.Attr(err),
 		)
 	}
 }
@@ -81,8 +82,10 @@ func (p *Processor) publishFail(
 	slog.ErrorContext(ctx, "Waveform generation failed",
 		"job_id", event.EventId,
 		"file_id", event.FileId,
+		"entity_type", event.EntityType.String(),
+		"entity_id", event.EntityId,
 		"duration_ms", time.Since(startedAt).Milliseconds(),
-		"error", cause,
+		failurecause.Attr(cause),
 	)
 	failEvent := &apiv1.WaveformFailEvent{
 		EventId:          event.EventId,

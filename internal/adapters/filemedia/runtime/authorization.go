@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -104,10 +106,13 @@ func (d *AuthorizationDeletion) DeleteAndVerify(
 		if panicValue == nil {
 			return
 		}
+		cause, stack := failurecause.Panic(panicValue)
+		slog.ErrorContext(ctx, "File authorization deletion panicked", "failure_cause", cause, "panic_stack", stack, "file_id", resource.ID())
 		if !forwardMayHaveApplied {
 			panic(panicValue)
 		}
 		if restoreErr := restoreBounded(); restoreErr != nil {
+			slog.ErrorContext(ctx, "Failed to restore File authorization after panic", "failure_cause", failurecause.Message(restoreErr), "file_id", resource.ID())
 			panic(errors.Join(
 				panicError(panicValue),
 				fmt.Errorf("restore File authorization relationships after panic: %w", restoreErr),

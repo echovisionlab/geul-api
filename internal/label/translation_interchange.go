@@ -3,9 +3,11 @@ package label
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"gorm.io/gorm"
 )
@@ -28,6 +30,7 @@ func LoadTypedTranslationInterchangeTarget(
 		return TranslationInterchangeTarget{}, errs.Internal(errors.New("label translation interchange dependencies are not configured"))
 	}
 	if _, err := canonicalLabelUUID(labelID); err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.LoadTypedTranslationInterchangeTarget", "outcome", "failed", failurecause.Attr(err))
 		return TranslationInterchangeTarget{}, errs.InvalidArgument("label_id", "must be a canonical UUID")
 	}
 	var err error

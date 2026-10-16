@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -26,7 +28,18 @@ type seriesUpdatePlan struct {
 func (s *SeriesService) UpdateSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateSeriesRequest],
-) (*connect.Response[managev1.Series], error) {
+) (_ *connect.Response[managev1.Series], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "UpdateSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	plan, err := buildSeriesUpdatePlan(req.Msg)
 	if err != nil {
 		return nil, err
@@ -193,6 +206,9 @@ func applySeriesFields(tx *gorm.DB, series *model.Series, plan seriesUpdatePlan,
 	updates["updated_at"] = plan.now
 	err := tx.Model(series).Updates(updates).Error
 	if dberrors.IsUniqueViolation(err) && plan.nextSlug != nil {
+		if err != nil {
+			slog.WarnContext(tx.Statement.Context, "Operation failed", "domain", "series", "operation", "applySeriesFields", failurecause.Attr(err))
+		}
 		return errs.SlugAlreadyExists("series", *plan.nextSlug)
 	}
 	if err != nil {

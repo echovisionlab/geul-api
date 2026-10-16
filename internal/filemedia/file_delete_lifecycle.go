@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -75,7 +77,17 @@ type FileDeletionMutation struct {
 func (s *FileService) DeleteFile(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteFileRequest],
-) (*connect.Response[managev1.DeleteFileResponse], error) {
+) (_ *connect.Response[managev1.DeleteFileResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DeleteFile", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	fileID := strings.TrimSpace(req.Msg.FileId)
 	can, err := policyv1.File.Delete(fileID)
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -165,6 +166,10 @@ func (s *TrackService) toProto(t *model.Track) *managev1.Track {
 	if t.Metadata != nil {
 		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
 			proto.Metadata = metadata
+		} else {
+			if err != nil {
+				slog.ErrorContext(context.Background(), "Operation failed", "domain", "release", "operation", "toProto", failurecause.Attr(err), "track_id", t.ID)
+			}
 		}
 	}
 
@@ -264,7 +269,18 @@ func (s *TrackService) getCreditsForTrack(ctx context.Context, trackID string) (
 func (s *TrackService) ListTracksByRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTracksByReleaseRequest],
-) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
+) (_ *connect.Response[managev1.ListTracksByReleaseResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ListTracksByRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req.Msg.ReleaseId == "" {
 		return nil, errs.Required("release_id")
 	}
@@ -301,7 +317,18 @@ func (s *TrackService) ListTracksByRelease(
 func (s *TrackService) CreateTrack(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateTrackRequest],
-) (*connect.Response[managev1.Track], error) {
+) (_ *connect.Response[managev1.Track], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "CreateTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req.Msg.ReleaseId == "" {
 		return nil, errs.Required("release_id")
 	}
@@ -390,7 +417,18 @@ func (s *TrackService) CreateTrack(
 func (s *TrackService) UpdateTrack(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateTrackRequest],
-) (*connect.Response[managev1.Track], error) {
+) (_ *connect.Response[managev1.Track], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}
@@ -513,7 +551,18 @@ func (s *TrackService) UpdateTrack(
 func (s *TrackService) DeleteTrack(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteTrackRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}
@@ -540,6 +589,7 @@ func (s *TrackService) DeleteTrack(
 	for range MaxTrackUploadCleanupPasses {
 		if err := s.cleanupTrackUploadSessions(ctx, track.ID); err != nil {
 			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
+				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(err))
 				return nil, errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the track")
 			}
 			return nil, errs.Internal(fmt.Errorf("cleanup track audio uploads: %w", err))
@@ -547,6 +597,7 @@ func (s *TrackService) DeleteTrack(
 		err := s.deleteTrackWhenNoUploadSessions(ctx, track.ID)
 		if err != nil {
 			if errors.Is(err, ErrTrackUploadSessionsChanged) {
+				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(err))
 				continue
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -568,7 +619,7 @@ func (s *TrackService) DeleteTrack(
 		[]string{track.ID},
 		managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
 	); err != nil {
-		slog.Warn("Failed to cancel waveform jobs for deleted track", "trackId", track.ID, "error", err)
+		slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted track", "trackId", track.ID, failurecause.Attr(err))
 	}
 	s.transcodes.CancelFiles(
 		ctx,
@@ -585,7 +636,18 @@ func (s *TrackService) DeleteTrack(
 func (s *TrackService) SetTrackCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.SetTrackCreditsRequest],
-) (*connect.Response[managev1.TrackWithCredits], error) {
+) (_ *connect.Response[managev1.TrackWithCredits], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetTrackCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if req.Msg.TrackId == "" {
 		return nil, errs.Required("track_id")
 	}
@@ -626,7 +688,18 @@ func (s *TrackService) SetTrackCredits(
 func (s *TrackService) ReorderTracks(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderTracksRequest],
-) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
+) (_ *connect.Response[managev1.ListTracksByReleaseResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ReorderTracks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if len(req.Msg.TrackIds) == 0 {
 		return nil, errs.Required("track_ids")
 	}
@@ -643,6 +716,7 @@ func (s *TrackService) ReorderTracks(
 	// Validate all track IDs are valid UUIDs to prevent injection
 	for _, trackID := range req.Msg.TrackIds {
 		if _, err := uuid.Parse(trackID); err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ReorderTracks", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("track_id", fmt.Sprintf("invalid: %s", trackID))
 		}
 	}
@@ -770,6 +844,10 @@ func (s *TrackService) toProtoForViewer(ctx context.Context, t *model.Track) *ma
 	if t.Metadata != nil {
 		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
 			proto.Metadata = metadata
+		} else {
+			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "convert_track_metadata", failurecause.Attr(err), "track_id", t.ID)
+			}
 		}
 	}
 

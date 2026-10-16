@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -122,7 +123,7 @@ func ResolveAccountEmailProviderCandidates(
 			resolvedEmail, err := fetchAccountEmailFromProvider(lookupCtx, provider, credential.InitialAccessToken)
 			cancel()
 			if err != nil {
-				slog.Warn("Failed to resolve provider email", "error", err, "provider", provider)
+				slog.ErrorContext(ctx, "Failed to resolve provider email", "failure_cause", failurecause.Message(err, credential.InitialAccessToken), "provider", provider)
 			}
 			email = resolvedEmail
 		}

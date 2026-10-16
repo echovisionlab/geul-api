@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -32,10 +34,12 @@ func WithAuthenticatedContext(
 	})
 	delegation, err := policyv1.MCPOAuth(principal.DelegationID, principal.DelegationName)
 	if err != nil {
+		slog.WarnContext(ctx, "Failed to construct MCP authorization context", "failure_cause", failurecause.Message(err, principal.DelegationName))
 		return ctx, ErrInvalidPrincipal
 	}
 	authenticated, err = auth.WithAuthorizationDelegation(authenticated, delegation)
 	if err != nil {
+		slog.WarnContext(ctx, "Failed to construct MCP authorization context", "failure_cause", failurecause.Message(err, principal.DelegationName))
 		return ctx, ErrInvalidPrincipal
 	}
 	return authenticated, nil

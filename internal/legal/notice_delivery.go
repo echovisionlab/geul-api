@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -319,7 +320,7 @@ func dispatchCreatedLegalNoticeRun(
 		slog.Warn("legal notice delivery run dispatch will be retried by scheduler",
 			"run_id", run.ID,
 			"run_kind", run.RunKind,
-			"error", err,
+			"failure_cause", failurecause.Message(err),
 		)
 	}
 }
@@ -387,7 +388,7 @@ func cancelScheduledLegalUpdateNoticeAfterActivation(
 			"reference_type", referenceType,
 			"reference_id", referenceID,
 			"event_key", eventKey,
-			"error", result.Error,
+			"failure_cause", failurecause.Message(result.Error),
 		)
 	}
 }

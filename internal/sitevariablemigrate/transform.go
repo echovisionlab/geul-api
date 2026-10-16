@@ -1,8 +1,10 @@
 package sitevariablemigrate
 
 import (
+	"context"
 	"encoding/json"
 	"html"
+	"log/slog"
 	"maps"
 	"net/url"
 	"regexp"
@@ -10,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	xhtml "golang.org/x/net/html"
 )
 
@@ -22,6 +25,9 @@ func serviceURLs(source string) string {
 	return regexp.MustCompile(`https://[^\s<>"']+`).ReplaceAllStringFunc(source, func(raw string) string {
 		parsed, err := url.Parse(raw)
 		if err != nil || parsed.Host != "opendiscogs.dsub.io" || parsed.User != nil {
+			if err != nil {
+				slog.WarnContext(context.Background(), "Skipping invalid service URL", "domain", "sitevariablemigrate", "operation", "service_urls", failurecause.Attr(err))
+			}
 			return raw
 		}
 		return strings.Replace(raw, "https://opendiscogs.dsub.io", "https://opendiscogs.rawsector.com", 1)
@@ -78,6 +84,11 @@ func Text(source string) string {
 func sitePath(value string) (string, bool) {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme != "https" || parsed.User != nil || (parsed.Host != "www.dsub.io" && parsed.Host != "dsub.io") {
+		// MenuJSON also passes ordinary labels here. They are not URL
+		// migration failures, and a parse error would echo their full text.
+		if err != nil && strings.HasPrefix(value, "https://") {
+			slog.WarnContext(context.Background(), "Skipping invalid site URL", "domain", "sitevariablemigrate", "operation", "site_path", failurecause.Attr(err))
+		}
 		return value, false
 	}
 	// An absolute site's path must never turn into a protocol-relative URL.

@@ -3,8 +3,10 @@ package programevent
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -32,6 +34,7 @@ func (a *PublicAssets) ResolveReadyAssetForSourceFile(
 ) *commonv1.AssetRef {
 	refs, err := a.ResolveReadyAssetsForSourceFiles(ctx, []string{fileID}, kinds...)
 	if err != nil {
+		slog.ErrorContext(ctx, "Failed to resolve Program Event public asset", "failure_cause", failurecause.Message(err))
 		return nil
 	}
 	return refs[strings.TrimSpace(fileID)]

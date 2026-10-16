@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -31,6 +33,9 @@ func (s *FormService) validateShareToken(
 
 	var shareLink model.ShareLink
 	if err := s.db.WithContext(ctx).First(&shareLink, "token = ?", *shareToken).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_share_link", "outcome", "failed", failurecause.Attr(err, *shareToken))
+		}
 		return formShareTokenState{}
 	}
 
@@ -43,6 +48,9 @@ func (s *FormService) validateShareToken(
 			return formShareTokenState{}
 		}
 		matched, err := s.password.Verify(*sharePassword, *shareLink.PasswordHash)
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_share_password", "outcome", "failed", failurecause.Attr(err, *sharePassword, *shareLink.PasswordHash))
+		}
 		if err != nil || !matched {
 			return formShareTokenState{}
 		}

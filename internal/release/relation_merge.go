@@ -1,9 +1,12 @@
 package release
 
 import (
+	"context"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
+	"log/slog"
 )
 
 func applyRelationOrderIntent(ids []string, intent *managev1.RelationOrderIntent) ([]string, bool) {
@@ -446,6 +449,7 @@ func mergeTrackCredits(
 		}
 		credit, err := newTrackCredit(trackID, row)
 		if err != nil {
+			slog.WarnContext(context.Background(), "Operation failed", "domain", "release", "operation", "mergeTrackCredits", failurecause.Attr(err), "track_id", trackID)
 			continue
 		}
 		credit.ID = id

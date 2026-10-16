@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 )
 
@@ -130,6 +132,7 @@ func (service *LoginHookService) resolveMember(
 	if err == nil || !errors.Is(err, ErrLoginMemberLinkRepairable) {
 		return memberID, err
 	}
+	slog.WarnContext(ctx, "Operation failed", "reason", "login_member_link_repair", failurecause.Attr(err), "identity_id", input.IdentityID)
 	preferredLocale := strings.TrimSpace(input.PreferredLocale)
 	if preferredLocale == "" {
 		preferredLocale = localization.LocaleEnglish

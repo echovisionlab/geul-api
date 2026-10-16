@@ -2,10 +2,12 @@ package legal
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -116,6 +118,7 @@ func requireLegalVersionViewOrNotFound(
 	}
 	if err := requireLegalPermission(ctx, checker, entityType, entityID, legalViewAction(policy, status)); err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
+			slog.WarnContext(ctx, "Legal version access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
 			return errs.NotFound(entityType, entityID)
 		}
 		return err
@@ -192,6 +195,7 @@ func RequireTranslationInterchangeViewWithDB(
 		ctx, checker, entityType, entityID, legalViewAction(policy, root.Status),
 	); err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
+			slog.WarnContext(ctx, "Legal translation access rejected", failurecause.Attr(err), "entity_type", entityType, "entity_id", entityID)
 			return errs.NotFound(entityType, entityID)
 		}
 		return err

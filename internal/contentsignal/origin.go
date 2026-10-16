@@ -3,9 +3,11 @@ package contentsignal
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 )
 
@@ -25,6 +27,9 @@ func WithClientOrigin(ctx context.Context, origin string) (context.Context, erro
 	// also accepts. Retain case because origin is opaque.
 	parsed, err := uuid.Parse(origin)
 	if err != nil || len(origin) != 36 || !strings.EqualFold(parsed.String(), origin) || parsed == uuid.Nil {
+		if err != nil {
+			slog.WarnContext(ctx, "content operation failed", "domain", "contentsignal", "operation", "contentsignal.WithClientOrigin", "outcome", "failed", failurecause.Attr(err))
+		}
 		return ctx, errors.New("Geul-Client-Origin must be a nonzero UUID")
 	}
 	return context.WithValue(ctx, clientOriginKey{}, origin), nil

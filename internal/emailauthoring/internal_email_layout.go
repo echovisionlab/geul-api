@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -58,7 +60,19 @@ func NewAuditedInternalEmailLayoutService(db *gorm.DB, auditWriter domainaudit.A
 func (s *InternalEmailLayoutService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveEmailLayoutDocumentRequest],
-) (*connect.Response[intrav1.SaveEmailLayoutDocumentResponse], error) {
+) (rpcResponse *connect.Response[intrav1.SaveEmailLayoutDocumentResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "SaveDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -278,6 +292,7 @@ func compileEmailLayoutTargetValues(
 ) (*string, *string, error) {
 	units, err := emailutil.ExtractLayoutContentUnits(canonicalSource)
 	if err != nil {
+		slog.Error("Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return nil, nil, errs.FailedPrecondition("Email Layout source unit markers require backfill before collaboration editing")
 	}
 	allowed := make(map[string]struct{}, len(units))
@@ -310,7 +325,19 @@ func compileEmailLayoutTargetValues(
 func (s *InternalEmailLayoutService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadEmailLayoutDocumentRequest],
-) (*connect.Response[intrav1.LoadEmailLayoutDocumentResponse], error) {
+) (rpcResponse *connect.Response[intrav1.LoadEmailLayoutDocumentResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -342,6 +369,7 @@ func (s *InternalEmailLayoutService) LoadDocument(
 			}
 			sourceUnits, unitErr := emailutil.ExtractLayoutContentUnits(derefString(state.ContentHTML))
 			if unitErr != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(unitErr))
 				return errs.FailedPrecondition(
 					"Email Layout source unit markers require backfill before collaboration editing",
 				)
@@ -356,6 +384,7 @@ func (s *InternalEmailLayoutService) LoadDocument(
 			if entry != nil && entry.ContentHTML != nil {
 				storedValues, valueErr := emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 				if valueErr != nil {
+					slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(valueErr))
 					return errs.FailedPrecondition(
 						"Email Layout target unit markers require backfill before collaboration editing",
 					)

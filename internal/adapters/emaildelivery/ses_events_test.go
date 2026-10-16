@@ -11,6 +11,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -208,4 +211,47 @@ type recordingSESNotificationProcessor struct {
 func (p *recordingSESNotificationProcessor) ProcessProviderNotification(_ context.Context, notification emaildelivery.ProviderNotification) error {
 	p.notifications = append(p.notifications, notification)
 	return p.err
+}
+
+func TestSESFailureLogsPreserveSanitizedCause(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, level string
+		status            int
+	}{
+		{"verification", "Notification", "WARN", http.StatusUnauthorized},
+		{"confirmation", "SubscriptionConfirmation", "ERROR", http.StatusBadGateway},
+		{"processing", "Notification", "ERROR", http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			failure := errors.New("upstream unavailable: reader@example.test token=private-token https://sns.example.test/?Token=private-token")
+			handler := &SESEventHandler{topicARN: testSESTopicARN, verifier: stubSNSVerifier{}, confirmer: &recordingSNSConfirmer{}, processor: &recordingSESNotificationProcessor{}}
+			switch tc.name {
+			case "verification":
+				handler.verifier = stubSNSVerifier{err: failure}
+			case "confirmation":
+				handler.confirmer = &recordingSNSConfirmer{err: failure}
+			case "processing":
+				handler.processor = &recordingSESNotificationProcessor{err: failure}
+			}
+			envelope := snsEnvelope{Type: tc.kind, MessageID: "sns-log-1", Message: `{"eventType":"Delivery","mail":{"messageId":"ses-1"},"delivery":{"timestamp":"2026-08-01T00:00:00Z","recipients":["reader@example.test"]}}`}
+			body, err := json.Marshal(envelope)
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, SESEventCallbackPath, bytes.NewReader(body)))
+			require.Equal(t, tc.status, response.Code)
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+			require.Equal(t, tc.level, entry["level"])
+			require.Equal(t, "sns-log-1", entry["message_id"])
+			require.Contains(t, entry["failure_cause"], "upstream unavailable")
+			require.Contains(t, entry["failure_cause"], "https://sns.example.test/")
+			for _, private := range []string{"reader@example.test", "private-token"} {
+				require.NotContains(t, output.String(), private)
+			}
+		})
+	}
 }

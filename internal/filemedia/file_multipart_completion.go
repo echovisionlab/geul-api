@@ -16,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -89,7 +90,17 @@ func (completion *multipartCompletion) publishFailure(err error) error {
 func (s *FileService) CompleteMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.CompleteMultipartUploadRequest],
-) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
+) (_ *connect.Response[managev1.CompleteMultipartUploadResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "CompleteMultipartUpload", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "completion request is required")
 	}
@@ -316,6 +327,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 
 	target, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
+		slog.ErrorContext(ctx, "Invalid completed file object target", failurecause.Attr(err), "file_id", file.ID)
 		return nil, errs.FailedPrecondition("completed file object target is invalid")
 	}
 	if err := s.verifyCompletedObjectContent(ctx, target.ObjectKey, file.FileSize, file.MimeType, uploadType); err != nil {
@@ -458,6 +470,7 @@ func (s *FileService) completeMultipartObject(
 				completion.session.FileSize,
 				completion.verifiedMime,
 			); verifyErr == nil {
+				slog.WarnContext(ctx, "Recovered completed object after missing multipart upload", failurecause.Attr(err), "uploadId", completion.session.UploadID, "fileId", completion.session.FileID, "correlationId", completion.correlationID)
 				return nil
 			} else {
 				err = errors.Join(err, verifyErr)
@@ -507,10 +520,7 @@ func (s *FileService) completeMultipartObject(
 				errors.Is(verifyErr, errCompletedObjectMetadataMismatch)
 			deleteCompletedObject = errors.Is(verifyErr, errCompletedObjectMetadataMismatch)
 		} else {
-			slog.Info("Recovered multipart completion after upload disappeared",
-				"uploadId", completion.session.UploadID,
-				"fileId", completion.session.FileID,
-			)
+			slog.WarnContext(ctx, "Recovered multipart completion after upload disappeared", failurecause.Attr(err), "uploadId", completion.session.UploadID, "fileId", completion.session.FileID, "correlationId", completion.correlationID)
 			err = nil
 		}
 	}
@@ -823,7 +833,7 @@ func (s *FileService) finishMultipartCompletion(
 
 func (s *FileService) markMultipartCompletionFailed(ctx context.Context, uploadID string) {
 	now := time.Now()
-	_ = s.db.WithContext(ctx).
+	err := s.db.WithContext(ctx).
 		Model(&model.UploadSession{}).
 		Where("upload_id = ? AND status = ?", uploadID, model.UploadSessionStatusFinalizing).
 		Updates(structured.Fields{
@@ -831,4 +841,7 @@ func (s *FileService) markMultipartCompletionFailed(ctx context.Context, uploadI
 			"last_activity_at": now,
 			"updated_at":       now,
 		}).Error
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to mark multipart completion failed", failurecause.Attr(err), "uploadId", uploadID)
+	}
 }

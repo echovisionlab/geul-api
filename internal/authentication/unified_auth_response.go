@@ -1,6 +1,7 @@
 package authentication
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -23,9 +24,9 @@ func unifiedAuthInputNode(name string, value unifiedAuthValue, group, inputType 
 	}
 }
 
-func (h *UnifiedAuthHandler) copyResponse(w http.ResponseWriter, response bufferedKratosResponse) {
+func (h *UnifiedAuthHandler) copyResponse(ctx context.Context, w http.ResponseWriter, response bufferedKratosResponse) {
 	response.Header = canonicalUnifiedAuthResponseHeaders(response.Header, response.Body)
-	h.transport.copy(w, response, projectUnifiedAuthFlow)
+	h.transport.copy(ctx, w, response, projectUnifiedAuthFlow)
 }
 
 func canonicalUnifiedAuthResponseHeaders(header http.Header, body []byte) http.Header {

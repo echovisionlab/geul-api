@@ -1,6 +1,11 @@
 package proxy
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+)
 
 func writeCacheableResponse(
 	w http.ResponseWriter,
@@ -16,5 +21,7 @@ func writeCacheableResponse(
 	if origin := r.Header.Get("Origin"); origin != "" && isAllowedOrigin(origin, allowedOrigins) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 	}
-	_, _ = w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		slog.ErrorContext(r.Context(), "Failed to write cached delivery response", failurecause.Attr(err), "content_type", contentType)
+	}
 }

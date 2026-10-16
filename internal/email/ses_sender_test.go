@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/mail"
 	"strings"
 	"testing"
@@ -126,7 +127,7 @@ func TestSESAdapterSendReturnsProviderError(t *testing.T) {
 	entry := decodeEmailPackageLog(t, logOutput)
 	require.Equal(t, "mail.provider.failed", entry["event"])
 	require.Equal(t, "provider_request_failed", entry["reason"])
-	require.NotContains(t, entry, "error")
+	require.Contains(t, entry["failure_cause"], "SES rejected")
 	require.NotContains(t, logOutput.String(), "recipient@example.test")
 }
 
@@ -154,6 +155,23 @@ func TestSESAdapterSendUsesTypedProviderRetryPolicy(t *testing.T) {
 			require.Equal(t, tt.wantKind, kind)
 			require.Equal(t, tt.retryable, retryable)
 		})
+	}
+}
+
+func TestSESAdapterFailureKeepsCauseAndRedactsMessageValues(t *testing.T) {
+	output := captureEmailPackageLogs(t)
+	providerErr := fmt.Errorf("SES request failed: %w", errors.New(`element <img> missing {unit}; relation "mail_queue"; Private Recipient; Private Sender; private subject; token=provider-secret`))
+	adapter := newTestSESAdapter(&stubSESEmailClient{err: providerErr})
+	adapter.from = `Private Sender <sender@example.test>`
+	message := sesTestEmail()
+	message.To = `Private Recipient <recipient@example.test>`
+	message.Subject = "private subject"
+	_, err := adapter.Send(t.Context(), message)
+	require.ErrorIs(t, err, providerErr)
+	entry := decodeEmailPackageLog(t, output)
+	require.Contains(t, entry["failure_cause"], `SES request failed: element <img> missing {unit}; relation "mail_queue"`)
+	for _, private := range []string{"Private Recipient", "Private Sender", "private subject", "provider-secret", "sender@example.test", "recipient@example.test"} {
+		require.NotContains(t, output.String(), private)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -159,6 +161,7 @@ func (s *FileService) prepareSourceAssetPromotion(
 			return model.File{}, nil, nil, false, txErr
 		}
 
+		slog.ErrorContext(ctx, "Source asset allocation commit failed; reconciling", failurecause.Attr(txErr), "file_id", file.ID)
 		// A commit acknowledgement can be lost after the allocation/resume row
 		// became durable. Re-read the source authority before retrying allocation.
 		existing, recoveredTarget, recoveredReady, recoverErr := recoverSourceAssetPromotionAllocation(
@@ -328,6 +331,9 @@ func recoverSourceAssetPromotionAllocation(
 	commitErr error,
 ) (*model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
 	existing, target, ready, err := loadSourceAssetPromotion(ctx, db, file, kind)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to reconcile source asset allocation", failurecause.Attr(err), "file_id", file.ID)
+	}
 	if err == nil && (ready || existing.Status == model.PublicAssetStatusAllocated) {
 		return existing, target, ready, nil
 	}
@@ -345,6 +351,9 @@ func sourceAssetPromotionTarget(
 	}
 	expectedObjectKey, err := mediaauth.AssetObjectKey(existing.ID, existing.Extension)
 	if err != nil || expectedObjectKey != existing.ObjectKey {
+		if err != nil {
+			slog.Error("Invalid source asset object key", failurecause.Attr(err), "asset_id", existing.ID)
+		}
 		return nil, errs.FailedPrecondition("source file public asset has a non-canonical object key")
 	}
 	return &commonv1.AssetWriteTarget{
@@ -455,6 +464,7 @@ func (s *FileService) completeSourceAssetPromotion(
 			return txErr
 		}
 
+		slog.ErrorContext(ctx, "Source asset completion commit failed; reconciling", failurecause.Attr(txErr), "file_id", sourceFileID, "asset_id", assetID)
 		// Resolve an ambiguous outer commit from the authoritative asset row.
 		resolved, recoverErr := recoverSourceAssetPromotionCompletion(
 			ctx, s.db, sourceFileID, assetID, fileSize, digest, txErr,
@@ -483,10 +493,14 @@ func recoverSourceAssetPromotionCompletion(
 		Select("id", "delete_requested_at").
 		Where("id = ?", sourceFileID).
 		Take(&file).Error; err != nil || file.DeleteRequestedAt != nil {
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to reconcile source file after asset completion", failurecause.Attr(err), "file_id", sourceFileID, "asset_id", assetID)
+		}
 		return false, commitErr
 	}
 	var asset model.PublicAsset
 	if err := db.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+		slog.ErrorContext(ctx, "Failed to reconcile completed source asset", failurecause.Attr(err), "file_id", sourceFileID, "asset_id", assetID)
 		return false, commitErr
 	}
 	if asset.SourceFileID == nil || *asset.SourceFileID != sourceFileID {

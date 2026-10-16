@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -389,6 +391,7 @@ func workDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
+	slog.Warn("Work document operation rejected", failurecause.Attr(err), "operation_index", index)
 	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
 }
 

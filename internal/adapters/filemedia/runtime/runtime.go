@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
 	transcodeapplication "github.com/echovisionlab/geul-api/internal/transcode/application"
@@ -96,6 +97,7 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 			Bucket: aws.String(r.bucket),
 			Key:    aws.String(original.GetObjectKey()),
 		}); err != nil {
+			slog.ErrorContext(ctx, "Failed to delete original storage object", "failure_cause", failurecause.Message(err), "file_id", event.GetFileId(), "bucket", r.bucket, "derivative_count", derivativeCount)
 			return errors.New("failed to delete original storage object")
 		}
 	}

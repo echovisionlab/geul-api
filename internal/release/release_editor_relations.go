@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -19,7 +21,18 @@ import (
 func (s *ReleaseService) GetReleaseRelations(
 	ctx context.Context,
 	req *connect.Request[managev1.GetReleaseRelationsRequest],
-) (*connect.Response[managev1.GetReleaseRelationsResponse], error) {
+) (_ *connect.Response[managev1.GetReleaseRelationsResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "GetReleaseRelations", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if err := requireReleaseAction(ctx, s.spiceDB, req.Msg.ReleaseId, releaseActionView); err != nil {
 		return nil, err
 	}

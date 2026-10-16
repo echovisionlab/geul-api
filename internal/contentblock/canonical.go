@@ -2,12 +2,15 @@ package contentblock
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -71,6 +74,9 @@ func canonicalObject(data json.RawMessage) (json.RawMessage, error) {
 	}
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "decode_canonical_object", "outcome", "failed", failurecause.Attr(err))
+		}
 		return nil, fmt.Errorf("must contain one JSON object")
 	}
 	encoded, err := json.Marshal(value)
@@ -83,6 +89,12 @@ func canonicalObject(data json.RawMessage) (json.RawMessage, error) {
 func sameCanonicalJSON(left, right json.RawMessage) bool {
 	leftCanonical, leftErr := canonicalObject(left)
 	rightCanonical, rightErr := canonicalObject(right)
+	if leftErr != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "compare_left_canonical_json", "outcome", "failed", failurecause.Attr(leftErr))
+	}
+	if rightErr != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "contentblock", "operation", "compare_right_canonical_json", "outcome", "failed", failurecause.Attr(rightErr))
+	}
 	return leftErr == nil && rightErr == nil && bytes.Equal(leftCanonical, rightCanonical)
 }
 

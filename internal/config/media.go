@@ -3,6 +3,9 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
+	"log/slog"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // MediaConfig controls API-owned delivery and durable background work. Queue
@@ -53,6 +56,9 @@ func (m MediaConfig) validate(apiPort, privatePort int) error {
 	}
 	for name, value := range map[string]string{"IMGPROXY_KEY": m.ImgproxyKey, "IMGPROXY_SALT": m.ImgproxySalt} {
 		if b, err := hex.DecodeString(value); err != nil || len(b) == 0 {
+			if err != nil {
+				slog.Error("Invalid media hexadecimal configuration", "config_key", name, "failure_cause", failurecause.Message(err, value))
+			}
 			return fmt.Errorf("%s must be non-empty, even-length hexadecimal", name)
 		}
 	}

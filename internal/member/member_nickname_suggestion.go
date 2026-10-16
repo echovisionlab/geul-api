@@ -3,6 +3,7 @@ package member
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -97,7 +99,12 @@ func (s *MemberService) nicknameSuggestion(ctx context.Context, member model.Mem
 	identity, err := s.identity.GetIdentityWithIncludeCredential(ctx, principal.IdentityID.String(), "oidc")
 	if err != nil || identity == nil {
 		if err != nil {
-			slog.Warn("OIDC nickname suggestion identity lookup failed", "error", err, "identity_id", principal.IdentityID.String())
+			var upstreamError *auth.KratosHTTPError
+			privateBody := ""
+			if errors.As(err, &upstreamError) {
+				privateBody = upstreamError.Body
+			}
+			slog.ErrorContext(ctx, "OIDC nickname suggestion identity lookup failed", "failure_cause", failurecause.Message(err, privateBody), "identity_id", principal.IdentityID.String())
 		}
 		return nil
 	}
@@ -116,7 +123,7 @@ func (s *MemberService) nicknameSuggestion(ctx context.Context, member model.Mem
 		suggestion, lookupErr := fetchMemberNicknameSuggestion(lookupCtx, provider.Provider, provider.InitialAccessToken)
 		cancel()
 		if lookupErr != nil {
-			slog.Warn("OIDC nickname suggestion lookup failed", "error", lookupErr, "provider", provider.Provider, "identity_id", principal.IdentityID.String())
+			slog.ErrorContext(ctx, "OIDC nickname suggestion lookup failed", "failure_cause", failurecause.Message(lookupErr, provider.InitialAccessToken), "provider", provider.Provider, "identity_id", principal.IdentityID.String())
 			continue
 		}
 		suggestion, normalizeErr := normalizeMemberNickname(suggestion)

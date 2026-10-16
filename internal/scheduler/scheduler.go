@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/robfig/cron/v3"
 )
 
@@ -68,6 +69,7 @@ func NewScheduler(pusher JobPusher, leader LeaderElector, instanceID string) *Sc
 	// Asia/Seoul timezone
 	loc, err := time.LoadLocation("Asia/Seoul")
 	if err != nil {
+		slog.Warn("Failed to load scheduler timezone; using fixed KST", "failure_cause", failurecause.Message(err))
 		loc = time.FixedZone("KST", 9*60*60)
 	}
 
@@ -133,13 +135,13 @@ func (s *Scheduler) addJob(schedule string, job Job) {
 			// Scheduler messages are coalescible wake-ups. The next authoritative
 			// DB scan recovers a missed tick, so retry belongs neither here nor in
 			// a second middleware loop around the queue consumer.
-			slog.Warn("Failed to push scheduled wake-up", "type", string(job), "error", err)
+			slog.ErrorContext(ctx, "Failed to push scheduled wake-up", "type", string(job), "failure_cause", failurecause.Message(err))
 			return
 		}
 		slog.Info("Pushed scheduled job", "type", string(job))
 	})
 	if err != nil {
-		slog.Error("Failed to add cron job", "schedule", schedule, "type", job, "error", err)
+		slog.Error("Failed to add cron job", "schedule", schedule, "type", job, "failure_cause", failurecause.Message(err))
 	}
 }
 

@@ -3,6 +3,7 @@ package filemedia
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -12,13 +13,28 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (*connect.Response[managev1.CreateFileFolderResponse], error) {
+func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (_ *connect.Response[managev1.CreateFileFolderResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			privateName := ""
+			if req != nil && req.Msg != nil {
+				privateName = req.Msg.GetName()
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "CreateFileFolder", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	user, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -45,7 +61,7 @@ func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request
 		}
 		return appendFileFolderCreatedAudit(ctx, tx, s.auditWriter, folder.ID)
 	}); err != nil {
-		return nil, fileManagerMutationError(err, "folder name already exists at this location")
+		return nil, fileManagerMutationError(ctx, err, "folder name already exists at this location", name)
 	}
 	proto, err := s.fileFolderProto(ctx, folder)
 	if err != nil {
@@ -54,7 +70,21 @@ func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&managev1.CreateFileFolderResponse{Folder: proto}), nil
 }
 
-func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (*connect.Response[managev1.RenameFileFolderResponse], error) {
+func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (_ *connect.Response[managev1.RenameFileFolderResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			privateName := ""
+			if req != nil && req.Msg != nil {
+				privateName = req.Msg.GetName()
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "RenameFileFolder", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -82,7 +112,7 @@ func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request
 			return nil
 		}
 		if err := tx.Model(&model.FileFolder{}).Where("id = ?", *folderID).Updates(structured.Fields{"name": name, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
-			return fileManagerMutationError(err, "folder name already exists at this location")
+			return fileManagerMutationError(ctx, err, "folder name already exists at this location", name)
 		}
 		if err := tx.Where("id = ?", *folderID).First(&folder).Error; err != nil {
 			return err
@@ -98,7 +128,17 @@ func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&managev1.RenameFileFolderResponse{Folder: proto}), nil
 }
 
-func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
+func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (_ *connect.Response[managev1.MoveFileFolderResponse], resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(resultErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "MoveFileFolder", "code", connect.CodeOf(resultErr).String())
+		}
+	}()
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -169,7 +209,7 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 		if err := tx.WithContext(ctx).Model(&model.FileFolder{}).
 			Where("id = ?", *folderID).
 			Updates(structured.Fields{"parent_id": parentID, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
-			return fileManagerMutationError(err, "folder move would create a cycle or duplicate name")
+			return fileManagerMutationError(ctx, err, "folder move would create a cycle or duplicate name", folder.Name)
 		}
 		if err := tx.WithContext(ctx).Where("id = ?", *folderID).First(&folder).Error; err != nil {
 			return err
@@ -185,12 +225,14 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 	return connect.NewResponse(&managev1.MoveFileFolderResponse{Folder: proto}), nil
 }
 
-func fileManagerMutationError(err error, message string) error {
+func fileManagerMutationError(ctx context.Context, err error, message string, privateName string) error {
 	value := strings.ToLower(err.Error())
 	if strings.Contains(value, "duplicate key") || strings.Contains(value, "unique constraint") {
+		slog.WarnContext(ctx, "File folder uniqueness conflict", failurecause.Attr(err, privateName))
 		return errs.AlreadyExistsMsg(message)
 	}
 	if strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
+		slog.WarnContext(ctx, "File folder hierarchy conflict", failurecause.Attr(err, privateName))
 		return errs.FailedPrecondition(message)
 	}
 	return errs.Internal(err)

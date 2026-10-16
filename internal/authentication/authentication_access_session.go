@@ -3,13 +3,16 @@ package authentication
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel/propagation"
 	"gorm.io/gorm"
@@ -18,10 +21,20 @@ import (
 func (recorder *AuthenticationAccessRecorder) resolveIncomingMember(request *http.Request) *auth.UserInfo {
 	sessionID, err := recorder.sessionIDFromWhoAmI(request.Context(), request.Cookies())
 	if err != nil || sessionID == "" {
+		if err != nil {
+			slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_incoming_session", failurecause.Attr(err))
+		}
 		return nil
 	}
 	principal, err := recorder.resolvePrincipal(request.Context(), sessionID)
 	if err != nil || principal == nil || principal.Banned {
+		if err != nil {
+			level := slog.LevelError
+			if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+				level = slog.LevelWarn
+			}
+			slog.Log(request.Context(), level, "Operation failed", "reason", "resolve_incoming_principal", failurecause.Attr(err))
+		}
 		return nil
 	}
 	return principal

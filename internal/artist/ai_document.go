@@ -1,12 +1,15 @@
 package artist
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -81,10 +84,12 @@ func (e *AIDocumentRevisionConflictError) Error() string {
 func validateArtistAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
 	artistID, err := canonicalArtistUUID(input.ArtistID)
 	if err != nil {
+		slog.WarnContext(context.Background(), "Operation failed", "domain", "artist", "operation", "validateArtistAIDocumentMutation", failurecause.Attr(err))
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("artist_id", "must be a canonical UUID")
 	}
 	expected, err := canonicalArtistUUID(input.ExpectedRevision)
 	if err != nil {
+		slog.WarnContext(context.Background(), "Operation failed", "domain", "artist", "operation", "validateArtistAIDocumentMutation", failurecause.Attr(err))
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("expected_revision", "must be a canonical UUID")
 	}
 	if strings.TrimSpace(input.Locale) == "" || strings.TrimSpace(input.ExpectedSource) == "" {
@@ -119,6 +124,7 @@ func mapArtistAIDocumentMutationError(err error) error {
 	}
 	var stale *contentblock.StaleRevisionError
 	if errors.As(err, &stale) {
+		slog.WarnContext(context.Background(), "AI document revision conflict", "domain", "artist", "operation", "mapArtistAIDocumentMutationError", failurecause.Attr(err))
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: stale.CurrentRevision.String(),
 		}

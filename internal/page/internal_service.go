@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -102,7 +104,19 @@ func (s *InternalPageService) requireContentBlockStore() error {
 func (s *InternalPageService) LoadPageBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPageBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadPageBlockDocumentResponse], error) {
+) (_ *connect.Response[intrav1.LoadPageBlockDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.LoadPageBlockDocument", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -185,7 +199,19 @@ func (s *InternalPageService) LoadPageBlockDocument(
 func (s *InternalPageService) ApplyPageBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyPageBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyPageBlockBatchResponse], error) {
+) (_ *connect.Response[intrav1.ApplyPageBlockBatchResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ApplyPageBlockBatch", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -369,7 +395,19 @@ func planPageLocaleMetadataMutation(
 func (s *InternalPageService) UpdatePageLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePageLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdatePageLocaleMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdatePageLocaleMetadataResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePageLocaleMetadata", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -635,7 +673,19 @@ func applyPageLocaleMetadataMutation(
 func (s *InternalPageService) UpdatePageDocumentMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePageDocumentMetadataRequest],
-) (*connect.Response[intrav1.UpdatePageDocumentMetadataResponse], error) {
+) (_ *connect.Response[intrav1.UpdatePageDocumentMetadataResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePageDocumentMetadata", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}
@@ -705,7 +755,19 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 func (s *InternalPageService) CreatePageVersionCheckpoint(
 	ctx context.Context,
 	req *connect.Request[intrav1.CreatePageVersionCheckpointRequest],
-) (*connect.Response[intrav1.CreatePageVersionCheckpointResponse], error) {
+) (_ *connect.Response[intrav1.CreatePageVersionCheckpointResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CreatePageVersionCheckpoint", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
 	}

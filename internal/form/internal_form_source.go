@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -26,7 +27,23 @@ import (
 func (s *InternalFormService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveFormDocumentRequest],
-) (*connect.Response[intrav1.SaveFormDocumentResponse], error) {
+) (rpcResponse *connect.Response[intrav1.SaveFormDocumentResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		formID := ""
+		if req != nil {
+			formID = req.Msg.GetFormId()
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "SaveDocument", "formId", formID, "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -127,6 +144,9 @@ func (s *InternalFormService) SaveDocument(
 		if locale == root.SourceLocale {
 			documentID, parseErr := uuid.Parse(root.DocumentID)
 			if parseErr != nil || documentID == uuid.Nil {
+				if parseErr != nil {
+					slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(parseErr))
+				}
 				return errs.FailedPrecondition("Form Content Document is not initialized")
 			}
 			advance, advanceErr := s.contentBlocks.AdvanceRevision(
@@ -198,7 +218,6 @@ func (s *InternalFormService) SaveDocument(
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		err = normalizeFormDocumentSaveError(err)
-		slog.Error("Failed to save collaborative Form document", "formId", r.FormId, "error", err)
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("form", r.FormId)
 		}
@@ -318,7 +337,19 @@ func applyFormCollaborativeLocaleUpdates(
 func (s *InternalFormService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadFormDocumentRequest],
-) (*connect.Response[intrav1.LoadFormDocumentResponse], error) {
+) (rpcResponse *connect.Response[intrav1.LoadFormDocumentResponse], rpcErr error) {
+	defer func() {
+		if rpcErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(rpcErr) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
+	}()
+
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -343,6 +374,7 @@ func (s *InternalFormService) LoadDocument(
 		}
 		sourceMeta, err := formMetaFromCanonicalRow(source)
 		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 			return errs.FailedPrecondition("Form source locale document is invalid")
 		}
 
@@ -362,10 +394,12 @@ func (s *InternalFormService) LoadDocument(
 		if requestedExists {
 			requestedMeta, err = formMetaFromCanonicalRow(requested)
 			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 				return errs.FailedPrecondition("Form requested locale document is invalid")
 			}
 			if locale != root.SourceLocale {
 				if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
+					slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 					return errs.FailedPrecondition("Form requested locale document is invalid")
 				}
 			}
@@ -373,6 +407,7 @@ func (s *InternalFormService) LoadDocument(
 				requested.Title, requested.Schema,
 			)
 			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 				return errs.FailedPrecondition("Form requested locale document is invalid")
 			}
 			if locale != root.SourceLocale {

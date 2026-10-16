@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -19,7 +21,18 @@ import (
 func (s *ReleaseService) SetReleaseArtists(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseArtistsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseArtists", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
 			return err
@@ -71,7 +84,18 @@ func (s *ReleaseService) SetReleaseArtists(
 func (s *ReleaseService) SetReleaseLabels(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseLabelsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseLabels", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
 			return err
@@ -125,7 +149,18 @@ func (s *ReleaseService) SetReleaseLabels(
 func (s *ReleaseService) SetReleaseCategories(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseCategoriesRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseCategories", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "categories", req.Msg.CategoryIds, req.Msg.Observed,
 		func(releaseID, categoryID string) *model.ReleaseCategory {
 			return &model.ReleaseCategory{ReleaseID: releaseID, CategoryID: categoryID}
@@ -136,7 +171,18 @@ func (s *ReleaseService) SetReleaseCategories(
 func (s *ReleaseService) SetReleaseGenres(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseGenresRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseGenres", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "genres", req.Msg.GenreIds, req.Msg.Observed,
 		func(releaseID, genreID string) *model.ReleaseGenre {
 			return &model.ReleaseGenre{ReleaseID: releaseID, GenreID: genreID}
@@ -147,7 +193,18 @@ func (s *ReleaseService) SetReleaseGenres(
 func (s *ReleaseService) SetReleaseStyles(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseStylesRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseStyles", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "styles", req.Msg.StyleIds, req.Msg.Observed,
 		func(releaseID, styleID string) *model.ReleaseStyle {
 			return &model.ReleaseStyle{ReleaseID: releaseID, StyleID: styleID}
@@ -158,7 +215,18 @@ func (s *ReleaseService) SetReleaseStyles(
 func (s *ReleaseService) SetReleaseFormats(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseFormatsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseFormats", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
 			return err
@@ -212,7 +280,18 @@ func (s *ReleaseService) SetReleaseFormats(
 func (s *ReleaseService) SetReleaseCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseCreditsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
+) (_ *connect.Response[managev1.SuccessResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
 			return err

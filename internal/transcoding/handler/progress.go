@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/transcoding/ffmpeg"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -82,7 +83,7 @@ func (s *progressState) publish(
 		Stage:          &stage,
 		TimestampMs:    now.UnixMilli(),
 	}); err != nil {
-		slog.Debug("Failed to publish progress event", "job_id", identity.jobID, "error", err)
+		slog.ErrorContext(ctx, "Failed to publish progress event", failurecause.Attr(err), "job_id", identity.jobID, "entity_type", identity.entityType.String(), "entity_id", identity.entityID, "file_id", identity.fileID)
 	}
 }
 

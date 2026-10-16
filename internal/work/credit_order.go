@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -352,6 +354,7 @@ func validateWorkCreditMoveAnchors(
 
 		parsedID, err := uuid.Parse(anchor.Id)
 		if err != nil {
+			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "validateWorkCreditMoveAnchors", failurecause.Attr(err))
 			return errs.InvalidArgument("anchor.id", "must be a valid item ID")
 		}
 		var groupCount, creditCount int64

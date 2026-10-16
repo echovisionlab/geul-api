@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/member/pat"
 )
 
@@ -76,6 +78,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, 1))
 	if err != nil || len(body) != 0 {
+		if err != nil {
+			slog.WarnContext(request.Context(), "Failed to read PAT verification request", "failure_cause", failurecause.Message(err))
+		}
 		writer.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -91,13 +96,21 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	defer cancel()
 	principal, err := handler.authenticator.Authenticate(ctx, request.Header.Get(APIKeyHeader))
 	if errors.Is(err, pat.ErrInvalidToken) {
+		slog.WarnContext(ctx, "PAT verification rejected", "failure_cause", failurecause.Message(err, request.Header.Get(APIKeyHeader), password))
 		writer.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	if err != nil || principal.MemberID == "" || principal.TokenID == "" {
+		if err == nil {
+			err = errors.New("PAT authenticator returned an incomplete principal")
+		}
+		cause := failurecause.Message(err, request.Header.Get(APIKeyHeader), password)
+		slog.ErrorContext(ctx, "PAT verification unavailable", "failure_cause", cause)
 		writer.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	writer.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(writer).Encode(principalResponse{MemberID: principal.MemberID})
+	if err := json.NewEncoder(writer).Encode(principalResponse{MemberID: principal.MemberID}); err != nil {
+		slog.ErrorContext(ctx, "Failed to write PAT verification response", "failure_cause", failurecause.Message(err))
+	}
 }

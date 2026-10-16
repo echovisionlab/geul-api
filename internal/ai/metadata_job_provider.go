@@ -2,21 +2,34 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"gorm.io/gorm"
 )
 
-func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) error {
+func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retErr error) {
+	var job metadataJobRecord
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		level := slog.LevelError
+		if errors.Is(retErr, context.Canceled) || errors.Is(retErr, errMetadataAIJobLeaseUnavailable) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "Metadata AI job processing failed", "domain", "ai", "event", "ai.metadata.delivery_failed", "job_id", jobID, "target_type", job.TargetType, "target_id", job.TargetID, failurecause.Attr(retErr, job.Context, job.Prompt))
+	}()
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
 		return fmt.Errorf("job ID is required")
 	}
 
-	var job metadataJobRecord
 	if err := m.db.WithContext(ctx).First(&job, "id = ?", jobID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil

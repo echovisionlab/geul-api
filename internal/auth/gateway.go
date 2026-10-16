@@ -3,8 +3,10 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"gorm.io/gorm"
 )
 
@@ -35,6 +37,12 @@ func RequireGatewaySession(db *gorm.DB, next http.Handler) http.Handler {
 			r.Header.Get("X-Session-Id"),
 		)
 		if err != nil {
+			level := slog.LevelError
+			if errors.Is(err, ErrSessionPrincipalInvalid) {
+				level = slog.LevelWarn
+			}
+			cause := failurecause.Message(err)
+			slog.Log(r.Context(), level, "Authentication principal resolution failed", "reason", "gateway_principal_resolution_failed", "failure_cause", cause)
 			if errors.Is(err, ErrSessionPrincipalInvalid) {
 				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			} else {

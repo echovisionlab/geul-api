@@ -2,10 +2,13 @@ package account
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	"gorm.io/gorm"
@@ -21,7 +24,7 @@ func (s *AccountEmailChangeLifecycle) Start(ctx context.Context) {
 		)
 	}
 	if err := reconcile(); err != nil {
-		logAccountEmailChangeError("Initial account email change reconciliation failed", "reconcile_initial_failed", err)
+		logAccountEmailChangeError(ctx, "Initial account email change reconciliation failed", "reconcile_initial_failed", err)
 	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -31,7 +34,7 @@ func (s *AccountEmailChangeLifecycle) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := reconcile(); err != nil {
-				logAccountEmailChangeError("Account email change reconciliation failed", "reconcile_scan_failed", err)
+				logAccountEmailChangeError(ctx, "Account email change reconciliation failed", "reconcile_scan_failed", err)
 			}
 		}
 	}
@@ -75,13 +78,19 @@ func (s *AccountEmailChangeLifecycle) Reconcile(ctx context.Context) error {
 		for i := range requests {
 			request := &requests[i]
 			if err := s.ReconcileRequest(ctx, request.ID); err != nil {
-				slog.Error(
+				var upstreamError *auth.KratosHTTPError
+				privateBody := ""
+				if errors.As(err, &upstreamError) {
+					privateBody = upstreamError.Body
+				}
+				slog.ErrorContext(ctx,
 					"Account email change request reconcile failed",
 					"domain", "auth",
 					"event", "auth.account_email_change.reconciliation_failed",
 					"outcome", "failed",
 					"reason", "request_reconcile_failed",
 					"error_type", fmt.Sprintf("%T", err),
+					"failure_cause", failurecause.Message(err, privateBody),
 					"request_id", request.ID,
 					"identity_id", request.IdentityID,
 				)
@@ -98,13 +107,19 @@ func (s *AccountEmailChangeLifecycle) Reconcile(ctx context.Context) error {
 	}
 }
 
-func logAccountEmailChangeError(message, reason string, err error) {
-	slog.Error(
+func logAccountEmailChangeError(ctx context.Context, message, reason string, err error) {
+	var upstreamError *auth.KratosHTTPError
+	privateBody := ""
+	if errors.As(err, &upstreamError) {
+		privateBody = upstreamError.Body
+	}
+	slog.ErrorContext(ctx,
 		message,
 		"domain", "auth",
 		"event", "auth.account_email_change.reconciliation_failed",
 		"outcome", "failed",
 		"reason", reason,
 		"error_type", fmt.Sprintf("%T", err),
+		"failure_cause", failurecause.Message(err, privateBody),
 	)
 }

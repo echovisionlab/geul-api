@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -24,7 +26,19 @@ import (
 func (s *ClientService) CreateClient(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateClientRequest],
-) (*connect.Response[managev1.Client], error) {
+) (_ *connect.Response[managev1.Client], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateClient", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Client.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -53,6 +67,7 @@ func (s *ClientService) CreateClient(
 		}
 		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}}}).Create(&client).Error; err != nil {
 			if isUniqueViolation(err) {
+				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 				return errs.AlreadyExistsMsg("client with this name already exists")
 			}
 			return errs.Internal(err)
@@ -74,6 +89,7 @@ func (s *ClientService) CreateClient(
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
+			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.AlreadyExistsMsg("client with this name already exists")
 		}
 		return nil, err
@@ -86,7 +102,19 @@ func (s *ClientService) CreateClient(
 func (s *ClientService) UpdateClient(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateClientRequest],
-) (*connect.Response[managev1.Client], error) {
+) (_ *connect.Response[managev1.Client], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Client.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -149,6 +177,7 @@ func (s *ClientService) applyClientUpdates(ctx context.Context, db *gorm.DB, cli
 	}
 	if err := db.WithContext(ctx).Model(client).Updates(updates).Error; err != nil {
 		if isUniqueViolation(err) {
+			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return errs.AlreadyExistsMsg("client with this name already exists")
 		}
 		return errs.Internal(err)
@@ -160,7 +189,19 @@ func (s *ClientService) applyClientUpdates(ctx context.Context, db *gorm.DB, cli
 func (s *ClientService) DeleteClient(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteClientRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Client.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

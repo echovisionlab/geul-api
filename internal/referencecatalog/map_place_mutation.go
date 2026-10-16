@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"reflect"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,7 +23,19 @@ import (
 func (s *MapPlaceService) CreateMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMapPlaceRequest],
-) (*connect.Response[managev1.MapPlace], error) {
+) (_ *connect.Response[managev1.MapPlace], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateMapPlace", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if req.Msg.Name == "" {
 		return nil, errs.Required("name")
 	}
@@ -127,7 +141,19 @@ func (s *MapPlaceService) CreateMapPlace(
 func (s *MapPlaceService) UpdateMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMapPlaceRequest],
-) (*connect.Response[managev1.MapPlace], error) {
+) (_ *connect.Response[managev1.MapPlace], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}
@@ -336,7 +362,19 @@ func (s *MapPlaceService) updateMapPlaceImageBinding(
 func (s *MapPlaceService) DeleteMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMapPlaceRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}

@@ -1,10 +1,13 @@
 package filemedia
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const uploadIdleTimeout = 120 * time.Second
@@ -20,12 +23,12 @@ func withUploadIdleTimeout(next http.Handler, idle time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		controller := http.NewResponseController(w)
 		if err := controller.SetWriteDeadline(time.Time{}); err != nil {
-			slog.ErrorContext(r.Context(), "Cannot configure upload write deadline", "error", err)
+			slog.ErrorContext(r.Context(), "Cannot configure upload write deadline", failurecause.Attr(err))
 			http.Error(w, "Upload streaming unavailable", http.StatusInternalServerError)
 			return
 		}
 		if err := controller.SetReadDeadline(time.Time{}); err != nil {
-			slog.ErrorContext(r.Context(), "Cannot configure upload read deadline", "error", err)
+			slog.ErrorContext(r.Context(), "Cannot configure upload read deadline", failurecause.Attr(err))
 			http.Error(w, "Upload streaming unavailable", http.StatusInternalServerError)
 			return
 		}
@@ -68,7 +71,11 @@ func (w *uploadIdleWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
-func (w *uploadIdleWriter) Flush() { _ = w.FlushError() }
+func (w *uploadIdleWriter) Flush() {
+	if err := w.FlushError(); err != nil {
+		slog.ErrorContext(context.Background(), "Failed to flush upload response", failurecause.Attr(err))
+	}
+}
 
 func (w *uploadIdleWriter) FlushError() error {
 	if err := w.controller.SetWriteDeadline(time.Now().Add(w.idle)); err != nil {

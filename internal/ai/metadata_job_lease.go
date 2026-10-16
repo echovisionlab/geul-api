@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -61,6 +62,11 @@ func (m *MetadataJobManager) failJob(
 	duration time.Duration,
 	cause error,
 ) error {
+	level := slog.LevelError
+	if errors.Is(cause, context.Canceled) {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "Metadata AI job failed", "domain", "ai", "event", "ai.metadata.job.failed", "outcome", "failed", failurecause.Attr(cause, job.Context, job.Prompt), "job_id", job.ID, "target_type", job.TargetType, "target_id", job.TargetID, "requested_keys", job.RequestedKeys, "duration_ms", duration.Milliseconds())
 	finishedAt := time.Now()
 	durationMS := duration.Milliseconds()
 	message := cause.Error()
@@ -89,14 +95,6 @@ func (m *MetadataJobManager) failJob(
 	job.DurationMS = &durationMS
 	job.CompletedAt = &finishedAt
 	job.UpdatedAt = finishedAt
-
-	slog.Warn("Metadata AI job failed",
-		"job_id", job.ID,
-		"target_type", job.TargetType,
-		"target_id", job.TargetID,
-		"duration_ms", durationMS,
-		"error", message,
-	)
 
 	return nil
 }

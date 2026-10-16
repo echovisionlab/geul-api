@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -390,9 +391,26 @@ func logCredentialHookFailure(ctx context.Context, stage string, input AccountCr
 	case errors.Is(err, ErrMemberPrimaryEmailUnavailable):
 		code, level = "canonical_email_provider_required", slog.LevelWarn
 	}
+	var upstreamError *auth.KratosHTTPError
+	privateBody := ""
+	if errors.As(err, &upstreamError) {
+		privateBody = upstreamError.Body
+	}
+	privateValues := []string{privateBody}
+	for _, credentials := range []map[string]auth.Credential{input.PreviousCredentials, input.Credentials} {
+		for _, provider := range auth.NewCredentialInventory(credentials).OIDCProviders() {
+			privateValues = append(privateValues, provider.Subject, provider.InitialAccessToken)
+			privateValues = append(privateValues, provider.NicknameCandidates()...)
+		}
+	}
+	if mutation, changed, mutationErr := accountCredentialMutationFromSnapshots(input); mutationErr == nil && changed {
+		for _, value := range mutation.emailData {
+			privateValues = append(privateValues, value)
+		}
+	}
 	slog.LogAttrs(ctx, level, "Settings credential hook failed",
 		slog.String("error_code", code),
-		slog.Any("error", err),
+		slog.String("failure_cause", failurecause.Message(err, privateValues...)),
 		slog.String("stage", stage),
 		slog.String("credential_type", string(input.Kind)),
 		slog.Bool("proposed_snapshot_present", input.CredentialSnapshotPresent && input.Credentials != nil),

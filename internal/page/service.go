@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -165,7 +167,19 @@ func NewPageService(
 func (s *PageService) GetPage(
 	ctx context.Context,
 	req *connect.Request[managev1.GetPageRequest],
-) (*connect.Response[managev1.Page], error) {
+) (_ *connect.Response[managev1.Page], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	return s.getPageBy(ctx, "id", req.Msg.Id)
 }
 
@@ -182,7 +196,19 @@ func (s *PageService) getPageBy(
 func (s *PageService) GetPageBySlug(
 	ctx context.Context,
 	req *connect.Request[managev1.GetPageBySlugRequest],
-) (*connect.Response[managev1.Page], error) {
+) (_ *connect.Response[managev1.Page], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPageBySlug", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	return s.getPageBy(ctx, "slug", req.Msg.Slug)
 }
 
@@ -190,7 +216,19 @@ func (s *PageService) GetPageBySlug(
 func (s *PageService) ListPagesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPagesAdminRequest],
-) (*connect.Response[managev1.ListPagesAdminResponse], error) {
+) (_ *connect.Response[managev1.ListPagesAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ListPagesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	// Check admin permission
 	if err := requirePageList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -260,7 +298,19 @@ func (s *PageService) ListPagesAdmin(
 func (s *PageService) CreatePage(
 	ctx context.Context,
 	req *connect.Request[managev1.CreatePageRequest],
-) (*connect.Response[managev1.Page], error) {
+) (_ *connect.Response[managev1.Page], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CreatePage", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
@@ -398,6 +448,7 @@ func (s *PageService) CreatePage(
 			return nil, err
 		}
 		if strings.Contains(err.Error(), "duplicate key") {
+			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("page", "slug")
 		}
 		return nil, errs.Internal(err)
@@ -410,7 +461,19 @@ func (s *PageService) CreatePage(
 func (s *PageService) UpdatePage(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdatePageRequest],
-) (*connect.Response[managev1.UpdatePageResponse], error) {
+) (_ *connect.Response[managev1.UpdatePageResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	page := model.Page{ID: req.Msg.Id}
 	update, err := s.preparePageUpdate(ctx, req.Msg)
 	if err != nil {
@@ -438,7 +501,19 @@ func (s *PageService) UpdatePage(
 func (s *PageService) DeletePage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePageRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.DeletePage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
@@ -468,6 +543,7 @@ func (s *PageService) DeletePage(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.DeletePage", "outcome", "failed", failurecause.Attr(err))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		deleteRelationships, restoreRelationships, err := pageAuthorizationDeletionBatches(page.ID, snapshots)
@@ -553,7 +629,19 @@ func (s *PageService) DeletePage(
 func (s *PageService) PublishPage(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishPageRequest],
-) (*connect.Response[managev1.PageLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PageLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.PublishPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
@@ -578,6 +666,9 @@ func (s *PageService) PublishPage(
 		}
 		documentID, err := uuid.Parse(*page.ContentDocumentID)
 		if err != nil || documentID == uuid.Nil {
+			if err != nil {
+				slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "parse_content_document_id", "outcome", "failed", failurecause.Attr(err))
+			}
 			return errs.FailedPrecondition("page content document has not been populated")
 		}
 		attachments, err := s.contentBlocks.LoadPublicationAttachments(ctx, tx, documentID)
@@ -644,7 +735,19 @@ func (s *PageService) PublishPage(
 func (s *PageService) UnpublishPage(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishPageRequest],
-) (*connect.Response[managev1.PageLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.PageLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UnpublishPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var page model.Page
 	lifecycleChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

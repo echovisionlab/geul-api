@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -84,7 +86,19 @@ func NewAuditedCategoryService(db *gorm.DB, auditWriter domainaudit.Appender, me
 func (s *CategoryService) ListCategories(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCategoriesRequest],
-) (*connect.Response[managev1.ListCategoriesResponse], error) {
+) (_ *connect.Response[managev1.ListCategoriesResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListCategories", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	categories, total, page, err := categoryListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -104,7 +118,19 @@ func (s *CategoryService) ListCategories(
 func (s *CategoryService) ListCategoriesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCategoriesAdminRequest],
-) (*connect.Response[managev1.ListCategoriesAdminResponse], error) {
+) (_ *connect.Response[managev1.ListCategoriesAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListCategoriesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Category.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -150,7 +176,19 @@ func (s *CategoryService) ListCategoriesAdmin(
 func (s *CategoryService) CreateCategory(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateCategoryRequest],
-) (*connect.Response[managev1.Category], error) {
+) (_ *connect.Response[managev1.Category], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateCategory", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Category.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -195,7 +233,19 @@ func (s *CategoryService) CreateCategory(
 func (s *CategoryService) UpdateCategory(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateCategoryRequest],
-) (*connect.Response[managev1.Category], error) {
+) (_ *connect.Response[managev1.Category], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateCategory", "outcome", "failed", "category_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Category.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -242,7 +292,19 @@ func (s *CategoryService) UpdateCategory(
 func (s *CategoryService) DeleteCategory(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteCategoryRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteCategory", "outcome", "failed", "category_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	can, err := policyv1.Category.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

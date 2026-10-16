@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	neturl "net/url"
 	"slices"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -137,7 +139,14 @@ func (c *KratosClient) doAdminRequest(
 }
 
 func kratosResponseError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxKratosErrorBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxKratosErrorBodyBytes))
+	if err != nil {
+		ctx := context.Background()
+		if resp.Request != nil {
+			ctx = resp.Request.Context()
+		}
+		slog.ErrorContext(ctx, "Read Kratos error response failed", "status_code", resp.StatusCode, failurecause.Attr(err))
+	}
 	return &KratosHTTPError{StatusCode: resp.StatusCode, Body: string(body)}
 }
 

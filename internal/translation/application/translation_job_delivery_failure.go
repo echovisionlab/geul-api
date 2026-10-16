@@ -3,8 +3,10 @@ package application
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 )
@@ -14,6 +16,20 @@ func (m *TranslationJobManager) handleQueuedDeliveryFailure(
 	job *model.TranslationJob,
 	cause error,
 ) error {
+	logCause := cause
+	var pinned translationProviderDocumentPinnedError
+	if errors.As(cause, &pinned) {
+		logCause = pinned.Unwrap()
+	}
+	fields := []any{"domain", "translation", "event", "translation.job.failed", "reason", classifyTranslationFailure(cause), failurecause.Attr(logCause)}
+	if job != nil {
+		fields = append(fields, "job_id", job.ID, "operation_id", job.OperationID, "entity_type", job.EntityType, "target_locale", job.TargetLocale)
+	}
+	level := slog.LevelError
+	if translationDeliveryTransportStopped(ctx, cause) {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "Translation job failed", fields...)
 	cause = boundTranslationFailure(cause)
 	if translationDeliveryTransportStopped(ctx, cause) {
 		return cause
@@ -32,6 +48,20 @@ func (m *TranslationJobManager) handleRunningDeliveryFailure(
 	startedAt time.Time,
 	cause error,
 ) error {
+	logCause := cause
+	var pinned translationProviderDocumentPinnedError
+	if errors.As(cause, &pinned) {
+		logCause = pinned.Unwrap()
+	}
+	fields := []any{"domain", "translation", "event", "translation.job.failed", "reason", classifyTranslationFailure(cause), failurecause.Attr(logCause)}
+	if job != nil {
+		fields = append(fields, "job_id", job.ID, "operation_id", job.OperationID, "entity_type", job.EntityType, "target_locale", job.TargetLocale)
+	}
+	level := slog.LevelError
+	if translationDeliveryTransportStopped(ctx, cause) {
+		level = slog.LevelWarn
+	}
+	slog.Log(ctx, level, "Translation job failed", fields...)
 	cause = boundTranslationFailure(cause)
 	if translationDeliveryTransportStopped(ctx, cause) {
 		return cause

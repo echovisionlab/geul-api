@@ -91,6 +91,7 @@ func logAdapterLifecycle(
 	outcome string,
 	reason string,
 	errorType string,
+	extra ...any,
 ) {
 	attrs := structured.Values{
 		"domain", "mail",
@@ -109,6 +110,7 @@ func logAdapterLifecycle(
 	if errorType = strings.TrimSpace(errorType); errorType != "" {
 		attrs = append(attrs, "error_type", errorType)
 	}
+	attrs = append(attrs, extra...)
 	slog.Log(ctx, level, message, attrs...)
 }
 

@@ -157,7 +157,7 @@ func TestOathkeeperLogsRedactedFailureCause(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, oathkeeperRequest())
-	if w.Code != 503 || !strings.Contains(logs.String(), `"error":"database unavailable:`) ||
+	if w.Code != 503 || !strings.Contains(logs.String(), `"failure_cause":"database unavailable:`) ||
 		strings.Contains(logs.String(), oathkeeperTestToken) || strings.Contains(logs.String(), testSecret) {
 		t.Fatal("failure cause missing or private values leaked")
 	}

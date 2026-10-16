@@ -3,6 +3,8 @@ package form
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"log/slog"
 	"net/mail"
 	"net/url"
 	"regexp"
@@ -107,6 +109,7 @@ func submissionConditionActive(raw json.RawMessage, values submissionObject, fie
 	}
 	var node map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &node); err != nil {
+		slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", failurecause.Attr(err))
 		return false
 	}
 	if childrenRaw, ok := node["conditions"]; ok {
@@ -123,10 +126,15 @@ func submissionConditionGroupActive(
 ) bool {
 	var children []json.RawMessage
 	if err := json.Unmarshal(childrenRaw, &children); err != nil {
+		slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", failurecause.Attr(err))
 		return false
 	}
 	var logic string
-	_ = json.Unmarshal(node["logic"], &logic)
+	if raw := node["logic"]; len(raw) != 0 {
+		if err := json.Unmarshal(raw, &logic); err != nil {
+			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "logic", failurecause.Attr(err))
+		}
+	}
 	for _, child := range children {
 		active := submissionConditionActive(child, values, fieldKeyByID)
 		if logic == "or" && active {
@@ -146,10 +154,26 @@ func submissionConditionLeafActive(
 ) bool {
 	var fieldID, legacyField, operator string
 	var expected submissionValue
-	_ = json.Unmarshal(node["fieldId"], &fieldID)
-	_ = json.Unmarshal(node["field"], &legacyField)
-	_ = json.Unmarshal(node["operator"], &operator)
-	_ = json.Unmarshal(node["value"], &expected)
+	if raw := node["fieldId"]; len(raw) != 0 {
+		if err := json.Unmarshal(raw, &fieldID); err != nil {
+			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "fieldId", failurecause.Attr(err))
+		}
+	}
+	if raw := node["field"]; len(raw) != 0 {
+		if err := json.Unmarshal(raw, &legacyField); err != nil {
+			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "field", failurecause.Attr(err))
+		}
+	}
+	if raw := node["operator"]; len(raw) != 0 {
+		if err := json.Unmarshal(raw, &operator); err != nil {
+			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "operator", failurecause.Attr(err))
+		}
+	}
+	if raw := node["value"]; len(raw) != 0 {
+		if err := json.Unmarshal(raw, &expected); err != nil {
+			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "value", failurecause.Attr(err))
+		}
+	}
 	if fieldID == "" {
 		fieldID = legacyField
 	}

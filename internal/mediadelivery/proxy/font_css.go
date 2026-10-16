@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/config"
 	"github.com/echovisionlab/geul-api/internal/mediadelivery/storage"
+	"github.com/minio/minio-go/v7"
 )
 
 const (
@@ -65,13 +67,17 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if code := minio.ToErrorResponse(err).Code; code != "NoSuchKey" && code != "NoSuchObject" && code != "NotFound" {
+		slog.ErrorContext(r.Context(), "Failed to read font cache", failurecause.Attr(err), "query_hash", queryHash)
+	}
+
 	p.logger.Debug("font CSS cache miss, fetching from upstream", "query_hash", queryHash)
 
 	upstreamURL := p.cfg.FontCSSUpstream + "/css2?" + query
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
 	if err != nil {
-		p.logger.Error("failed to create request", "error", err)
+		p.logger.ErrorContext(r.Context(), "failed to create request", failurecause.Attr(err), "query_hash", queryHash)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -82,7 +88,7 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.logger.Error("failed to fetch from upstream", "error", err, "query_hash", queryHash)
+		p.logger.ErrorContext(r.Context(), "failed to fetch from upstream", failurecause.Attr(err), "query_hash", queryHash)
 		http.Error(w, "Failed to fetch font CSS", http.StatusBadGateway)
 		return
 	}
@@ -100,7 +106,7 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		p.logger.Error("failed to read response", "error", err, "query_hash", queryHash)
+		p.logger.ErrorContext(r.Context(), "failed to read response", failurecause.Attr(err), "query_hash", queryHash)
 		http.Error(w, "Failed to read upstream response", http.StatusBadGateway)
 		return
 	}
@@ -127,7 +133,7 @@ func (p *FontCSSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		data,
 		"text/css; charset=utf-8",
 		"font CSS",
-		"query", query,
+		"query_hash", queryHash,
 	)
 
 	p.respond(w, r, data)

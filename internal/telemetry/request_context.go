@@ -2,7 +2,9 @@ package telemetry
 
 import (
 	"context"
+	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -33,6 +35,7 @@ func RequestIDFromContext(ctx context.Context) string {
 func ContextWithPropagatedRequestID(ctx context.Context, requestID string, actor Actor) context.Context {
 	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(requestID, actor)
 	if err != nil {
+		slog.WarnContext(ctx, "Propagated request context rejected", "failure_cause", failurecause.Message(err, requestID))
 		return ctx
 	}
 	return sharedtelemetry.WithRequestContext(ctx, requestContext)

@@ -1,9 +1,12 @@
 package errors
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -133,6 +136,29 @@ func TestWrapPreservesConnectErrorAndWrapsPlainErrors(t *testing.T) {
 	}
 	if got := wrapped.Unwrap(); got != plainErr {
 		t.Fatalf("unwrapped error = %v, want %v", got, plainErr)
+	}
+}
+
+func TestWrapLogsCauseBeforeDiscardingOperationContext(t *testing.T) {
+	for _, inner := range []error{
+		connect.NewError(connect.CodeInternal, stderrors.New("provider unavailable")),
+		context.Canceled,
+		context.DeadlineExceeded,
+		&pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type uuid"},
+	} {
+		t.Run(inner.Error(), func(t *testing.T) {
+			var output bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			Wrap(fmt.Errorf("resolve operation for person@example.test: %w", inner))
+			if !strings.Contains(output.String(), "resolve operation") || !strings.Contains(output.String(), `"failure_cause":`) {
+				t.Fatalf("missing failure cause: %s", output.String())
+			}
+			if strings.Contains(output.String(), "person@example.test") {
+				t.Fatal("failure log exposed recipient")
+			}
+		})
 	}
 }
 

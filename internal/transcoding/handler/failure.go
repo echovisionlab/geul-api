@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobregistry"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -51,14 +52,14 @@ func (s *completionService) publishFailure(
 	cause error,
 ) error {
 	duration := time.Since(startedAt).Milliseconds()
-	slog.Error(logMessage,
+	slog.ErrorContext(ctx, logMessage,
 		"media_type", mediaType,
 		"job_id", command.GetEventId(),
 		"entity_type", command.GetEntityType().String(),
 		"entity_id", command.GetEntityId(),
 		"file_id", command.GetFileId(),
 		"duration_ms", duration,
-		"error", cause,
+		failurecause.Attr(cause),
 	)
 	errorMessage := cause.Error()
 	publishErr := s.publisher.PublishComplete(ctx, &apiv1.TranscodeCompleteEvent{
@@ -72,7 +73,7 @@ func (s *completionService) publishFailure(
 		ProcessingTimeMs: duration,
 	})
 	if publishErr != nil {
-		slog.Error("Failed to publish failure event", "error", publishErr)
+		slog.ErrorContext(ctx, "Failed to publish failure event", failurecause.Attr(publishErr), "media_type", mediaType, "job_id", command.GetEventId(), "entity_type", command.GetEntityType().String(), "entity_id", command.GetEntityId(), "file_id", command.GetFileId())
 		return jobresult.Retry(fmt.Errorf("publish %s failure result: %w; job failure: %v", mediaType, publishErr, cause))
 	}
 	return jobresult.Terminal(cause)

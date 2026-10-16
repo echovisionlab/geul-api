@@ -3,6 +3,7 @@ package aidocumentadapter
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -44,6 +46,7 @@ func (c *PageCodec) Compile(
 			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: "Page sections do not expose generic relations"}}, nil
 		}
 		if err := c.applyPageOperation(working, role, operation, deleted); err != nil {
+			slog.Warn("Page operation rejected", failurecause.Attr(err), "document_id", documentID.String(), "operation_index", index)
 			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil
 		}
 		c.updatePageAffectedLocaleValues(working, affected, operation)
@@ -200,6 +203,7 @@ func (c *PageCodec) pageLocaleValueTargetExists(document *contentv1.LocalizedPag
 		}
 		_, message, err := c.localeSectionMessage(locale.ProtoReflect())
 		if err != nil {
+			slog.Error("Failed to resolve Page locale section", failurecause.Attr(err), "block_id", string(target.Block), "field", string(target.Field))
 			return false
 		}
 		container, field, err := pageResolvePath(message, path, false)
@@ -253,6 +257,9 @@ func (c *PageCodec) pageRichTextFieldIsLocale(document *contentv1.LocalizedPageD
 				continue
 			}
 			resolved, _, err := c.rich.blockMessage(node.GetBlock().ProtoReflect())
+			if err != nil {
+				slog.Error("Failed to resolve Page rich text block ownership", "failure_cause", failurecause.Message(err), "block_id", string(target.Block), "field", string(target.Field))
+			}
 			if err == nil {
 				kind = resolved
 			}

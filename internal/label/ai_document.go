@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -106,6 +108,7 @@ func (s *LabelService) LoadAIDocumentState(ctx context.Context, labelID, locale 
 	}
 	canonicalID, err := canonicalLabelUUID(labelID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.LoadAIDocumentState", "outcome", "failed", failurecause.Attr(err))
 		return AIDocumentState{}, errs.InvalidArgument("label_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeLabelDocumentLocale(locale)
@@ -249,6 +252,7 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 	}
 	canonicalID, err := canonicalLabelUUID(labelID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.ExecuteAIDocumentMutation", "outcome", "failed", failurecause.Attr(err))
 		return AIDocumentMutationResult{}, errs.InvalidArgument("label_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeLabelDocumentLocale(locale)
@@ -276,6 +280,7 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 		}
 		memberID, err := canonicalLabelUUID(principal.MemberID.String())
 		if err != nil {
+			slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.ExecuteAIDocumentMutation", "outcome", "failed", failurecause.Attr(err))
 			return errs.NotFound("label", root.ID)
 		}
 		state, err := s.loadAIDocumentStateAfterAuthorization(
@@ -366,18 +371,26 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 func validateLabelAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
 	labelID, err := canonicalLabelUUID(input.LabelID)
 	if err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "label.validateLabelAIDocumentMutation", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("label_id", "must be a canonical UUID")
 	}
 	expected, err := canonicalLabelUUID(input.ExpectedRevision)
 	if err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "label.validateLabelAIDocumentMutation", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("expected_revision", "must be a canonical UUID")
 	}
 	locale, localeErr := normalizeLabelDocumentLocale(input.Locale)
 	if localeErr != nil || locale != input.Locale {
+		if localeErr != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "label.validateLabelAIDocumentMutation", "outcome", "failed", failurecause.Attr(localeErr))
+		}
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "must be an exact canonical locale")
 	}
 	source, sourceErr := normalizeLabelDocumentLocale(input.ExpectedSource)
 	if sourceErr != nil || source != input.ExpectedSource {
+		if sourceErr != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "label.validateLabelAIDocumentMutation", "outcome", "failed", failurecause.Attr(sourceErr))
+		}
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("expected_source", "must be an exact canonical locale")
 	}
 	modeCount := 0
@@ -527,10 +540,12 @@ func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) 
 	}
 	var stale *contentblock.StaleRevisionError
 	if errors.As(err, &stale) {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_ai_document_conflict", "outcome", "failed", failurecause.Attr(err))
 		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String()}
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_ai_document_conflict", "outcome", "failed", failurecause.Attr(err))
 		var currentTargetRevision *string
 		if targetConflict.CurrentExists {
 			currentTargetRevision = cloneLabelTargetRevision(&targetConflict.CurrentRevision)

@@ -3,10 +3,12 @@ package email
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -249,6 +251,7 @@ func LoadCanonicalLayoutTranslationDocument(
 	}
 	contentHTML, contentText, err := MaterializeLayoutSourceLocale(*document.ContentHTML)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.FailedPrecondition("Email Layout source locale markers are invalid")
 	}
 	document.ContentHTML = contentHTML

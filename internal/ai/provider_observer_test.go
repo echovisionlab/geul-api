@@ -37,7 +37,8 @@ func TestMetadataAIProviderObserverRedactsProviderErrorDetails(t *testing.T) {
 	require.NotContains(t, line, "RESOURCE_EXHAUSTED")
 	require.NotContains(t, line, "api_message")
 	require.NotContains(t, line, "api_status")
-	require.NotContains(t, line, `"error"`)
+	require.Contains(t, line, `"failure_cause"`)
+	require.Contains(t, line, "provider failure: rate_limited")
 
 	var record map[string]any
 	require.NoError(t, json.Unmarshal([]byte(line), &record))

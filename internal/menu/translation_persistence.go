@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -41,6 +43,9 @@ func ApplyProviderTranslationCandidateWithDB(
 	}
 	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.ApplyProviderTranslationCandidateWithDB", "outcome", "failed", failurecause.Attr(err))
+		}
 		return errs.InternalMsg("Menu provider translation requires canonical requester Member")
 	}
 	now := input.Now.UTC()
@@ -140,6 +145,7 @@ func DecodeTranslationLabelValues(body []byte) (map[string]string, error) {
 	}
 	var items []translationLabelItem
 	if err := json.Unmarshal(body, &items); err != nil {
+		slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.DecodeTranslationLabelValues", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("content_json", "must be a valid Menu label document")
 	}
 	var collect func([]translationLabelItem) error

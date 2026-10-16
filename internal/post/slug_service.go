@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -18,7 +20,19 @@ import (
 func (s *PostService) CheckSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckSlugAvailableRequest],
-) (*connect.Response[managev1.CheckSlugAvailableResponse], error) {
+) (_ *connect.Response[managev1.CheckSlugAvailableResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CheckSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if _, err := s.authz.MustAuthenticate(ctx); err != nil {
 		return nil, err
 	}

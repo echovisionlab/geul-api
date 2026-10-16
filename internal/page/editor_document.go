@@ -2,16 +2,30 @@ package page
 
 import (
 	"context"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // GetPageEditorDocument delegates authorization and materialization to room bootstrap.
-func (s *PageService) GetPageEditorDocument(ctx context.Context, req *connect.Request[managev1.GetPageEditorDocumentRequest]) (*connect.Response[managev1.GetPageEditorDocumentResponse], error) {
+func (s *PageService) GetPageEditorDocument(ctx context.Context, req *connect.Request[managev1.GetPageEditorDocumentRequest]) (_ *connect.Response[managev1.GetPageEditorDocumentResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPageEditorDocument", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
+	}()
+
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.SessionID == "" {
 		return nil, errs.AuthenticationRequired()

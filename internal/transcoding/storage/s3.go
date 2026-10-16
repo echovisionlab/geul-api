@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // completionMetadataKey identifies the terminal receipt stored with a
@@ -120,7 +121,11 @@ func (c *S3Client) Download(ctx context.Context, key string, localPath string) e
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if err := file.Close(); err != nil {
+			slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(err), "bucket", c.bucket)
+		}
+	}()
 
 	// Copy content
 	written, err := io.Copy(file, result.Body)

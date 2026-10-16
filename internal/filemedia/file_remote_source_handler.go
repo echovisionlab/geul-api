@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -29,16 +31,29 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	opts, err := parseUploadSourceQuery(r.URL.RawQuery)
 	if err != nil {
+		slog.WarnContext(r.Context(), "Invalid upload source query", failurecause.Attr(err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	request, err := s.prepareRemoteImport(r.Context(), opts)
 	if err != nil {
+		level := slog.LevelWarn
+		switch connect.CodeOf(err) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+			level = slog.LevelError
+		}
+		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
 		writeUploadSourceError(w, err)
 		return
 	}
 	source, err := s.openBrowserUploadSource(r.Context(), request)
 	if err != nil {
+		level := slog.LevelWarn
+		switch connect.CodeOf(err) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
+			level = slog.LevelError
+		}
+		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
 		writeUploadSourceError(w, err)
 		return
 	}
@@ -65,11 +80,16 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	limited := &io.LimitedReader{R: reader, N: source.sourceMaxSize}
 	written, err := io.CopyBuffer(w, limited, make([]byte, 64*1024))
 	if err != nil {
+		slog.ErrorContext(r.Context(), "Failed to stream remote upload source", failurecause.Attr(err))
 		panic(http.ErrAbortHandler)
 	}
 	var excess [1]byte
 	n, err := reader.Read(excess[:])
 	if n != 0 || err != io.EOF || written < request.config.MinSize || (source.response.ContentLength >= 0 && written != source.response.ContentLength) {
+		if err == nil || err == io.EOF {
+			err = fmt.Errorf("remote source length does not match expected bounds")
+		}
+		slog.ErrorContext(r.Context(), "Remote upload source stream incomplete", failurecause.Attr(err), "bytes_written", written, "excess_bytes", n)
 		// Headers may already have been sent. net/http closes/reset the stream so
 		// callers cannot mistake a truncated or failed transfer for a complete file.
 		panic(http.ErrAbortHandler)
@@ -91,6 +111,7 @@ func (r *uploadSourceContextReader) Read(p []byte) (int, error) {
 func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	query, err := url.ParseQuery(rawQuery)
 	if err != nil {
+		slog.Warn("Failed to parse upload source query", failurecause.Attr(err))
 		return remoteFileImportOptions{}, fmt.Errorf("invalid query")
 	}
 	for key, values := range query {
@@ -100,6 +121,7 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	}
 	value, err := strconv.ParseInt(query.Get("uploadType"), 10, 32)
 	if err != nil {
+		slog.Warn("Failed to parse upload source uploadType", failurecause.Attr(err))
 		return remoteFileImportOptions{}, fmt.Errorf("invalid uploadType")
 	}
 	if _, ok := managev1.UploadType_name[int32(value)]; !ok || value == 0 {
@@ -118,12 +140,14 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	}
 	if opts.entityID != "" {
 		if _, err := uuid.Parse(opts.entityID); err != nil {
+			slog.Warn("Failed to parse upload source entity ID", failurecause.Attr(err))
 			return opts, fmt.Errorf("invalid entityId")
 		}
 	}
 	if query.Has("entityType") {
 		value, err := strconv.ParseInt(query.Get("entityType"), 10, 32)
 		if err != nil {
+			slog.Warn("Failed to parse upload source entityType", failurecause.Attr(err))
 			return opts, fmt.Errorf("invalid entityType")
 		}
 		if _, ok := managev1.TranscodeEntityType_name[int32(value)]; !ok || value == 0 {

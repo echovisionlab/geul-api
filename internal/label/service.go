@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -191,7 +193,19 @@ func NewLabelService(db *gorm.DB, spiceDB *auth.SpiceDBClient, kratosClient auth
 func (s *LabelService) GetLabelEditorData(
 	ctx context.Context,
 	req *connect.Request[managev1.GetLabelEditorDataRequest],
-) (*connect.Response[managev1.GetLabelEditorDataResponse], error) {
+) (_ *connect.Response[managev1.GetLabelEditorDataResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.GetLabelEditorData", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var label model.Label
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
@@ -230,7 +244,19 @@ func (s *LabelService) GetLabelEditorData(
 func (s *LabelService) ListLabels(
 	ctx context.Context,
 	req *connect.Request[managev1.ListLabelsRequest],
-) (*connect.Response[managev1.ListLabelsResponse], error) {
+) (_ *connect.Response[managev1.ListLabelsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabels", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	var labels []model.Label
 	var total int64
 
@@ -308,7 +334,19 @@ func (s *LabelService) ListLabels(
 func (s *LabelService) ListLabelsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListLabelsAdminRequest],
-) (*connect.Response[managev1.ListLabelsAdminResponse], error) {
+) (_ *connect.Response[managev1.ListLabelsAdminResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabelsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	// Check admin role
 	if err := requireLabelList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -433,7 +471,19 @@ func (s *LabelService) ListLabelsAdmin(
 func (s *LabelService) CreateLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateLabelRequest],
-) (*connect.Response[managev1.Label], error) {
+) (_ *connect.Response[managev1.Label], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.CreateLabel", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Label content Block store is not configured")
 	}
@@ -462,6 +512,7 @@ func (s *LabelService) CreateLabel(
 			return nil, err
 		}
 		if strings.Contains(err.Error(), "duplicate key") {
+			slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.AlreadyExistsMsg("label with this slug already exists")
 		}
 		return nil, errs.Internal(err)
@@ -618,7 +669,19 @@ func (s *LabelService) createLabelSourceLocaleWithDB(
 func (s *LabelService) PreviewDeleteLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewDeleteLabelRequest],
-) (*connect.Response[managev1.PreviewDeleteLabelResponse], error) {
+) (_ *connect.Response[managev1.PreviewDeleteLabelResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.PreviewDeleteLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var label model.Label
 	if err := s.db.WithContext(ctx).Select("id").First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -640,7 +703,19 @@ func (s *LabelService) PreviewDeleteLabel(
 func (s *LabelService) DeleteLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteLabelRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Label content Block store is not configured")
 	}
@@ -660,6 +735,7 @@ func (s *LabelService) DeleteLabel(
 
 	snapshotPlan, err := policyv1.Label.Snapshot(req.Msg.Id)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("id", "must identify a Label")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
@@ -689,10 +765,12 @@ func (s *LabelService) DeleteLabel(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", failurecause.Attr(err))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		deleteRelationships, restoreRelationships, err := labelDeletionRelationshipMutations(req.Msg.Id, snapshots)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", failurecause.Attr(err))
 			return errs.DependencyUnavailable("SpiceDB")
 		}
 		if err := validateResourceDeletionAuthorizationBatchSize("label", deleteRelationships, restoreRelationships); err != nil {
@@ -751,7 +829,19 @@ func (s *LabelService) DeleteLabel(
 func (s *LabelService) PublishLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishLabelRequest],
-) (*connect.Response[managev1.LabelLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.LabelLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.PublishLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var label model.Label
 	transitioned := false
 	now := time.Now().UTC()
@@ -799,7 +889,19 @@ func (s *LabelService) PublishLabel(
 func (s *LabelService) UnpublishLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishLabelRequest],
-) (*connect.Response[managev1.LabelLifecycleMutationResponse], error) {
+) (_ *connect.Response[managev1.LabelLifecycleMutationResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil || req == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.UnpublishLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
+	}()
+
 	var label model.Label
 	transitioned := false
 	now := time.Now().UTC()

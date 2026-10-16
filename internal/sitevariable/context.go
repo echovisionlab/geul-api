@@ -4,10 +4,12 @@ package sitevariable
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 )
@@ -55,6 +57,7 @@ func (c Context) ResolveText(source string) string {
 	return tokenPattern.ReplaceAllStringFunc(source, func(token string) string {
 		value, err := c.Resolve(token[2 : len(token)-2])
 		if err != nil {
+			slog.WarnContext(context.Background(), "content operation failed", "domain", "sitevariable", "operation", "sitevariable.ResolveText", "outcome", "failed", failurecause.Attr(err))
 			return token
 		}
 		return value

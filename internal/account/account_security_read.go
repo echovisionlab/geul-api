@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -27,6 +29,12 @@ func (s *AccountService) deliveryPrimaryEmailForIdentity(ctx context.Context, me
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", errs.NotFound("member", memberID)
 		}
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "deliveryPrimaryEmailForIdentity", failurecause.Attr(err, privateBody))
 		return "", errs.Internal(err)
 	}
 	return strings.TrimSpace(email), nil
@@ -43,6 +51,16 @@ func (s *AccountService) securityForIdentity(
 	}
 	identity, err := s.identity.GetIdentityWithIncludeCredential(ctx, identityID, "oidc")
 	if err != nil || identity == nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		cause := failurecause.Message(err, privateBody)
+		if err == nil {
+			cause = "Kratos identity response is empty"
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "securityForIdentity", "failure_cause", cause)
 		return nil, errs.Internal(fmt.Errorf("read account identity: %w", err))
 	}
 	if identity.ID != identityID || identity.ExternalID != memberID || identity.State != auth.KratosStateActive {
@@ -50,6 +68,16 @@ func (s *AccountService) securityForIdentity(
 	}
 	passkeyIdentity, err := s.identity.GetIdentityWithIncludeCredential(ctx, identityID, "passkey")
 	if err != nil || passkeyIdentity == nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		cause := failurecause.Message(err, privateBody)
+		if err == nil {
+			cause = "Kratos identity response is empty"
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "securityForIdentity", "failure_cause", cause)
 		return nil, errs.Internal(fmt.Errorf("read account passkeys: %w", err))
 	}
 	deliveryPrimaryEmail, err := s.deliveryPrimaryEmailForIdentity(ctx, memberID, identityID)
@@ -62,6 +90,16 @@ func (s *AccountService) securityForIdentity(
 	}
 	codeIdentity, err := s.identity.GetIdentityWithIncludeCredential(ctx, identityID, "code")
 	if err != nil || codeIdentity == nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		cause := failurecause.Message(err, privateBody)
+		if err == nil {
+			cause = "Kratos identity response is empty"
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "securityForIdentity", "failure_cause", cause)
 		return nil, errs.Internal(fmt.Errorf("read account email-code credential: %w", err))
 	}
 	if identity.Credentials == nil {
@@ -102,6 +140,7 @@ func (s *AccountService) securityForIdentity(
 		  AND expires_at > CURRENT_TIMESTAMP
 		ORDER BY authenticated_at DESC, id DESC
 	`, identityID).Scan(&sessions).Error; err != nil {
+		slog.ErrorContext(ctx, "Load account sessions failed", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	currentFound := false
@@ -156,7 +195,7 @@ func (s *AccountService) setIdentityCanonicalEmail(ctx context.Context, identity
 	}
 	before, err := s.identity.GetIdentity(ctx, identityID)
 	if err != nil {
-		return "", "", false, accountCanonicalEmailMutationError(err, identityID)
+		return "", "", false, accountCanonicalEmailMutationError(ctx, err, identityID)
 	}
 	if before == nil {
 		return "", "", false, errs.NotFound("identity", identityID)
@@ -164,11 +203,17 @@ func (s *AccountService) setIdentityCanonicalEmail(ctx context.Context, identity
 	previous := emailutil.NormalizeAddressForDelivery(before.CurrentEmail())
 	err = NewAccountEmailChangeLifecycle(s.db, s.identity, s.publisher, s.memberEmails).
 		ApplyProvenCandidate(ctx, identityID, normalized)
-	if err := accountCanonicalEmailMutationError(err, identityID); err != nil {
+	if err := accountCanonicalEmailMutationError(ctx, err, identityID); err != nil {
 		return "", "", false, err
 	}
 	after, err := s.identity.GetIdentity(ctx, identityID)
 	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Operation failed", "operation", "setIdentityCanonicalEmail", failurecause.Attr(err, privateBody))
 		return "", "", false, errs.Internal(fmt.Errorf("confirm canonical account email: %w", err))
 	}
 	if after == nil {
@@ -181,7 +226,7 @@ func (s *AccountService) setIdentityCanonicalEmail(ctx context.Context, identity
 	return previous, current, previous != current, nil
 }
 
-func accountCanonicalEmailMutationError(err error, identityID string) error {
+func accountCanonicalEmailMutationError(ctx context.Context, err error, identityID string) error {
 	if err == nil {
 		return nil
 	}
@@ -195,6 +240,12 @@ func accountCanonicalEmailMutationError(err error, identityID string) error {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		return errs.NotFound("identity", identityID)
 	default:
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Canonical account email mutation failed", failurecause.Attr(err, privateBody))
 		return errs.Internal(err)
 	}
 }

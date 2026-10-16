@@ -5,9 +5,11 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
@@ -336,12 +338,27 @@ func InternalMsg(msg string) *connect.Error {
 func Wrap(err error) *connect.Error {
 	var connectErr *connect.Error
 	if stderrors.As(err, &connectErr) && connectErr != nil {
+		if err != connectErr {
+			level := slog.LevelWarn
+			switch connectErr.Code() {
+			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			// Returning the classified error discards the outer operation context.
+			slog.Log(context.Background(), level, "Classified RPC error", "error_code", connectErr.Code().String(), "failure_cause", failurecause.Message(err))
+		}
 		return connectErr
 	}
 	if stderrors.Is(err, context.Canceled) {
+		if err.Error() != context.Canceled.Error() {
+			slog.Warn("Request canceled", "failure_cause", failurecause.Message(err))
+		}
 		return connect.NewError(connect.CodeCanceled, context.Canceled)
 	}
 	if stderrors.Is(err, context.DeadlineExceeded) {
+		if err.Error() != context.DeadlineExceeded.Error() {
+			slog.Warn("Request deadline exceeded", "failure_cause", failurecause.Message(err))
+		}
 		return connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)
 	}
 	// UUID columns cannot contain malformed stored UUIDs. This exact driver
@@ -353,6 +370,7 @@ func Wrap(err error) *connect.Error {
 	}
 	if stderrors.As(err, &sqlState) && sqlState.SQLState() == "22P02" &&
 		strings.Contains(sqlState.Error(), "invalid input syntax for type uuid") {
+		slog.Warn("Database rejected request UUID", "sql_state", sqlState.SQLState(), "failure_cause", failurecause.Message(err))
 		return InvalidArgumentMsg("request contains an invalid UUID")
 	}
 	return connect.NewError(connect.CodeInternal, err)

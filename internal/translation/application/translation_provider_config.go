@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -72,7 +73,19 @@ func (r dbTranslationGeneratorResolver) HasAvailableProvider(ctx context.Context
 func (s *TranslationService) ListTranslationProviders(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTranslationProvidersRequest],
-) (*connect.Response[managev1.ListTranslationProvidersResponse], error) {
+) (_ *connect.Response[managev1.ListTranslationProvidersResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListTranslationProviders")
+		}
+	}()
 	can, canErr := policyv1.TranslationProvider.List()
 	if err := s.requireTranslationPlatformCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -120,7 +133,19 @@ func (s *TranslationService) ListTranslationProviders(
 func (s *TranslationService) CreateTranslationProvider(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateTranslationProviderRequest],
-) (*connect.Response[managev1.CreateTranslationProviderResponse], error) {
+) (_ *connect.Response[managev1.CreateTranslationProviderResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr, strings.TrimSpace(req.Msg.GetLlmConfig().GetApiKey()), strings.TrimSpace(req.Msg.GetDeeplConfig().GetApiKey())), "operation", "CreateTranslationProvider")
+		}
+	}()
 	providerCan, err := policyv1.TranslationProvider.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -184,7 +209,19 @@ func (s *TranslationService) CreateTranslationProvider(
 func (s *TranslationService) UpdateTranslationProvider(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateTranslationProviderRequest],
-) (*connect.Response[managev1.UpdateTranslationProviderResponse], error) {
+) (_ *connect.Response[managev1.UpdateTranslationProviderResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr, strings.TrimSpace(req.Msg.GetLlmConfig().GetApiKey()), strings.TrimSpace(req.Msg.GetDeeplConfig().GetApiKey())), "operation", "UpdateTranslationProvider")
+		}
+	}()
 	providerCan, err := policyv1.TranslationProvider.Update()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -324,7 +361,19 @@ func configJSONSemanticallyEqual(left, right []byte) bool {
 func (s *TranslationService) DeleteTranslationProvider(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteTranslationProviderRequest],
-) (*connect.Response[managev1.DeleteTranslationProviderResponse], error) {
+) (_ *connect.Response[managev1.DeleteTranslationProviderResponse], retErr error) {
+	defer func() {
+		if retErr != nil {
+			level := slog.LevelError
+			switch connect.CodeOf(retErr) {
+			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
+				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
+				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
+				level = slog.LevelWarn
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "DeleteTranslationProvider")
+		}
+	}()
 	providerCan, err := policyv1.TranslationProvider.Delete()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -399,7 +448,7 @@ func loadActiveTranslationGenerators(
 				"provider_id", providers[i].ID,
 				"provider_name", providers[i].Name,
 				"provider_type", providers[i].Type,
-				"error", err,
+				"failure_cause", failurecause.Message(err),
 			)
 			continue
 		}
@@ -413,7 +462,7 @@ func loadActiveTranslationGenerators(
 					"provider_id", providers[index].ID,
 					"provider_name", providers[index].Name,
 					"provider_type", providers[index].Type,
-					"error", err,
+					"failure_cause", failurecause.Message(err),
 				)
 				continue
 			}
@@ -546,6 +595,7 @@ func resolveLLMTranslationProviderValues(
 	}
 	current, err := existing.GetLLMConfig()
 	if err != nil {
+		slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", existing.ID)
 		return values
 	}
 	values.apiKey = strings.TrimSpace(current.APIKey)
@@ -659,6 +709,7 @@ func inheritDeepLProviderConfig(
 	}
 	current, err := existing.GetDeepLConfig()
 	if err != nil {
+		slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", existing.ID)
 		return apiKey, baseURL
 	}
 	if apiKey == "" {
@@ -752,6 +803,8 @@ func toProtoTranslationProvider(provider *model.TranslationProviderConfig, inclu
 				out.ApiKey = cfg.APIKey
 			}
 			proto.Config = &managev1.TranslationProvider_LlmConfig{LlmConfig: out}
+		} else {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", provider.ID)
 		}
 	case model.TranslationProviderTypeDeepL:
 		if cfg, err := provider.GetDeepLConfig(); err == nil {
@@ -763,6 +816,8 @@ func toProtoTranslationProvider(provider *model.TranslationProviderConfig, inclu
 				out.ApiKey = cfg.APIKey
 			}
 			proto.Config = &managev1.TranslationProvider_DeeplConfig{DeeplConfig: out}
+		} else {
+			slog.ErrorContext(context.Background(), "Operation failed", "domain", "translation", "event", "translation.provider.config_decode_failed", "outcome", "failed", failurecause.Attr(err), "provider_id", provider.ID)
 		}
 	}
 	return proto

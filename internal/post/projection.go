@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -11,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -24,7 +26,19 @@ import (
 func (s *PostService) ListMyPosts(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMyPostsRequest],
-) (*connect.Response[managev1.ListMyPostsResponse], error) {
+) (_ *connect.Response[managev1.ListMyPostsResponse], returnErr error) {
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+		level := slog.LevelWarn
+		switch connect.CodeOf(returnErr) {
+		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListMyPosts", "outcome", "failed", failurecause.Attr(returnErr))
+	}()
+
 	var posts []model.Post
 	var total int64
 
@@ -364,10 +378,12 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadCurrentPostAuthorities", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadCurrentPostAuthorities", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.AuthenticationRequired()
 	}
 	wanted := make(map[string]struct{}, len(postIDs))
@@ -393,6 +409,7 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 	for _, item := range lookups {
 		ids, err := s.spiceDB.LookupResources(ctx, item.lookup, actor)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadCurrentPostAuthorities", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.DependencyUnavailable("SpiceDB")
 		}
 		for _, id := range ids {
@@ -421,6 +438,7 @@ func lookupPostResources(
 	for _, lookup := range lookups {
 		ids, err := spiceDB.LookupResources(ctx, lookup, actor)
 		if err != nil {
+			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.lookupPostResources", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.DependencyUnavailable("SpiceDB")
 		}
 		for _, id := range ids {

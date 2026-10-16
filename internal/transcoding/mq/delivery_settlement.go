@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
@@ -81,7 +83,9 @@ func (d *deliverySettlement) enqueueResultAndComplete(
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				slog.ErrorContext(ctx, "Failed to rollback transcode settlement", failurecause.Attr(err), "queue", d.queue, "message_id", d.messageID, "transport_id", d.transportID)
+			}
 		}
 	}()
 	if err := enqueue(ctx, tx); err != nil {

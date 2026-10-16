@@ -4,6 +4,9 @@ package mediaruntime
 import (
 	"context"
 	"fmt"
+	"log/slog"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // Starter starts a long-running service component.
@@ -76,8 +79,11 @@ func CloseAll(closers []Closer) error {
 		if closers[index] == nil {
 			continue
 		}
-		if err := closers[index].Close(); err != nil && firstErr == nil {
-			firstErr = err
+		if err := closers[index].Close(); err != nil {
+			slog.ErrorContext(context.Background(), "Failed to close media component", failurecause.Attr(err), "component_type", fmt.Sprintf("%T", closers[index]))
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 	return firstErr

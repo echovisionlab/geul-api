@@ -1,11 +1,14 @@
 package emailauthoring
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -148,6 +151,14 @@ func (s *EmailLayoutAIDocumentService) Load(
 		state, err = s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, "SHARE")
 		return err
 	})
+	if err != nil {
+		level := slog.LevelWarn
+		switch connect.CodeOf(err) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "AI document load failed", "domain", "emailauthoring", "event", "emailauthoring.document_load_failed", "outcome", "failed", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
+	}
 	return state, err
 }
 
@@ -229,8 +240,20 @@ func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 	if err != nil {
 		var compilerErr *emailLayoutAIDocumentCompilerError
 		if errors.As(err, &compilerErr) {
+			slog.WarnContext(ctx, "AI document compilation rejected", "domain", "emailauthoring", "event", "emailauthoring.document_rejected", "outcome", "blocked", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
 			return EmailLayoutAIDocumentMutationResult{}, compilerErr.cause
 		}
+		level := slog.LevelWarn
+		var conflict *EmailLayoutAIDocumentRevisionConflictError
+		var stale *contentblock.StaleRevisionError
+		var target *translation.TargetRevisionConflict
+		if !errors.As(err, &conflict) && !errors.As(err, &stale) && !errors.As(err, &target) && !errors.Is(err, contentblock.ErrStaleRevision) {
+			switch connect.CodeOf(err) {
+			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+		}
+		slog.Log(ctx, level, "AI document mutation failed", "domain", "emailauthoring", "event", "emailauthoring.document_mutation_failed", "outcome", "failed", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
 		return EmailLayoutAIDocumentMutationResult{}, err
 	}
 	return output, nil
@@ -278,6 +301,9 @@ func (s *EmailLayoutAIDocumentService) applyAIDocumentMutationInTransaction(
 				}
 				expectedRevision, err := uuid.Parse(current.DocumentRevision)
 				if err != nil || expectedRevision == uuid.Nil {
+					if err != nil {
+						slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "emailauthoring", "event", "emailauthoring.document_invalid", "outcome", "failed", "operation", "parse_document_revision", failurecause.Attr(err))
+					}
 					return EmailLayoutAIDocumentMutationResult{}, errs.InternalMsg("Email Layout Content Document revision is invalid")
 				}
 				if _, err := s.layouts.contentBlocks.AdvanceRevision(
@@ -382,6 +408,7 @@ func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
 	sourceHTML := derefString(source.ContentHTML)
 	descriptors, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 		return EmailLayoutAIDocumentState{}, errs.FailedPrecondition("Email Layout source unit markers require backfill before editing")
 	}
 
@@ -402,6 +429,7 @@ func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
 		} else if localeEntry.ContentHTML != nil {
 			values, err = emailutil.ExtractLayoutStoredLocaleValues(*localeEntry.ContentHTML)
 			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
 				return EmailLayoutAIDocumentState{}, errs.FailedPrecondition("Email Layout target unit markers require backfill before editing")
 			}
 		}
@@ -603,10 +631,12 @@ func requireEmailLayoutAIDocumentAuthority(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
+		slog.WarnContext(ctx, "Operation rejected", "domain", "emailauthoring", "event", "emailauthoring.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
 		return uuid.Nil, errs.AuthenticationRequired()
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
 		return uuid.Nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {

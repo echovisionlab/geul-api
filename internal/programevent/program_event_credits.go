@@ -3,6 +3,7 @@ package programevent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -24,7 +26,18 @@ import (
 func (s *ProgramEventService) AddProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.AddProgramEventCreditRequest],
-) (*connect.Response[managev1.ProgramEventCredit], error) {
+) (_ *connect.Response[managev1.ProgramEventCredit], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "AddProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -82,7 +95,18 @@ func (s *ProgramEventService) AddProgramEventCredit(
 func (s *ProgramEventService) UpdateProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventCreditRequest],
-) (*connect.Response[managev1.ProgramEventCredit], error) {
+) (_ *connect.Response[managev1.ProgramEventCredit], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -141,7 +165,18 @@ func (s *ProgramEventService) UpdateProgramEventCredit(
 func (s *ProgramEventService) DeleteProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventCreditRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -183,7 +218,18 @@ func (s *ProgramEventService) DeleteProgramEventCredit(
 func (s *ProgramEventService) ReorderProgramEventCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderProgramEventCreditsRequest],
-) (*connect.Response[managev1.ReorderProgramEventCreditsResponse], error) {
+) (_ *connect.Response[managev1.ReorderProgramEventCreditsResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ReorderProgramEventCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -527,7 +573,10 @@ func (s *ProgramEventService) toProtoProgramEventCredit(ctx context.Context, row
 	if row != nil && row.MemberID != nil {
 		memberIDs = append(memberIDs, *row.MemberID)
 	}
-	summaries, _ := s.creditMembers.LoadCreditMemberSummaries(ctx, memberIDs)
+	summaries, err := s.creditMembers.LoadCreditMemberSummaries(ctx, memberIDs)
+	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_credit_member_summaries", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
+	}
 	return toProtoProgramEventCredit(ctx, s.db, s.runtime, row, summaries)
 }
 
@@ -561,6 +610,10 @@ func toProtoProgramEventCredit(ctx context.Context, db *gorm.DB, mediaAssets Med
 			if imageAsset := loadProgramEventArtistImageAsset(ctx, db, mediaAssets, artist.ID); imageAsset != nil {
 				credit.Artist.ImageAsset = imageAsset
 			}
+		} else {
+			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "toProtoProgramEventCredit", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
+			}
 		}
 	}
 
@@ -590,10 +643,14 @@ func loadProgramEventArtistImageAsset(ctx context.Context, db *gorm.DB, mediaAss
 		Order("artist_file.sort_order ASC").
 		Limit(1).
 		Scan(&result).Error; err != nil || result.FileID == "" {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventArtistImageAsset", failurecause.Attr(err), "artist_id", artistID)
+		}
 		return nil
 	}
 	asset, err := mediaAssets.ReadyPublicAssetRefForSourceFile(ctx, db, result.FileID, "image")
 	if err != nil {
+		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventArtistImageAsset", failurecause.Attr(err), "artist_id", artistID, "file_id", result.FileID)
 		return nil
 	}
 	return asset

@@ -29,7 +29,7 @@ func TestCredentialHookLogsSurviveProductionRedaction(t *testing.T) {
 		{"recovery policy", "recoverable_auth_method", "WARN", ErrAccountCredentialUnrecoverable, false},
 		{"email policy", "canonical_email_provider_required", "WARN", ErrMemberPrimaryEmailUnavailable, false},
 		{"committed mismatch", "credential_committed_mismatch", "ERROR", ErrAccountCredentialCommittedMismatch, true},
-		{"upstream failure", "credential_hook_failed", "ERROR", errors.New("secret-token person@example.test"), true},
+		{"upstream failure", "credential_hook_failed", "ERROR", errors.New("upstream unavailable token=secret-token person@example.test"), true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var output bytes.Buffer

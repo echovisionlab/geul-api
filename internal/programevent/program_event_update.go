@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -28,7 +30,18 @@ type programEventUpdate struct {
 func (s *ProgramEventService) UpdateProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventRequest],
-) (*connect.Response[managev1.UpdateProgramEventResponse], error) {
+) (_ *connect.Response[managev1.UpdateProgramEventResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	event, err := s.loadProgramEventForUpdate(ctx, req.Msg.Id)
 	if err != nil {
 		return nil, err
@@ -239,6 +252,7 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 		if metadataChanged {
 			if err := tx.Model(&current).Updates(update.fields).Error; err != nil {
 				if dberrors.IsUniqueViolation(err) && r.Slug != nil {
+					slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "applyProgramEventUpdate", failurecause.Attr(err))
 					return errs.SlugAlreadyExists("program event", r.GetSlug())
 				}
 				return errs.Internal(err)

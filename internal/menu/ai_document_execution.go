@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -176,6 +179,7 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 	}
 	authorizationAction, err := action.authorizationAction()
 	if err != nil {
+		slog.WarnContext(ctx, "content operation failed", "domain", "menu", "operation", "menu.ExecuteAIDocumentMutation", "outcome", "failed", failurecause.Attr(err))
 		return AIDocumentApplyResult{}, errs.InvalidArgument("action", "is not supported")
 	}
 	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
@@ -198,6 +202,7 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		if err := requireFreshMenuPermission(ctx, tx, s.permissions, menuID, authorizationAction); err != nil {
 			switch connect.CodeOf(err) {
 			case connect.CodeUnauthenticated, connect.CodePermissionDenied:
+				slog.WarnContext(ctx, "Menu AI document permission rejected", "domain", "menu", "operation", "authorize_ai_document_mutation", "outcome", "failed", "menu_id", menuID, failurecause.Attr(err))
 				return errs.NotFound("menu", menuID)
 			default:
 				return err

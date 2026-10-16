@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
@@ -90,14 +91,23 @@ func Init(ctx context.Context, serviceName sharedtelemetry.ServiceName) (*InitRe
 		LogHandler: logHandler,
 		Shutdown: func(ctx context.Context) error {
 			var firstErr error
-			if err := tp.Shutdown(ctx); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("trace provider shutdown: %w", err)
+			if err := tp.Shutdown(ctx); err != nil {
+				slog.ErrorContext(ctx, "Telemetry provider shutdown failed", "provider", "trace", "failure_cause", failurecause.Message(err))
+				if firstErr == nil {
+					firstErr = fmt.Errorf("trace provider shutdown: %w", err)
+				}
 			}
-			if err := mp.Shutdown(ctx); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("metric provider shutdown: %w", err)
+			if err := mp.Shutdown(ctx); err != nil {
+				slog.ErrorContext(ctx, "Telemetry provider shutdown failed", "provider", "metric", "failure_cause", failurecause.Message(err))
+				if firstErr == nil {
+					firstErr = fmt.Errorf("metric provider shutdown: %w", err)
+				}
 			}
-			if err := lp.Shutdown(ctx); err != nil && firstErr == nil {
-				firstErr = fmt.Errorf("log provider shutdown: %w", err)
+			if err := lp.Shutdown(ctx); err != nil {
+				slog.ErrorContext(ctx, "Telemetry provider shutdown failed", "provider", "log", "failure_cause", failurecause.Message(err))
+				if firstErr == nil {
+					firstErr = fmt.Errorf("log provider shutdown: %w", err)
+				}
 			}
 			return firstErr
 		},

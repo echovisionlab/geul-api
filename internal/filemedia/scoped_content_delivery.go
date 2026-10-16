@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -241,7 +242,11 @@ func (s *FileService) hydrateAuthorizedContentBlockMediaWithDB(
 	if can, err := policyv1.File.List(); err == nil {
 		if allowed, checkErr := checkSpiceDBCan(scopedCtx, principal, can, s.spiceDB); checkErr == nil {
 			hasLibraryDownload = allowed
+		} else {
+			slog.ErrorContext(scopedCtx, "Failed to check scoped file library access", failurecause.Attr(checkErr))
 		}
+	} else {
+		slog.ErrorContext(scopedCtx, "Failed to build scoped file library policy", failurecause.Attr(err))
 	}
 
 	fileIDs := sortedStringSet(requestedFileIDs)
@@ -404,7 +409,7 @@ func (s *FileService) buildLockedInlineDelivery(
 	scopedService := *s
 	scopedService.db = tx
 	if err := scopedService.populateFileProcessingStatus(ctx, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
-		slog.Warn("Failed to populate scoped featured-image processing status", "error", err, "fileId", file.ID)
+		slog.Error("Failed to populate scoped featured-image processing status", failurecause.Attr(err), "fileId", file.ID)
 	}
 	return delivery, nil
 }

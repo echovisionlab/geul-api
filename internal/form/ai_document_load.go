@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -75,6 +77,14 @@ func (s *InternalFormService) LoadAIDocumentState(ctx context.Context, formID, l
 		state = loaded.State
 		return loadErr
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		level := slog.LevelWarn
+		switch connect.CodeOf(err) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "AI document load failed", "domain", "form", "event", "form.document_load_failed", "outcome", "failed", "entity_id", formID, "locale", locale, failurecause.Attr(err))
+	}
 	return state, err
 }
 

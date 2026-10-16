@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,7 +23,18 @@ import (
 func (s *ProgramEventService) AddProgramEventMedia(
 	ctx context.Context,
 	req *connect.Request[managev1.AddProgramEventMediaRequest],
-) (*connect.Response[managev1.AddProgramEventMediaResponse], error) {
+) (_ *connect.Response[managev1.AddProgramEventMediaResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "AddProgramEventMedia", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var media model.ProgramEventMedia
 	var changed bool
 	var eventUpdatedAt time.Time
@@ -99,7 +112,18 @@ func (s *ProgramEventService) AddProgramEventMedia(
 func (s *ProgramEventService) DeleteProgramEventMedia(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventMediaRequest],
-) (*connect.Response[managev1.DeleteProgramEventMediaResponse], error) {
+) (_ *connect.Response[managev1.DeleteProgramEventMediaResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventMedia", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var eventUpdatedAt time.Time
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockProgramEventForMutation(ctx, tx, req.Msg.EventId); err != nil {
@@ -151,7 +175,18 @@ func (s *ProgramEventService) DeleteProgramEventMedia(
 func (s *ProgramEventService) ReorderProgramEventMedia(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderProgramEventMediaRequest],
-) (*connect.Response[managev1.ReorderProgramEventMediaResponse], error) {
+) (_ *connect.Response[managev1.ReorderProgramEventMediaResponse], terminalErr error) {
+	defer func() {
+		if terminalErr != nil {
+			level := slog.LevelWarn
+			switch connect.CodeOf(terminalErr) {
+			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ReorderProgramEventMedia", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
+		}
+	}()
+
 	var role string
 	var changed bool
 	var eventUpdatedAt time.Time

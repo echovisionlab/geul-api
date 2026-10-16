@@ -1,12 +1,15 @@
 package emailauthoring
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -126,6 +129,14 @@ func (s *AIDocumentService) Load(ctx context.Context, templateID, locale string)
 		)
 		return err
 	})
+	if err != nil {
+		level := slog.LevelWarn
+		switch connect.CodeOf(err) {
+		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "AI document load failed", "domain", "emailauthoring", "event", "emailauthoring.document_load_failed", "outcome", "failed", "entity_id", templateID, "locale", locale, failurecause.Attr(err))
+	}
 	return state, err
 }
 
@@ -222,8 +233,20 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	if err != nil {
 		var compilerErr *emailTemplateAIDocumentCompilerError
 		if errors.As(err, &compilerErr) {
+			slog.WarnContext(ctx, "AI document compilation rejected", "domain", "emailauthoring", "event", "emailauthoring.document_rejected", "outcome", "blocked", "entity_id", templateID, "locale", locale, failurecause.Attr(err))
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
+		level := slog.LevelWarn
+		var conflict *AIDocumentRevisionConflictError
+		var stale *contentblock.StaleRevisionError
+		var target *translation.TargetRevisionConflict
+		if !errors.As(err, &conflict) && !errors.As(err, &stale) && !errors.As(err, &target) && !errors.Is(err, contentblock.ErrStaleRevision) {
+			switch connect.CodeOf(err) {
+			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+				level = slog.LevelError
+			}
+		}
+		slog.Log(ctx, level, "AI document mutation failed", "domain", "emailauthoring", "event", "emailauthoring.document_mutation_failed", "outcome", "failed", "entity_id", templateID, "locale", locale, failurecause.Attr(err))
 		return AIDocumentMutationResult{}, mapEmailTemplateAIDocumentError(err, currentDocumentRevision)
 	}
 	return output, nil

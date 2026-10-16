@@ -2,11 +2,13 @@ package work
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -48,6 +50,10 @@ func normalizeInitialSourceLocale(ctx context.Context, db *gorm.DB, locale strin
 		if normalized := localization.NormalizeSupportedLocale(settings.DefaultLocale); normalized != nil {
 			return *normalized
 		}
+	} else {
+		if err != nil {
+			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "normalizeInitialSourceLocale", failurecause.Attr(err))
+		}
 	}
 	return translation.DefaultLocale
 }
@@ -61,6 +67,10 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 			Scan(&preferred).Error; err == nil && preferred != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferred); locale != nil {
 				return *locale
+			}
+		} else {
+			if err != nil {
+				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
 			}
 		}
 	}
