@@ -76,7 +76,9 @@ func StripHTML(source string) string {
 		if kind != xhtml.EndTagToken {
 			switch tag {
 			case "br":
-				out.WriteByte('\n')
+				// Protect authored breaks from layout-whitespace collapsing and
+				// edge trimming below. HTML text cannot contain a literal NUL.
+				out.WriteByte(0)
 			case "img":
 				out.WriteString(attribute("alt"))
 			case "a":
@@ -123,7 +125,12 @@ func StripHTML(source string) string {
 		}
 		result = append(result, line)
 	}
-	return strings.TrimSpace(strings.Join(result, "\n"))
+	text := strings.ReplaceAll(strings.TrimSpace(strings.Join(result, "\n")), "\x00", "\n")
+	lines = strings.Split(text, "\n")
+	for index := range lines {
+		lines[index] = strings.TrimSpace(lines[index])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func isSeparatorOnly(line string) bool {

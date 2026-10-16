@@ -452,8 +452,8 @@ func TestMaterializeEmailParagraphsAndHardBreaks(t *testing.T) {
 	require.NoError(t, err)
 	result, err := MaterializeLocalizedRichTextDocument(t.Context(), localized, nil)
 	require.NoError(t, err)
-	require.Equal(t, "<p><strong>First<br>line</strong><br>after break</p><p>Second paragraph</p>", result.HTML)
-	require.Equal(t, "First\r\nline\nafter break\nSecond paragraph", result.Text)
+	require.Equal(t, "<p><strong>First</strong><br><strong>line</strong><br>after break</p><p>Second paragraph</p>", result.HTML)
+	require.Equal(t, "First\nline\nafter break\nSecond paragraph", result.Text)
 }
 
 func TestMaterializeMermaidKeepsSourceAndEscapesAuthoredMarkup(t *testing.T) {

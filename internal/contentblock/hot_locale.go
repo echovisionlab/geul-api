@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -128,6 +129,10 @@ func (s *Store) normalizeHotLocaleInputs(batch Batch, sourceLocale string) ([]ho
 			localized, err := s.contract.ValidateLocale(batch.validatedProfile, update.ExpectedKind, update.LocalizedData)
 			if err != nil {
 				return nil, fmt.Errorf("%w: Block %s locale %s payload: %v", ErrInvalidMutation, update.BlockID, group.Locale, err)
+			}
+			localized, err = richtextinline.CanonicalizeStorageLocale(localized)
+			if err != nil {
+				return nil, fmt.Errorf("%w: Block %s locale %s inline line breaks: %v", ErrInvalidMutation, update.BlockID, group.Locale, err)
 			}
 			inputs = append(inputs, hotLocaleInput{
 				BlockID: update.BlockID, Locale: group.Locale, ExpectedKind: update.ExpectedKind, LocalizedData: localized,

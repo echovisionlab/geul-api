@@ -6,8 +6,10 @@ import (
 	"maps"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -183,6 +185,7 @@ func richTextSemanticSegments(block *contentv1.RichTextBlockLocale) []richTextSe
 }
 
 func richTextSemanticInline(content []*contentv1.RichTextInline, emailTemplate ...bool) (string, []XLIFFOriginalData, []XLIFFInline) {
+	content = richtextinline.Canonicalize(content)
 	data := make([]XLIFFOriginalData, 0)
 	nodes := make([]XLIFFInline, 0, len(content))
 	runIndex := 0
@@ -284,12 +287,16 @@ func richTextUnitID(prefix string, path []string) string {
 }
 
 func applyRichTextSemanticResult(content []*contentv1.RichTextInline, result UnitResult) ([]*contentv1.RichTextInline, error) {
+	content = richtextinline.Canonicalize(content)
 	sourceText, _, _ := richTextSemanticInline(content)
 	if !samePlaceholderMultiset(siteTokenPattern.FindAllString(sourceText, -1), siteTokenPattern.FindAllString(result.TranslatedText, -1)) {
 		return nil, fmt.Errorf("translation changed site token multiset")
 	}
 	if len(result.TargetInline) == 0 {
 		for _, item := range content {
+			if item.GetHardBreak() != nil || item.GetMathInline() != nil {
+				return nil, fmt.Errorf("typed Rich Text target inline structure is required for breaks and math")
+			}
 			if item.GetSiteVariable() != nil {
 				return nil, fmt.Errorf("siteVariable placeholders must be preserved")
 			}
@@ -309,13 +316,13 @@ func applyRichTextSemanticResult(content []*contentv1.RichTextInline, result Uni
 		cloned := cloneRichTextInlineSlice(content)
 		for _, item := range cloned {
 			if item.GetText() != nil {
-				item.GetText().Text = PreserveSourceEdgeWhitespace(item.GetText().GetText(), result.TranslatedText)
-				return cloned, nil
+				item.GetText().Text = preserveInlineTranslationWhitespace(item.GetText().GetText(), result.TranslatedText)
+				return richtextinline.Canonicalize(cloned), nil
 			}
 			if item.GetLink() != nil && len(item.GetLink().GetContent()) == 1 {
 				text := item.GetLink().GetContent()[0]
-				text.Text = PreserveSourceEdgeWhitespace(text.GetText(), result.TranslatedText)
-				return cloned, nil
+				text.Text = preserveInlineTranslationWhitespace(text.GetText(), result.TranslatedText)
+				return richtextinline.Canonicalize(cloned), nil
 			}
 		}
 	}
@@ -359,7 +366,7 @@ func rebuildRichTextInline(source []*contentv1.RichTextInline, result UnitResult
 	if visible != result.TranslatedText {
 		return nil, fmt.Errorf("typed Rich Text applied text differs from the validated target")
 	}
-	return rebuilt, nil
+	return richtextinline.Canonicalize(rebuilt), nil
 }
 
 func indexRichTextInlineAuthority(source []*contentv1.RichTextInline) richTextInlineAuthority {
@@ -408,7 +415,7 @@ func rebuildRichTextTopLevelNode(node XLIFFInline, originalData []XLIFFOriginalD
 				return nil, err
 			}
 			run := proto.Clone(sourceRun).(*contentv1.RichTextStyledText)
-			run.Text = PreserveSourceEdgeWhitespace(sourceRun.GetText(), text)
+			run.Text = preserveInlineTranslationWhitespace(sourceRun.GetText(), text)
 			return &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Text{Text: run}}, nil
 		}
 		if sourceLink, ok := authority.links[node.ID]; ok {
@@ -427,7 +434,7 @@ func rebuildRichTextTopLevelNode(node XLIFFInline, originalData []XLIFFOriginalD
 					return nil, err
 				}
 				run := proto.Clone(sourceRun).(*contentv1.RichTextStyledText)
-				run.Text = PreserveSourceEdgeWhitespace(sourceRun.GetText(), text)
+				run.Text = preserveInlineTranslationWhitespace(sourceRun.GetText(), text)
 				link.Content = append(link.Content, run)
 			}
 			return &contentv1.RichTextInline{Value: &contentv1.RichTextInline_Link{Link: link}}, nil
@@ -499,4 +506,13 @@ func walkMutableRichTextTranslationStrings(
 			visit(fieldPath, message, field)
 		}
 	}
+}
+
+// Translation whitespace cleanup must never trim authored inline line breaks.
+func preserveInlineTranslationWhitespace(source, translated string) string {
+	if !strings.ContainsAny(translated, "\r\n") {
+		return PreserveSourceEdgeWhitespace(source, translated)
+	}
+	trimmed := strings.TrimFunc(translated, func(r rune) bool { return r != '\r' && r != '\n' && unicode.IsSpace(r) })
+	return leadingWhitespace(source) + trimmed + trailingWhitespace(source)
 }

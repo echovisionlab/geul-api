@@ -1,6 +1,7 @@
 package email
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ func TestStripHTML(t *testing.T) {
 		{"document metadata", `<!doctype html><html><head><title>Subject</title><meta name="description" content="hidden"><style>p {color:red}</style></head><body><p>Body<script>alert(1)</script><style>hidden</style></p></body></html>`, "Body"},
 		{"links and mailto", `<p><a href="https://example.com/?a=1&amp;b=2">Read more</a> <a href="https://same.test">https://same.test</a></p><a href="mailto:help@example.com?subject=Help">Contact</a> <a href="mailto:me@example.com">me@example.com</a>`, "Read more (https://example.com/?a=1&b=2) https://same.test\n\nContact (help@example.com) me@example.com"},
 		{"images and entities", `<p><img alt="Brand &amp; Co"><img alt=""><img src="tracking.gif"> &copy; &#x1F600; &nbsp; A &amp;lt;B&amp;gt;</p>`, "Brand & Co © 😀 A &lt;B&gt;"},
-		{"spacing", "<p>  First   line\nsecond\t line </p>\n  <p><br><br><br> Last </p>", "First line\nsecond line\n\nLast"},
+		{"spacing", "<p>  First   line\nsecond\t line </p>\n  <p><br><br><br> Last </p>", "First line\nsecond line\n\n\n\n\nLast"},
 		{"layout blocks", `<header>Header</header><section><div>One</div><div>Two</div><table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table><ul><li>First</li><li>Second</li></ul></section><hr><footer>Footer</footer>`, "Header\n\nOne\nTwo\n\nA B\nC D\n\nFirst\nSecond\n\nFooter"},
 		{"empty", "", ""},
 		{"plain and escaped text", `Less &lt; than &amp; more`, "Less < than & more"},
@@ -30,5 +31,12 @@ func TestStripHTMLDropsInlineSeparatorLines(t *testing.T) {
 	want := "Privacy Policy (https://example.test/privacy)\nTerms (https://example.test/terms)"
 	if got != want {
 		t.Fatalf("StripHTML() = %q, want %q", got, want)
+	}
+}
+
+func TestStripHTMLPreservesEveryAuthoredBreakAtEdgesAndInSequence(t *testing.T) {
+	for _, text := range []string{"\na", "a\n", "\n\na\n\n\nb\n\n", "\n\n\n"} {
+		html := "<p>" + strings.ReplaceAll(text, "\n", "<br>") + "</p>"
+		require.Equal(t, text, StripHTML(html))
 	}
 }

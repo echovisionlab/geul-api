@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -191,7 +192,7 @@ func MaterializeLocalizedRichTextDocument(
 			} else {
 				htmlBuilder.WriteString(fragment.HTML)
 			}
-			if strings.TrimSpace(fragment.Text) != "" {
+			if strings.TrimSpace(fragment.Text) != "" || strings.Contains(fragment.Text, "\n") {
 				textParts = append(textParts, fragment.Text)
 			}
 			if err := renderChildren(blockID); err != nil {
@@ -550,7 +551,7 @@ func renderInline(content []*contentv1.RichTextInline) (MaterializedContent, err
 				escaped = "<strong>" + escaped + "</strong>"
 			}
 			htmlBuilder.WriteString(escaped)
-			textBuilder.WriteString(value.Text.GetText())
+			textBuilder.WriteString(richtextinline.NormalizeNewlines(value.Text.GetText()))
 		case *contentv1.RichTextInline_HardBreak:
 			htmlBuilder.WriteString("<br>")
 			textBuilder.WriteByte('\n')
