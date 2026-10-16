@@ -41,26 +41,11 @@ var translationJobSortConfig = queryutil.SortConfig{
 }
 
 type translationServicePublisher interface {
-	PublishTranslationGenerate(ctx context.Context, job *managev1.TranslationGenerateEvent) error
+	// The job and its durable queue command must become visible together.
+	EnqueueTranslationGenerateWithDB(context.Context, *gorm.DB, *managev1.TranslationGenerateEvent) error
 	PublishTranslationLifecycle(ctx context.Context, event *managev1.TranslationLifecycleEvent) error
 	// content.updated is scheduled only in the owning mutation transaction.
 	contentsignal.Publisher
-}
-
-type transactionalTranslationServicePublisher interface {
-	EnqueueTranslationGenerateWithDB(context.Context, *gorm.DB, *managev1.TranslationGenerateEvent) error
-}
-
-func enqueueTranslationGenerateWithDB(
-	ctx context.Context,
-	publisher translationServicePublisher,
-	tx *gorm.DB,
-	job *managev1.TranslationGenerateEvent,
-) error {
-	if transactionalPublisher, ok := publisher.(transactionalTranslationServicePublisher); ok {
-		return transactionalPublisher.EnqueueTranslationGenerateWithDB(ctx, tx, job)
-	}
-	return publisher.PublishTranslationGenerate(ctx, job)
 }
 
 type TranslationService struct {
