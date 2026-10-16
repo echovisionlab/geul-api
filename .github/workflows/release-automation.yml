@@ -6,7 +6,18 @@ on:
     paths:
       - ".github/workflows/release-automation.yml"
 
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+
 permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   access:
@@ -21,8 +32,11 @@ jobs:
         run: |
           python3 - <<'PY'
           import json
+          import os
           import subprocess
 
+          if not os.environ.get("GH_TOKEN"):
+              raise SystemExit("Existing PRIVATE_DEPS_TOKEN is not configured")
           response = subprocess.check_output(
               ["gh", "api", "--include", "repos/echovisionlab/deployment"], text=True
           ).replace("\r\n", "\n")
@@ -43,3 +57,39 @@ jobs:
                   raise SystemExit("Existing receiver is not active")
           print("Existing repository credential can access both active automation receivers.")
           PY
+
+  notify:
+    name: Notify existing release controllers
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+      RELEASE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Dispatch existing source-scoped receivers
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            published_sha="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.target_commitish')"
+            if [[ "${published_sha}" != "${RELEASE_HEAD_SHA}" ]]; then
+              echo "This successful source run did not publish a new release."
+              exit 0
+            fi
+          fi
+
+          gh workflow run release-pr-maintenance.yml \
+            --repo echovisionlab/deployment --ref main \
+            -f repository="${GITHUB_REPOSITORY}"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            gh workflow run image-discovery.yml \
+              --repo echovisionlab/deployment --ref main \
+              -f repository="${GITHUB_REPOSITORY}"
+          fi
