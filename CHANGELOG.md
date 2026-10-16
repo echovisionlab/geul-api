@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/echovisionlab/geul-api/compare/v1.8.0...v1.9.0) (2026-10-16)
+
+
+### Features
+
+* **opendiscogs:** verify member PATs for Oathkeeper ([#115](https://github.com/echovisionlab/geul-api/issues/115)) ([5e8946c](https://github.com/echovisionlab/geul-api/commit/5e8946caf95fa0da12540d7caebfdcdae7ec79ac))
+
 ## [1.8.0](https://github.com/echovisionlab/geul-api/compare/v1.7.1...v1.8.0) (2026-10-15)
 
 
