@@ -18,7 +18,7 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "17"
+const mcpServerImplementationVersion = "18"
 
 const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist to find UUIDs. Pass d unchanged; never substitute slugs or URLs. " +
 	"Use policy_list/get for policy UUIDs; read/edit with p=terms or p=privacy. policy_create creates an empty draft without email; edits send no email. policy_schedule and policy_activate_now start notice email delivery. policy_delete allows every lifecycle and retains delivery history. " +
@@ -26,9 +26,10 @@ const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=
 	"Read settings before focused management tools. Post/Page/Release unpublish returns to draft; administrator-managed archived Posts can also return to draft. Program Events archive. Track publication follows Release. Map Places/Themes have no publication state. " +
 	"Read release_relations_get or track_list before relation edits; preserve exact observed snapshots and supported order_intent. Resolve references through reference_search, label_list, event type/series lists, music genre/style/format lists, form_list, post_series_list, and map_theme_list/get. Theme snapshot updates require its read revision. " +
 	"Use program_event_media_list before media edits. Adding the same event/role/file upserts alt/caption; omitted values clear them. Use member_admin_list/get for audited administrator information and member_tag_list for tag names. " +
+	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; sender changes keep credentials and may send verification email. " +
 	"Use document_catalog for typed fields, block kinds, relations and File ownership. document_metadata_update edits titles, summaries, Post categories/tags and Page layout. Post settings/layout require configuration_revision. " +
 	"Use work_settings_get before updating Work metadata or clients; pass read values as observed_metadata or observed_client_ids. Use focused featured-image, participant, credit, version, slug, and File tools. " +
-	"Use file_upload for ChatGPT attachments, including independent File library uploads without a document. Retain correlation_id on retry; only the returned DSUB File UUID can be attached. file_list browses folders. Read deletion impacts before file_delete; accepted IDs mean deletion scheduled, and referenced Files are rejected. " +
+	"Use file_upload for ChatGPT attachments, including independent File library uploads without a document. Retain correlation_id on retry; only the returned File UUID can be attached. file_list browses folders. Read deletion impacts before file_delete; accepted IDs mean deletion scheduled, and referenced Files are rejected. " +
 	"Use document_file_add/replace/remove for document images and attachments; native File Blocks render image MIME. Use document_file_caption_update for localized captions. Removing a Block preserves File bytes. Page placements need a rich-text parent. " +
 	"Use document_file_download_policy_get before updates; copy audience and segment IDs into observed_policy.audience and observed_policy.audience_segment_ids. expected_file_id guards the exact attachment. " +
 	"For Track audio use file_transfer k=track_audio with track_id and current audio_original_file_id as expected_current_file_id; omit only if absent. Preserve returned handles and browser media bundles. Remote imports retain the same correlation_id on retries. " +
@@ -124,6 +125,8 @@ type contentMCPApplications struct {
 	mapThemes    mcpadapter.MapThemeManagement
 	menus        mcpadapter.MenuDiscovery
 	menuSettings mcpadapter.MenuLocationReader
+	siteSettings mcpadapter.SiteSettingsAdminApplication
+	mailAdapters mcpadapter.MailAdapterAdminApplication
 }
 
 func newAIDocumentMCPComposition(
@@ -272,6 +275,10 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP Member administrator tools: %w", err)
 	}
+	adminSettingsTools, err := mcpadapter.NewAdminSettingsTools(references.siteSettings, references.mailAdapters)
+	if err != nil {
+		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP administrator settings tools: %w", err)
+	}
 	relatedTools, err := mcpadapter.NewContentRelatedTools(posts, works, pages)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP related content tools: %w", err)
@@ -315,7 +322,7 @@ func newAIDocumentMCPComposition(
 	toolSet, err := mcpadapter.NewToolSet(
 		discoveryTools, menuTools, referenceTools, eventReferenceTools, musicReferenceTools, pageReferenceTools,
 		managementTools, policyTools, eventManagementTools, eventMediaTools, releaseManagementTools, releaseRelationTools,
-		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools,
+		trackManagementTools, mapPlaceManagementTools, mapThemeManagementTools, memberAdminTools, memberTagTools, adminSettingsTools,
 		relatedTools, documentTools, catalogTools, translationTools, fileTools, fileBlockTools, fileManagerTools,
 	)
 	if err != nil {

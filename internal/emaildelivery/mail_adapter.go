@@ -184,6 +184,14 @@ func (s *MailAdapterService) Create(
 func (s *MailAdapterService) Update(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMailAdapterRequest],
+) (*connect.Response[managev1.UpdateMailAdapterResponse], error) {
+	return s.update(ctx, req, nil)
+}
+
+func (s *MailAdapterService) update(
+	ctx context.Context,
+	req *connect.Request[managev1.UpdateMailAdapterRequest],
+	sender *MailAdapterSenderUpdate,
 ) (rpcResponse *connect.Response[managev1.UpdateMailAdapterResponse], rpcErr error) {
 	defer func() {
 		if rpcErr == nil {
@@ -244,21 +252,38 @@ func (s *MailAdapterService) Update(
 			}
 		}
 
-		configChanged := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil
+		senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
+		configChanged := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
 		var requestedConfig model.MailAdapterConfig
 		if configChanged {
-			config, err := s.buildConfig(effectiveType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
-			if err != nil {
-				return errs.InvalidArgumentMsg(err.Error())
+			var config structured.Value
+			if senderChanged {
+				requestedConfig, config, err = s.senderConfig(&adapter, *sender)
+				if err != nil {
+					return err
+				}
+			} else {
+				config, err = s.buildConfig(effectiveType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
+				if err != nil {
+					return errs.InvalidArgumentMsg(err.Error())
+				}
+				candidate := adapter
+				if err := candidate.SetConfig(config); err != nil {
+					return errs.Internal(fmt.Errorf("failed to set config: %w", err))
+				}
+				requestedConfig = candidate.Config
 			}
-			candidate := adapter
-			if err := candidate.SetConfig(config); err != nil {
-				return errs.Internal(fmt.Errorf("failed to set config: %w", err))
+			if !senderChanged || !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
+				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
+					if senderChanged {
+						// Provider diagnostics can contain credentials. Keep their cause
+						// in redacted logs, never in an actionable MCP error.
+						slog.ErrorContext(ctx, "mail adapter sender verification failed", "adapter_id", adapter.ID, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
+						return errs.InvalidArgument("config", "sender configuration verification failed; check provider configuration and sender verification")
+					}
+					return errs.InvalidArgument("config", err.Error())
+				}
 			}
-			if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
-				return errs.InvalidArgument("config", err.Error())
-			}
-			requestedConfig = candidate.Config
 		}
 
 		updates := structured.Fields{}
@@ -306,11 +331,17 @@ func (s *MailAdapterService) Update(
 		})
 	})
 	if err != nil {
+		if sender != nil {
+			slog.ErrorContext(ctx, "mail adapter sender update failed", "adapter_id", req.Msg.Id, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
+		}
 		if connectErr, ok := err.(*connect.Error); ok {
 			return nil, connectErr
 		}
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("mail adapter", req.Msg.Id)
+		}
+		if sender != nil {
+			return nil, errs.InternalMsg("mail adapter sender update failed")
 		}
 		return nil, errs.Internal(err)
 	}
