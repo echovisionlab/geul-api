@@ -68,7 +68,7 @@ func (s *AccountLifecycleService) RequestDeletion(
 			privateBody = upstreamError.Body
 		}
 		slog.ErrorContext(ctx, "Resolve account deletion email failed", "identity_id", identityID, failurecause.Attr(err, privateBody))
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(accountIdentityLookupError{cause: err})
 	}
 	if accountEmail == nil {
 		return nil, errs.FailedPrecondition("a verified Member primary email is required")

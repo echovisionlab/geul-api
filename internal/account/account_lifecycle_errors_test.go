@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -104,4 +105,39 @@ func TestRequestDeletionPreservesRecipientAndSnapshotFailures(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+type deletionRecipientIdentityFailure struct {
+	accountSecurityIdentityManager
+	calls     int
+	lookupErr error
+}
+
+func (m *deletionRecipientIdentityFailure) GetIdentityWithIncludeCredential(ctx context.Context, identityID, credential string) (*auth.Identity, error) {
+	m.calls++
+	if m.calls > 2 {
+		return nil, m.lookupErr
+	}
+	return m.accountSecurityIdentityManager.GetIdentityWithIncludeCredential(ctx, identityID, credential)
+}
+
+func TestRequestDeletionDoesNotExposeRecipientIdentityFailureBody(t *testing.T) {
+	db, mock := newAccountErrorTestDB(t)
+	memberID := "11111111-1111-4111-8111-111111111111"
+	identityID := "22222222-2222-4222-8222-222222222222"
+	mock.ExpectQuery(`SELECT member.id::text AS member_id`).WillReturnRows(sqlmock.NewRows([]string{"member_id", "identity_id", "onboarded"}).AddRow(memberID, identityID, true))
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+	identity := &auth.Identity{ID: identityID, ExternalID: memberID, State: auth.KratosStateActive,
+		Traits: structured.Fields{"email": "member@example.test"}, Credentials: map[string]auth.Credential{"code": {Type: "code", Identifiers: []string{"member@example.test"}}}}
+	lookupErr := &auth.KratosHTTPError{StatusCode: http.StatusServiceUnavailable, Body: "private-upstream-response session_token=private-token"}
+	manager := &deletionRecipientIdentityFailure{accountSecurityIdentityManager: accountSecurityIdentityManager{identity: identity}, lookupErr: lookupErr}
+	service := &AccountLifecycleService{db: db, kratosClient: manager, memberEmails: deletionPrimaryEmailProjection{}, memberDeletion: deletionSnapshotErrorLifecycle{}}
+	result, err := service.RequestDeletion(t.Context(), memberID, identityID)
+	require.Nil(t, result)
+	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.ErrorIs(t, err, lookupErr)
+	require.NotContains(t, err.Error(), "private-upstream-response")
+	require.NotContains(t, err.Error(), "private-token")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
