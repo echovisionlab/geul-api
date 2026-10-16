@@ -16,6 +16,8 @@ import (
 )
 
 const (
+	// Deprecated: legacy Worker verification path. Use OathkeeperPath on the
+	// private listener for OpenDiscogs after the Worker is retired.
 	Path                    = "/internal/auth/personal-access-token/verify"
 	GatewayUsername         = "pat-verifier"
 	APIKeyHeader            = "X-API-Key"
@@ -41,6 +43,8 @@ type principalResponse struct {
 	MemberID pat.MemberID `json:"member_id"`
 }
 
+// New constructs the legacy dedicated-credential verifier.
+// Deprecated: use NewOathkeeper for the replacement OpenDiscogs ingress.
 func New(secret string, authenticator Authenticator) (*Handler, error) {
 	if len(secret) < minimumSecretLength || len(secret) > maximumSecretLength || authenticator == nil {
 		return nil, errors.New("PAT verification requires a 32–256 byte gateway secret and an authenticator")

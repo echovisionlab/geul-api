@@ -101,6 +101,7 @@ func run() int {
 	server := newApplicationHTTPServer(mux, cfg)
 	mcpPrivateServer, err := newMCPPrivateHTTPServer(mcpPrivateHandlers{
 		authorAdmission: registered.mcpAuthorAdmissionHandler,
+		oathkeeperPAT:   registered.oathkeeperPATHandler,
 	}, cfg)
 	if err != nil {
 		return logStartupFailure("initialize MCP private HTTP server", err)

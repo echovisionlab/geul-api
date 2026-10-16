@@ -14,6 +14,8 @@ import (
 )
 
 type Config struct {
+	// Deprecated: legacy Worker verifier credential; retained for migration.
+	// Oathkeeper uses the existing internal-service credential on the private port.
 	PATVerificationSecret string      `envconfig:"PAT_VERIFICATION_SECRET"`
 	Media                 MediaConfig `envconfig:""`
 	Port                  int         `envconfig:"PORT" required:"true"`

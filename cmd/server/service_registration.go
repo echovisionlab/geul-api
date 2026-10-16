@@ -32,6 +32,7 @@ import (
 	ogadapter "github.com/echovisionlab/geul-api/internal/adapters/og"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	pageruntime "github.com/echovisionlab/geul-api/internal/adapters/page/runtime"
+	"github.com/echovisionlab/geul-api/internal/adapters/patauth"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
@@ -113,6 +114,7 @@ type registeredServices struct {
 	accountEmailChangeLifecycle *account.AccountEmailChangeLifecycle
 	accountLifecycle            *account.AccountLifecycleService
 	mcpAuthorAdmissionHandler   http.Handler
+	oathkeeperPATHandler        http.Handler
 }
 
 type personalAccessTokenComposition struct {
@@ -321,6 +323,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	if err := registerPATVerification(mux, cfg.PATVerificationSecret, personalAccessTokenHandlers.tokens); err != nil {
 		return registeredServices{}, fmt.Errorf("initialize PAT verification: %w", err)
+	}
+	oathkeeperPATHandler, err := patauth.NewOathkeeper(cfg.TokenSigningSecret, cfg.InternalServiceHeaderName, personalAccessTokenHandlers.tokens)
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Oathkeeper PAT verification: %w", err)
 	}
 	accountService := personalAccessTokenHandlers.accountHandler
 	mcpAuthorAdmissionHandler, err := authentication.NewMCPGatewayAuthorAdmissionHandler(
@@ -899,5 +905,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
 		accountLifecycle:            accountLifecycle,
 		mcpAuthorAdmissionHandler:   mcpAuthorAdmissionHandler,
+		oathkeeperPATHandler:        oathkeeperPATHandler,
 	}, nil
 }

@@ -357,7 +357,9 @@ Personal access tokens use only `pat_<selector>.<secret>` for issuance,
 regeneration and verification. The database stores the selector and SHA-256
 secret verifier.
 
-Set the optional `PAT_VERIFICATION_SECRET` (32–256 bytes) to enable
+The legacy Worker verification endpoint and its dedicated credential are
+deprecated and retained for migration. Set the optional
+`PAT_VERIFICATION_SECRET` (32–256 bytes) to enable
 `POST /internal/auth/personal-access-token/verify` on the main listener. An
 unset secret leaves the route unregistered. This dedicated credential is
 independent of internal RPC, session, OAuth and media signing secrets. Keep
@@ -379,6 +381,84 @@ Invalid credentials return 401, invalid transport 400, saturation 503 with
 At most eight verification calls run concurrently, each with a two-second
 deadline. Raw bearers, verifiers and incoming identity headers are neither
 returned nor logged. Do not cache verification responses.
+
+### Oathkeeper PAT session check
+
+`GET /internal/oathkeeper/pat` is registered only on the existing private
+gateway listener, `MCP_PRIVATE_PORT` (default **8001**). It is absent from the
+main `PORT` listener (typically 8000), even when legacy verification is enabled.
+Oathkeeper sends the original `Authorization: Bearer pat_<selector>.<secret>`
+and the existing internal-service credential: `TOKEN_SIGNING_SECRET` in the
+header named by `INTERNAL_SERVICE_HEADER_NAME` (default `X-Internal-Service`).
+The caller credential uses the same constant-time comparison as internal RPCs;
+PAT verifiers use the existing constant-time SHA-256 comparison.
+
+Success returns `200` JSON:
+
+```json
+{"subject":"<member id>","extra":{"member_id":"<member id>","token_id":"<selector>"}}
+```
+
+Missing, malformed or invalid credentials return `401 {"error":"Unauthorized"}`.
+Dependency failures or invalid stored principals return
+`503 {"error":"Service Unavailable"}`. Saturation also returns 503 with
+`Retry-After: 1`; wrong methods return JSON 405 with `Allow: GET`. Other paths
+are unregistered. Checks require an empty
+body and no query parameters. Every handler response sets `Cache-Control:
+no-store`. There is no authentication cache, and each call has the existing
+two-second deadline and eight-call concurrency bound. Failures use
+`failurecause.Attr`, with the PAT and internal credential supplied as private
+values rather than log fields.
+
+Both verification endpoints share the Member PAT service. Its final current
+verifier check now also requires a live, onboarded Member linked in both
+directions to an active, unbanned Kratos Identity. This eligibility check also
+applies to the retained legacy endpoint. Regeneration/deletion invalidates the
+old bearer immediately for subsequent checks. The current PAT model has no
+expiry timestamp: these credentials are non-expiring until replaced/deleted.
+No schema change is introduced.
+
+Deployment must allow the Oathkeeper workload to reach the API's private port
+through the internal service/NetworkPolicy. Keep that port internal, with no
+HAProxy/Tunnel/public Oathkeeper rule exposing this callback. Configure the
+OpenDiscogs access rule to use only `bearer_token` for authentication and route
+its upstream to `open-discogs-api`. Keep the internal caller header out of
+client-controlled forwarding. The authenticator's `additional_headers` injects
+the deployment-owned value only into the private check request.
+
+Example global authenticator configuration (merge into the existing config;
+render the actual internal service URL, port, header name and secret from the
+deployment secret store, without checking the rendered credential into Git):
+
+```yaml
+authenticators:
+  bearer_token:
+    enabled: true
+    config:
+      check_session_url: http://geul-api:8001/internal/oathkeeper/pat
+      token_from:
+        header: Authorization
+      prefix: pat_
+      preserve_path: true
+      preserve_query: true
+      force_method: GET
+      forward_http_headers: [Authorization]
+      additional_headers:
+        X-Internal-Service: "<rendered TOKEN_SIGNING_SECRET>"
+      subject_from: subject
+      extra_from: extra
+```
+
+On the OpenDiscogs access rule, set `authenticators: [{handler: bearer_token}]`
+without anonymous or cookie-session fallback. `subject_from: subject` is
+explicit because Oathkeeper v26.2.0 otherwise defaults bearer-token subjects to
+`sub`. The prefix filters credentials before the API performs full validation.
+The path, query, method and header options follow the
+[Ory authenticator contract](https://www.ory.com/docs/oathkeeper/pipeline/authn)
+and [v26.2.0 implementation](https://github.com/ory/oathkeeper/blob/v26.2.0/pipeline/authn/authenticator_bearer_token.go).
+Do not add a cache around the callback. Once the Worker has been retired and
+no other callers need the legacy endpoint, unset `PAT_VERIFICATION_SECRET`;
+its endpoint and credential remain in code for this migration.
 
 ### HTTP admission responses
 
