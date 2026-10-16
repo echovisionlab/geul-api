@@ -76,11 +76,14 @@ function renderTitle(
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        boxSizing: 'border-box',
         padding: `${titleConfig.padding.top}px ${titleConfig.padding.right}px ${titleConfig.padding.bottom}px ${titleConfig.padding.left}px`,
       }}
     >
       <div
         style={{
+          width: '100%',
+          minWidth: 0,
           fontSize: `${fontSize}px`,
           fontWeight: titleConfig.fontWeight,
           color: titleConfig.color,

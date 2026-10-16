@@ -93,6 +93,82 @@ describe('OG templates', () => {
     expect(output).toContain('40px');
   });
 
+  it('shows the featured image behind its contrast gradient', async () => {
+    const image = await sharp({
+      create: { width: 1200, height: 630, channels: 4, background: '#6b3867' },
+    }).png().toBuffer();
+    const svg = await satori(
+      ContentOgTemplate({
+        title: '',
+        settings: {
+          siteTitle: '',
+          primaryColor: '#b02d23',
+          featuredImageDataUrl: `data:image/png;base64,${image.toString('base64')}`,
+        },
+      }),
+      {
+        width: 1200,
+        height: 630,
+        fonts: [{
+          name: 'Noto Sans',
+          weight: 400,
+          style: 'normal',
+          data: readFileSync('assets/fonts/NotoSans-Regular.ttf'),
+        }],
+      }
+    );
+    const { data, info } = await sharp(Buffer.from(svg)).raw().toBuffer({ resolveWithObject: true });
+    const topRed = data[0]!;
+    const bottomRed = data[(info.height - 1) * info.width * info.channels]!;
+    expect(topRed).toBeGreaterThan(70);
+    expect(topRed).toBeLessThan(107);
+    expect(bottomRed).toBeLessThan(40);
+    expect(topRed).toBeGreaterThan(bottomRed);
+  });
+
+  it('keeps a wrapped title inside the configured padding and centered on the canvas', async () => {
+    const svg = await satori(
+      ContentOgTemplate({
+        title: 'A listening room for independent music',
+        settings: { siteTitle: '', primaryColor: '#b02d23' },
+      }),
+      {
+        width: 1200,
+        height: 630,
+        fonts: [{
+          name: 'Noto Sans',
+          weight: 700,
+          style: 'normal',
+          data: readFileSync('assets/fonts/NotoSans-Bold.ttf'),
+        }],
+      }
+    );
+    const { data, info } = await sharp(Buffer.from(svg)).raw().toBuffer({ resolveWithObject: true });
+    let titlePixelCount = 0;
+    let left = info.width;
+    let right = 0;
+    let top = info.height;
+    let bottom = 0;
+    for (let y = 0; y < info.height; y++) {
+      for (let x = 0; x < info.width; x++) {
+        const offset = (y * info.width + x) * info.channels;
+        if (data[offset]! > 200 && data[offset + 1]! > 200 && data[offset + 2]! > 200) {
+          titlePixelCount++;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      }
+    }
+    expect(titlePixelCount).toBeGreaterThan(0);
+    expect(left).toBeGreaterThanOrEqual(DEFAULT_CONTENT_OG_CONFIG.title.padding.left);
+    expect(right).toBeLessThan(1200 - DEFAULT_CONTENT_OG_CONFIG.title.padding.right);
+    expect(bottom - top).toBeGreaterThan(DEFAULT_CONTENT_OG_CONFIG.title.fontSizeLarge);
+    expect(Math.abs((left + right) / 2 - 600)).toBeLessThan(10);
+    expect(Math.abs((top + bottom) / 2 - 315)).toBeLessThan(15);
+  });
+
   it('renders homepage with default site title and with custom image assets', () => {
     const fallback = serialized(
       HomeOgTemplate({ settings: { siteTitle: 'Example Studio', primaryColor: '#b02d23' } })
