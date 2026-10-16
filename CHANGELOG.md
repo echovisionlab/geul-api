@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.10.0](https://github.com/echovisionlab/geul-api/compare/v1.9.1...v1.10.0) (2026-10-16)
+
+
+### Features
+
+* **mcp:** manage site settings and mail adapter senders ([#121](https://github.com/echovisionlab/geul-api/issues/121)) ([a4145ef](https://github.com/echovisionlab/geul-api/commit/a4145ef3e6473b5d9104b140b2ed027d9a986d43))
+* **site-variables:** migrate content to site variables and fix email delivery ([#119](https://github.com/echovisionlab/geul-api/issues/119)) ([c281c0d](https://github.com/echovisionlab/geul-api/commit/c281c0df0638643a3ffaa7e7d63cd628a1c67f28))
+
+
+### Bug Fixes
+
+* **logging:** keep sanitized failure causes in production logs ([#120](https://github.com/echovisionlab/geul-api/issues/120)) ([7e56ffd](https://github.com/echovisionlab/geul-api/commit/7e56ffd7a9f30fe6735e01f0a0dbc15dbc54ad13))
+
 ## [1.9.1](https://github.com/echovisionlab/geul-api/compare/v1.9.0...v1.9.1) (2026-10-16)
 
 
