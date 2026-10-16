@@ -10,6 +10,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
 )
 
 type stubTranslationServicePublisher struct {
@@ -22,8 +23,9 @@ type stubTranslationServicePublisher struct {
 	contentErr      error
 }
 
-func (s *stubTranslationServicePublisher) PublishTranslationGenerate(
+func (s *stubTranslationServicePublisher) EnqueueTranslationGenerateWithDB(
 	_ context.Context,
+	_ *gorm.DB,
 	event *managev1.TranslationGenerateEvent,
 ) error {
 	s.mu.Lock()

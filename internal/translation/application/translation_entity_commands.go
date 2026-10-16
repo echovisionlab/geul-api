@@ -255,9 +255,8 @@ func (s *TranslationService) createRegeneratedTranslationJobs(
 				continue
 			}
 			result.createdJobs = append(result.createdJobs, job)
-			if err := enqueueTranslationGenerateWithDB(
+			if err := s.publisher.EnqueueTranslationGenerateWithDB(
 				ctx,
-				s.publisher,
 				tx,
 				&managev1.TranslationGenerateEvent{JobId: job.ID},
 			); err != nil {

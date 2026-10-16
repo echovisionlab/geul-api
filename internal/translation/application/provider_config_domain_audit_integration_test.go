@@ -366,8 +366,9 @@ func (translationProviderOGRenderConfig) Snapshot(
 
 type translationProviderPublisherStub struct{}
 
-func (*translationProviderPublisherStub) PublishTranslationGenerate(
+func (*translationProviderPublisherStub) EnqueueTranslationGenerateWithDB(
 	context.Context,
+	*gorm.DB,
 	*managev1.TranslationGenerateEvent,
 ) error {
 	return nil
