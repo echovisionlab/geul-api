@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/echovisionlab/geul-api/compare/v1.9.0...v1.9.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **docker:** authenticate private npm installs through pnpm config ([#117](https://github.com/echovisionlab/geul-api/issues/117)) ([cdb7908](https://github.com/echovisionlab/geul-api/commit/cdb79087e44e345ebb0626d8108bf1e325f3465f))
+
 ## [1.9.0](https://github.com/echovisionlab/geul-api/compare/v1.8.0...v1.9.0) (2026-10-16)
 
 
