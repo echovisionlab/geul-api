@@ -93,6 +93,39 @@ describe('OG templates', () => {
     expect(output).toContain('40px');
   });
 
+  it('shows the featured image behind its contrast gradient', async () => {
+    const image = await sharp({
+      create: { width: 1200, height: 630, channels: 4, background: '#6b3867' },
+    }).png().toBuffer();
+    const svg = await satori(
+      ContentOgTemplate({
+        title: '',
+        settings: {
+          siteTitle: '',
+          primaryColor: '#b02d23',
+          featuredImageDataUrl: `data:image/png;base64,${image.toString('base64')}`,
+        },
+      }),
+      {
+        width: 1200,
+        height: 630,
+        fonts: [{
+          name: 'Noto Sans',
+          weight: 400,
+          style: 'normal',
+          data: readFileSync('assets/fonts/NotoSans-Regular.ttf'),
+        }],
+      }
+    );
+    const { data, info } = await sharp(Buffer.from(svg)).raw().toBuffer({ resolveWithObject: true });
+    const topRed = data[0]!;
+    const bottomRed = data[(info.height - 1) * info.width * info.channels]!;
+    expect(topRed).toBeGreaterThan(70);
+    expect(topRed).toBeLessThan(107);
+    expect(bottomRed).toBeLessThan(40);
+    expect(topRed).toBeGreaterThan(bottomRed);
+  });
+
   it('keeps a wrapped title inside the configured padding and centered on the canvas', async () => {
     const svg = await satori(
       ContentOgTemplate({
