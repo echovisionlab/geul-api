@@ -528,7 +528,11 @@ func renderInline(content []*contentv1.RichTextInline) (MaterializedContent, err
 	for _, inline := range content {
 		switch value := inline.GetValue().(type) {
 		case *contentv1.RichTextInline_Text:
+			// Text nodes can contain authored newlines as well as explicit HardBreaks.
+			// Email clients collapse literal HTML whitespace, unlike the editor.
 			escaped := html.EscapeString(value.Text.GetText())
+			escaped = strings.ReplaceAll(strings.ReplaceAll(escaped, "\r\n", "\n"), "\r", "\n")
+			escaped = strings.ReplaceAll(escaped, "\n", "<br>")
 			style := value.Text.GetStyles()
 			if style.GetCode() {
 				escaped = "<code>" + escaped + "</code>"

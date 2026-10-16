@@ -203,7 +203,7 @@ func TestBuildTranslationCandidateContentPreservesEmailLayoutWrapperMarkup(t *te
 	assert.Contains(t, *candidate.ContentHTML, `href="{{unsubscribe_link}}"`)
 	assert.Contains(t, *candidate.ContentHTML, `<!--geul-unit:text:`)
 	assert.Contains(t, *candidate.ContentHTML, `<!--geul-value:text:`)
-	assert.Equal(t, "Unsubscribe", *candidate.ContentText)
+	assert.Equal(t, "{{content}}\n\nUnsubscribe ({{unsubscribe_link}})", *candidate.ContentText)
 
 	rendered, err := email.ResolveLayoutLocaleMarkup(sourceHTML, candidate.ContentHTML)
 	require.NoError(t, err)

@@ -135,6 +135,34 @@ func TestBuildEmailTemplateSendTestJobBuildsDirectTemplatePayload(t *testing.T) 
 	require.NotEqual(t, job.GetMessageId(), secondJob.GetMessageId(), "each explicit test send needs a fresh command identity")
 }
 
+func TestEmailTemplateTestSendUsesPreviewSamplesForEverySystemEvent(t *testing.T) {
+	job, err := buildEmailTemplateSendTestJob(emailTemplateRuntimeFixture{}, uuid.NewString(), "admin@example.com", nil, "admin-1")
+	require.NoError(t, err)
+	previewData := emailTemplateSampleData()
+	for key, value := range previewData {
+		if key == "recipient_email" || key == "identity_email" || key == "to" {
+			value = "admin@example.com"
+		}
+		assert.Equal(t, value, job.TemplateData[key], key)
+	}
+	for _, event := range automaticEmailEventKeys() {
+		t.Run(event.String(), func(t *testing.T) {
+			for _, key := range verifiedSystemEmailTemplateVariableNames(event) {
+				if key == "site_name" || key == "site_origin" || key == "logo_email_url" {
+					continue // Site branding is resolved by BuildEmailRenderData at delivery.
+				}
+				_, err := email.RenderSubjectVarsStrict("{{"+key+"}}", job.TemplateData)
+				require.NoError(t, err)
+			}
+		})
+	}
+	subject, err := email.RenderSubjectVarsStrict("Login code: {{login_code}}", job.TemplateData)
+	require.NoError(t, err)
+	assert.Equal(t, "Login code: 789012", subject)
+	job.TemplateData["login_code"] = "changed"
+	assert.Equal(t, "789012", emailTemplateSampleData()["login_code"])
+}
+
 func TestResolveEmailTemplateSendTestLocaleNormalizesOverride(t *testing.T) {
 	locale := " pt "
 

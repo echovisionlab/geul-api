@@ -140,7 +140,7 @@ func renderStoredTemplate(
 
 	html := ""
 	if localizedTemplate.ContentHTML != nil {
-		html = *localizedTemplate.ContentHTML
+		html = NormalizeEmailContentHTML(*localizedTemplate.ContentHTML)
 	}
 
 	// Add subject to data for layout rendering
@@ -200,7 +200,7 @@ func RenderCampaignSnapshotForLocale(
 	if err != nil {
 		return nil, fmt.Errorf("render delivery snapshot subject: %w", err)
 	}
-	html := content.ContentHTML
+	html := NormalizeEmailContentHTML(content.ContentHTML)
 
 	data["subject"] = subject
 
@@ -483,7 +483,7 @@ func renderVarsStrict(
 	return result, nil
 }
 
-// Pre-compiled regex patterns for StripHTML
+// Pre-compiled template normalization patterns
 var (
 	renderVarRe                = regexp.MustCompile(`{{\s*[^\s{}]+\s*}}`)
 	normalizedPlaceholderRe    = regexp.MustCompile(`\{\s*\{\s*([^\s{}]+)\s*\}\s*\}`)
@@ -493,10 +493,6 @@ var (
 	emptyParagraphRe           = regexp.MustCompile(`(?is)<p([^>]*)>\s*</p>`)
 	doubleQuoteDuplicateHrefRe = regexp.MustCompile(`(?i)\bhref="(https?:\/\/)(https?:\/\/[^"<>]+)"`)
 	singleQuoteDuplicateHrefRe = regexp.MustCompile(`(?i)\bhref='(https?:\/\/)(https?:\/\/[^'<>]+)'`)
-	stripScriptRe              = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-	stripStyleRe               = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-	stripTagRe                 = regexp.MustCompile(`<[^>]*>`)
-	stripWhitespaceRe          = regexp.MustCompile(`\s+`)
 )
 
 func NormalizeTemplatePlaceholders(value string) string {
@@ -564,27 +560,4 @@ func normalizeRenderedDoctype(html string) string {
 		result = result[:match[0]] + result[match[1]:]
 	}
 	return result
-}
-
-// StripHTML removes HTML tags and returns plain text.
-func StripHTML(html string) string {
-	// Remove script and style tags with their content
-	text := stripScriptRe.ReplaceAllString(html, "")
-	text = stripStyleRe.ReplaceAllString(text, "")
-
-	// Remove all HTML tags
-	text = stripTagRe.ReplaceAllString(text, "")
-
-	// Decode common HTML entities
-	text = strings.ReplaceAll(text, "&nbsp;", " ")
-	text = strings.ReplaceAll(text, "&amp;", "&")
-	text = strings.ReplaceAll(text, "&lt;", "<")
-	text = strings.ReplaceAll(text, "&gt;", ">")
-	text = strings.ReplaceAll(text, "&quot;", "\"")
-	text = strings.ReplaceAll(text, "&#39;", "'")
-
-	// Collapse multiple whitespace
-	text = stripWhitespaceRe.ReplaceAllString(text, " ")
-
-	return strings.TrimSpace(text)
 }

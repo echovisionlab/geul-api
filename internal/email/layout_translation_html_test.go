@@ -16,6 +16,37 @@ func canonicalLayoutSourceForTest(t *testing.T, source string) string {
 	return canonical
 }
 
+func TestLayoutTextNewlinesSurviveStorageAndRendering(t *testing.T) {
+	source := canonicalLayoutSourceForTest(t, "<html>\n<head><style>p { color: red; }\n</style></head>\n<body><main>{{content}}</main><footer>Source\nline</footer></body></html>")
+	units, err := ExtractLayoutContentUnits(source)
+	require.NoError(t, err)
+	require.Len(t, units, 1)
+	value := "First\nsecond\n\nthird & <safe>"
+	overlay, text, err := ApplyLayoutLocaleValues(source, map[string]string{units[0].Handle: value})
+	require.NoError(t, err)
+	values, err := ExtractLayoutLocaleValues(*overlay)
+	require.NoError(t, err)
+	require.Equal(t, value, values[units[0].Handle], "stored newlines stay in one durable locale value")
+	require.Contains(t, *text, value)
+	for _, target := range []*string{nil, overlay} {
+		rendered, err := ResolveLayoutLocaleMarkup(source, target)
+		require.NoError(t, err)
+		if target == nil {
+			require.Contains(t, rendered, "<footer>Source<br>line</footer>")
+		} else {
+			require.Contains(t, rendered, "<footer>First<br>second<br><br>third &amp; &lt;safe&gt;</footer>")
+		}
+		require.Contains(t, rendered, "<html>\n<head>", "HTML formatting outside text values stays unchanged")
+		require.Contains(t, rendered, "p { color: red; }\n</style>")
+		require.NotContains(t, rendered, "geul-unit:")
+	}
+	materializedSource, _, err := MaterializeLayoutSourceFromLocale(source, overlay)
+	require.NoError(t, err)
+	rendered, err := ResolveLayoutLocaleMarkup(*materializedSource, nil)
+	require.NoError(t, err)
+	require.Contains(t, rendered, "First<br>second<br><br>third")
+}
+
 func TestLayoutTranslationHTMLPreservesWrapperAndStableUnit(t *testing.T) {
 	t.Parallel()
 
@@ -40,7 +71,7 @@ func TestLayoutTranslationHTMLPreservesWrapperAndStableUnit(t *testing.T) {
 	assert.Contains(t, *result, `<style>body { color: red; }</style>`)
 	assert.Contains(t, *result, `<!--geul-value:text:`)
 	require.NotNil(t, textResult)
-	assert.Equal(t, "구독 해지", *textResult)
+	assert.Equal(t, "{{content}}\n\n구독 해지", *textResult)
 
 	rendered, err := ResolveLayoutLocaleMarkup(source, result)
 	require.NoError(t, err)
@@ -224,4 +255,21 @@ func TestLayoutTranslationRejectsUnmarkedAndDuplicateStableUnits(t *testing.T) {
 	duplicate := `<!--geul-unit:text:11111111-1111-4111-8111-111111111111-->One<!--geul-unit:text:11111111-1111-4111-8111-111111111111-->Two`
 	_, err = ExtractLayoutContentUnits(duplicate)
 	require.ErrorContains(t, err, "duplicate")
+}
+
+func TestLayoutValuesPreserveLeadingAndTrailingHardBreaks(t *testing.T) {
+	source := canonicalLayoutSourceForTest(t, "<main>{{content}}</main><footer> Source </footer>")
+	units, err := ExtractLayoutContentUnits(source)
+	require.NoError(t, err)
+	for _, value := range []string{"\nFirst\n", "\r\nFirst\r\n", "\n\n"} {
+		overlay, _, err := ApplyLayoutLocaleValues(source, map[string]string{units[0].Handle: value})
+		require.NoError(t, err)
+		values, err := ExtractLayoutLocaleValues(*overlay)
+		require.NoError(t, err)
+		require.Equal(t, value, values[units[0].Handle])
+		rendered, err := ResolveLayoutLocaleMarkup(source, overlay)
+		require.NoError(t, err)
+		require.Contains(t, rendered, "<footer><br>")
+		require.Contains(t, rendered, "<br></footer>")
+	}
 }
