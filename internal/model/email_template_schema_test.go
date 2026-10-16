@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -11,7 +12,8 @@ import (
 )
 
 func TestEmailTemplateGlobalKeyAndEventUniqueness(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:email-template-schema?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 
 	parsed, err := schema.Parse(&EmailTemplate{}, &sync.Map{}, db.NamingStrategy)

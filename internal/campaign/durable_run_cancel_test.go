@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -35,7 +36,7 @@ func TestCampaignDeliveryRuntimeRejectsSendingRun(t *testing.T) {
 
 func campaignCancelTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE campaign (id TEXT PRIMARY KEY); CREATE TABLE email_delivery_run (id TEXT PRIMARY KEY, campaign_id TEXT, status TEXT NOT NULL, completed_at DATETIME, updated_at DATETIME)`).Error)
 	return db

@@ -4,7 +4,6 @@ on:
   pull_request:
     branches: [main]
     paths-ignore:
-      - '.github/**'
       - '.release-please-manifest.json'
       - 'CHANGELOG.md'
       - 'release-please-config.json'
@@ -17,8 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  validate:
-    name: Validate
+  go-checks:
+    name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -33,7 +32,8 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
+          cache-dependency-path: go.sum
 
       - name: Configure private Go dependencies
         env:
@@ -59,21 +59,12 @@ jobs:
           fi
           magick -version
 
-      - name: Set up media tools
+      # Process-lifecycle tests execute a temporary Node fixture. They do not
+      # depend on the media workers or their installed packages.
+      - name: Set up Node for process tests
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
-          # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
-          # environment-backed auth in the repository .npmrc.
-          registry-url: https://npm.pkg.github.com
-          scope: '@echovisionlab'
-
-      - name: Build and test media tools
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
-        run: |
-          npm install --global pnpm@12.9.1
-          make media-test
 
       - name: Test
         run: make test
@@ -93,3 +84,43 @@ jobs:
       - name: Remove private Git credentials
         if: ${{ always() }}
         run: rm -f "$GIT_CONFIG_GLOBAL"
+
+  media-tools:
+    name: Media tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up media tools
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
+          # environment-backed auth in the repository .npmrc.
+          registry-url: https://npm.pkg.github.com
+          scope: '@echovisionlab'
+
+      - name: Build and test media tools
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+        run: |
+          npm install --global pnpm@12.9.1
+          make media-test
+
+  validate:
+    # Keep the existing required check and fail closed if either job is skipped,
+    # cancelled, or fails. Both independent suites must still pass.
+    name: Validate
+    runs-on: ubuntu-latest
+    needs: [go-checks, media-tools]
+    if: ${{ always() }}
+    steps:
+      - name: Require every validation job
+        env:
+          GO_RESULT: ${{ needs.go-checks.result }}
+          MEDIA_RESULT: ${{ needs.media-tools.result }}
+        run: test "$GO_RESULT" = success && test "$MEDIA_RESULT" = success

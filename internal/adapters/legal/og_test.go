@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -113,7 +114,7 @@ func TestTitleUsesExistingTargetValue(t *testing.T) {
 
 func legalOGTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE privacy_history (

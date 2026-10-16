@@ -211,26 +211,26 @@ func TestPublicHLSTypePolicy(t *testing.T) {
 
 func assertExactMediaTypePolicy(
 	t *testing.T,
-	actual map[string][]string,
+	configuredTypes map[string][]string,
 	expected map[string]struct{},
 ) {
 	t.Helper()
 
-	actualPairs := make(map[string]struct{})
-	for extension, contentTypes := range actual {
+	configuredPairs := make(map[string]struct{})
+	for extension, contentTypes := range configuredTypes {
 		for _, contentType := range contentTypes {
-			actualPairs[mediaTypePolicyKey(extension, contentType)] = struct{}{}
+			configuredPairs[mediaTypePolicyKey(extension, contentType)] = struct{}{}
 		}
 	}
-	if len(actualPairs) != len(expected) {
-		t.Fatalf("policy pair count=%d, want %d: actual=%v", len(actualPairs), len(expected), actualPairs)
+	if len(configuredPairs) != len(expected) {
+		t.Fatalf("policy pair count=%d, want %d: actual=%v", len(configuredPairs), len(expected), configuredPairs)
 	}
 	for pair := range expected {
-		if _, ok := actualPairs[pair]; !ok {
+		if _, ok := configuredPairs[pair]; !ok {
 			t.Fatalf("missing policy pair %q", pair)
 		}
 	}
-	for pair := range actualPairs {
+	for pair := range configuredPairs {
 		if _, ok := expected[pair]; !ok {
 			t.Fatalf("unexpected policy pair %q", pair)
 		}

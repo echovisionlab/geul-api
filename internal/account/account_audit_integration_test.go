@@ -311,10 +311,10 @@ func TestSetAccountRoleSynchronizesEveryDirectRoleTransitionIntegration(t *testi
 			)
 			require.NoError(t, err)
 			subject := requireAccountIdentitySubject(t, target.IdentityID)
-			actual, found, err := stack.SpiceDBClient.ReadDirectGlobalRole(t.Context(), subject)
+			persistedRole, found, err := stack.SpiceDBClient.ReadDirectGlobalRole(t.Context(), subject)
 			require.NoError(t, err)
 			require.True(t, found)
-			require.Equal(t, transition.want, actual)
+			require.Equal(t, transition.want, persistedRole)
 		})
 	}
 }

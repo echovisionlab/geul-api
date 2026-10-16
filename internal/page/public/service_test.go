@@ -5,6 +5,7 @@ import (
 
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -32,7 +33,7 @@ func TestApplyLocalizedPageFieldsDoesNotUseLegacyBodyProjection(t *testing.T) {
 }
 
 func TestResolvePageLocalizedMetadataDoesNotRequireLegacyBodyColumns(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:page-localized-metadata?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE page (

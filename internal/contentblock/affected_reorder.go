@@ -125,8 +125,8 @@ func validateAffectedSiblingDensity(blocks map[uuid.UUID]FullBlock, containers [
 			}
 		}
 		sort.Ints(positions)
-		for expected, actual := range positions {
-			if actual != expected {
+		for expected, persistedPosition := range positions {
+			if persistedPosition != expected {
 				return fmt.Errorf("%w: affected sibling positions must be dense from zero", ErrInvalidMutation)
 			}
 		}

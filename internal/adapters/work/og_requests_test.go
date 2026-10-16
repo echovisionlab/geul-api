@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestOGResolverMapsMissingWorkToNotFound(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE work (id TEXT PRIMARY KEY, source_locale TEXT, featured_image_file_id TEXT);
@@ -35,7 +36,7 @@ func TestOGResolverMapsMissingWorkToNotFound(t *testing.T) {
 }
 
 func TestOGRequestsResolveExistingTargetValue(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE work (id TEXT PRIMARY KEY, source_locale TEXT, featured_image_file_id TEXT);

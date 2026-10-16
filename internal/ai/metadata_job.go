@@ -8,6 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/llm"
+	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"gorm.io/gorm"
 )
 
@@ -49,7 +50,7 @@ func newAITextProvider(apiKey string) (llm.Provider, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("googleAIAPIKey must be configured for gemini provider")
 	}
-	return llm.NewGeminiProvider(llm.GeminiConfig{APIKey: apiKey})
+	return llmproviders.NewGeminiProvider(llmproviders.GeminiConfig{APIKey: apiKey})
 }
 
 func NewMetadataJobManagerWithProvider(

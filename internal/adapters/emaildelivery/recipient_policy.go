@@ -295,11 +295,11 @@ func (h *RecipientPolicy) ensureCommittedAccountSecurityMutation(ctx context.Con
 		if err != nil {
 			return false, err
 		}
-		actualCount := 0
+		usablePasskeyCount := 0
 		if passkeyIdentity != nil {
-			actualCount = auth.UsablePasskeyCredentialCount(passkeyIdentity.Credentials["passkey"])
+			usablePasskeyCount = auth.UsablePasskeyCredentialCount(passkeyIdentity.Credentials["passkey"])
 		}
-		if actualCount != expectedCount {
+		if usablePasskeyCount != expectedCount {
 			return h.blockEmailForRecipientContext(ctx, job, "security_mutation_not_committed", "passkey mutation was not committed")
 		}
 		delete(job.TemplateData, "_credential_count")

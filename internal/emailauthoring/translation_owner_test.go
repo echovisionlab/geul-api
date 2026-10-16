@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -41,7 +42,7 @@ func (*translationOwnerReferences) DetachLayoutHistory(context.Context, *gorm.DB
 }
 
 func TestRequireTranslationSourceMutableLocksOwnedRootBeforeCampaignAuthority(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		CREATE TABLE email_template (id TEXT PRIMARY KEY, updated_at DATETIME);

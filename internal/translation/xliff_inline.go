@@ -95,15 +95,15 @@ func validateProtectedXLIFFPartOrder(source, target []XLIFFInline) error {
 	}
 	for group, expectedParts := range expected {
 		positions := make([]int, 0, len(expectedParts))
-		actualParts := make([]string, 0, len(expectedParts))
+		targetParts := make([]string, 0, len(expectedParts))
 		for position, event := range targetEvents {
 			eventGroup, _, ok := parseProtectedXLIFFPartID(event)
 			if ok && eventGroup == group {
 				positions = append(positions, position)
-				actualParts = append(actualParts, event)
+				targetParts = append(targetParts, event)
 			}
 		}
-		if !reflect.DeepEqual(expectedParts, actualParts) {
+		if !reflect.DeepEqual(expectedParts, targetParts) {
 			return fmt.Errorf("protected term parts changed order")
 		}
 		for index := 1; index < len(positions); index++ {

@@ -602,12 +602,12 @@ func (c *SpiceDBClient) SyncAccountIdentityGlobalRole(ctx context.Context, subje
 	if err != nil {
 		return ZedToken{}, err
 	}
-	actual, found, err := c.ReadDirectGlobalRoleAtLeastAsFresh(ctx, subject, token)
+	persistedRole, found, err := c.ReadDirectGlobalRoleAtLeastAsFresh(ctx, subject, token)
 	if err != nil {
 		return ZedToken{}, fmt.Errorf("verify global role: %w", err)
 	}
-	if !found || actual != role {
-		return ZedToken{}, fmt.Errorf("verify global role: got %q, want %q", actual.ID(), role.ID())
+	if !found || persistedRole != role {
+		return ZedToken{}, fmt.Errorf("verify global role: got %q, want %q", persistedRole.ID(), role.ID())
 	}
 	return token, nil
 }

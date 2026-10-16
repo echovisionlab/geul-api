@@ -80,7 +80,7 @@ func TestBandGoTestArgumentsBoundPackageConcurrency(t *testing.T) {
 	db, _ := bandByName("db")
 	args := bandGoTestArguments(db, 3)
 	wantPrefix := []string{
-		"test", "-p", "3", "-parallel", "1", "-timeout", "30m",
+		"test", "-p", "3", "-parallel", "3", "-timeout", "30m",
 		"-count=1", "-tags=integration",
 	}
 	if len(args) < len(wantPrefix) {
@@ -95,6 +95,9 @@ func TestBandGoTestArgumentsBoundPackageConcurrency(t *testing.T) {
 	serialArgs := bandGoTestArguments(serial, 3)
 	if serialArgs[2] != "1" {
 		t.Fatalf("serial package concurrency = %q, want 1", serialArgs[2])
+	}
+	if serialArgs[4] != "1" {
+		t.Fatalf("shared backend test concurrency = %q, want 1", serialArgs[4])
 	}
 }
 

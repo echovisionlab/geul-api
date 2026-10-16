@@ -1,4 +1,4 @@
-package llm
+package providers
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,14 +33,14 @@ func TestOpenAICompatibleProviderBoundsErrorBodyRead(t *testing.T) {
 		Transport: providerResponseCountingTransport{next: server.Client().Transport, counter: counter},
 	}
 
-	_, err = provider.GenerateText(context.Background(), GenerationRequest{
+	_, err = provider.GenerateText(context.Background(), llm.GenerationRequest{
 		RequestID: "req-1", SystemPrompt: "system", UserPrompt: "source text",
 	})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "sensitive-provider-detail")
-	details, ok := ProviderFailureDetailsFromError(err)
+	details, ok := llm.ProviderFailureDetailsFromError(err)
 	require.True(t, ok)
-	require.Equal(t, ProviderFailureRateLimited, details.Category)
+	require.Equal(t, llm.ProviderFailureRateLimited, details.Category)
 	require.Equal(t, expectedMaxProviderErrorBodyRead+1, counter.bytesRead)
 	require.Equal(t, int64(-1), counter.contentLength)
 	require.True(t, counter.closed)
@@ -60,9 +61,9 @@ func TestOpenAICompatibleResponseBodyLimit(t *testing.T) {
 		_, err := readOpenAICompatibleResponseBody(response, maxSuccessBodyBytes, maxErrorBodyBytes)
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), responseText)
-		details, ok := ProviderFailureDetailsFromError(err)
+		details, ok := llm.ProviderFailureDetailsFromError(err)
 		require.True(t, ok)
-		require.Equal(t, ProviderFailureResponseInvalid, details.Category)
+		require.Equal(t, llm.ProviderFailureResponseInvalid, details.Category)
 		require.Equal(t, maxSuccessBodyBytes+1, counter.bytesRead)
 	})
 
@@ -81,9 +82,9 @@ func TestOpenAICompatibleResponseBodyLimit(t *testing.T) {
 		_, err := readOpenAICompatibleResponseBody(response, maxSuccessBodyBytes, maxErrorBodyBytes)
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), responseText)
-		details, ok := ProviderFailureDetailsFromError(err)
+		details, ok := llm.ProviderFailureDetailsFromError(err)
 		require.True(t, ok)
-		require.Equal(t, ProviderFailureRateLimited, details.Category)
+		require.Equal(t, llm.ProviderFailureRateLimited, details.Category)
 		require.Equal(t, "4xx", details.HTTPStatusClass)
 		require.Equal(t, maxErrorBodyBytes+1, counter.bytesRead)
 	})
@@ -100,9 +101,9 @@ func TestOpenAICompatibleResponseBodyLimit(t *testing.T) {
 
 		_, err := readOpenAICompatibleResponseBody(response, maxSuccessBodyBytes, maxErrorBodyBytes)
 		require.Error(t, err)
-		details, ok := ProviderFailureDetailsFromError(err)
+		details, ok := llm.ProviderFailureDetailsFromError(err)
 		require.True(t, ok)
-		require.Equal(t, ProviderFailureResponseInvalid, details.Category)
+		require.Equal(t, llm.ProviderFailureResponseInvalid, details.Category)
 		require.Equal(t, maxSuccessBodyBytes+1, counter.bytesRead)
 	})
 

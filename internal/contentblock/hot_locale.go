@@ -206,7 +206,7 @@ targets AS MATERIALIZED (
            input.delete,
            input.localized_data,
            block.id AS owned_block_id,
-           block.document_id AS actual_document_id,
+           block.document_id AS block_document_id,
            block.kind,
            locale_row.localized_data AS previous_localized_data
     FROM input
@@ -218,7 +218,7 @@ targets AS MATERIALIZED (
 assessment AS MATERIALIZED (
     SELECT count(*) FILTER (
                WHERE targets.owned_block_id IS NOT NULL
-                 AND targets.actual_document_id <> ?::uuid
+                 AND targets.block_document_id <> ?::uuid
            ) AS cross_document_count,
            count(*) FILTER (WHERE targets.owned_block_id IS NULL) AS missing_block_count,
            count(*) FILTER (
@@ -227,7 +227,7 @@ assessment AS MATERIALIZED (
                  AND targets.kind <> targets.expected_kind
            ) AS kind_mismatch_count,
            count(*) FILTER (
-               WHERE targets.actual_document_id = ?::uuid
+               WHERE targets.block_document_id = ?::uuid
                  AND (
                      (targets.delete AND targets.previous_localized_data IS NOT NULL)
                      OR
@@ -253,7 +253,7 @@ deleted AS (
     DELETE FROM content_block_locale AS locale_row
     USING targets, bumped
     WHERE targets.delete
-      AND targets.actual_document_id = bumped.id
+      AND targets.block_document_id = bumped.id
       AND locale_row.block_id = targets.block_id
       AND locale_row.locale = targets.locale
       AND targets.previous_localized_data IS NOT NULL
@@ -263,7 +263,7 @@ upserted AS (
     INSERT INTO content_block_locale(block_id, locale, localized_data)
     SELECT targets.block_id, targets.locale, targets.localized_data
     FROM targets
-    JOIN bumped ON bumped.id = targets.actual_document_id
+    JOIN bumped ON bumped.id = targets.block_document_id
     WHERE NOT targets.delete
       AND targets.previous_localized_data IS DISTINCT FROM targets.localized_data
     ON CONFLICT (block_id, locale) DO UPDATE
@@ -291,7 +291,7 @@ SELECT CASE
                'block_id', targets.block_id,
                'locale', targets.locale,
                'delete', targets.delete,
-               'changed', targets.actual_document_id = ?::uuid AND (
+               'changed', targets.block_document_id = ?::uuid AND (
                    (targets.delete AND targets.previous_localized_data IS NOT NULL)
                    OR
                    (NOT targets.delete AND targets.previous_localized_data IS DISTINCT FROM targets.localized_data)

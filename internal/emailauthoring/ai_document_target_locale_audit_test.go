@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func TestEmailAuthoringAIDocumentLocaleAuditsAreMemberOwnedAndMinimal(t *testing
 }
 
 func TestEmailAuthoringLocaleAuditFailureRollsBackOwningTransaction(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE mutation_fact (id TEXT PRIMARY KEY)`).Error)
 	want := errors.New("append failed")

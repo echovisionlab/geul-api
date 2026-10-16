@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -41,7 +42,7 @@ func (durableReferenceStub) DetachLayoutHistory(context.Context, *gorm.DB, strin
 
 func TestDurableReferenceCountsAreOwnedByCampaignDeliveryPort(t *testing.T) {
 	now := time.Now().UTC()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE email_template (id TEXT PRIMARY KEY, layout_id TEXT)`).Error)
 	for index := 0; index < 7; index++ {

@@ -68,6 +68,52 @@ func TestAIGeneratorRetainsExactInvalidRawResponse(t *testing.T) {
 	require.Equal(t, []byte(rawBody), response.Raw.Body())
 }
 
+type cancellingAIProvider struct {
+	cancel context.CancelFunc
+	close  func(context.Context) error
+}
+
+func (cancellingAIProvider) GenerateText(context.Context, llm.GenerationRequest) (string, error) {
+	panic("translation uses provider sessions")
+}
+func (provider cancellingAIProvider) StartSession(context.Context, llm.SessionSpec) (llm.Session, error) {
+	return cancellingAISession(provider), nil
+}
+func (cancellingAIProvider) ProviderName() string { return "cancelling-test" }
+func (cancellingAIProvider) ModelName() string    { return "cancelling-model" }
+
+type cancellingAISession cancellingAIProvider
+
+func (session cancellingAISession) GenerateText(context.Context, llm.SessionTurn) (string, error) {
+	session.cancel()
+	return "", context.Canceled
+}
+func (session cancellingAISession) Close(ctx context.Context) error { return session.close(ctx) }
+
+func TestAIGeneratorClosesSessionAfterRequestCancellation(t *testing.T) {
+	t.Parallel()
+
+	type contextKey struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), contextKey{}, "translation"))
+	defer cancel()
+	closed := false
+	provider := cancellingAIProvider{cancel: cancel, close: func(closeCtx context.Context) error {
+		closed = true
+		require.NoError(t, closeCtx.Err(), "session cleanup must survive request cancellation")
+		require.Equal(t, "translation", closeCtx.Value(contextKey{}))
+		_, bounded := closeCtx.Deadline()
+		require.True(t, bounded, "session cleanup must have a deadline")
+		return nil
+	}}
+	request := testXLIFFRequest(
+		testProfile("post", "en", "ko", false, nil),
+		XLIFFGroup{ID: "body", TranslationUnit: []XLIFFUnit{{ID: "u1", Source: "Hello"}}},
+	)
+	_, err := NewAIGenerator(provider).Translate(ctx, request)
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, closed, "the generator owns and closes its session")
+}
+
 func TestAISystemPromptEmphasizesOriginalNameWithOptionalParentheses(t *testing.T) {
 	t.Parallel()
 

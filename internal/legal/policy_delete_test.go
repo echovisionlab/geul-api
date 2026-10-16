@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -15,7 +16,7 @@ import (
 func TestPolicyDeletionCancelsOutstandingDeliveryAndPreservesSealedHistory(t *testing.T) {
 	for _, kind := range []string{"terms", "privacy"} {
 		t.Run(kind, func(t *testing.T) {
-			db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+			db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 			require.NoError(t, err)
 			for _, sql := range []string{
 				`CREATE TABLE email_delivery_run (id TEXT PRIMARY KEY,terms_id TEXT,privacy_id TEXT,status TEXT,definition_sealed BOOLEAN,render_snapshot TEXT,completed_at DATETIME,updated_at DATETIME,skipped_count INTEGER)`,
@@ -73,7 +74,7 @@ func TestPolicyDeletionCancelsOutstandingDeliveryAndPreservesSealedHistory(t *te
 }
 
 func TestPolicyDeletionDeliveryCleanupRollsBackWithTransaction(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE email_delivery_run (id TEXT PRIMARY KEY,terms_id TEXT,status TEXT,completed_at DATETIME,updated_at DATETIME,skipped_count INTEGER)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE email_delivery_recipient (id TEXT PRIMARY KEY,run_id TEXT,status TEXT,error_type TEXT,terminal_at DATETIME,delivery_claim_id TEXT,delivery_claim_expires_at DATETIME,updated_at DATETIME)`).Error)

@@ -343,10 +343,10 @@ func requireProgramEventAudit(t *testing.T, rows []programEventAuditRow, action,
 	t.Helper()
 	for _, row := range rows {
 		if row.Action == action && row.TargetType == targetType && row.TargetID == targetID {
-			var actual, expected any
-			require.NoError(t, json.Unmarshal(row.Attributes, &actual))
+			var persistedAttributes, expected any
+			require.NoError(t, json.Unmarshal(row.Attributes, &persistedAttributes))
 			require.NoError(t, json.Unmarshal([]byte(attributes), &expected))
-			if reflect.DeepEqual(expected, actual) {
+			if reflect.DeepEqual(expected, persistedAttributes) {
 				return
 			}
 		}

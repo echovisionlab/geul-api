@@ -178,16 +178,16 @@ func submissionConditionLeafActive(
 		fieldID = legacyField
 	}
 	key := fieldKeyByID[fieldID]
-	actual, exists := values[key]
+	submittedValue, exists := values[key]
 	switch operator {
 	case "eq":
-		return fmt.Sprint(actual) == fmt.Sprint(expected)
+		return fmt.Sprint(submittedValue) == fmt.Sprint(expected)
 	case "neq":
-		return fmt.Sprint(actual) != fmt.Sprint(expected)
+		return fmt.Sprint(submittedValue) != fmt.Sprint(expected)
 	case "exists":
-		return exists && actual != nil && fmt.Sprint(actual) != ""
+		return exists && submittedValue != nil && fmt.Sprint(submittedValue) != ""
 	case "gt", "gte", "lt", "lte":
-		left, leftOK := conditionComparableValue(actual)
+		left, leftOK := conditionComparableValue(submittedValue)
 		right, rightOK := conditionComparableValue(expected)
 		if !leftOK || !rightOK {
 			return false
@@ -195,17 +195,17 @@ func submissionConditionLeafActive(
 		return numericPredicateSatisfied(operator, left, right)
 	case "in", "notIn":
 		items, ok := expected.(submissionValues)
-		contained := ok && containsSubmissionValue(items, actual)
+		contained := ok && containsSubmissionValue(items, submittedValue)
 		return contained == (operator == "in")
 	case "contains", "containsAny", "containsAll":
-		return collectionPredicateSatisfied(operator, actual, expected)
+		return collectionPredicateSatisfied(operator, submittedValue, expected)
 	default:
 		return false
 	}
 }
 
-func collectionPredicateSatisfied(operator string, actual, expected submissionValue) bool {
-	items, ok := actual.(submissionValues)
+func collectionPredicateSatisfied(operator string, submittedValue, expected submissionValue) bool {
+	items, ok := submittedValue.(submissionValues)
 	if !ok {
 		return false
 	}
@@ -384,7 +384,7 @@ func applyComparableSubmissionValidator(
 	value submissionValue,
 	validator formFieldValidatorPayload,
 ) error {
-	actual, ok := comparableSubmissionValue(fieldType, value)
+	submittedNumber, ok := comparableSubmissionValue(fieldType, value)
 	if !ok {
 		return fmt.Errorf("cannot apply %s validator", validator.Predicate)
 	}
@@ -392,24 +392,24 @@ func applyComparableSubmissionValidator(
 	if err != nil {
 		return fmt.Errorf("has invalid %s validator", validator.Predicate)
 	}
-	if !numericPredicateSatisfied(validator.Predicate, actual, expected) {
+	if !numericPredicateSatisfied(validator.Predicate, submittedNumber, expected) {
 		return fmt.Errorf("does not satisfy %s", validator.Predicate)
 	}
 	return nil
 }
 
-func numericPredicateSatisfied(predicate string, actual, expected float64) bool {
+func numericPredicateSatisfied(predicate string, submittedNumber, expected float64) bool {
 	switch predicate {
 	case "gt":
-		return actual > expected
+		return submittedNumber > expected
 	case "gte":
-		return actual >= expected
+		return submittedNumber >= expected
 	case "lt":
-		return actual < expected
+		return submittedNumber < expected
 	case "lte":
-		return actual <= expected
+		return submittedNumber <= expected
 	case "eq":
-		return actual == expected
+		return submittedNumber == expected
 	default:
 		return false
 	}
@@ -437,13 +437,13 @@ func applySubmissionRegexValidator(value, rawPattern submissionValue) error {
 }
 
 func applySubmissionDateBoundaryValidator(value submissionValue, validator formFieldValidatorPayload) error {
-	actual, ok := value.(string)
+	submittedDate, ok := value.(string)
 	expected, expectedOK := validator.Value.(string)
 	if !ok || !expectedOK {
 		return fmt.Errorf("has invalid date validator")
 	}
-	if (validator.Predicate == "minDate" && actual < expected) ||
-		(validator.Predicate == "maxDate" && actual > expected) {
+	if (validator.Predicate == "minDate" && submittedDate < expected) ||
+		(validator.Predicate == "maxDate" && submittedDate > expected) {
 		return fmt.Errorf("does not satisfy %s", validator.Predicate)
 	}
 	return nil

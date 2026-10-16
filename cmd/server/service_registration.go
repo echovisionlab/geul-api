@@ -63,7 +63,7 @@ import (
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/llm"
+	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
@@ -868,7 +868,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	)
 	mux.Handle(aiDocumentPath, aiDocumentHandler)
 	slog.Info("Registered service", "path", aiDocumentPath)
-	aiEditorProvider, err := llm.NewGeminiProvider(llm.GeminiConfig{APIKey: cfg.GoogleAIAPIKey})
+	aiEditorProvider, err := llmproviders.NewGeminiProvider(llmproviders.GeminiConfig{APIKey: cfg.GoogleAIAPIKey})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize AI Editor Gemini provider: %w", err)
 	}

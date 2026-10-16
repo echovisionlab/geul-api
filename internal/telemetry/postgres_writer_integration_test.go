@@ -5,12 +5,9 @@ package telemetry_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,46 +22,18 @@ import (
 	"gorm.io/gorm"
 )
 
-var (
-	telemetryIntegrationPostgres        *testutil.AppPostgres
-	telemetryIntegrationPostgresOnce    sync.Once
-	telemetryIntegrationPostgresCleanup func() error
-	telemetryIntegrationPostgresErr     error
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if telemetryIntegrationPostgresCleanup != nil {
-		if err := telemetryIntegrationPostgresCleanup(); err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup telemetry integration postgres: %v\n", err)
-			if code == 0 {
-				code = 1
-			}
-		}
-	}
-	os.Exit(code)
-}
-
+// Each writer test owns its database, including committed audit records. No
+// package-wide TRUNCATE can erase another test's assertions.
 func telemetryIntegrationStack(t *testing.T) *testutil.AppPostgres {
 	t.Helper()
-
-	telemetryIntegrationPostgresOnce.Do(func() {
-		telemetryIntegrationPostgres, telemetryIntegrationPostgresCleanup, telemetryIntegrationPostgresErr = testutil.StartAppPostgres(context.Background(), testutil.AppPostgresOptions{
-			BootstrapKratosStub: true,
-			ApplyAppSchemaSQL:   true,
-		})
-		if telemetryIntegrationPostgresErr != nil {
-			fmt.Fprintf(os.Stderr, "start telemetry integration postgres: %v\n", telemetryIntegrationPostgresErr)
-		}
+	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+		BootstrapKratosStub: true,
+		ApplyAppSchemaSQL:   true,
 	})
-	require.NoError(t, telemetryIntegrationPostgresErr)
-	require.NoError(t, telemetryIntegrationPostgres.DB.Exec(`
-		TRUNCATE TABLE public.domain_audit, public.security_access
-	`).Error)
-	return telemetryIntegrationPostgres
 }
 
 func TestDurableWriterPersistsDomainAndSecurityRecords(t *testing.T) {
+	t.Parallel()
 	stack := telemetryIntegrationStack(t)
 	memberID := uuid.NewString()
 	require.NoError(t, stack.DB.Exec(`
@@ -191,6 +160,7 @@ func TestDurableWriterPersistsDomainAndSecurityRecords(t *testing.T) {
 }
 
 func TestDurableWriterRollsBackWithOwningDomainTransaction(t *testing.T) {
+	t.Parallel()
 	stack := telemetryIntegrationStack(t)
 	memberID := uuid.NewString()
 	require.NoError(t, stack.DB.Exec(`
@@ -217,6 +187,7 @@ func TestDurableWriterRollsBackWithOwningDomainTransaction(t *testing.T) {
 }
 
 func TestDurableWriterMakesMatchingDomainAuditRetryIdempotent(t *testing.T) {
+	t.Parallel()
 	stack := telemetryIntegrationStack(t)
 	memberID := uuid.NewString()
 	recordID := uuid.NewString()
@@ -250,6 +221,7 @@ func TestDurableWriterMakesMatchingDomainAuditRetryIdempotent(t *testing.T) {
 }
 
 func TestDurableWriterRejectsDuplicateRecordID(t *testing.T) {
+	t.Parallel()
 	stack := telemetryIntegrationStack(t)
 	requestID := uuid.NewString()
 	access, err := sharedtelemetry.NewAuthenticationBlockedRecord(sharedtelemetry.SecurityAccessMetadata{
@@ -269,6 +241,7 @@ func TestDurableWriterRejectsDuplicateRecordID(t *testing.T) {
 }
 
 func TestAccessInterceptorPersistsOneTerminalAuthorizationDenialIntegration(t *testing.T) {
+	t.Parallel()
 	stack := telemetryIntegrationStack(t)
 	writer := apitelemetry.NewDurableWriter(stack.DB)
 	access := apitelemetry.NewAccessLogInterceptor(writer)

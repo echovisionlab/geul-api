@@ -41,9 +41,9 @@ func TestAppendLocaleContentInterchangeAuditSelectsCreateAndUpdateOperation(t *t
 					_ sharedtelemetry.AuditMetadata,
 					_ string,
 					_ string,
-					actual sharedtelemetry.AuditItemOperation,
+					emittedOperation sharedtelemetry.AuditItemOperation,
 				) (sharedtelemetry.AuditRecord, error) {
-					operation = actual
+					operation = emittedOperation
 					return sharedtelemetry.AuditRecord{}, buildStopped
 				},
 				sharedtelemetry.AuditArtistUpdated,

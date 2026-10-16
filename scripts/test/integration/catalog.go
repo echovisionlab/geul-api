@@ -31,6 +31,8 @@ var integrationCatalog = []integrationBand{
 	{
 		// PostgreSQL or in-process SQLite only. Each package receives an
 		// independent logical database and can run with bounded package parallelism.
+		// Tests opt into t.Parallel only when they own an independent fixture;
+		// legacy package-scoped database fixtures remain sequential.
 		Name:             "db",
 		Resources:        integrationPostgresOnly,
 		ParallelPackages: true,
@@ -206,7 +208,7 @@ func discoverIntegrationPackages(repoRoot, goWork string) ([]string, error) {
 	return packages, nil
 }
 
-func verifyIntegrationCatalog(actual []string) error {
+func verifyIntegrationCatalog(discoveredPackages []string) error {
 	assignments := make(map[string]string)
 	for _, band := range integrationCatalog {
 		for _, packagePath := range band.Packages {
@@ -218,14 +220,14 @@ func verifyIntegrationCatalog(actual []string) error {
 	}
 	want := catalogPackagePaths()
 	var missing []string
-	for _, packagePath := range actual {
+	for _, packagePath := range discoveredPackages {
 		if !slices.Contains(want, packagePath) {
 			missing = append(missing, packagePath)
 		}
 	}
 	var stale []string
 	for _, packagePath := range want {
-		if !slices.Contains(actual, packagePath) {
+		if !slices.Contains(discoveredPackages, packagePath) {
 			stale = append(stale, packagePath)
 		}
 	}

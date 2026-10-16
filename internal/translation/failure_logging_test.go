@@ -58,3 +58,24 @@ func TestDeepLFailureLogsCauseBeforeBoundedMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestAIResponseFailureLogsPrivateDiagnosticAtProviderBoundary(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	request := testXLIFFRequest(
+		testProfile("post", "en", "ko", false, nil),
+		XLIFFGroup{ID: "body", TranslationUnit: []XLIFFUnit{{ID: "u1", Source: "Hello"}}},
+	)
+	_, err := NewAIGenerator(rawResponseAIProvider{text: `{"bundles":false}`}).Translate(t.Context(), request)
+	require.ErrorIs(t, err, ErrProviderResponseInvalid)
+	require.Equal(t, ErrProviderResponseInvalid.Error()+": invalid JSON envelope", err.Error())
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	require.Equal(t, "translation.provider.decode_failed", record["event"])
+	require.Equal(t, request.RequestID, record["request_id"])
+	require.Equal(t, request.OperationID, record["operation_id"])
+	require.Contains(t, record["failure_cause"], "cannot unmarshal bool")
+}

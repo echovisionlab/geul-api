@@ -43,11 +43,11 @@ func TestPersistenceAttributeDTOsCoverTheSharedWireExactlyOnce(t *testing.T) {
 func assertAttributeTagsMatch(t *testing.T, source, attributes reflect.Type, envelope map[string]struct{}) {
 	t.Helper()
 	expected := jsonTags(source, true)
-	actual := jsonTags(attributes, false)
+	attributeTags := jsonTags(attributes, false)
 	for tag := range envelope {
 		delete(expected, tag)
 	}
-	require.Equal(t, sortedTags(expected), sortedTags(actual))
+	require.Equal(t, sortedTags(expected), sortedTags(attributeTags))
 }
 
 func jsonTags(record reflect.Type, descendAnonymous bool) map[string]int {
@@ -215,9 +215,9 @@ func assertSerializedAttributesMatchFlatRecord(t *testing.T, record any, attribu
 	for _, key := range envelope {
 		delete(expected, key)
 	}
-	var actual map[string]any
-	require.NoError(t, json.Unmarshal(attributes, &actual))
-	require.Equal(t, expected, actual)
+	var serializedAttributes map[string]any
+	require.NoError(t, json.Unmarshal(attributes, &serializedAttributes))
+	require.Equal(t, expected, serializedAttributes)
 }
 
 func TestDurableWriterRejectsInvalidRecordsBeforeDatabaseAccess(t *testing.T) {

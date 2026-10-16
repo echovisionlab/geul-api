@@ -254,7 +254,7 @@ func integrationSpiceDBDefinitionNames() ([]string, error) {
 }
 
 func verifyIntegrationSpiceDBBaseline(ctx context.Context, raw *authzed.Client, definitions []string) error {
-	actual := make([]string, 0, 5)
+	persistedRelationships := make([]string, 0, 5)
 	for _, definitionName := range definitions {
 		stream, err := raw.ReadRelationships(ctx, &v1.ReadRelationshipsRequest{
 			RelationshipFilter: &v1.RelationshipFilter{ResourceType: definitionName},
@@ -271,10 +271,10 @@ func verifyIntegrationSpiceDBBaseline(ctx context.Context, raw *authzed.Client, 
 			if err != nil {
 				return fmt.Errorf("receive SpiceDB relationship for %s: %w", definitionName, err)
 			}
-			actual = append(actual, integrationSpiceDBRelationshipKey(response.Relationship))
+			persistedRelationships = append(persistedRelationships, integrationSpiceDBRelationshipKey(response.Relationship))
 		}
 	}
-	sort.Strings(actual)
+	sort.Strings(persistedRelationships)
 	expected := []string{
 		"platform:global#admin@role:admin#member",
 		"platform:global#author@role:author#member",
@@ -282,8 +282,8 @@ func verifyIntegrationSpiceDBBaseline(ctx context.Context, raw *authzed.Client, 
 		"role:author#member@role:admin#member",
 		"role:user#member@role:author#member",
 	}
-	if strings.Join(actual, "\n") != strings.Join(expected, "\n") {
-		return fmt.Errorf("unexpected SpiceDB baseline relationships: got %q want %q", actual, expected)
+	if strings.Join(persistedRelationships, "\n") != strings.Join(expected, "\n") {
+		return fmt.Errorf("unexpected SpiceDB baseline relationships: got %q want %q", persistedRelationships, expected)
 	}
 	return nil
 }

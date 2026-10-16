@@ -304,13 +304,13 @@ func verifyPersistedMutation(
 			Find(&rows).Error; err != nil {
 			return fmt.Errorf("verify persisted content Blocks: %w", err)
 		}
-		actual := make(map[uuid.UUID]FullBlock, len(rows))
+		persistedBlocks := make(map[uuid.UUID]FullBlock, len(rows))
 		for _, row := range rows {
 			sharedData, err := canonicalObject(row.SharedData)
 			if err != nil {
 				return fmt.Errorf("%w: persisted Block %s shared data: %v", ErrInvalidMutation, row.ID, err)
 			}
-			actual[row.ID] = FullBlock{BaseBlock: BaseBlock{
+			persistedBlocks[row.ID] = FullBlock{BaseBlock: BaseBlock{
 				ID:            row.ID,
 				ParentID:      row.ParentBlockID,
 				ContainerSlot: row.ContainerSlot,
@@ -321,7 +321,7 @@ func verifyPersistedMutation(
 		}
 		for _, blockID := range blockIDs {
 			expected, shouldExist := after.blocks[blockID]
-			persisted, exists := actual[blockID]
+			persisted, exists := persistedBlocks[blockID]
 			if exists != shouldExist || (exists && !samePersistedBlockFields(expected, persisted)) {
 				return fmt.Errorf("%w: persisted affected Block %s differs", ErrInvalidMutation, blockID)
 			}
@@ -372,7 +372,7 @@ func verifyPersistedMutationLocales(
 		Find(&rows).Error; err != nil {
 		return fmt.Errorf("verify persisted content Block locales: %w", err)
 	}
-	actual := make(map[uuid.UUID]map[string]json.RawMessage)
+	persistedLocalesByBlock := make(map[uuid.UUID]map[string]json.RawMessage)
 	for _, row := range rows {
 		data, err := canonicalObject(row.LocalizedData)
 		if err != nil {
@@ -384,19 +384,19 @@ func verifyPersistedMutationLocales(
 				err,
 			)
 		}
-		if actual[row.BlockID] == nil {
-			actual[row.BlockID] = make(map[string]json.RawMessage)
+		if persistedLocalesByBlock[row.BlockID] == nil {
+			persistedLocalesByBlock[row.BlockID] = make(map[string]json.RawMessage)
 		}
-		actual[row.BlockID][row.Locale] = data
+		persistedLocalesByBlock[row.BlockID][row.Locale] = data
 	}
 	for blockID := range kindChangedSet {
 		expectedLocales := after.locales[blockID]
-		actualLocales := actual[blockID]
-		if len(expectedLocales) != len(actualLocales) {
+		persistedLocales := persistedLocalesByBlock[blockID]
+		if len(expectedLocales) != len(persistedLocales) {
 			return fmt.Errorf("%w: persisted affected Block %s locale set differs", ErrInvalidMutation, blockID)
 		}
 		for locale, expected := range expectedLocales {
-			persisted, exists := actualLocales[locale]
+			persisted, exists := persistedLocales[locale]
 			if !exists || !sameCanonicalJSON(expected, persisted) {
 				return fmt.Errorf("%w: persisted affected Block %s locale %s differs", ErrInvalidMutation, blockID, locale)
 			}
@@ -407,7 +407,7 @@ func verifyPersistedMutationLocales(
 			continue
 		}
 		expected, shouldExist := after.locales[key.blockID][key.locale]
-		persisted, exists := actual[key.blockID][key.locale]
+		persisted, exists := persistedLocalesByBlock[key.blockID][key.locale]
 		if exists != shouldExist || (exists && !sameCanonicalJSON(expected, persisted)) {
 			return fmt.Errorf("%w: persisted affected Block %s locale %s differs", ErrInvalidMutation, key.blockID, key.locale)
 		}
@@ -440,16 +440,16 @@ func verifyPersistedMutationAttachments(
 	if err := tx.WithContext(ctx).Where("block_id IN ?", queryIDs).Find(&rows).Error; err != nil {
 		return fmt.Errorf("verify persisted content Block attachments: %w", err)
 	}
-	actual := make(map[uuid.UUID][]FileReference, len(queryIDs))
+	persistedReferences := make(map[uuid.UUID][]FileReference, len(queryIDs))
 	for _, row := range rows {
 		reference, err := fileReferenceFromAttachmentRow(row)
 		if err != nil {
 			return err
 		}
-		actual[row.BlockID] = append(actual[row.BlockID], reference)
+		persistedReferences[row.BlockID] = append(persistedReferences[row.BlockID], reference)
 	}
 	for _, blockID := range queryIDs {
-		if !sameFileReferences(after.blocks[blockID].FileReferences, actual[blockID]) {
+		if !sameFileReferences(after.blocks[blockID].FileReferences, persistedReferences[blockID]) {
 			return fmt.Errorf("%w: persisted affected Block %s attachments differ", ErrInvalidMutation, blockID)
 		}
 	}
@@ -857,13 +857,13 @@ WHERE block.id = moved.id
 	return nil
 }
 
-func samePersistedBlockFields(expected, actual FullBlock) bool {
-	return expected.ID == actual.ID &&
-		equalUUIDPointers(expected.ParentID, actual.ParentID) &&
-		expected.ContainerSlot == actual.ContainerSlot &&
-		expected.Position == actual.Position &&
-		expected.Kind == actual.Kind &&
-		sameCanonicalJSON(expected.SharedData, actual.SharedData)
+func samePersistedBlockFields(expected, persisted FullBlock) bool {
+	return expected.ID == persisted.ID &&
+		equalUUIDPointers(expected.ParentID, persisted.ParentID) &&
+		expected.ContainerSlot == persisted.ContainerSlot &&
+		expected.Position == persisted.Position &&
+		expected.Kind == persisted.Kind &&
+		sameCanonicalJSON(expected.SharedData, persisted.SharedData)
 }
 
 func (repository) updateDocument(

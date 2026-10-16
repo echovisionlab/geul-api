@@ -32,9 +32,9 @@ func TestSplitRepoPathForLegacySuffix(t *testing.T) {
 		"infra/spicedb/schema.generated.zed": filepath.Join(string(filepath.Separator), "workspace", "geul-identity", "config", "spicedb", "schema.generated.zed"),
 	}
 	for suffix, expected := range tests {
-		actual, ok := splitRepoPathForLegacySuffix(moduleRoot, suffix)
+		resolvedPath, ok := splitRepoPathForLegacySuffix(moduleRoot, suffix)
 		require.True(t, ok)
-		require.Equal(t, expected, actual)
+		require.Equal(t, expected, resolvedPath)
 	}
 	_, ok := splitRepoPathForLegacySuffix(moduleRoot, "infra/unknown")
 	require.False(t, ok)
@@ -47,9 +47,9 @@ func TestSplitRepoPathForLegacySuffixFindsSiblingRepoAboveWorktree(t *testing.T)
 	require.NoError(t, os.MkdirAll(filepath.Dir(kratosConfig), 0o755))
 	require.NoError(t, os.WriteFile(kratosConfig, nil, 0o644))
 
-	actual, ok := splitRepoPathForLegacySuffix(moduleRoot, "infra/kratos/kratos.yml")
+	resolvedPath, ok := splitRepoPathForLegacySuffix(moduleRoot, "infra/kratos/kratos.yml")
 	require.True(t, ok)
-	require.Equal(t, kratosConfig, actual)
+	require.Equal(t, kratosConfig, resolvedPath)
 }
 
 func TestAppIntegrationSchemaSQLFilesUseSingleSchemaAuthority(t *testing.T) {
@@ -218,7 +218,17 @@ func TestStartAppPostgresAdminLeasesAreDistinctAndDropped(t *testing.T) {
 	firstName := currentIntegrationDatabaseName(t, first.SQLDB)
 	secondName := currentIntegrationDatabaseName(t, second.SQLDB)
 	require.NotEqual(t, firstName, secondName)
+	for _, database := range []*sql.DB{first.SQLDB, second.SQLDB} {
+		_, err := database.ExecContext(t.Context(), "CREATE TABLE fixture_isolation (id INTEGER PRIMARY KEY)")
+		require.NoError(t, err)
+	}
+	_, err = first.SQLDB.ExecContext(t.Context(), "INSERT INTO fixture_isolation VALUES (1)")
+	require.NoError(t, err)
+	var rows int
+	require.NoError(t, second.SQLDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM fixture_isolation").Scan(&rows))
+	require.Zero(t, rows, "committed fixture rows must not escape their database lease")
 	require.NoError(t, firstCleanup())
+	require.NoError(t, second.SQLDB.PingContext(t.Context()), "dropping one lease must leave the other usable")
 	require.NoError(t, secondCleanup())
 
 	admin, err := sql.Open("postgres", lease.PostgresAdminDSN)

@@ -104,6 +104,21 @@ func TestMigratedPackagesDoNotDependOnLegacyOrRuntimePackages(t *testing.T) {
 	}
 }
 
+// LLM consumers depend on contracts; SDK and HTTP adapters are leaf packages.
+func TestLLMContractsDoNotImportProviderImplementations(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(findRepositoryRoot(t), "internal", "llm")
+	for _, imported := range productionImports(t, root) {
+		if imported == modulePath+"/internal/structured" {
+			continue
+		}
+		first, _, _ := strings.Cut(imported, "/")
+		if strings.Contains(first, ".") {
+			t.Errorf("llm contracts import provider or external implementation %s", imported)
+		}
+	}
+}
+
 func productionPackagePathsUnder(t *testing.T, repositoryRoot string, domainRoot string) []string {
 	t.Helper()
 	paths := make([]string, 0)

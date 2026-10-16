@@ -4,13 +4,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func TestSiteSettingsReferencesClearsOnlyMatchingMenuSlots(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:menu-site-settings?mode=memory&cache=shared"), &gorm.Config{})
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE site_settings (
 		id INTEGER PRIMARY KEY,

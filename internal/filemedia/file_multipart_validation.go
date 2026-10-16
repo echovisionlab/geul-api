@@ -198,11 +198,11 @@ func formatAllowedExtensions(allowed []string) string {
 	return strings.Join(extensions, ", ")
 }
 
-func unsupportedMimeMessage(actual string, allowed []string) string {
-	actualLabel := normalizeMimeType(actual)
+func unsupportedMimeMessage(detectedMIME string, allowed []string) string {
+	detectedLabel := normalizeMimeType(detectedMIME)
 	prefix := "Unsupported file type."
-	if actualLabel != "" {
-		prefix = fmt.Sprintf("Unsupported file type (%s).", actualLabel)
+	if detectedLabel != "" {
+		prefix = fmt.Sprintf("Unsupported file type (%s).", detectedLabel)
 	}
 
 	allowedFormats := formatAllowedExtensions(allowed)

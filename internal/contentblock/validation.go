@@ -214,8 +214,8 @@ func validateAggregateStructure(contract Contract, state *aggregate, limits Limi
 	}
 	for siblingKey, group := range siblingPositions {
 		sort.Ints(group)
-		for expected, actual := range group {
-			if actual != expected {
+		for expected, blockPosition := range group {
+			if blockPosition != expected {
 				return fmt.Errorf(
 					"%w: sibling group %q positions must be dense from zero",
 					ErrInvalidMutation,

@@ -35,7 +35,7 @@ func TestSnapshotDigestMatchesGeneratedStorageVectors(t *testing.T) {
 		ID: blockID, ContainerSlot: "content", Kind: "paragraph", SharedData: sharedJSON,
 	}}
 	state.locales[blockID] = map[string]json.RawMessage{"en": localizedJSON}
-	actual, err := snapshotDigest(state)
+	digest, err := snapshotDigest(state)
 	require.NoError(t, err)
 
 	generated, err := contentv1.ContentStorageCanonicalHash("post", []contentv1.ContentStorageRow{{
@@ -43,7 +43,7 @@ func TestSnapshotDigestMatchesGeneratedStorageVectors(t *testing.T) {
 		Locales: []contentv1.ContentStorageLocale{{Locale: "en", LocalizedData: localizedJSON}},
 	}})
 	require.NoError(t, err)
-	require.Equal(t, generated, actual)
+	require.Equal(t, generated, digest)
 }
 
 func TestSameCanonicalJSONComparesNestedObjectsSemantically(t *testing.T) {
