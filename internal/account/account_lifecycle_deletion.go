@@ -45,7 +45,10 @@ func (s *AccountLifecycleService) RequestDeletion(
 			privateBody = upstreamError.Body
 		}
 		slog.Log(ctx, level, "Account deletion link resolution failed", failurecause.Attr(err, privateBody), "member_id", memberID, "identity_id", identityID)
-		return nil, errs.FailedPrecondition("an active member and identity link is required")
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
+			return nil, errs.FailedPrecondition("an active member and identity link is required")
+		}
+		return nil, errs.Internal(err)
 	}
 	if _, err := NewAccountEmailService(s.db, s.kratosClient, s.memberEmails).
 		SyncMemberEmailProjection(ctx, identityID, nil, nil); err != nil {
@@ -57,7 +60,16 @@ func (s *AccountLifecycleService) RequestDeletion(
 		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestDeletion", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(fmt.Errorf("sync deletion Member email projection: %w", err))
 	}
-	accountEmail := s.resolveVerifiedAccountEmailForDelivery(ctx, identityID, emailpkg.EventAccountDeletionConfirm.String())
+	accountEmail, _, err := ResolveMemberPrimaryEmailForIdentity(ctx, s.db, s.memberEmails, s.kratosClient, identityID)
+	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			privateBody = upstreamError.Body
+		}
+		slog.ErrorContext(ctx, "Resolve account deletion email failed", "identity_id", identityID, failurecause.Attr(err, privateBody))
+		return nil, errs.Internal(err)
+	}
 	if accountEmail == nil {
 		return nil, errs.FailedPrecondition("a verified Member primary email is required")
 	}
@@ -73,7 +85,10 @@ func (s *AccountLifecycleService) RequestDeletion(
 			privateBody = upstreamError.Body
 		}
 		slog.Log(ctx, level, "Account deletion link resolution failed", failurecause.Attr(err, privateBody), "member_id", memberID, "identity_id", identityID)
-		return nil, errs.FailedPrecondition("an active member and identity link is required")
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
+			return nil, errs.FailedPrecondition("an active member and identity link is required")
+		}
+		return nil, errs.Internal(err)
 	}
 	if member.PrimaryEmail == "" || !accountEmailsEqual(member.PrimaryEmail, accountEmail.Email) {
 		return nil, errs.FailedPrecondition("Member primary email is not synchronized")

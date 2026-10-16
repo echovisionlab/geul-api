@@ -186,9 +186,6 @@ func (c *KratosClient) getIdentity(ctx context.Context, identityID, credentialTy
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("identity not found: %s", identityID)
-	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, kratosResponseError(resp)
 	}

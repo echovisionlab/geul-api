@@ -177,7 +177,9 @@ func (s *AuthBootstrapService) SyncLoginRole(
 		}
 		return nil
 	})
-	if errors.Is(err, errLoginRoleUnchanged) {
+	// Execute returns the sentinel unchanged only after a successful rollback.
+	// A joined rollback failure must still reach the caller.
+	if err == errLoginRoleUnchanged {
 		return LoginRoleSyncResult{Role: desiredRole, FirstAdmin: firstAdmin}, nil
 	}
 	if err != nil {

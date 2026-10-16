@@ -236,17 +236,20 @@ func (h *RecipientPolicy) ensureAccountSelectedPrimaryEmail(ctx context.Context,
 		Select("id", "account_identity_id", "primary_email", "onboarded", "deleted_at").
 		Where("account_identity_id = ? AND onboarded = TRUE AND deleted_at IS NULL", identityID).
 		Take(&member).Error; err != nil {
-		level := slog.LevelWarn
+		level, outcome := slog.LevelWarn, "blocked"
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			level = slog.LevelError
+			level, outcome = slog.LevelError, "failed"
 		}
 		private := []string{job.GetRecipient()}
 		for _, value := range job.GetTemplateData() {
 			private = append(private, value)
 		}
 		cause := failurecause.Message(err, private...)
-		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "member_identity_link_mismatch",
+		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", outcome, "reason", "member_identity_link_mismatch",
 			"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, fmt.Errorf("resolve email recipient member link: %w", err)
+		}
 		return h.blockEmailForRecipientContext(ctx, job, "member_identity_link_mismatch", "account identity is not linked to an active Member")
 	}
 	if member.ID != identity.ExternalID {
@@ -350,17 +353,20 @@ func (h *RecipientPolicy) ensureNewsletterCurrentVerifiedEmail(ctx context.Conte
 		Select("id", "account_identity_id", "primary_email", "onboarded", "deleted_at").
 		Where("id = ? AND account_identity_id = ? AND onboarded = TRUE AND deleted_at IS NULL", memberID, identityID).
 		First(&member).Error; err != nil {
-		level := slog.LevelWarn
+		level, outcome := slog.LevelWarn, "blocked"
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			level = slog.LevelError
+			level, outcome = slog.LevelError, "failed"
 		}
 		private := []string{job.GetRecipient()}
 		for _, value := range job.GetTemplateData() {
 			private = append(private, value)
 		}
 		cause := failurecause.Message(err, private...)
-		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", "blocked", "reason", "member_identity_link_mismatch",
+		slog.Log(ctx, level, "Email recipient check failed", "domain", "mail", "outcome", outcome, "reason", "member_identity_link_mismatch",
 			"template_type", job.GetTemplateType(), "message_id", job.GetMessageId(), "failure_cause", cause)
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, fmt.Errorf("resolve email recipient member link: %w", err)
+		}
 		return h.blockEmailForRecipientContext(ctx, job, "member_identity_link_mismatch", "newsletter identity is not linked to the requested active Member")
 	}
 	if member.AccountIdentityID == nil || *member.AccountIdentityID != identityID {

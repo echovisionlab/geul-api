@@ -96,10 +96,11 @@ func (s *MemberService) setAvatar(ctx context.Context, memberID, fileID string, 
 		return nil, errs.Wrap(err)
 	}
 	members, err := s.loadMembers(ctx, []string{memberID})
-	if err != nil || len(members) != 1 {
-		if err != nil {
-			slog.ErrorContext(ctx, "Load member after avatar mutation failed", "member_id", memberID, failurecause.Attr(err))
-		}
+	if err != nil {
+		slog.ErrorContext(ctx, "Load member after avatar mutation failed", "member_id", memberID, failurecause.Attr(err))
+		return nil, errs.Internal(err)
+	}
+	if len(members) != 1 {
 		return nil, errs.NotFound("member", memberID)
 	}
 	return memberSummary(members[0], asset), nil
@@ -156,10 +157,11 @@ func (s *MemberService) deleteAvatar(ctx context.Context, memberID string, admin
 		return nil, errs.Wrap(err)
 	}
 	members, err := s.loadMembers(ctx, []string{memberID})
-	if err != nil || len(members) != 1 {
-		if err != nil {
-			slog.ErrorContext(ctx, "Load member after avatar mutation failed", "member_id", memberID, failurecause.Attr(err))
-		}
+	if err != nil {
+		slog.ErrorContext(ctx, "Load member after avatar mutation failed", "member_id", memberID, failurecause.Attr(err))
+		return nil, errs.Internal(err)
+	}
+	if len(members) != 1 {
 		return nil, errs.NotFound("member", memberID)
 	}
 	return memberSummary(members[0], nil), nil

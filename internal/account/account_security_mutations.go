@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -69,15 +70,19 @@ func (s *AccountService) RequestEmailChange(
 		return nil, err
 	}
 	identity, err := s.identity.GetIdentity(ctx, p.IdentityID.String())
-	if err != nil || identity == nil {
-		if err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
+	if err != nil {
+		var upstreamError *auth.KratosHTTPError
+		privateBody := ""
+		if errors.As(err, &upstreamError) {
+			if upstreamError.StatusCode == http.StatusNotFound {
+				return nil, errs.NotFound("identity", p.IdentityID.String())
 			}
-			slog.ErrorContext(ctx, "Operation failed", "reason", "request_email_change_identity_lookup_failed", failurecause.Attr(err, privateBody))
+			privateBody = upstreamError.Body
 		}
+		slog.ErrorContext(ctx, "Operation failed", "reason", "request_email_change_identity_lookup_failed", failurecause.Attr(err, privateBody))
+		return nil, errs.Internal(err)
+	}
+	if identity == nil {
 		return nil, errs.NotFound("identity", p.IdentityID.String())
 	}
 	normalized, ok := normalizeAccountEmailInput(req.Msg.NewEmail)
