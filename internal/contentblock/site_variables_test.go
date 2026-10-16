@@ -4,6 +4,7 @@ import (
 	"html"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -28,6 +29,27 @@ func TestMaterializeSiteVariables(t *testing.T) {
 	require.Equal(t, `<p><strong>Raw &amp; &lt;sector&gt;</strong><a href="mailto:support@example.test">support@example.test</a></p>`, rendered.HTML)
 	require.Equal(t, "Raw & <sector>support@example.test", rendered.Text)
 	require.True(t, proto.Equal(before, localized))
+}
+
+func TestExistingAndNewContactAtomsUseUnifiedSettingsWithoutStoredRewrite(t *testing.T) {
+	document := paragraphDocument(uuid.New(), "")
+	for _, key := range []string{"contact.supportEmail", "contact.privacyEmail", "contact.email", "contact.legalEmail"} {
+		document.LocaleOverlays[0].Blocks[0].GetParagraph().Content = append(document.LocaleOverlays[0].Blocks[0].GetParagraph().Content,
+			&contentv1.RichTextInline{Value: &contentv1.RichTextInline_SiteVariable{SiteVariable: &contentv1.RichTextSiteVariable{Key: key, Linked: true}}})
+	}
+	localized, err := MaterializeSnapshotRichTextLocale(snapshotFromRichDocument(t, document), "en")
+	require.NoError(t, err)
+	before := proto.Clone(localized)
+	for _, contact := range []string{"contact@example.test", ""} {
+		rendered, err := MaterializeLocalizedRichTextDocument(t.Context(), localized, nil, sitevariable.FromSettings(model.SiteSettings{
+			ContactEmail: contact, LegalEmail: "legal@example.test", SupportEmail: "old-support@example.test", PrivacyEmail: "old-privacy@example.test",
+		}, ""))
+		require.NoError(t, err)
+		require.Equal(t, contact+contact+contact+"legal@example.test", rendered.Text)
+		require.NotContains(t, rendered.HTML, "old-support")
+		require.NotContains(t, rendered.HTML, "old-privacy")
+		require.True(t, proto.Equal(before, localized), "rendering must preserve saved legacy keys")
+	}
 }
 
 func TestMaterializeDescriptiveContactLink(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 )
 
 func TestSiteVariableHrefs(t *testing.T) {
-	data := map[string]string{"site.url": "https://www.rawsector.com", "contact.legalEmail": "legal@rawsector.com", "site.title": "Raw & <sector>"}
-	for _, href := range []string{"{{site.url}}", "{{site.url}}/tools/hwp?x=1#a", "mailto:{{contact.legalEmail}}", "/my"} {
+	data := map[string]string{"site.url": "https://www.rawsector.com", "contact.legalEmail": "legal@rawsector.com", "contact.email": "contact@example.test", "contact.supportEmail": "contact@example.test", "contact.privacyEmail": "contact@example.test", "site.title": "Raw & <sector>"}
+	for _, href := range []string{"{{site.url}}", "{{site.url}}/tools/hwp?x=1#a", "mailto:{{contact.legalEmail}}", "mailto:{{contact.email}}", "mailto:{{contact.supportEmail}}", "mailto:{{contact.privacyEmail}}", "/my"} {
 		rendered, err := RenderHTMLVarsStrict(`<a href="`+href+`">{{site.title}}</a>`, data)
 		require.NoError(t, err, href)
 		require.NotContains(t, rendered, `href="/`)

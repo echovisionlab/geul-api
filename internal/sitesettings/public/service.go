@@ -151,8 +151,8 @@ func (s *ManifestService) buildSettings(ctx context.Context, settings *model.Sit
 		SiteTitle: settings.SiteTitle, MetaDescription: sitevariable.FromSettings(*settings, s.siteOrigin).ResolveText(settings.MetaDescription),
 		PrimaryColor: settings.PrimaryColor, CompanyName: settings.CompanyName,
 		CompanyAddress: settings.CompanyAddress, TaxId: settings.TaxID,
-		LegalEmail: settings.LegalEmail, SupportEmail: settings.SupportEmail,
-		PrivacyEmail: settings.PrivacyEmail, SiteOrigin: s.siteOrigin,
+		LegalEmail: settings.LegalEmail, ContactEmail: settings.ContactEmail, SupportEmail: settings.ContactEmail,
+		PrivacyEmail: settings.ContactEmail, SiteOrigin: s.siteOrigin,
 		DefaultCommentsEnabled: settings.DefaultCommentsEnabled, SocialLinks: map[string]string{},
 	}
 	if settings.GoogleAnalyticsID != nil && *settings.GoogleAnalyticsID != "" {

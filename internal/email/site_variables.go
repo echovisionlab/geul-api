@@ -19,14 +19,14 @@ func ValidateSiteVariableHrefs(source string) error {
 			continue
 		}
 		valid := value == "{{site.url}}" || strings.HasPrefix(value, "{{site.url}}/")
-		for _, key := range []string{"legalEmail", "supportEmail", "privacyEmail"} {
+		for _, key := range []string{"legalEmail", "email", "supportEmail", "privacyEmail"} {
 			valid = valid || value == "mailto:{{contact."+key+"}}"
 		}
 		if !valid {
 			return fmt.Errorf("invalid site variable href %q", value)
 		}
 		probe := strings.ReplaceAll(value, "{{site.url}}", "https://site.invalid")
-		for _, key := range []string{"legalEmail", "supportEmail", "privacyEmail"} {
+		for _, key := range []string{"legalEmail", "email", "supportEmail", "privacyEmail"} {
 			probe = strings.ReplaceAll(probe, "{{contact."+key+"}}", "contact@site.invalid")
 		}
 		if strings.Contains(probe, "{{") || !safeEmailHref(probe) {

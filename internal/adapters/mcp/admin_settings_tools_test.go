@@ -59,7 +59,7 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 	owner := &recordingAdminSettingsApplication{settings: &managev1.AllSettings{
 		Public: &managev1.PublicSettings{
 			SiteTitle: "Site", CompanyName: "Company", CompanyAddress: "Address", TaxId: "Tax",
-			LegalEmail: "legal@example.test", SupportEmail: "support@example.test", PrivacyEmail: "privacy@example.test",
+			LegalEmail: "legal@example.test", ContactEmail: "contact@example.test", SupportEmail: "contact@example.test", PrivacyEmail: "contact@example.test",
 			MetaDescription: "Description", PrimaryColor: "#abcdef", DefaultCommentsEnabled: true, SocialLinks: social,
 			HomepagePageId: adminSettingsPointer(adminSettingsTestID), MenuHeaderId: adminSettingsPointer(adminSettingsTestID),
 			GoogleAnalyticsId: adminSettingsPointer("G-ABC"), DefaultMapThemeId: adminSettingsTestID,
@@ -78,7 +78,7 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 	settings := result.StructuredContent["settings"].(map[string]any)
 	for key, value := range map[string]any{
 		"site_title": "Site", "company_name": "Company", "company_address": "Address", "tax_id": "Tax", "meta_description": "Description",
-		"legal_email": "legal@example.test", "support_email": "support@example.test", "privacy_email": "privacy@example.test",
+		"legal_email": "legal@example.test", "contact_email": "contact@example.test", "support_email": "contact@example.test", "privacy_email": "contact@example.test",
 		"primary_color": "#abcdef", "default_comments_enabled": true, "homepage_page_id": adminSettingsTestID,
 		"menu_header_id": adminSettingsTestID, "google_analytics_id": "G-ABC", "default_map_theme_id": adminSettingsTestID,
 		"site_origin": "https://example.test", "logo_light_file_id": adminSettingsTestID,
@@ -117,11 +117,11 @@ func TestSiteSettingsSchemaAndRuntimeAllowlistAgree(t *testing.T) {
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal([]byte(siteSettingsUpdateInputJSONSchema), &schema))
 	properties := schema["properties"].(map[string]any)["settings"].(map[string]any)["properties"].(map[string]any)
-	require.Len(t, properties, 27)
+	require.Len(t, properties, 26)
 	for key := range properties {
 		require.True(t, siteSettingsMutableKey(key), key)
 	}
-	for _, key := range []string{"default_map_theme_id", "site_origin", "loader_file_ids", "smtp_password"} {
+	for _, key := range []string{"default_map_theme_id", "site_origin", "loader_file_ids", "smtp_password", "support_email", "privacy_email"} {
 		require.False(t, siteSettingsMutableKey(key))
 	}
 }

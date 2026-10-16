@@ -69,6 +69,9 @@ func (s *SiteSettingService) changedSiteSettingKeys(
 	seen := make(map[string]struct{}, len(keys))
 	changed := make([]string, 0, len(keys))
 	for _, key := range keys {
+		if key == "support_email" || key == "privacy_email" {
+			key = "contact_email"
+		}
 		if _, exists := seen[key]; exists {
 			continue
 		}

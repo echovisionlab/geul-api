@@ -127,9 +127,9 @@ func TestNormalizeEmailRenderLocaleUsesCanonicalRegistry(t *testing.T) {
 }
 
 func TestReservedSiteVariablesOverrideCallerCaseAliases(t *testing.T) {
-	input := map[string]string{"site.title": "attacker", "SITE.TITLE": "attacker", "contact.legalemail": "attacker", "CONTACT.SUPPORTEMAIL": "attacker", "site.url": "https://evil.test"}
-	data := buildEmailRenderDataWithDefaults("", "https://www.rawsector.com/", "en", input, &emailSiteSettings{SiteTitle: "rawsector", CompanyName: "Company", LegalEmail: "legal@example.test", SupportEmail: "support@example.test", PrivacyEmail: "privacy@example.test"}, nil)
-	for key, want := range map[string]string{"site.title": "rawsector", "site.url": "https://www.rawsector.com", "site.companyName": "Company", "contact.legalEmail": "legal@example.test", "contact.supportEmail": "support@example.test", "contact.privacyEmail": "privacy@example.test"} {
+	input := map[string]string{"site.title": "attacker", "SITE.TITLE": "attacker", "contact.legalemail": "attacker", "CONTACT.SUPPORTEMAIL": "attacker", "CONTACT.EMAIL": "attacker", "contact.email": "attacker", "site.url": "https://evil.test"}
+	data := buildEmailRenderDataWithDefaults("", "https://www.rawsector.com/", "en", input, &emailSiteSettings{SiteTitle: "rawsector", CompanyName: "Company", LegalEmail: "legal@example.test", ContactEmail: "contact@example.test"}, nil)
+	for key, want := range map[string]string{"site.title": "rawsector", "site.url": "https://www.rawsector.com", "site.companyName": "Company", "contact.legalEmail": "legal@example.test", "contact.email": "contact@example.test", "contact.supportEmail": "contact@example.test", "contact.privacyEmail": "contact@example.test"} {
 		if data[key] != want {
 			t.Fatalf("%s = %q, want %q", key, data[key], want)
 		}

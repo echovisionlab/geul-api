@@ -45,6 +45,16 @@ type change struct {
 
 // Run never opens a database itself. The command requires an explicit DATABASE_URL.
 func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
+	return run(ctx, db, apply, report, false)
+}
+
+// RunContactEmail rewrites only live legacy contact atoms and reserved tokens.
+// It shares Run's owner locks, before-image backups, validation and revisions.
+func RunContactEmail(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
+	return run(ctx, db, apply, report, true)
+}
+
+func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contactOnly bool) error {
 	owners := map[string][]change{}
 	counts := map[string]int{}
 	layoutOwners := map[string]layoutMigrationOwner{}
@@ -69,7 +79,7 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 		}
 		if spec.table == "email_layout_translation" {
 			var err error
-			layoutOwners, err = planLayoutBackfills(ctx, db, rows)
+			layoutOwners, err = planLayoutChanges(ctx, db, rows, contactOnly)
 			if err != nil {
 				return err
 			}
@@ -87,9 +97,17 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 			var err error
 			switch spec.jsonKind {
 			case "rich":
-				next, err = RichJSON(raw)
+				if contactOnly {
+					next, err = ContactRichJSON(raw)
+				} else {
+					next, err = RichJSON(raw)
+				}
 			case "menu":
-				next, err = MenuJSON(raw)
+				if contactOnly {
+					next, err = ContactMenuJSON(raw)
+				} else {
+					next, err = MenuJSON(raw)
+				}
 			default:
 				var source string
 				err = json.Unmarshal(raw, &source)
@@ -100,9 +118,13 @@ func Run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer) error {
 							_ = json.Unmarshal(fields["entity_id"], &id)
 							_ = json.Unmarshal(fields["locale"], &locale)
 							source = layoutOwners[id].Locales[locale]
+						} else if contactOnly {
+							source = ContactText(source)
 						} else {
 							source = EmailSource(source)
 						}
+					} else if contactOnly {
+						source = ContactText(source)
 					} else {
 						source = Text(source)
 					}

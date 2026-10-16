@@ -102,8 +102,8 @@ func newLocalizationTestDB(t *testing.T) *gorm.DB {
 func TestPublicSummaryResolvesTokensWithoutChangingStoredTemplates(t *testing.T) {
 	db := newLocalizationTestDB(t)
 	require.NoError(t, db.Exec(`ALTER TABLE series_translation ADD COLUMN summary TEXT`).Error)
-	require.NoError(t, db.Exec(`CREATE TABLE site_settings(id INTEGER PRIMARY KEY,site_title TEXT,company_name TEXT,legal_email TEXT,support_email TEXT,privacy_email TEXT)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO site_settings VALUES(1,'rawsector','{{site.title}}','','support@example.test','')`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE site_settings(id INTEGER PRIMARY KEY,site_title TEXT,company_name TEXT,legal_email TEXT,contact_email TEXT,support_email TEXT,privacy_email TEXT)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO site_settings VALUES(1,'rawsector','{{site.title}}','','contact@example.test','support@example.test','')`).Error)
 	entityID := uuid.NewString()
 	source := `About {{site.title}}: {{contact.supportEmail}} / {{site.companyName}}`
 	require.NoError(t, db.Exec(`INSERT INTO series(id,source_locale) VALUES(?,'en')`, entityID).Error)
@@ -111,7 +111,7 @@ func TestPublicSummaryResolvesTokensWithoutChangingStoredTemplates(t *testing.T)
 	spec := Spec{EntityType: "series", TableName: "series_translation", SelectClause: "locale, title, summary"}
 	selected, err := ResolveWithPolicy(t.Context(), db, spec, entityID, "en", translation.DefaultRuntimeSettings())
 	require.NoError(t, err)
-	require.Equal(t, "About rawsector: support@example.test / {{site.title}}", *selected.Summary)
+	require.Equal(t, "About rawsector: contact@example.test / {{site.title}}", *selected.Summary)
 	batched, err := ResolveBatchWithPolicy(t.Context(), db, spec, []string{entityID}, "en", translation.DefaultRuntimeSettings())
 	require.NoError(t, err)
 	require.Equal(t, selected.Summary, batched[entityID].Summary)

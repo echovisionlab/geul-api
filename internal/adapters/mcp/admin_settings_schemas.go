@@ -10,8 +10,7 @@ const siteSettingsMutablePropertiesJSONSchema = `
   "company_address":{"type":["string","null"]},
   "tax_id":{"type":["string","null"]},
   "legal_email":{"type":["string","null"],"description":"Email address, or empty/null to clear."},
-  "support_email":{"type":["string","null"],"description":"Email address, or empty/null to clear."},
-  "privacy_email":{"type":["string","null"],"description":"Email address, or empty/null to clear."},
+  "contact_email":{"type":["string","null"],"description":"Unified contact email address, or empty/null to clear. Legal email remains separate."},
   "social_links":{"type":["object","null"],"description":"Replaces the full social links object; null resets it to an empty object."},
   "logo_light_file_id":{"type":["string","null"],"description":"Source File UUID; empty/null clears. Use file_list or file_upload to resolve Files."},
   "logo_dark_file_id":{"type":["string","null"],"description":"Source File UUID; empty/null clears."},
@@ -43,6 +42,8 @@ const siteSettingsUpdateInputJSONSchema = `{
 const siteSettingsGetOutputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["settings"],
   "properties":{"settings":{"type":"object","additionalProperties":false,"properties":{` + siteSettingsMutablePropertiesJSONSchema + `,
+    "support_email":{"type":"string","description":"Legacy read alias of contact_email."},
+    "privacy_email":{"type":"string","description":"Legacy read alias of contact_email."},
     "loader_file_ids":{"type":"array","items":{"type":"string"},"description":"Read-only ordered source File IDs."},
     "default_map_theme_id":{"type":"string","description":"Read-only here. Change with map_theme_set_default."},
     "site_origin":{"type":"string","description":"Read-only runtime origin."}

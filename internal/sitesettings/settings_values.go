@@ -20,6 +20,7 @@ var defaultSettings = siteSettingObject{
 	"company_address":               "",
 	"tax_id":                        "",
 	"legal_email":                   "",
+	"contact_email":                 "",
 	"support_email":                 "",
 	"privacy_email":                 "",
 	"social_links":                  siteSettingObject{},
@@ -264,10 +265,8 @@ func settingValue(settings *model.SiteSettings, key string) (siteSettingValue, b
 		return settings.TaxID, true
 	case "legal_email":
 		return settings.LegalEmail, true
-	case "support_email":
-		return settings.SupportEmail, true
-	case "privacy_email":
-		return settings.PrivacyEmail, true
+	case "contact_email", "support_email", "privacy_email":
+		return settings.ContactEmail, true
 	case "social_links":
 		return jsonColumnToMap(settings.SocialLinks, "social_links", true), true
 	case "logo_light_file_id":
@@ -321,7 +320,7 @@ func (s *SiteSettingService) applySettingValue(settings *model.SiteSettings, key
 	switch key {
 	case "site_title", "company_name", "company_address", "tax_id", "meta_description":
 		return applyRequiredStringSiteSetting(settings, key, value)
-	case "legal_email", "support_email", "privacy_email":
+	case "legal_email", "contact_email", "support_email", "privacy_email":
 		return applyEmailSiteSetting(settings, key, value)
 	case "social_links":
 		v, err := parseJSONObjectBytes(value, false)
@@ -406,10 +405,8 @@ func applyEmailSiteSetting(settings *model.SiteSettings, key string, value siteS
 	switch key {
 	case "legal_email":
 		settings.LegalEmail = parsed
-	case "support_email":
-		settings.SupportEmail = parsed
-	case "privacy_email":
-		settings.PrivacyEmail = parsed
+	case "contact_email", "support_email", "privacy_email":
+		settings.ContactEmail = parsed
 	}
 	return nil
 }

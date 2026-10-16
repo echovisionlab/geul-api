@@ -15,9 +15,8 @@ import (
 
 type emailSiteSettings struct {
 	CompanyName     string  `gorm:"column:company_name"`
+	ContactEmail    string  `gorm:"column:contact_email"`
 	LegalEmail      string  `gorm:"column:legal_email"`
-	SupportEmail    string  `gorm:"column:support_email"`
-	PrivacyEmail    string  `gorm:"column:privacy_email"`
 	SiteTitle       string  `gorm:"column:site_title"`
 	LogoEmailFileID *string `gorm:"column:logo_email_file_id"`
 }
@@ -59,7 +58,7 @@ func loadEmailRenderDefaults(
 	var settings emailSiteSettings
 	err := db.WithContext(ctx).
 		Table("site_settings").
-		Select("site_title, company_name, legal_email, support_email, privacy_email, logo_email_file_id").
+		Select("site_title, company_name, legal_email, contact_email, logo_email_file_id").
 		Where("id = 1").
 		Take(&settings).Error
 	if err != nil {
@@ -103,7 +102,7 @@ func buildEmailRenderDataWithDefaults(
 	}
 	trusted := model.SiteSettings{}
 	if settings != nil {
-		trusted = model.SiteSettings{SiteTitle: settings.SiteTitle, CompanyName: settings.CompanyName, LegalEmail: settings.LegalEmail, SupportEmail: settings.SupportEmail, PrivacyEmail: settings.PrivacyEmail}
+		trusted = model.SiteSettings{SiteTitle: settings.SiteTitle, CompanyName: settings.CompanyName, LegalEmail: settings.LegalEmail, ContactEmail: settings.ContactEmail}
 	}
 	for key, value := range sitevariable.FromSettings(trusted, siteOrigin).Values() {
 		data[key] = value

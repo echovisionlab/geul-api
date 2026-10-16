@@ -1,0 +1,56 @@
+package sitevariablemigrate
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+var contactTokens = strings.NewReplacer(
+	"{{contact.supportEmail}}", "{{contact.email}}",
+	"{{contact.privacyEmail}}", "{{contact.email}}",
+)
+
+// ContactText replaces exact reserved tokens without interpreting setting values
+// or changing unrelated branding, addresses, template variables or HTML markers.
+func ContactText(source string) string { return contactTokens.Replace(source) }
+
+func ContactRichJSON(source []byte) ([]byte, error) {
+	return contactJSON(source, false)
+}
+
+func ContactMenuJSON(source []byte) ([]byte, error) {
+	return contactJSON(source, true)
+}
+
+func contactJSON(source []byte, menu bool) ([]byte, error) {
+	var value any
+	if err := json.Unmarshal(source, &value); err != nil {
+		return nil, err
+	}
+	var walk func(any)
+	walk = func(value any) {
+		switch node := value.(type) {
+		case []any:
+			for _, item := range node {
+				walk(item)
+			}
+		case map[string]any:
+			if variable, ok := node["siteVariable"].(map[string]any); ok {
+				if key := variable["key"]; key == "contact.supportEmail" || key == "contact.privacyEmail" {
+					variable["key"] = "contact.email"
+				}
+			}
+			for key, item := range node {
+				// Rich payloads can contain executable source and metadata. Limit
+				// text replacement to authored text and link hrefs; menu labels use label.
+				if text, ok := item.(string); ok && (key == "text" || key == "href" || (menu && key == "label")) {
+					node[key] = ContactText(text)
+				} else {
+					walk(item)
+				}
+			}
+		}
+	}
+	walk(value)
+	return json.Marshal(value)
+}
