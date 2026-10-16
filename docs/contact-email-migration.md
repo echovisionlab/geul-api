@@ -48,14 +48,16 @@ close/stop Collab rooms so no resident room can save an old snapshot. Keep these
 writers stopped through verification. The command's `--writers-stopped` flag
 acknowledges this operational prerequisite; it does not stop services itself.
 
-Take and verify an external database backup first. Use the release's migration
-binary with an explicitly configured `DATABASE_URL`; keep credentials in the
-operator's existing secret mechanism. Inspect the dry-run counts:
+Take and verify an external database backup first. Build the command from the
+exact API release source on the operator's approved build environment
+(`go build -o site-variable-migrate ./cmd/site-variable-migrate`); the application
+image contains only the server. Supply an explicitly configured `DATABASE_URL`
+through the operator's existing secret mechanism. Inspect the dry-run counts:
 
 ```sh
-site-variable-migrate --contact-email --dry-run
-site-variable-migrate --contact-email --apply --writers-stopped
-site-variable-migrate --contact-email --dry-run
+./site-variable-migrate --contact-email --dry-run
+./site-variable-migrate --contact-email --apply --writers-stopped
+./site-variable-migrate --contact-email --dry-run
 ```
 
 Only `--apply` enables writes. The final dry run should report zero changes for
