@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0](https://github.com/echovisionlab/geul-api/compare/v1.10.0...v2.0.0) (2026-10-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* require canonical contacts and migrate stored content ([#128](https://github.com/echovisionlab/geul-api/issues/128))
+
+### Features
+
+* require canonical contacts and migrate stored content ([#128](https://github.com/echovisionlab/geul-api/issues/128)) ([d65f5f5](https://github.com/echovisionlab/geul-api/commit/d65f5f5105f36a01eb1866b493194be30648ec28))
+
+
+### Bug Fixes
+
+* preserve dependency and cleanup failures at service boundaries ([#126](https://github.com/echovisionlab/geul-api/issues/126)) ([3ad5ca2](https://github.com/echovisionlab/geul-api/commit/3ad5ca204a91f583eceff7a2031b54470fa184b9))
+* preserve email formatting and isolate application tests ([#123](https://github.com/echovisionlab/geul-api/issues/123)) ([7155b62](https://github.com/echovisionlab/geul-api/commit/7155b62b9be580753f2187ec85fb2b8eed9dcd94))
+* **translation:** enqueue jobs within the owning transaction ([#129](https://github.com/echovisionlab/geul-api/issues/129)) ([63eb32b](https://github.com/echovisionlab/geul-api/commit/63eb32b334e38a768c58fceeb4eafc71355929c5))
+
 ## [1.10.0](https://github.com/echovisionlab/geul-api/compare/v1.9.1...v1.10.0) (2026-10-16)
 
 
