@@ -139,7 +139,7 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/og-render-baseline" --no-save --ignore-scripts "satori@$BASELINE_VERSION"
           # Keep the archived sources inside tsconfig's src glob so tsx applies
           # the same Hono automatic JSX transform to both template versions.
-          baseline_sources="$GITHUB_WORKSPACE/media/og/src/.og-render-baseline"
+          baseline_sources="$GITHUB_WORKSPACE/media/og/src/og-render-baseline-ci"
           mkdir -p "$baseline_sources"
           git archive "$BASE_SHA" media/og/src/templates media/og/src/types | tar -x -C "$baseline_sources"
           cd media/og
