@@ -2,6 +2,11 @@ package series
 
 import (
 	"context"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -46,13 +51,43 @@ func (s *SeriesService) loadSeriesListDetails(
 	return details, nil
 }
 
-func loadSeriesManagerMemberIDs(ctx context.Context, db *gorm.DB, seriesID string) ([]string, error) {
-	var memberIDs []string
-	if err := db.WithContext(ctx).Table("series_manager").
-		Where("series_id = ?", seriesID).
-		Order("created_at ASC, member_id ASC").
-		Pluck("member_id", &memberIDs).Error; err != nil {
-		return nil, err
+type seriesManagerAttribution struct {
+	MemberID  string
+	CreatedAt time.Time
+}
+
+func loadSeriesManagerAttributions(ctx context.Context, db *gorm.DB, seriesID string) ([]seriesManagerAttribution, error) {
+	var rows []seriesManagerAttribution
+	err := db.WithContext(ctx).Table("series_manager").Select("member_id", "created_at").
+		Where("series_id = ?", seriesID).Order("created_at ASC, member_id ASC").Scan(&rows).Error
+	return rows, err
+}
+
+func (s *SeriesService) loadSeriesManagerProjections(ctx context.Context, seriesID string) ([]*managev1.SeriesManager, error) {
+	rows, err := loadSeriesManagerAttributions(ctx, s.db, seriesID)
+	if err != nil {
+		return nil, errs.Internal(err)
 	}
-	return memberIDs, nil
+	result := make([]*managev1.SeriesManager, 0, len(rows))
+	if len(rows) == 0 {
+		return result, nil
+	}
+	memberIDs := make([]string, len(rows))
+	for i := range rows {
+		memberIDs[i] = rows[i].MemberID
+	}
+	summaries, err := s.members.LoadSeriesManagers(ctx, memberIDs)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	for _, row := range rows {
+		summary := summaries[row.MemberID]
+		if summary == nil {
+			return nil, errs.InternalMsg("series manager member was not found")
+		}
+		manager := proto.Clone(summary).(*managev1.SeriesManager)
+		manager.CreatedAt = timestamppb.New(row.CreatedAt)
+		result = append(result, manager)
+	}
+	return result, nil
 }

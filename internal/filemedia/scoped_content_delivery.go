@@ -167,6 +167,15 @@ func (s *FileService) HydrateAuthorizedPageBlockMediaWithDB(
 	)
 }
 
+// HydrateAuthorizedPostBlockMediaWithDB adds private editor delivery while
+// Post holds its owner, principal, document, and exact attachment witnesses.
+func (s *FileService) HydrateAuthorizedPostBlockMediaWithDB(
+	ctx context.Context, tx *gorm.DB, postID string, documentID uuid.UUID,
+	principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
+) ([]*contentv1.ContentBlockMediaItem, error) {
+	return s.hydrateAuthorizedContentBlockMediaWithDB(ctx, tx, scopedContentOwnerPost, postID, documentID, principal, items)
+}
+
 // HydrateAuthorizedWorkBlockMediaWithDB adds private editor delivery while
 // the Work owner keeps its exact authorization and lifecycle fence.
 func (s *FileService) HydrateAuthorizedWorkBlockMediaWithDB(

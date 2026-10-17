@@ -25,11 +25,12 @@ func directDraftMediaTTL(configured time.Duration) time.Duration {
 }
 
 type scopedMediaFile struct {
-	ID        string  `gorm:"column:id"`
-	Extension string  `gorm:"column:extension"`
-	MimeType  string  `gorm:"column:mime_type"`
-	FileSize  int64   `gorm:"column:file_size"`
-	FileName  *string `gorm:"column:file_name"`
+	ID              string  `gorm:"column:id"`
+	Extension       string  `gorm:"column:extension"`
+	MimeType        string  `gorm:"column:mime_type"`
+	FileSize        int64   `gorm:"column:file_size"`
+	FileName        *string `gorm:"column:file_name"`
+	DurationSeconds *int    `gorm:"column:duration_seconds"`
 }
 
 type scopedMediaDerivative struct {
@@ -56,7 +57,7 @@ func (s *FileService) buildScopedMediaURLsWithDB(
 	var files []scopedMediaFile
 	if err := db.WithContext(ctx).
 		Table("file").
-		Select("id, extension, mime_type, file_size, file_name").
+		Select("id, extension, mime_type, file_size, file_name, duration_seconds").
 		Where("id IN ? AND delete_requested_at IS NULL", allowedFileIDs).
 		Find(&files).Error; err != nil {
 		return nil, errs.Internal(err)
@@ -161,7 +162,7 @@ func (s *FileService) ResolvePublicDisplayMedia(
 
 	var files []scopedMediaFile
 	if err := s.db.WithContext(ctx).Table("file").
-		Select("id, extension, mime_type, file_size, file_name").
+		Select("id, extension, mime_type, file_size, file_name, duration_seconds").
 		Where("id IN ? AND delete_requested_at IS NULL", requested).
 		Find(&files).Error; err != nil {
 		return nil, errs.Internal(err)
@@ -218,6 +219,10 @@ func projectScopedMediaURL(
 	}
 	if file.FileName != nil {
 		response.FileName = file.FileName
+	}
+	if file.DurationSeconds != nil {
+		duration := int32(*file.DurationSeconds)
+		response.DurationSeconds = &duration
 	}
 
 	if publicAsset.AssetID != "" {

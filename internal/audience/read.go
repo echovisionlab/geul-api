@@ -144,7 +144,7 @@ func (s *AudienceService) ListSegmentsAdmin(
 	}
 	return connect.NewResponse(&managev1.ListSegmentsAdminResponse{
 		Segments:   protoSegments,
-		Pagination: &commonv1.PaginationResponse{Total: int32(total), Limit: limit, Offset: offset},
+		Pagination: (queryutil.Pagination{Limit: limit, Offset: offset}).BuildResponse(total),
 	}), nil
 }
 

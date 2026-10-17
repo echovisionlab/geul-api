@@ -127,6 +127,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 		postMedia,
 		post.WithInternalPostDomainAuditWriter(telemetryWriter),
 		post.WithInternalPostContentBlockStore(contentBlockStore),
+		post.WithInternalPostContentBlockMediaHydrator(fileService),
 	)
 	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(internalPostService, internalHandlerOpts...)
 	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))

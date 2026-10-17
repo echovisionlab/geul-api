@@ -12,7 +12,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -254,12 +254,8 @@ func (s *MapPlaceService) ListMapPlacesAdmin(
 	}
 
 	return connect.NewResponse(&managev1.ListMapPlacesAdminResponse{
-		Places: result,
-		Pagination: &commonv1.PaginationResponse{
-			Total:  int32(total),
-			Limit:  int32(limit),
-			Offset: int32(offset),
-		},
+		Places:     result,
+		Pagination: (queryutil.Pagination{Limit: int32(limit), Offset: int32(offset)}).BuildResponse(total),
 	}), nil
 }
 

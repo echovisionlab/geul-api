@@ -20,6 +20,7 @@ import (
 // workSortConfig defines allowed sort fields for works
 type creditedWorkRow struct {
 	WorkID            string    `gorm:"column:work_id"`
+	SourceLocale      string    `gorm:"column:source_locale"`
 	Title             string    `gorm:"column:title"`
 	Slug              *string   `gorm:"column:slug"`
 	Type              string    `gorm:"column:type"`
@@ -104,6 +105,7 @@ func (s *WorkService) ListMyCreditedWorks(
 	err = pg.Apply(query).
 		Select(`
 			w.id AS work_id,
+ w.source_locale AS source_locale,
 			` + WorkSourceTitleSQL("w") + ` AS title,
 			w.slug AS slug,
 			w.type AS type,
@@ -158,14 +160,15 @@ func (s *WorkService) projectCreditedWork(
 		workStatus = managev1.WorkStatus_WORK_STATUS_DRAFT
 	}
 	credited := &managev1.MyCreditedWork{
-		WorkId:     row.WorkID,
-		Title:      row.Title,
-		Slug:       row.Slug,
-		Type:       workType,
-		Status:     workStatus,
-		CreditId:   row.CreditID,
-		CreditRole: row.CreditRole,
-		CreatedAt:  timestamppb.New(row.CreatedAt),
+		WorkId:       row.WorkID,
+		SourceLocale: row.SourceLocale,
+		Title:        row.Title,
+		Slug:         row.Slug,
+		Type:         workType,
+		Status:       workStatus,
+		CreditId:     row.CreditID,
+		CreditRole:   row.CreditRole,
+		CreatedAt:    timestamppb.New(row.CreatedAt),
 	}
 	if row.MemberID != nil && *row.MemberID == memberID {
 		if memberSummary == nil {

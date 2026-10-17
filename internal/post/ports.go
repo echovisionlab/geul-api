@@ -5,6 +5,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -53,6 +54,12 @@ type ShareLinkValidator interface {
 // Post operation has authorized the document.
 type ContentBlockMediaLoader interface {
 	LoadContentBlockMediaReferences(context.Context, *gorm.DB, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
+}
+
+// ContentBlockMediaHydrator adds private delivery while Post holds the
+// authorized owner, document, and attachment witnesses in one transaction.
+type ContentBlockMediaHydrator interface {
+	HydrateAuthorizedPostBlockMediaWithDB(context.Context, *gorm.DB, string, uuid.UUID, *auth.UserInfo, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
 }
 
 // MemberSummaryLoader supplies Member-owned manage projections after Post has

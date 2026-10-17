@@ -620,10 +620,11 @@ func validateMenuItemLink(item *managev1.MenuItem, itemPath string) error {
 
 func (s *MenuService) toProtoMenu(m *model.Menu) (*managev1.Menu, error) {
 	menu := &managev1.Menu{
-		Id:        m.ID,
-		Name:      m.Name,
-		CreatedAt: timestamppb.New(m.CreatedAt),
-		UpdatedAt: timestamppb.New(m.UpdatedAt),
+		Id:           m.ID,
+		SourceLocale: m.SourceLocale,
+		Name:         m.Name,
+		CreatedAt:    timestamppb.New(m.CreatedAt),
+		UpdatedAt:    timestamppb.New(m.UpdatedAt),
 	}
 
 	// Parse items from JSON

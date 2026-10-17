@@ -21,6 +21,7 @@ func (s *FormService) toProtoForm(ctx context.Context, f *model.Form) (*managev1
 	}
 	form := &managev1.Form{
 		Id:           f.ID,
+		SourceLocale: f.SourceLocale,
 		Title:        resolveFormTitle(sourceState.Title),
 		Schema:       sourceState.ContentJSON,
 		Status:       managev1.FormStatus(managev1.FormStatus_value[string(f.Status)]),
@@ -110,10 +111,11 @@ func toProtoFormSummaryWithSubmissionCount(
 
 func (s *FormService) toProtoSubmission(sub *model.FormSubmission) *managev1.FormSubmission {
 	submission := &managev1.FormSubmission{
-		Id:        sub.ID,
-		FormId:    sub.FormID,
-		Data:      sub.Data,
-		CreatedAt: timestamppb.New(sub.CreatedAt),
+		Id:          sub.ID,
+		FormId:      sub.FormID,
+		CountryCode: sub.CountryCode,
+		Data:        sub.Data,
+		CreatedAt:   timestamppb.New(sub.CreatedAt),
 	}
 
 	if sub.MemberID != nil {

@@ -822,6 +822,10 @@ func (s *PostService) buildPostResponse(
 	if post.PublishedAt != nil {
 		protoPost.PublishedAt = timestamppb.New(*post.PublishedAt)
 	}
+	if post.ScheduledAt != nil {
+		protoPost.ScheduledAt = timestamppb.New(*post.ScheduledAt)
+	}
+	protoPost.ScheduledTimeZone = post.ScheduledTimeZone
 	postSourceOgAssetID := post.OgAssetID
 	if localization.OmitSourceOgFallback {
 		postSourceOgAssetID = nil

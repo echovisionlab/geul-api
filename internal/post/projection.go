@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -252,21 +253,37 @@ func (s *PostService) hydratePostContentProjection(ctx context.Context, post *mo
 	if err != nil {
 		return err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshot(ctx, s.db, documentID, post.SourceLocale)
-	if err != nil {
-		return normalizePostContentBlockError(err)
+	if s.mediaHydrator == nil {
+		return errs.InternalMsg("Post Block media hydrator is not configured")
 	}
-	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
-	if err != nil {
-		return normalizePostContentBlockError(err)
-	}
-	post.ContentDocument = document
-	post.ContentRevision = snapshot.Document.Revision.String()
-	post.BlockMedia, err = s.mediaLoader.LoadContentBlockMediaReferences(ctx, s.db, documentID)
-	if err != nil {
-		return errs.Internal(fmt.Errorf("load Post content media references: %w", err))
-	}
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		root, err := lockPostContentDocumentRoot(ctx, tx, post.ID, documentID, true)
+		if err != nil {
+			return err
+		}
+		if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, root.Status); err != nil {
+			return err
+		}
+		if root.SourceLocale != post.SourceLocale {
+			return errs.FailedPrecondition("Post source locale changed; reload before reading")
+		}
+		snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, post.SourceLocale)
+		if err != nil {
+			return normalizePostContentBlockError(err)
+		}
+		document, err := contentblock.SnapshotToRichTextDocument(snapshot)
+		if err != nil {
+			return normalizePostContentBlockError(err)
+		}
+		mediaItems, err := loadPostBlockMedia(ctx, tx, post.ID, documentID, auth.GetUser(ctx), s.mediaLoader, s.mediaHydrator)
+		if err != nil {
+			return err
+		}
+		post.ContentDocument = document
+		post.ContentRevision = snapshot.Document.Revision.String()
+		post.BlockMedia = mediaItems
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 }
 
 func (s *PostService) hydratePostContentProjections(ctx context.Context, posts []model.Post) error {
@@ -493,6 +510,7 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 	post := &managev1.Post{
 		Id:                    p.ID,
 		Title:                 p.Title,
+		SourceLocale:          p.SourceLocale,
 		Document:              p.ContentDocument,
 		Revision:              p.ContentRevision,
 		ConfigurationRevision: p.ConfigurationRevision,
@@ -533,9 +551,10 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 		post.Categories = make([]*managev1.Category, len(p.Categories))
 		for i, cat := range p.Categories {
 			post.Categories[i] = &managev1.Category{
-				Id:   cat.ID,
-				Name: cat.Name,
-				Slug: &cat.Slug,
+				Id:        cat.ID,
+				Name:      cat.Name,
+				CreatedAt: timestamppb.New(cat.CreatedAt),
+				Slug:      &cat.Slug,
 			}
 			if cat.Description != nil {
 				post.Categories[i].Description = cat.Description
@@ -548,9 +567,10 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 		post.Tags = make([]*managev1.Tag, len(p.Tags))
 		for i, tag := range p.Tags {
 			post.Tags[i] = &managev1.Tag{
-				Id:   tag.ID,
-				Name: tag.Name,
-				Slug: &tag.Slug,
+				Id:        tag.ID,
+				Name:      tag.Name,
+				CreatedAt: timestamppb.New(tag.CreatedAt),
+				Slug:      &tag.Slug,
 			}
 		}
 	}
@@ -558,9 +578,12 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 	// Convert series
 	if p.Series != nil {
 		post.Series = &managev1.Series{
-			Id:    p.Series.ID,
-			Title: p.Series.Title,
-			Slug:  p.Series.Slug,
+			Id:           p.Series.ID,
+			SourceLocale: p.Series.SourceLocale,
+			Title:        p.Series.Title,
+			Status:       p.Series.Status,
+			CreatedAt:    timestamppb.New(p.Series.CreatedAt),
+			Slug:         p.Series.Slug,
 		}
 		if p.Series.Description != nil {
 			post.Series.Description = p.Series.Description

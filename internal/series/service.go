@@ -25,7 +25,6 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // SeriesService implements the SeriesService Connect handler
@@ -122,23 +121,14 @@ func (s *SeriesService) ListSeriesPosts(
 		}
 	}()
 
-	type postResult struct {
-		ID          string
-		Title       string
-		Slug        *string
-		Status      string
-		SeriesOrder *int
-		PublishedAt *time.Time
-	}
-
-	var posts []postResult
+	var posts []seriesPostRow
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := s.requireSeriesViewAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
 			return err
 		}
 		return tx.WithContext(ctx).
 			Table("post").
-			Select("id, "+s.postAccess.PostSourceTitleSQL()+" AS title, slug, status, series_order, published_at").
+			Select("id, "+s.postAccess.PostSourceTitleSQL()+" AS title, source_locale, slug, status, series_order, published_at").
 			Where("series_id = ?", req.Msg.SeriesId).
 			Order("series_order ASC NULLS LAST, created_at ASC").
 			Find(&posts).Error
@@ -151,25 +141,8 @@ func (s *SeriesService) ListSeriesPosts(
 
 	// Convert to proto
 	protoPosts := make([]*managev1.SeriesPost, len(posts))
-	for i, post := range posts {
-		seriesOrder := int32(0)
-		if post.SeriesOrder != nil {
-			seriesOrder = int32(*post.SeriesOrder)
-		}
-		slug := ""
-		if post.Slug != nil {
-			slug = *post.Slug
-		}
-		protoPosts[i] = &managev1.SeriesPost{
-			Id:          post.ID,
-			Title:       post.Title,
-			Slug:        slug,
-			Status:      post.Status,
-			SeriesOrder: seriesOrder,
-		}
-		if post.PublishedAt != nil {
-			protoPosts[i].PublishedAt = timestamppb.New(*post.PublishedAt)
-		}
+	for i := range posts {
+		protoPosts[i] = toProtoSeriesPost(&posts[i])
 	}
 
 	return connect.NewResponse(&managev1.ListSeriesPostsResponse{
@@ -407,11 +380,7 @@ func (s *SeriesService) ListSeriesSimple(
 	// Convert to simple
 	simpleSeries := make([]*managev1.SeriesSimple, len(seriesList))
 	for i := range seriesList {
-		simpleSeries[i] = &managev1.SeriesSimple{
-			Id:    seriesList[i].ID,
-			Title: seriesList[i].Title,
-			Slug:  seriesList[i].Slug,
-		}
+		simpleSeries[i] = toProtoSeriesSimple(&seriesList[i])
 	}
 
 	return connect.NewResponse(&managev1.ListSeriesSimpleResponse{

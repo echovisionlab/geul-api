@@ -454,6 +454,7 @@ func newPublicFileDownloadUnitDB(t *testing.T) *gorm.DB {
 			extension TEXT NOT NULL,
 			mime_type TEXT NOT NULL,
 			file_size INTEGER NOT NULL,
+ duration_seconds INTEGER,
 			delete_requested_at DATETIME
 		);
 		CREATE TABLE audience_segment (

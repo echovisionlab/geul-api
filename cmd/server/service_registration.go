@@ -477,6 +477,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		postVersionRestore,
 		telemetryWriter,
 		post.WithPostContentBlockStore(contentBlockStore),
+		post.WithPostContentBlockMediaHydrator(fileService),
 	)
 	postPath, postHandler := managev1connect.NewPostServiceHandler(postService, handlerOpts...)
 	mux.Handle(postPath, postHandler)

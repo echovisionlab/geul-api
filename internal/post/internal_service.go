@@ -3,6 +3,7 @@ package post
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"slices"
@@ -40,12 +41,17 @@ type InternalPostService struct {
 	contentBlocks  *contentblock.Store
 	ogRefresher    *og.Refresher
 	mediaLoader    ContentBlockMediaLoader
+	mediaHydrator  ContentBlockMediaHydrator
 }
 
 type InternalPostServiceOption func(*InternalPostService)
 
 func WithInternalPostDomainAuditWriter(writer domainaudit.Appender) InternalPostServiceOption {
 	return func(s *InternalPostService) { s.auditWriter = writer }
+}
+
+func WithInternalPostContentBlockMediaHydrator(hydrator ContentBlockMediaHydrator) InternalPostServiceOption {
+	return func(s *InternalPostService) { s.mediaHydrator = hydrator }
 }
 
 func WithInternalPostContentBlockStore(store *contentblock.Store) InternalPostServiceOption {
@@ -108,6 +114,9 @@ func (s *InternalPostService) LoadPostBlockDocument(
 	if req.Msg == nil {
 		return nil, errs.InvalidArgumentMsg("request is required")
 	}
+	if s.mediaHydrator == nil {
+		return nil, errs.InternalMsg("Post Block media hydrator is not configured")
+	}
 	locale, err := validatePostAIDocumentIdentity(req.Msg.PostId, req.Msg.Locale)
 	if err != nil {
 		return nil, err
@@ -126,9 +135,10 @@ func (s *InternalPostService) LoadPostBlockDocument(
 	var tagIDs []string
 	var mediaItems []*contentv1.ContentBlockMediaItem
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := authorizePostBlockBootstrap(
+		principal, err := authorizePostBlockBootstrap(
 			ctx, tx, s.spiceDB, req.Msg.PostId, documentID, req.Msg.Principal,
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
 		domain, err := loadPostContentDomainContext(ctx, tx, req.Msg.PostId)
@@ -173,9 +183,9 @@ func (s *InternalPostService) LoadPostBlockDocument(
 		if err != nil {
 			return err
 		}
-		mediaItems, err = s.mediaLoader.LoadContentBlockMediaReferences(ctx, tx, documentID)
+		mediaItems, err = loadPostBlockMedia(ctx, tx, req.Msg.PostId, documentID, principal, s.mediaLoader, s.mediaHydrator)
 		return err
-	})
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, normalizePostContentBlockError(err)
 	}
