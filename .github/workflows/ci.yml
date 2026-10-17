@@ -19,7 +19,35 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    name: Scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_full: ${{ steps.scope.outputs.run_full }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify release metadata
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: python3 .github/scripts/release-scope.py
+
+      - name: Check release scope contracts
+        if: steps.scope.outputs.run_full == 'true'
+        run: python3 -m unittest discover -s .github/scripts -p 'test_release_scope.py'
+
   go-checks:
+    needs: scope
+    if: needs.scope.outputs.run_full == 'true'
     name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -89,6 +117,8 @@ jobs:
         run: rm -f "$GIT_CONFIG_GLOBAL"
 
   media-tools:
+    needs: scope
+    if: needs.scope.outputs.run_full == 'true'
     name: Media tools
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -239,22 +269,31 @@ jobs:
         run: rm -f "$GIT_CONFIG_GLOBAL"
 
   validate:
-    # PRs require both ordinary suites. A requested dispatch smoke must also pass;
-    # a skipped smoke is accepted only when it was not requested.
+    # Version-only Release Please PRs require the scope check. Ordinary PRs
+    # require both suites; a requested dispatch smoke must also pass.
     name: Validate
     runs-on: ubuntu-latest
-    needs: [go-checks, media-tools, integration-smoke]
+    needs: [scope, go-checks, media-tools, integration-smoke]
     if: ${{ always() }}
     steps:
       - name: Require every validation job
         env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          RUN_FULL: ${{ needs.scope.outputs.run_full }}
           GO_RESULT: ${{ needs.go-checks.result }}
           MEDIA_RESULT: ${{ needs.media-tools.result }}
           SMOKE_REQUIRED: ${{ github.event_name == 'workflow_dispatch' && inputs.integration_smoke }}
           SMOKE_RESULT: ${{ needs.integration-smoke.result }}
         run: |
-          test "$GO_RESULT" = success
-          test "$MEDIA_RESULT" = success
+          set -euo pipefail
+          test "$SCOPE_RESULT" = success
+          if [ "$RUN_FULL" = true ]; then
+            test "$GO_RESULT" = success
+            test "$MEDIA_RESULT" = success
+          else
+            test "$GO_RESULT" = skipped
+            test "$MEDIA_RESULT" = skipped
+          fi
           if [ "$SMOKE_REQUIRED" = true ]; then
             test "$SMOKE_RESULT" = success
           else
