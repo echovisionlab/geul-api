@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.5](https://github.com/echovisionlab/geul-api/compare/v2.0.4...v2.0.5) (2026-10-17)
+
+
+### Bug Fixes
+
+* allow library SVG images in site logo settings ([#141](https://github.com/echovisionlab/geul-api/issues/141)) ([d204730](https://github.com/echovisionlab/geul-api/commit/d20473060beb5fbf876e9b869eb318470b838b26))
+
 ## [2.0.4](https://github.com/echovisionlab/geul-api/compare/v2.0.3...v2.0.4) (2026-10-17)
 
 
