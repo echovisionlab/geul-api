@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.3](https://github.com/echovisionlab/geul-api/compare/v2.0.2...v2.0.3) (2026-10-17)
+
+
+### Bug Fixes
+
+* **translation:** keep AI response references owned by the source ([#136](https://github.com/echovisionlab/geul-api/issues/136)) ([d427492](https://github.com/echovisionlab/geul-api/commit/d4274926e8361fff6b5bbf84a7655fa09751bd9c))
+
 ## [2.0.2](https://github.com/echovisionlab/geul-api/compare/v2.0.1...v2.0.2) (2026-10-17)
 
 
