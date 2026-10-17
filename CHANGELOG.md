@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.4](https://github.com/echovisionlab/geul-api/compare/v2.0.3...v2.0.4) (2026-10-17)
+
+
+### Bug Fixes
+
+* complete content responses and authorized editor media ([#138](https://github.com/echovisionlab/geul-api/issues/138)) ([5390770](https://github.com/echovisionlab/geul-api/commit/5390770b1a8cff0ff95ecd2b392c718485952c94))
+
 ## [2.0.3](https://github.com/echovisionlab/geul-api/compare/v2.0.2...v2.0.3) (2026-10-17)
 
 
