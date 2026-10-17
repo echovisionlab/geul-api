@@ -777,14 +777,16 @@ func layoutTranslatedValue(source, value string) string {
 	if value == "" {
 		return ""
 	}
-	// Preserve source formatting spaces, but explicit locale newlines are
-	// authored content. Trimming them would erase leading/trailing hard breaks.
+	// Preserve source formatting spaces without inheriting its line breaks.
+	// Explicit locale newlines remain authored content, including edge breaks.
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" && strings.ContainsAny(value, "\r\n") {
 		return value
 	}
 	leading := source[:len(source)-len(strings.TrimLeftFunc(source, unicode.IsSpace))]
 	trailing := source[len(strings.TrimRightFunc(source, unicode.IsSpace)):]
+	leading = strings.ReplaceAll(strings.ReplaceAll(leading, "\r", ""), "\n", "")
+	trailing = strings.ReplaceAll(strings.ReplaceAll(trailing, "\r", ""), "\n", "")
 	valueLeading := value[:len(value)-len(strings.TrimLeftFunc(value, unicode.IsSpace))]
 	valueTrailing := value[len(strings.TrimRightFunc(value, unicode.IsSpace)):]
 	if strings.ContainsAny(valueLeading, "\r\n") {

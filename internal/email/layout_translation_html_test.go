@@ -257,6 +257,39 @@ func TestLayoutTranslationRejectsUnmarkedAndDuplicateStableUnits(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate")
 }
 
+func TestLayoutFooterSeparatorCanRemoveSourceFormattingLineBreaks(t *testing.T) {
+	t.Parallel()
+
+	source := canonicalLayoutSourceForTest(t, "<main>{{content}}</main><footer><a href=\"/privacy\">Privacy</a>\r\n  \u00a0·\u00a0\r\n  <a href=\"/terms\">Terms</a></footer>")
+	units, err := ExtractLayoutContentUnits(source)
+	require.NoError(t, err)
+	require.Len(t, units, 3)
+	separator := units[1].Handle
+
+	updatedSource, _, err := ApplyLayoutSourceValues(source, map[string]string{separator: "\u00a0·\u00a0"})
+	require.NoError(t, err)
+	updatedUnits, err := ExtractLayoutContentUnits(*updatedSource)
+	require.NoError(t, err)
+	require.Equal(t, separator, updatedUnits[1].Handle)
+	require.NotContains(t, updatedUnits[1].SourceValue, "\n")
+	require.NotContains(t, updatedUnits[1].SourceValue, "\r")
+
+	for _, wrapper := range []string{source, *updatedSource} {
+		overlay, _, err := ApplyLayoutLocaleValues(wrapper, map[string]string{
+			units[0].Handle: "개인정보처리방침", separator: "\u00a0·\u00a0", units[2].Handle: "이용약관",
+		})
+		require.NoError(t, err)
+		rendered, err := ResolveLayoutLocaleMarkup(wrapper, overlay)
+		require.NoError(t, err)
+		require.Contains(t, rendered, "개인정보처리방침")
+		require.Contains(t, rendered, "이용약관")
+		require.NotContains(t, rendered, "<br>", "source HTML formatting must not restore deleted footer breaks")
+	}
+	renderedSource, err := ResolveLayoutLocaleMarkup(*updatedSource, nil)
+	require.NoError(t, err)
+	require.NotContains(t, renderedSource, "<br>")
+}
+
 func TestLayoutValuesPreserveLeadingAndTrailingHardBreaks(t *testing.T) {
 	source := canonicalLayoutSourceForTest(t, "<main>{{content}}</main><footer> Source </footer>")
 	units, err := ExtractLayoutContentUnits(source)
