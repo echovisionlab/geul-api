@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2](https://github.com/echovisionlab/geul-api/compare/v2.0.1...v2.0.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **email:** keep footer separators inline when removing formatting breaks ([#133](https://github.com/echovisionlab/geul-api/issues/133)) ([b15aa10](https://github.com/echovisionlab/geul-api/commit/b15aa10e1de798380450cfe4287722429372d124))
+
 ## [2.0.1](https://github.com/echovisionlab/geul-api/compare/v2.0.0...v2.0.1) (2026-10-16)
 
 
