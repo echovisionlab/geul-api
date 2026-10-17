@@ -67,9 +67,8 @@ func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
 	for _, state := range []string{"active", "detached", "replaced", "deleting", "wrong owner"} {
 		t.Run(state, func(t *testing.T) {
 			db := newConcurrentServiceIntegrationDB(t)
-			fixture := seedScopedPageBlockFixture(t, db)
-			postID := uuid.NewString()
-			require.NoError(t, db.Exec(`INSERT INTO post (id, status, content_document_id) VALUES (?::uuid, ?, ?::uuid)`, postID, managev1.PostStatus_POST_STATUS_DRAFT.String(), fixture.documentID).Error)
+			fixture := seedScopedContentBlockFixture(t, db, scopedContentOwnerPost)
+			postID := fixture.ownerID
 			switch state {
 			case "detached":
 				require.NoError(t, db.Exec(`DELETE FROM content_block_attachment WHERE block_id = ?::uuid`, fixture.blockID).Error)
@@ -141,12 +140,12 @@ func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIn
 
 			var hydrated []*contentv1.ContentBlockMediaItem
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-				if err := lockScopedPageRootForTest(t.Context(), tx, fixture.pageID); err != nil {
+				if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 					return err
 				}
 				var err error
 				hydrated, err = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-					t.Context(), tx, fixture.pageID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
+					t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
 				)
 				return err
 			}))
@@ -213,12 +212,12 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 			go func() {
 				var hydrated []*contentv1.ContentBlockMediaItem
 				err := db.Transaction(func(tx *gorm.DB) error {
-					if err := lockScopedPageRootForTest(t.Context(), tx, fixture.pageID); err != nil {
+					if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 						return err
 					}
 					var hydrateErr error
 					hydrated, hydrateErr = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-						t.Context(), tx, fixture.pageID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
+						t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
 					)
 					return hydrateErr
 				})
@@ -281,12 +280,12 @@ func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementI
 
 	var hydrated []*contentv1.ContentBlockMediaItem
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.pageID); err != nil {
+		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
 			return err
 		}
 		var err error
 		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-			t.Context(), tx, fixture.pageID, uuid.MustParse(fixture.documentID), fixture.principal, items,
+			t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, items,
 		)
 		return err
 	}))
@@ -434,7 +433,7 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 type scopedBlockFixture struct {
 	service           *FileService
 	principal         *auth.UserInfo
-	pageID            string
+	ownerID           string
 	documentID        string
 	blockID           string
 	fileID            string
@@ -453,16 +452,27 @@ func (fixture scopedBlockFixture) item(blockID, fileID string) *contentv1.Conten
 }
 
 func seedScopedPageBlockFixture(t *testing.T, db *gorm.DB) scopedBlockFixture {
+	return seedScopedContentBlockFixture(t, db, scopedContentOwnerPage)
+}
+
+func seedScopedContentBlockFixture(t *testing.T, db *gorm.DB, owner scopedContentOwner) scopedBlockFixture {
 	t.Helper()
 	memberID := uuid.NewString()
 	otherMemberID := uuid.NewString()
 	for _, id := range []string{memberID, otherMemberID} {
 		require.NoError(t, db.Exec(`INSERT INTO member (id, nickname) VALUES (?::uuid, ?)`, id, "member-"+id[:8]).Error)
 	}
-	pageID, documentID, blockID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	ownerID, documentID, blockID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	fileID, replacementFileID := uuid.NewString(), uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'page', ?::uuid)`, documentID, uuid.NewString()).Error)
-	require.NoError(t, db.Exec(`INSERT INTO page (id, content_document_id) VALUES (?::uuid, ?::uuid)`, pageID, documentID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, ?, ?::uuid)`, documentID, string(owner), uuid.NewString()).Error)
+	switch owner {
+	case scopedContentOwnerPage:
+		require.NoError(t, db.Exec(`INSERT INTO page (id, content_document_id) VALUES (?::uuid, ?::uuid)`, ownerID, documentID).Error)
+	case scopedContentOwnerPost:
+		require.NoError(t, db.Exec(`INSERT INTO post (id, status, content_document_id) VALUES (?::uuid, ?, ?::uuid)`, ownerID, managev1.PostStatus_POST_STATUS_DRAFT.String(), documentID).Error)
+	default:
+		t.Fatalf("unsupported content owner %q", owner)
+	}
 	for _, id := range []string{fileID, replacementFileID} {
 		require.NoError(t, db.Exec(
 			`INSERT INTO file (id, file_name, extension, mime_type, file_size, sha256, uploaded_by_member_id) VALUES (?::uuid, ?, 'jpg', 'image/jpeg', 128, ?, ?::uuid)`,
@@ -485,7 +495,7 @@ func seedScopedPageBlockFixture(t *testing.T, db *gorm.DB) scopedBlockFixture {
 			IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(memberID),
 			SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 		},
-		pageID: pageID, documentID: documentID, blockID: blockID, fileID: fileID, replacementFileID: replacementFileID,
+		ownerID: ownerID, documentID: documentID, blockID: blockID, fileID: fileID, replacementFileID: replacementFileID,
 	}
 }
 
