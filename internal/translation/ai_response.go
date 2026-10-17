@@ -50,32 +50,59 @@ func parseTranslationProviderResponse(req ProviderRequest, text string) (*Provid
 	raw := ProviderResponse{Document: providerDocument}
 	validation := ValidateResponse(req.Document, raw, req.Profile.ProtectedTerms...)
 	if !validation.Passed {
-		return nil, &translationResponseError{event: "validation_failed", cause: fmt.Errorf("response violates XLIFF source contract")}
+		return nil, &translationResponseError{event: "validation_failed", cause: fmt.Errorf(
+			"response violates XLIFF source contract: missing_units=%d unknown_units=%d duplicate_units=%d line_break_units=%d placeholder_units=%d missing_placeholders=%d unexpected_placeholders=%d structural_issue=%t",
+			len(validation.MissingUnitIDs), len(validation.UnknownUnitIDs), len(validation.DuplicateUnitIDs),
+			len(validation.LineBreakMismatchUnitIDs), len(validation.PlaceholderMismatchUnitIDs),
+			len(validation.MissingPlaceholders), len(validation.UnexpectedPlaceholders), validation.ParseError != nil,
+		)}
 	}
 	selected := SelectResponse(req, raw)
 	return &selected, nil
 }
 
 func xliffProviderResponseFromAI(source XLIFFDocument, envelope translationJSONEnvelope) (XLIFFDocument, error) {
-	expectedGroups := make(map[string]XLIFFGroup, len(source.File.Groups))
-	expectedUnits := make(map[string]XLIFFUnit)
-	for _, group := range source.File.Groups {
-		expectedGroups[group.ID] = group
-		for _, unit := range group.TranslationUnit {
-			expectedUnits[unit.ID] = unit
+	if len(envelope.Bundles) != len(source.File.Groups) {
+		return XLIFFDocument{}, fmt.Errorf("AI response group count changed")
+	}
+	returnedGroups := make(map[string]translationJSONBundle, len(envelope.Bundles))
+	for _, group := range envelope.Bundles {
+		if _, duplicate := returnedGroups[group.BundleID]; duplicate {
+			return XLIFFDocument{}, fmt.Errorf("AI response contains a duplicate group")
 		}
+		returnedGroups[group.BundleID] = group
 	}
 
 	result := source
-	result.File.Groups = make([]XLIFFGroup, 0, len(envelope.Bundles))
-	for _, returnedGroup := range envelope.Bundles {
-		group := expectedGroups[returnedGroup.BundleID]
-		group.ID = returnedGroup.BundleID
-		group.TranslationUnit = make([]XLIFFUnit, 0, len(returnedGroup.Units))
-		for _, returnedUnit := range returnedGroup.Units {
-			unit := expectedUnits[returnedUnit.UnitID]
-			unit.ID = returnedUnit.UnitID
+	result.File.Groups = make([]XLIFFGroup, len(source.File.Groups))
+	for groupIndex, sourceGroup := range source.File.Groups {
+		returnedGroup, ok := returnedGroups[sourceGroup.ID]
+		if !ok || len(returnedGroup.Units) != len(sourceGroup.TranslationUnit) {
+			return XLIFFDocument{}, fmt.Errorf("AI response group membership changed")
+		}
+		returnedUnits := make(map[string]translationJSONUnit, len(returnedGroup.Units))
+		for _, unit := range returnedGroup.Units {
+			if _, duplicate := returnedUnits[unit.UnitID]; duplicate {
+				return XLIFFDocument{}, fmt.Errorf("AI response contains a duplicate unit")
+			}
+			returnedUnits[unit.UnitID] = unit
+		}
+		group := sourceGroup
+		group.TranslationUnit = make([]XLIFFUnit, len(sourceGroup.TranslationUnit))
+		for unitIndex, sourceUnit := range sourceGroup.TranslationUnit {
+			returnedUnit, ok := returnedUnits[sourceUnit.ID]
+			if !ok {
+				return XLIFFDocument{}, fmt.Errorf("AI response unit membership changed")
+			}
+			unit, err := normalizeXLIFFUnitInline(sourceUnit, isEmailTemplateFile(source.File.ID))
+			if err != nil {
+				return XLIFFDocument{}, err
+			}
 			targetInline, err := UnmarshalXLIFFInlineFragment(returnedUnit.TranslatedInline)
+			if err != nil {
+				return XLIFFDocument{}, err
+			}
+			targetInline, err = restoreAISourceInline(unit.SourceInline, targetInline)
 			if err != nil {
 				return XLIFFDocument{}, err
 			}
@@ -85,9 +112,9 @@ func xliffProviderResponseFromAI(source XLIFFDocument, envelope translationJSONE
 			}
 			unit.Target = &target
 			unit.TargetInline = targetInline
-			group.TranslationUnit = append(group.TranslationUnit, unit)
+			group.TranslationUnit[unitIndex] = unit
 		}
-		result.File.Groups = append(result.File.Groups, group)
+		result.File.Groups[groupIndex] = group
 	}
 	return result, nil
 }
