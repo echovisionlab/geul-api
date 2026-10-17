@@ -73,6 +73,48 @@ func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {
 	require.Equal(t, "https://www.example.test", settings.Msg.Settings.GetRuntime().GetSiteOrigin())
 }
 
+// MCP general SVG ingest produces a ready image asset, rather than a dedicated logo asset.
+func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
+	db := newServiceIntegrationDB(t)
+	service, ctx := newSiteSettingIntegrationService(t, db)
+	lightID, lightURL := seedSiteSettingReadyFile(t, db, "library-light", "image", "svg", "image/svg+xml", 1024)
+	darkID, darkURL := seedSiteSettingReadyFile(t, db, "library-dark", "image", "svg", "image/svg+xml", 1024)
+	response, err := service.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{
+		Settings: []*managev1.SiteSetting{
+			{Key: "logo_light_file_id", Value: structpb.NewStringValue(lightID)},
+			{Key: "logo_dark_file_id", Value: structpb.NewStringValue(darkID)},
+		},
+	}))
+	require.NoError(t, err)
+	require.True(t, response.Msg.Success)
+	settings, err := service.GetSettings(ctx, connect.NewRequest(&managev1.GetSettingsRequest{}))
+	require.NoError(t, err)
+	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoLightAsset().GetUrl())
+	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoDarkAsset().GetUrl())
+	var bindings []model.PublicAssetBinding
+	require.NoError(t, db.Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", "site_settings", "1", []string{"logo:light", "logo:dark"}).Find(&bindings).Error)
+	require.Len(t, bindings, 2)
+	for _, binding := range bindings {
+		var asset model.PublicAsset
+		require.NoError(t, db.Where("id = ?", binding.AssetID).Take(&asset).Error)
+		require.Equal(t, "image", asset.Kind)
+		require.Equal(t, asset.SourceFileID, binding.SourceFileID)
+	}
+	// A failed second slot preserves both of the previously committed logo bindings.
+	invalidID, _ := seedSiteSettingReadyFile(t, db, "library-invalid", "image", "webp", "image/webp", 1024)
+	_, err = service.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{
+		Settings: []*managev1.SiteSetting{
+			{Key: "logo_light_file_id", Value: structpb.NewStringValue(darkID)},
+			{Key: "logo_dark_file_id", Value: structpb.NewStringValue(invalidID)},
+		},
+	}))
+	require.Error(t, err)
+	settings, err = service.GetSettings(ctx, connect.NewRequest(&managev1.GetSettingsRequest{}))
+	require.NoError(t, err)
+	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoLightAsset().GetUrl())
+	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoDarkAsset().GetUrl())
+}
+
 func TestSiteSettingLoaderAssetsUseOrderedRelationOnlyIntegration(t *testing.T) {
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)

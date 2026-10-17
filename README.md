@@ -285,6 +285,11 @@ returning individual Member data.
 `site_settings_update` sends only supplied keys to the same atomic
 `SiteSettingService.SetManySettings` operation as the admin UI, retaining its
 validation, fresh administrator permission check, attachment handling and audit.
+Ready PNG/SVG images imported into the File library can be assigned to the light
+and dark logo slots; email branding accepts PNG. Site Settings reuses their
+existing `image` assets and immutable source File IDs, without copying bytes or
+changing asset kinds. Public settings and OG snapshots resolve the same binding.
+Dedicated `logo` and `email_image` uploads remain supported.
 `mail_adapter_list` returns safe sender/provider metadata without access keys,
 passwords, usernames or tokens. `mail_adapter_sender_update` changes sender
 name/address and optionally activation/priority through the existing Mail Adapter

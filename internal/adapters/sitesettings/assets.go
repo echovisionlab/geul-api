@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"connectrpc.com/connect"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -101,13 +103,17 @@ func (a Assets) BindReady(
 	db *gorm.DB,
 	binding domain.AssetBinding,
 ) (*commonv1.AssetRef, error) {
+	_, kind, err := readySiteSettingAsset(ctx, db, a.cdnDomain, binding.SourceFileID, binding.Kind)
+	if err != nil {
+		return nil, err
+	}
 	return mediaasset.NewLifecycle(db, a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		binding.SourceFileID,
 		siteSettingsAssetOwnerType,
 		siteSettingsAssetOwnerID,
 		binding.Key,
-		binding.Kind,
+		kind,
 	)
 }
 
@@ -179,7 +185,28 @@ func (a Assets) ReadyRef(
 	fileID string,
 	kind string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).ReadyAssetRefForSourceFile(ctx, fileID, kind)
+	ref, _, err := readySiteSettingAsset(ctx, db, a.cdnDomain, fileID, kind)
+	return ref, err
+}
+
+// A File-library image can be used in a branding slot without changing its
+// immutable asset kind or copying its bytes. Dedicated logo uploads remain valid.
+// Keep assignment, public settings and OG snapshots on the same resolution path.
+func readySiteSettingAsset(ctx context.Context, db *gorm.DB, cdnDomain, fileID, kind string) (*commonv1.AssetRef, string, error) {
+	lifecycle := mediaasset.NewLifecycle(db, cdnDomain)
+	ref, err := lifecycle.ReadyAssetRefForSourceFile(ctx, fileID, kind)
+	if err == nil || connect.CodeOf(err) != connect.CodeNotFound || (kind != "logo" && kind != "email_image") {
+		return ref, kind, err
+	}
+	ref, err = lifecycle.ReadyAssetRefForSourceFile(ctx, fileID, "image")
+	if err != nil {
+		return nil, kind, err
+	}
+	mimeType := normalizeSiteSettingMIME(ref.GetMimeType())
+	if mimeType != "image/png" && (kind != "logo" || mimeType != "image/svg+xml") {
+		return nil, kind, errs.InvalidArgument("file_id", "branding requires PNG or SVG; email branding requires PNG")
+	}
+	return ref, "image", nil
 }
 
 func (a Assets) ReadyAsset(
