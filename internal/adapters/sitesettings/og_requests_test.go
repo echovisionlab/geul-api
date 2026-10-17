@@ -38,7 +38,8 @@ func siteOGUnitDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE site_settings (
 		id integer PRIMARY KEY, site_title text NOT NULL DEFAULT '',
-		primary_color text NOT NULL DEFAULT '#b02d23', logo_light_file_id text,
+		primary_color text NOT NULL DEFAULT '#b02d23', logo_full_light_file_id text, logo_full_dark_file_id text,
+		logo_symbol_light_file_id text, logo_symbol_dark_file_id text,
 		site_og_background_file_id text, og_image_config blob
 	)`).Error)
 	require.NoError(t, db.Exec("INSERT INTO site_settings (id) VALUES (1)").Error)

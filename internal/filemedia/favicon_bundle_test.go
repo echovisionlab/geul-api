@@ -158,7 +158,7 @@ func TestSyncSiteSettingFaviconBindingsReplacesAndClearsWholeBundle(t *testing.T
 		return settingAssets.ReplaceFavicon(t.Context(), tx, &secondFileID)
 	}))
 	bindings := assertFaviconBindings(t, db, secondFileID, 7)
-	wantKeys := []string{"favicon", "favicon:apple180", "favicon:ico", "favicon:manifest192", "favicon:manifest512", "favicon:png16", "favicon:png48"}
+	wantKeys := []string{"favicon", "favicon_apple180", "favicon_ico", "favicon_manifest192", "favicon_manifest512", "favicon_png16", "favicon_png48"}
 	gotKeys := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
 		gotKeys = append(gotKeys, binding.BindingKey)
@@ -170,7 +170,7 @@ func TestSyncSiteSettingFaviconBindingsReplacesAndClearsWholeBundle(t *testing.T
 		return settingAssets.ReplaceFavicon(t.Context(), tx, nil)
 	}))
 	var count int64
-	require.NoError(t, db.Model(&model.PublicAssetBinding{}).Where("binding_key = ? OR binding_key LIKE ?", "favicon", "favicon:%").Count(&count).Error)
+	require.NoError(t, db.Model(&model.PublicAssetBinding{}).Scopes(func(q *gorm.DB) *gorm.DB { return mediaasset.WhereBindingKeyFamily(q, "favicon") }).Count(&count).Error)
 	require.Zero(t, count)
 }
 
@@ -184,7 +184,7 @@ func TestSyncSiteSettingFaviconBindingsIncludesSVG(t *testing.T) {
 		return assets.ReplaceFavicon(t.Context(), tx, &fileID)
 	}))
 	bindings := assertFaviconBindings(t, db, fileID, 8)
-	require.NotEmpty(t, assetIDForBinding(bindings, "favicon:svg"))
+	require.NotEmpty(t, assetIDForBinding(bindings, "favicon_svg"))
 }
 
 func TestRequestFaviconAssetsDeletionProtectsActiveThenMarksAllPending(t *testing.T) {
@@ -680,7 +680,7 @@ func assertFaviconBindings(t *testing.T, db *gorm.DB, sourceFileID string, want 
 	t.Helper()
 	var bindings []model.PublicAssetBinding
 	require.NoError(t, db.Where("owner_type = ? AND owner_id = ?", "site_settings", "1").
-		Where("binding_key = ? OR binding_key LIKE ?", "favicon", "favicon:%").
+		Scopes(func(q *gorm.DB) *gorm.DB { return mediaasset.WhereBindingKeyFamily(q, "favicon") }).
 		Order("binding_key ASC").
 		Find(&bindings).Error)
 	require.Len(t, bindings, want)

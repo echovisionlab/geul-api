@@ -26,30 +26,12 @@ func TestResolveSiteUploadEntityIDUsesBackendOwnedSlots(t *testing.T) {
 		slotID     string
 		want       string
 	}{
-		{
-			name:       "light logo",
-			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     "logo_light",
-			want:       siteUploadEntityIDLogoLight,
-		},
-		{
-			name:       "legacy logo slot maps to light logo",
-			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     "logo",
-			want:       siteUploadEntityIDLogoLight,
-		},
-		{
-			name:       "dark logo",
-			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     "logo_dark",
-			want:       siteUploadEntityIDLogoDark,
-		},
-		{
-			name:       "email logo",
-			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     "logo_email",
-			want:       siteUploadEntityIDEmailLogo,
-		},
+		{name: "full light logo", uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slotID: "logo_full_light", want: siteUploadEntityIDLogoFullLight},
+		{name: "full dark logo", uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slotID: "logo_full_dark", want: siteUploadEntityIDLogoFullDark},
+		{name: "symbol light logo", uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slotID: "logo_symbol_light", want: siteUploadEntityIDLogoSymbolLight},
+		{name: "symbol dark logo", uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slotID: "logo_symbol_dark", want: siteUploadEntityIDLogoSymbolDark},
+		{name: "email light logo", uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slotID: "logo_email_light", want: siteUploadEntityIDLogoEmailLight},
+		{name: "email dark logo", uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slotID: "logo_email_dark", want: siteUploadEntityIDLogoEmailDark},
 		{
 			name:       "loader",
 			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOADER,
@@ -89,6 +71,11 @@ func TestResolveSiteUploadEntityIDUsesBackendOwnedSlots(t *testing.T) {
 
 func TestResolveSiteUploadEntityIDRejectsUnsupportedSlot(t *testing.T) {
 	t.Parallel()
+
+	for _, slot := range []string{"", "logo", "logo_light", "logo_dark", "logo_email"} {
+		_, err := resolveSiteUploadEntityID(nil, managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slot)
+		require.Error(t, err, slot)
+	}
 
 	_, err := resolveSiteUploadEntityID(
 		nil,
@@ -145,34 +132,41 @@ func TestValidateSiteEmailLogoMimeRequiresPNGOnlyForEmailLogoSlot(t *testing.T) 
 		wantErr    bool
 	}{
 		{
-			name:       "email logo png",
+			name:       "email light logo png",
 			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     siteEmailLogoSlotID,
+			slotID:     siteLogoSlotEmailLight,
 			mimeType:   siteEmailLogoStableMime,
+		},
+		{
+			name:       "email dark logo rejects svg",
+			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
+			slotID:     siteLogoSlotEmailDark,
+			mimeType:   "image/svg+xml",
+			wantErr:    true,
 		},
 		{
 			name:       "email logo normalizes content type parameters",
 			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     siteEmailLogoSlotID,
+			slotID:     siteLogoSlotEmailLight,
 			mimeType:   " IMAGE/PNG ; charset=binary",
 		},
 		{
 			name:       "email logo rejects svg",
 			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     siteEmailLogoSlotID,
+			slotID:     siteLogoSlotEmailLight,
 			mimeType:   "image/svg+xml",
 			wantErr:    true,
 		},
 		{
-			name:       "site light logo is not email logo restricted",
+			name:       "site full and symbol logos are not email logo restricted",
 			uploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-			slotID:     "logo_light",
+			slotID:     siteLogoSlotSymbolDark,
 			mimeType:   "image/svg+xml",
 		},
 		{
 			name:       "client logo is not email logo restricted",
 			uploadType: managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
-			slotID:     siteEmailLogoSlotID,
+			slotID:     siteLogoSlotEmailLight,
 			mimeType:   "image/svg+xml",
 		},
 	}

@@ -21,7 +21,7 @@ func TestCleanupMarksOnlyOldUnboundReadyFaviconAssets(t *testing.T) {
 	young := seedReadyAsset(t, db, "favicon", now.Add(-23*time.Hour))
 	nonFavicon := seedReadyAsset(t, db, "image", now.Add(-25*time.Hour))
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
-		AssetID: active.ID, OwnerType: "site_settings", OwnerID: "1", BindingKey: "favicon:ico",
+		AssetID: active.ID, OwnerType: "site_settings", OwnerID: "1", BindingKey: "favicon_ico",
 		CreatedAt: now, UpdatedAt: now,
 	}).Error)
 

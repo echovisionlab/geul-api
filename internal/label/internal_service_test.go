@@ -64,7 +64,7 @@ func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
 	require.NoError(t, db.Table("public_asset").
 		Select("id").Where("source_file_id = ?", logoFileID).Scan(&logoAssetID).Error)
 	require.NoError(t, mediaasset.NewLifecycle(db, "").BindPublicAsset(context.Background(), mediaasset.Binding{
-		AssetID: logoAssetID, OwnerType: "label", OwnerID: labelID, BindingKey: "logo:light", SourceFileID: &logoFileID,
+		AssetID: logoAssetID, OwnerType: "label", OwnerID: labelID, BindingKey: "logo_light", SourceFileID: &logoFileID,
 	}))
 	require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
 		Update("logo_light_file_id", logoFileID).Error)

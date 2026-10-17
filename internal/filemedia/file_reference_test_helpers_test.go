@@ -34,8 +34,9 @@ func createFileAttachmentReferenceTablesForServiceTests(t *testing.T, db *gorm.D
 		`CREATE TABLE IF NOT EXISTS map_place (id TEXT, image_file_id TEXT)`,
 		`CREATE TABLE IF NOT EXISTS program_event_series (id TEXT, poster_file_id TEXT)`,
 		`CREATE TABLE IF NOT EXISTS site_settings (
-			id TEXT, logo_light_file_id TEXT, logo_dark_file_id TEXT,
-			logo_email_file_id TEXT, favicon_file_id TEXT,
+			id TEXT, logo_full_light_file_id TEXT, logo_full_dark_file_id TEXT,
+			logo_symbol_light_file_id TEXT, logo_symbol_dark_file_id TEXT,
+			logo_email_light_file_id TEXT, logo_email_dark_file_id TEXT, favicon_file_id TEXT,
 			site_og_background_file_id TEXT, privacy_og_background_file_id TEXT,
 			terms_og_background_file_id TEXT
 		)`,

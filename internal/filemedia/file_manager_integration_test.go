@@ -322,14 +322,15 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "branding", "png", "image/png")
 	require.NoError(t, db.Exec(`UPDATE site_settings SET
-		logo_light_file_id = ?, logo_dark_file_id = ?, logo_email_file_id = ?, favicon_file_id = ?,
+		logo_full_light_file_id = ?, logo_full_dark_file_id = ?, logo_symbol_light_file_id = ?, logo_symbol_dark_file_id = ?,
+		logo_email_light_file_id = ?, logo_email_dark_file_id = ?, favicon_file_id = ?,
 		site_og_background_file_id = ?, privacy_og_background_file_id = ?, terms_og_background_file_id = ?
-		WHERE id = 1`, fileID, fileID, fileID, fileID, fileID, fileID, fileID).Error)
+		WHERE id = 1`, fileID, fileID, fileID, fileID, fileID, fileID, fileID, fileID, fileID, fileID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO site_setting_loader_file (site_setting_id, file_id, position) VALUES (1, ?, 0)`, fileID).Error)
 
 	response, err := service.ListFileUsages(ctx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
 	require.NoError(t, err)
-	require.Len(t, response.Msg.Usages, 8)
+	require.Len(t, response.Msg.Usages, 11)
 
 	slots := make([]string, 0, len(response.Msg.Usages))
 	for _, usage := range response.Msg.Usages {
@@ -337,14 +338,15 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 		slots = append(slots, usage.GetReferencePath())
 	}
 	require.ElementsMatch(t, []string{
-		"logo_light", "logo_dark", "logo_email", "favicon", "loader",
+		"logo_full_light", "logo_full_dark", "logo_symbol_light", "logo_symbol_dark",
+		"logo_email_light", "logo_email_dark", "favicon", "loader",
 		"site_og_background", "privacy_og_background", "terms_og_background",
 	}, slots)
 
 	impact, err := service.GetFileDeletionImpact(ctx, connect.NewRequest(&managev1.GetFileDeletionImpactRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Len(t, impact.Msg.Impacts, 1)
-	require.EqualValues(t, 8, impact.Msg.Impacts[0].GetTotalUsageCount())
+	require.EqualValues(t, 11, impact.Msg.Impacts[0].GetTotalUsageCount())
 	require.Len(t, impact.Msg.Impacts[0].GetFirstUsages(), fileDeletionImpactPreviewSize)
 	require.True(t, impact.Msg.Impacts[0].GetHasMoreUsages())
 	require.Len(t, impact.Msg.Impacts[0].GetDomainCounts(), 1)

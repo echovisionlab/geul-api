@@ -9,17 +9,28 @@ import (
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"gorm.io/gorm"
 )
 
 type emailSiteSettings struct {
-	CompanyName     string  `gorm:"column:company_name"`
-	ContactEmail    string  `gorm:"column:contact_email"`
-	LegalEmail      string  `gorm:"column:legal_email"`
-	SiteTitle       string  `gorm:"column:site_title"`
-	LogoEmailFileID *string `gorm:"column:logo_email_file_id"`
+	CompanyName          string  `gorm:"column:company_name"`
+	ContactEmail         string  `gorm:"column:contact_email"`
+	LegalEmail           string  `gorm:"column:legal_email"`
+	SiteTitle            string  `gorm:"column:site_title"`
+	LogoEmailLightFileID *string `gorm:"column:logo_email_light_file_id"`
+	LogoEmailDarkFileID  *string `gorm:"column:logo_email_dark_file_id"`
 }
+
+// Email logo template variables. logo_email_url is the light logo (dark when no
+// light logo is set); logo_email_dark_url is the dark logo (light when unset).
+const (
+	emailLogoURLVariable     = "logo_email_url"
+	emailLogoDarkURLVariable = "logo_email_dark_url"
+)
+
+type emailLogoURLs = sitelogo.Email[string]
 
 const defaultEmailRenderLocale = localization.LocaleEnglish
 const emailNotoFontStylesheetPath = "/fonts/css2?family=Noto+Sans:wght@100..900&family=Noto+Sans+Arabic:wght@100..900&family=Noto+Sans+KR:wght@100..900&family=Noto+Sans+JP:wght@100..900&family=Noto+Sans+SC:wght@100..900&family=Noto+Sans+TC:wght@100..900&family=Noto+Sans+HK:wght@100..900&family=Noto+Sans+Mono:wght@100..900&family=Noto+Color+Emoji&display=swap"
@@ -35,14 +46,14 @@ func BuildEmailRenderData(
 	requestedLocale string,
 	input map[string]string,
 ) map[string]string {
-	settings, resolvedLogoURL := loadEmailRenderDefaults(ctx, db, cdnDomain, input)
+	settings, logos := loadEmailRenderDefaults(ctx, db, cdnDomain)
 	return buildEmailRenderDataWithDefaults(
 		cdnDomain,
 		siteOrigin,
 		requestedLocale,
 		input,
 		settings,
-		resolvedLogoURL,
+		logos,
 	)
 }
 
@@ -50,28 +61,26 @@ func loadEmailRenderDefaults(
 	ctx context.Context,
 	db *gorm.DB,
 	cdnDomain string,
-	input map[string]string,
-) (*emailSiteSettings, *string) {
+) (*emailSiteSettings, emailLogoURLs) {
 	if db == nil {
-		return nil, nil
+		return nil, emailLogoURLs{}
 	}
 	var settings emailSiteSettings
 	err := db.WithContext(ctx).
 		Table("site_settings").
-		Select("site_title, company_name, legal_email, contact_email, logo_email_file_id").
+		Select("site_title, company_name, legal_email, contact_email, logo_email_light_file_id, logo_email_dark_file_id").
 		Where("id = 1").
 		Take(&settings).Error
 	if err != nil {
 		if err != gorm.ErrRecordNotFound {
 			slog.Warn("Failed to load site settings for email defaults", "error", err)
 		}
-		return nil, nil
+		return nil, emailLogoURLs{}
 	}
-	if strings.TrimSpace(input["logo_email_url"]) != "" || settings.LogoEmailFileID == nil {
-		return &settings, nil
+	return &settings, emailLogoURLs{
+		Light: resolveEmailLogoURL(ctx, db, cdnDomain, settings.LogoEmailLightFileID),
+		Dark:  resolveEmailLogoURL(ctx, db, cdnDomain, settings.LogoEmailDarkFileID),
 	}
-	logoURL := resolveEmailLogoURL(ctx, db, cdnDomain, *settings.LogoEmailFileID)
-	return &settings, &logoURL
 }
 
 func buildEmailRenderDataWithDefaults(
@@ -80,7 +89,7 @@ func buildEmailRenderDataWithDefaults(
 	requestedLocale string,
 	input map[string]string,
 	settings *emailSiteSettings,
-	resolvedLogoURL *string,
+	logos emailLogoURLs,
 ) map[string]string {
 	data := cloneEmailRenderData(input)
 
@@ -88,8 +97,13 @@ func buildEmailRenderDataWithDefaults(
 		if strings.TrimSpace(data["site_name"]) == "" && strings.TrimSpace(settings.SiteTitle) != "" {
 			data["site_name"] = strings.TrimSpace(settings.SiteTitle)
 		}
-		if strings.TrimSpace(data["logo_email_url"]) == "" && resolvedLogoURL != nil {
-			data["logo_email_url"] = *resolvedLogoURL
+		for variable, url := range map[string]*string{
+			emailLogoURLVariable:     logos.Resolve(sitelogo.Light),
+			emailLogoDarkURLVariable: logos.Resolve(sitelogo.Dark),
+		} {
+			if strings.TrimSpace(data[variable]) == "" && url != nil {
+				data[variable] = *url
+			}
 		}
 	}
 
@@ -113,8 +127,10 @@ func buildEmailRenderDataWithDefaults(
 	if _, ok := data["site_name"]; !ok {
 		data["site_name"] = ""
 	}
-	if _, ok := data["logo_email_url"]; !ok {
-		data["logo_email_url"] = ""
+	for _, variable := range []string{emailLogoURLVariable, emailLogoDarkURLVariable} {
+		if _, ok := data[variable]; !ok {
+			data[variable] = ""
+		}
 	}
 
 	normalizedLocale := normalizeEmailRenderLocale(requestedLocale)
@@ -257,20 +273,21 @@ func cloneEmailRenderData(src map[string]string) map[string]string {
 	return dst
 }
 
-func resolveEmailLogoURL(ctx context.Context, db *gorm.DB, cdnDomain, logoFileID string) string {
-	logoFileID = strings.TrimSpace(logoFileID)
-	if logoFileID == "" {
-		return ""
+// resolveEmailLogoURL returns the ready email logo URL for a slot, or nil when
+// the slot is unset or unusable so the other theme can stand in.
+func resolveEmailLogoURL(ctx context.Context, db *gorm.DB, cdnDomain string, logoFileID *string) *string {
+	if logoFileID == nil || strings.TrimSpace(*logoFileID) == "" {
+		return nil
 	}
-
-	asset, err := mediaasset.NewLifecycle(db, cdnDomain).
-		ReadyAssetRefForSourceFile(ctx, logoFileID, "email_image")
+	asset, _, err := mediaasset.NewLifecycle(db, cdnDomain).
+		ReadyBrandingAssetRef(ctx, strings.TrimSpace(*logoFileID), mediaasset.BrandingKindEmailImage)
 	if err != nil {
-		slog.Warn("Failed to resolve ready email logo asset", "fileId", logoFileID, "error", err)
-		return ""
+		slog.Warn("Failed to resolve ready email logo asset", "fileId", *logoFileID, "error", err)
+		return nil
 	}
 	if asset.GetMimeType() == "" || asset.GetUrl() == "" {
-		return ""
+		return nil
 	}
-	return asset.GetUrl()
+	url := asset.GetUrl()
+	return &url
 }

@@ -195,7 +195,7 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			var bindingCount int64
 			require.NoError(t, db.Model(&model.PublicAssetBinding{}).
 				Where(
-					"owner_type = ? AND owner_id = ? AND binding_key = 'og:en'",
+					"owner_type = ? AND owner_id = ? AND binding_key = 'og_en'",
 					testCase.name,
 					routeID,
 				).

@@ -24,7 +24,10 @@ func TestClassifySiteSettingOgInvalidationMatrix(t *testing.T) {
 	}{
 		{name: "site title invalidates all", mutate: func(value *model.SiteSettings) { value.SiteTitle = "After" }, keys: []string{"site_title"}, want: OGInvalidation{All: true}},
 		{name: "primary color invalidates all", mutate: func(value *model.SiteSettings) { value.PrimaryColor = "#222222" }, keys: []string{"primary_color"}, want: OGInvalidation{All: true}},
-		{name: "light logo invalidates all", mutate: func(value *model.SiteSettings) { value.LogoLightFileID = new("light") }, keys: []string{"logo_light_file_id"}, want: OGInvalidation{All: true}},
+		{name: "full light logo invalidates all", mutate: func(value *model.SiteSettings) { value.LogoFullLightFileID = new("full-light") }, keys: []string{"logo_full_light_file_id"}, want: OGInvalidation{All: true}},
+		{name: "full dark logo invalidates all", mutate: func(value *model.SiteSettings) { value.LogoFullDarkFileID = new("full-dark") }, keys: []string{"logo_full_dark_file_id"}, want: OGInvalidation{All: true}},
+		{name: "symbol light logo invalidates all", mutate: func(value *model.SiteSettings) { value.LogoSymbolLightFileID = new("symbol-light") }, keys: []string{"logo_symbol_light_file_id"}, want: OGInvalidation{All: true}},
+		{name: "symbol dark logo invalidates all", mutate: func(value *model.SiteSettings) { value.LogoSymbolDarkFileID = new("symbol-dark") }, keys: []string{"logo_symbol_dark_file_id"}, want: OGInvalidation{All: true}},
 		{name: "site background invalidates site", mutate: func(value *model.SiteSettings) { value.SiteOgBackgroundFileID = new("site") }, keys: []string{"site_og_background_file_id"}, want: OGInvalidation{Site: true}},
 		{name: "privacy background invalidates privacy", mutate: func(value *model.SiteSettings) { value.PrivacyOgBackgroundFileID = new("privacy") }, keys: []string{"privacy_og_background_file_id"}, want: OGInvalidation{Privacy: true}},
 		{name: "terms background invalidates terms", mutate: func(value *model.SiteSettings) { value.TermsOgBackgroundFileID = new("terms") }, keys: []string{"terms_og_background_file_id"}, want: OGInvalidation{Terms: true}},
@@ -43,11 +46,11 @@ func TestClassifySiteSettingOgInvalidationMatrix(t *testing.T) {
 		{name: "structural equality ignores json order", mutate: func(value *model.SiteSettings) {
 			value.OGImageConfig = []byte(`{"content":{"title":1},"home":{"logo":1}}`)
 		}, keys: []string{"og_image_config"}},
-		{name: "dark email and favicon do not invalidate", mutate: func(value *model.SiteSettings) {
-			value.LogoDarkFileID = new("dark")
-			value.LogoEmailFileID = new("email")
+		{name: "email logos and favicon do not invalidate", mutate: func(value *model.SiteSettings) {
+			value.LogoEmailLightFileID = new("email-light")
+			value.LogoEmailDarkFileID = new("email-dark")
 			value.FaviconFileID = new("favicon")
-		}, keys: []string{"logo_dark_file_id", "logo_email_file_id", "favicon_file_id"}},
+		}, keys: []string{"logo_email_light_file_id", "logo_email_dark_file_id", "favicon_file_id"}},
 		{name: "overlapping set many remains one combined classification", mutate: func(value *model.SiteSettings) {
 			value.SiteTitle = "After"
 			value.SiteOgBackgroundFileID = new("site")

@@ -146,9 +146,11 @@ func (r *Runtime) ReplaceArtistImageBindings(
 		return err
 	}
 	var currentKeys []string
-	if err := tx.Model(&model.PublicAssetBinding{}).
-		Where("owner_type = ? AND owner_id = ?", "artist", artistID).
-		Where("binding_key = ? OR binding_key LIKE ?", "image", "image:%").
+	if err := mediaasset.WhereBindingKeyFamily(
+		tx.Model(&model.PublicAssetBinding{}).
+			Where("owner_type = ? AND owner_id = ?", "artist", artistID),
+		"image",
+	).
 		Order("binding_key ASC").Pluck("binding_key", &currentKeys).Error; err != nil {
 		return err
 	}
@@ -165,7 +167,7 @@ func (r *Runtime) ReplaceArtistImageBindings(
 		if err != nil {
 			return err
 		}
-		key := "image:" + fileID
+		key := "image_" + fileID
 		nextKeys[key] = struct{}{}
 		if err := lifecycle.BindPublicAsset(ctx, mediaasset.Binding{
 			AssetID: asset.GetAssetId(), OwnerType: "artist", OwnerID: artistID,

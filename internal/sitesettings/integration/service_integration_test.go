@@ -41,35 +41,35 @@ func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {
 	darkFileID, darkURL := seedSiteSettingReadyFile(t, db, "dark-logo", "logo", "png", "image/png", 1024)
 
 	lightSet, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
-		Key:   "logo_light_file_id",
+		Key:   "logo_full_light_file_id",
 		Value: structpb.NewStringValue(lightFileID),
 	}))
 	require.NoError(t, err)
 	require.True(t, lightSet.Msg.Success)
 
 	darkSet, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
-		Key:   "logo_dark_file_id",
+		Key:   "logo_full_dark_file_id",
 		Value: structpb.NewStringValue(darkFileID),
 	}))
 	require.NoError(t, err)
 	require.True(t, darkSet.Msg.Success)
 
 	lightSetting, err := service.GetSetting(ctx, connect.NewRequest(&managev1.GetSettingRequest{
-		Key: "logo_light_file_id",
+		Key: "logo_full_light_file_id",
 	}))
 	require.NoError(t, err)
 	require.Equal(t, lightFileID, lightSetting.Msg.GetSetting().GetValue().GetStringValue())
 
 	darkSetting, err := service.GetSetting(ctx, connect.NewRequest(&managev1.GetSettingRequest{
-		Key: "logo_dark_file_id",
+		Key: "logo_full_dark_file_id",
 	}))
 	require.NoError(t, err)
 	require.Equal(t, darkFileID, darkSetting.Msg.GetSetting().GetValue().GetStringValue())
 
 	settings, err := service.GetSettings(ctx, connect.NewRequest(&managev1.GetSettingsRequest{}))
 	require.NoError(t, err)
-	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoLightAsset().GetUrl())
-	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoDarkAsset().GetUrl())
+	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoFullLightAsset().GetUrl())
+	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoFullDarkAsset().GetUrl())
 	require.Equal(t, "https://www.example.test", settings.Msg.Settings.GetRuntime().GetSiteOrigin())
 }
 
@@ -81,18 +81,18 @@ func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
 	darkID, darkURL := seedSiteSettingReadyFile(t, db, "library-dark", "image", "svg", "image/svg+xml", 1024)
 	response, err := service.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{
 		Settings: []*managev1.SiteSetting{
-			{Key: "logo_light_file_id", Value: structpb.NewStringValue(lightID)},
-			{Key: "logo_dark_file_id", Value: structpb.NewStringValue(darkID)},
+			{Key: "logo_full_light_file_id", Value: structpb.NewStringValue(lightID)},
+			{Key: "logo_full_dark_file_id", Value: structpb.NewStringValue(darkID)},
 		},
 	}))
 	require.NoError(t, err)
 	require.True(t, response.Msg.Success)
 	settings, err := service.GetSettings(ctx, connect.NewRequest(&managev1.GetSettingsRequest{}))
 	require.NoError(t, err)
-	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoLightAsset().GetUrl())
-	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoDarkAsset().GetUrl())
+	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoFullLightAsset().GetUrl())
+	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoFullDarkAsset().GetUrl())
 	var bindings []model.PublicAssetBinding
-	require.NoError(t, db.Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", "site_settings", "1", []string{"logo:light", "logo:dark"}).Find(&bindings).Error)
+	require.NoError(t, db.Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", "site_settings", "1", []string{"logo_full_light", "logo_full_dark"}).Find(&bindings).Error)
 	require.Len(t, bindings, 2)
 	for _, binding := range bindings {
 		var asset model.PublicAsset
@@ -104,15 +104,15 @@ func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
 	invalidID, _ := seedSiteSettingReadyFile(t, db, "library-invalid", "image", "webp", "image/webp", 1024)
 	_, err = service.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{
 		Settings: []*managev1.SiteSetting{
-			{Key: "logo_light_file_id", Value: structpb.NewStringValue(darkID)},
-			{Key: "logo_dark_file_id", Value: structpb.NewStringValue(invalidID)},
+			{Key: "logo_full_light_file_id", Value: structpb.NewStringValue(darkID)},
+			{Key: "logo_full_dark_file_id", Value: structpb.NewStringValue(invalidID)},
 		},
 	}))
 	require.Error(t, err)
 	settings, err = service.GetSettings(ctx, connect.NewRequest(&managev1.GetSettingsRequest{}))
 	require.NoError(t, err)
-	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoLightAsset().GetUrl())
-	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoDarkAsset().GetUrl())
+	require.Equal(t, lightURL, settings.Msg.Settings.Public.GetLogoFullLightAsset().GetUrl())
+	require.Equal(t, darkURL, settings.Msg.Settings.Public.GetLogoFullDarkAsset().GetUrl())
 }
 
 func TestSiteSettingLoaderAssetsUseOrderedRelationOnlyIntegration(t *testing.T) {
@@ -159,7 +159,7 @@ func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
 
 	webpLogoFileID, _ := seedSiteSettingReadyFile(t, db, "webp-logo", "logo", "webp", "image/webp", 1024)
 	_, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
-		Key:   "logo_light_file_id",
+		Key:   "logo_full_light_file_id",
 		Value: structpb.NewStringValue(webpLogoFileID),
 	}))
 	require.Error(t, err)
@@ -168,7 +168,7 @@ func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
 	_, err = service.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{
 		Settings: []*managev1.SiteSetting{
 			{Key: "site_title", Value: structpb.NewStringValue("must roll back")},
-			{Key: "logo_light_file_id", Value: structpb.NewStringValue(webpLogoFileID)},
+			{Key: "logo_full_light_file_id", Value: structpb.NewStringValue(webpLogoFileID)},
 		},
 	}))
 	require.Error(t, err)
@@ -178,12 +178,14 @@ func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
 	require.NotEqual(t, "must roll back", settings.SiteTitle)
 
 	svgEmailLogoFileID, _ := seedSiteSettingReadyFile(t, db, "svg-email-logo", "email_image", "svg", "image/svg+xml", 1024)
-	_, err = service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
-		Key:   "logo_email_file_id",
-		Value: structpb.NewStringValue(svgEmailLogoFileID),
-	}))
-	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	for _, key := range []string{"logo_email_light_file_id", "logo_email_dark_file_id"} {
+		_, err = service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
+			Key:   key,
+			Value: structpb.NewStringValue(svgEmailLogoFileID),
+		}))
+		require.Error(t, err, key)
+		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), key)
+	}
 
 	oversizedLoaderFileID, _ := seedSiteSettingReadyFile(t, db, "oversized-loader", "loader", "webp", "image/webp", 100*1024+1)
 	_, err = service.AddSiteLoaderAsset(ctx, connect.NewRequest(&managev1.AddSiteLoaderAssetRequest{FileId: oversizedLoaderFileID}))

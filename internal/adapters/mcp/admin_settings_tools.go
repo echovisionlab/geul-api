@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 
@@ -26,8 +27,8 @@ const (
 )
 
 var adminSettingsTools = []mcpserver.Tool{
-	oauthTool(ToolSiteSettingsGet, "Get site settings", "Read administrator site settings, source File IDs, social links, branding, contact details, navigation, OG configuration, and read-only runtime site_origin. Requires the admin UI's Site Settings view permission. File IDs are source IDs, not rendered asset IDs.", adminSettingsEmptyInputJSONSchema, siteSettingsGetOutputJSONSchema, true, false),
-	oauthTool(ToolSiteSettingsUpdate, "Update site settings", "Atomically update only supplied settings through the admin UI's Site Settings service, validation and audit. Read site_settings_get first. Omitted keys stay unchanged; null clears or resets values according to the existing admin service. social_links and og_image_config replace whole objects; dotted OG section keys replace only that section. Loader files, default_map_theme_id and runtime site_origin are read-only here; use map_theme_set_default for the default theme.", siteSettingsUpdateInputJSONSchema, siteSettingsUpdateOutputJSONSchema, false, false),
+	oauthTool(ToolSiteSettingsGet, "Get site settings", "Read administrator site settings, source File IDs (including the full, symbol and email logos, light and dark), social links, branding, contact details, navigation, OG configuration, and read-only runtime site_origin. Requires the admin UI's Site Settings view permission. File IDs are source IDs, not rendered asset IDs.", adminSettingsEmptyInputJSONSchema, siteSettingsGetOutputJSONSchema, true, false),
+	oauthTool(ToolSiteSettingsUpdate, "Update site settings", "Atomically update only supplied settings through the admin UI's Site Settings service, validation and audit. Read site_settings_get first. Omitted keys stay unchanged; null clears or resets values according to the existing admin service. social_links and og_image_config replace whole objects; dotted OG section keys replace only that section. To set a logo, upload the SVG/PNG with file_upload kind=image (email logos must be PNG) and assign its File UUID to the matching logo_* key. Loader files, default_map_theme_id and runtime site_origin are read-only here; use map_theme_set_default for the default theme.", siteSettingsUpdateInputJSONSchema, siteSettingsUpdateOutputJSONSchema, false, false),
 	oauthTool(ToolMailAdapterList, "List mail adapters", "List administrator mail adapters in priority order with safe sender and provider metadata. Requires the admin UI's Mail Adapter list permission. Credentials, access keys, passwords, usernames and tokens are excluded. Continue with next_offset while has_more.", mailAdapterListInputJSONSchema, mailAdapterListOutputJSONSchema, true, false),
 	oauthTool(ToolMailAdapterSenderUpdate, "Update mail adapter sender", "Partially update from_name/from_email and optionally is_active/priority for a mail adapter ID from mail_adapter_list. Omitted fields and all stored credentials remain unchanged; an empty from_name clears the display name. Sender changes require SES or SMTP. Uses the admin UI's fresh Mail Adapter update permission, audit and provider verification, which may send a verification email to the resulting sender address. No credentials are accepted or returned.", mailAdapterSenderUpdateInputJSONSchema, mailAdapterSenderUpdateOutputJSONSchema, false, false),
 }
@@ -191,12 +192,21 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 	}
 }
 
-var siteSettingsFileKeys = []string{"logo_light_file_id", "logo_dark_file_id", "logo_email_file_id", "favicon_file_id", "site_og_background_file_id", "privacy_og_background_file_id", "terms_og_background_file_id"}
+// siteSettingsFileKeys are the source File settings; reads resolve each through
+// GetSetting and every one of them is writable.
+var siteSettingsFileKeys = []string{
+	"logo_full_light_file_id", "logo_full_dark_file_id",
+	"logo_symbol_light_file_id", "logo_symbol_dark_file_id",
+	"logo_email_light_file_id", "logo_email_dark_file_id",
+	"favicon_file_id", "site_og_background_file_id", "privacy_og_background_file_id", "terms_og_background_file_id",
+}
 
 func siteSettingsMutableKey(key string) bool {
+	if slices.Contains(siteSettingsFileKeys, key) {
+		return true
+	}
 	switch key {
 	case "site_title", "company_name", "company_address", "tax_id", "legal_email", "contact_email", "social_links",
-		"logo_light_file_id", "logo_dark_file_id", "logo_email_file_id", "favicon_file_id", "site_og_background_file_id", "privacy_og_background_file_id", "terms_og_background_file_id",
 		"primary_color", "default_comments_enabled", "homepage_page_id", "menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id",
 		"meta_description", "google_analytics_id", "og_image_config", "og_image_config.home", "og_image_config.content":
 		return true

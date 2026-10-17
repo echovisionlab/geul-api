@@ -63,8 +63,8 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 			MetaDescription: "Description", PrimaryColor: "#abcdef", DefaultCommentsEnabled: true, SocialLinks: social,
 			HomepagePageId: adminSettingsPointer(adminSettingsTestID), MenuHeaderId: adminSettingsPointer(adminSettingsTestID),
 			GoogleAnalyticsId: adminSettingsPointer("G-ABC"), DefaultMapThemeId: adminSettingsTestID,
-			LogoLightAsset: &commonv1.AssetRef{AssetId: "rendered-asset-must-not-be-file-id", Url: "https://cdn.example.test/logo"},
-			LoaderAssets:   []*managev1.SiteLoaderAsset{{FileId: adminSettingsTestID}},
+			LogoFullLightAsset: &commonv1.AssetRef{AssetId: "rendered-asset-must-not-be-file-id", Url: "https://cdn.example.test/logo"},
+			LoaderAssets:       []*managev1.SiteLoaderAsset{{FileId: adminSettingsTestID}},
 		},
 		OgImageConfig: og, Runtime: &managev1.RuntimeSettings{SiteOrigin: "https://example.test"},
 	}}
@@ -81,7 +81,7 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 		"legal_email": "legal@example.test", "contact_email": "contact@example.test",
 		"primary_color": "#abcdef", "default_comments_enabled": true, "homepage_page_id": adminSettingsTestID,
 		"menu_header_id": adminSettingsTestID, "google_analytics_id": "G-ABC", "default_map_theme_id": adminSettingsTestID,
-		"site_origin": "https://example.test", "logo_light_file_id": adminSettingsTestID,
+		"site_origin": "https://example.test", "logo_full_light_file_id": adminSettingsTestID,
 	} {
 		require.Equal(t, value, settings[key], key)
 	}
@@ -120,7 +120,7 @@ func TestSiteSettingsSchemaAndRuntimeAllowlistAgree(t *testing.T) {
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal([]byte(siteSettingsUpdateInputJSONSchema), &schema))
 	properties := schema["properties"].(map[string]any)["settings"].(map[string]any)["properties"].(map[string]any)
-	require.Len(t, properties, 26)
+	require.Len(t, properties, 29)
 	for key := range properties {
 		require.True(t, siteSettingsMutableKey(key), key)
 	}
@@ -399,7 +399,7 @@ func (owner *recordingAdminSettingsApplication) GetSetting(ctx context.Context, 
 	owner.calls++
 	owner.getKeys = append(owner.getKeys, request.Msg.Key)
 	value := structpb.NewNullValue()
-	if request.Msg.Key == "logo_light_file_id" {
+	if request.Msg.Key == "logo_full_light_file_id" {
 		value = structpb.NewStringValue(adminSettingsTestID)
 	}
 	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{Key: request.Msg.Key, Value: value}}), owner.bindingErr

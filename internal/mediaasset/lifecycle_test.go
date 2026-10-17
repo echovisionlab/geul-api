@@ -132,10 +132,10 @@ func TestMediaAssetLifecycleLastBindingDeletion(t *testing.T) {
 		firstOwnerID := uuid.NewString()
 		secondOwnerID := uuid.NewString()
 		require.NoError(t, service.BindPublicAsset(t.Context(), Binding{
-			AssetID: asset.ID, OwnerType: "post", OwnerID: firstOwnerID, BindingKey: "generated:first",
+			AssetID: asset.ID, OwnerType: "post", OwnerID: firstOwnerID, BindingKey: "generated_first",
 		}))
 		require.NoError(t, service.BindPublicAsset(t.Context(), Binding{
-			AssetID: asset.ID, OwnerType: "post", OwnerID: secondOwnerID, BindingKey: "generated:second",
+			AssetID: asset.ID, OwnerType: "post", OwnerID: secondOwnerID, BindingKey: "generated_second",
 		}))
 
 		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", firstOwnerID, "generated"))
@@ -189,7 +189,7 @@ func TestMediaAssetLifecycleLastBindingDeletion(t *testing.T) {
 		ownerID := uuid.NewString()
 		for _, binding := range []Binding{
 			{AssetID: canonical.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og"},
-			{AssetID: localized.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og:ko"},
+			{AssetID: localized.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og_ko"},
 			{AssetID: featured.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "featured_image"},
 		} {
 			require.NoError(t, service.BindPublicAsset(t.Context(), binding))
@@ -206,6 +206,45 @@ func TestMediaAssetLifecycleLastBindingDeletion(t *testing.T) {
 		require.Equal(t, int64(1), bindingCount)
 	})
 
+	t.Run("prefix release matches only the literal underscore family", func(t *testing.T) {
+		db := newUnitDB(t)
+		service := NewLifecycle(db, "")
+		ownerID := uuid.NewString()
+		keys := []string{
+			"og", "og_ko", "ogx", "og-ko", "og:ko",
+			"featured_image", "featured_image_alt", "featuredXimage", "featuredXimage_ko",
+		}
+		assets := make(map[string]*model.PublicAsset, len(keys))
+		for _, key := range keys {
+			asset := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
+			assets[key] = asset
+			require.NoError(t, service.BindPublicAsset(t.Context(), Binding{
+				AssetID: asset.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: key,
+			}))
+		}
+		remainingKeys := func() []string {
+			t.Helper()
+			var remaining []string
+			require.NoError(t, db.Model(&model.PublicAssetBinding{}).
+				Where("owner_type = ? AND owner_id = ?", "post", ownerID).
+				Order("binding_key ASC").
+				Pluck("binding_key", &remaining).Error)
+			return remaining
+		}
+
+		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "og"))
+		require.ElementsMatch(t, []string{
+			"ogx", "og-ko", "og:ko", "featured_image", "featured_image_alt", "featuredXimage", "featuredXimage_ko",
+		}, remainingKeys())
+		requirePublicAssetState(t, db, assets["og"].ID, model.PublicAssetStatusDeletePending, true)
+		requirePublicAssetState(t, db, assets["og_ko"].ID, model.PublicAssetStatusDeletePending, true)
+		requirePublicAssetState(t, db, assets["ogx"].ID, model.PublicAssetStatusReady, false)
+
+		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "featured_image"))
+		require.ElementsMatch(t, []string{"ogx", "og-ko", "og:ko", "featuredXimage", "featuredXimage_ko"}, remainingKeys())
+		requirePublicAssetState(t, db, assets["featuredXimage"].ID, model.PublicAssetStatusReady, false)
+	})
+
 	t.Run("exact release preserves sibling localized binding", func(t *testing.T) {
 		db := newUnitDB(t)
 		service := NewLifecycle(db, "")
@@ -213,20 +252,20 @@ func TestMediaAssetLifecycleLastBindingDeletion(t *testing.T) {
 		korean := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
 		ownerID := uuid.NewString()
 		for _, binding := range []Binding{
-			{AssetID: english.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og:en"},
-			{AssetID: korean.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og:ko"},
+			{AssetID: english.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og_en"},
+			{AssetID: korean.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og_ko"},
 		} {
 			require.NoError(t, service.BindPublicAsset(t.Context(), binding))
 		}
 
 		require.NoError(t, service.ReleaseExactPublicAssetBindings(
-			t.Context(), "post", ownerID, []string{"og:en"},
+			t.Context(), "post", ownerID, []string{"og_en"},
 		))
 		requirePublicAssetState(t, db, english.ID, model.PublicAssetStatusDeletePending, true)
 		requirePublicAssetState(t, db, korean.ID, model.PublicAssetStatusReady, false)
 		var binding model.PublicAssetBinding
 		require.NoError(t, db.Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ?", "post", ownerID, "og:ko",
+			"owner_type = ? AND owner_id = ? AND binding_key = ?", "post", ownerID, "og_ko",
 		).Take(&binding).Error)
 		require.Equal(t, korean.ID, binding.AssetID)
 	})

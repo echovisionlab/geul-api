@@ -81,6 +81,6 @@ func (p *Projection) Complete(
 	})
 }
 
-func artistOGBindingKey(locale string) string { return "og:" + strings.TrimSpace(locale) }
+func artistOGBindingKey(locale string) string { return "og_" + strings.TrimSpace(locale) }
 
 var _ og.Projection = (*Projection)(nil)

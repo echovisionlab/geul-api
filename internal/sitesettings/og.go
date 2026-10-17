@@ -35,7 +35,8 @@ func ClassifyOGInvalidation(before, after *model.SiteSettings, keys []string) OG
 			continue
 		}
 		switch key {
-		case "site_title", "primary_color", "logo_light_file_id":
+		case "site_title", "primary_color", "logo_full_light_file_id", "logo_full_dark_file_id",
+			"logo_symbol_light_file_id", "logo_symbol_dark_file_id":
 			result.All = true
 		case "site_og_background_file_id":
 			result.Site = true

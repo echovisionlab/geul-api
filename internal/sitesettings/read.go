@@ -83,15 +83,12 @@ func (s *SiteSettingService) GetSettings(
 		public.GoogleAnalyticsId = &value
 	}
 
-	if settings.LogoLightFileID != nil {
-		public.LogoLightAsset = s.getFileAsset(ctx, *settings.LogoLightFileID, "logo")
-	}
-	if settings.LogoDarkFileID != nil {
-		public.LogoDarkAsset = s.getFileAsset(ctx, *settings.LogoDarkFileID, "logo")
-	}
-	if settings.LogoEmailFileID != nil {
-		public.LogoEmailAsset = s.getFileAsset(ctx, *settings.LogoEmailFileID, "email_image")
-	}
+	public.LogoFullLightAsset = s.optionalFileAsset(ctx, settings.LogoFullLightFileID, "logo")
+	public.LogoFullDarkAsset = s.optionalFileAsset(ctx, settings.LogoFullDarkFileID, "logo")
+	public.LogoSymbolLightAsset = s.optionalFileAsset(ctx, settings.LogoSymbolLightFileID, "logo")
+	public.LogoSymbolDarkAsset = s.optionalFileAsset(ctx, settings.LogoSymbolDarkFileID, "logo")
+	public.LogoEmailLightAsset = s.optionalFileAsset(ctx, settings.LogoEmailLightFileID, "email_image")
+	public.LogoEmailDarkAsset = s.optionalFileAsset(ctx, settings.LogoEmailDarkFileID, "email_image")
 	if settings.FaviconFileID != nil {
 		public.FaviconAsset, public.FaviconAssetSet = s.assets.ProjectFavicon(ctx, s.db, *settings.FaviconFileID)
 	}

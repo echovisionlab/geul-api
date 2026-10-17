@@ -20,8 +20,14 @@ func TestAssetsValidateAttachment(t *testing.T) {
 		return fileID
 	}
 	assets := NewAssets("")
-	require.NoError(t, assets.ValidateAttachment(context.Background(), db, "logo_light_file_id", insert("image/png", 1024)))
-	require.Error(t, assets.ValidateAttachment(context.Background(), db, "logo_light_file_id", insert("image/webp", 1024)))
-	require.Error(t, assets.ValidateAttachment(context.Background(), db, "logo_email_file_id", insert("image/svg+xml", 1024)))
+	for _, key := range []string{"logo_full_light_file_id", "logo_full_dark_file_id", "logo_symbol_light_file_id", "logo_symbol_dark_file_id"} {
+		require.NoError(t, assets.ValidateAttachment(context.Background(), db, key, insert("image/png", 1024)), key)
+		require.NoError(t, assets.ValidateAttachment(context.Background(), db, key, insert("image/svg+xml", 1024)), key)
+		require.Error(t, assets.ValidateAttachment(context.Background(), db, key, insert("image/webp", 1024)), key)
+	}
+	for _, key := range []string{"logo_email_light_file_id", "logo_email_dark_file_id"} {
+		require.NoError(t, assets.ValidateAttachment(context.Background(), db, key, insert("image/png", 1024)), key)
+		require.Error(t, assets.ValidateAttachment(context.Background(), db, key, insert("image/svg+xml", 1024)), key)
+	}
 	require.Error(t, assets.ValidateAttachment(context.Background(), db, "loader", insert("image/webp", 100*1024+1)))
 }

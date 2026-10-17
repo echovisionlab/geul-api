@@ -54,7 +54,7 @@ var fileAttachmentReferenceRegistry = []fileAttachmentReferenceSpec{
 	{name: "form.featured_image_file_id", table: "form", predicate: "ref.featured_image_file_id = %s.id"},
 	{name: "map_place.image_file_id", table: "map_place", predicate: "ref.image_file_id = %s.id"},
 	{name: "program_event_series.poster_file_id", table: "program_event_series", predicate: "ref.poster_file_id = %s.id"},
-	{name: "site_settings.file_ids", table: "site_settings", predicate: "(ref.logo_light_file_id = %s.id OR ref.logo_dark_file_id = %s.id OR ref.logo_email_file_id = %s.id OR ref.favicon_file_id = %s.id OR ref.site_og_background_file_id = %s.id OR ref.privacy_og_background_file_id = %s.id OR ref.terms_og_background_file_id = %s.id)"},
+	{name: "site_settings.file_ids", table: "site_settings", predicate: "(ref.logo_full_light_file_id = %s.id OR ref.logo_full_dark_file_id = %s.id OR ref.logo_symbol_light_file_id = %s.id OR ref.logo_symbol_dark_file_id = %s.id OR ref.logo_email_light_file_id = %s.id OR ref.logo_email_dark_file_id = %s.id OR ref.favicon_file_id = %s.id OR ref.site_og_background_file_id = %s.id OR ref.privacy_og_background_file_id = %s.id OR ref.terms_og_background_file_id = %s.id)"},
 	{name: "site_setting_loader_file", table: "site_setting_loader_file", predicate: "ref.file_id = %s.id"},
 	{
 		name:      "mesh_optimization_candidate.output_file_id",

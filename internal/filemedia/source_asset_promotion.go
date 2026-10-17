@@ -47,7 +47,7 @@ func dedicatedPublicAssetKind(uploadType managev1.UploadType, slotID string) (st
 		managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO:
 		return "logo", true
 	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO:
-		if strings.TrimSpace(slotID) == siteEmailLogoSlotID {
+		if isSiteEmailLogoUpload(uploadType, slotID) {
 			return "email_image", true
 		}
 		return "logo", true

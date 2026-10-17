@@ -15,10 +15,10 @@ import (
 
 func TestBrandingReusesReadyLibraryImageAcrossBindingReadsAndOG(t *testing.T) {
 	for _, tc := range []struct{ kind, extension, mime, slot, expected string }{
-		{"image", "svg", "image/svg+xml", "logo:light", "logo"},
-		{"image", "png", "image/png", "logo:light", "logo"},
-		{"image", "png", "image/png", "logo:email", "email_image"},
-		{"logo", "svg", "image/svg+xml", "logo:light", "logo"},
+		{"image", "svg", "image/svg+xml", "logo_full_light", "logo"},
+		{"image", "png", "image/png", "logo_full_light", "logo"},
+		{"image", "png", "image/png", "logo_email_light", "email_image"},
+		{"logo", "svg", "image/svg+xml", "logo_full_light", "logo"},
 	} {
 		t.Run(tc.kind+"/"+tc.extension+"/"+tc.slot, func(t *testing.T) {
 			db := brandingAssetDB(t)
@@ -44,7 +44,7 @@ func TestBrandingReusesReadyLibraryImageAcrossBindingReadsAndOG(t *testing.T) {
 			require.NoError(t, db.Model(&model.PublicAsset{}).Count(&count).Error)
 			require.EqualValues(t, 1, count)
 			if tc.expected == "logo" {
-				require.NoError(t, db.Exec("UPDATE site_settings SET logo_light_file_id = ? WHERE id = 1", fileID).Error)
+				require.NoError(t, db.Exec("UPDATE site_settings SET logo_full_light_file_id = ? WHERE id = 1", fileID).Error)
 				payload, _, err := NewRenderConfig().Snapshot(t.Context(), db, "https://cdn.example.com")
 				require.NoError(t, err)
 				var snapshot renderSnapshot
@@ -54,6 +54,40 @@ func TestBrandingReusesReadyLibraryImageAcrossBindingReadsAndOG(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOGSnapshotDrawsFullLightLogoWithDisplayFallbacks(t *testing.T) {
+	for _, tc := range []struct {
+		name, column string
+	}{
+		{"full light", "logo_full_light_file_id"},
+		{"full dark only", "logo_full_dark_file_id"},
+		{"symbol dark only", "logo_symbol_dark_file_id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := brandingAssetDB(t)
+			fileID, assetID := seedBrandingAsset(t, db, "logo", "svg", "image/svg+xml", model.PublicAssetStatusReady)
+			require.NoError(t, db.Exec("UPDATE site_settings SET "+tc.column+" = ? WHERE id = 1", fileID).Error)
+			payload, _, err := NewRenderConfig().Snapshot(t.Context(), db, "https://cdn.example.com")
+			require.NoError(t, err)
+			var snapshot renderSnapshot
+			require.NoError(t, json.Unmarshal(payload, &snapshot))
+			require.NotNil(t, snapshot.LogoAsset)
+			require.Equal(t, assetID, snapshot.LogoAsset.AssetID)
+		})
+	}
+	t.Run("unready preferred slot falls back to a ready one", func(t *testing.T) {
+		db := brandingAssetDB(t)
+		unready, _ := seedBrandingAsset(t, db, "logo", "svg", "image/svg+xml", model.PublicAssetStatusAllocated)
+		ready, assetID := seedBrandingAsset(t, db, "logo", "svg", "image/svg+xml", model.PublicAssetStatusReady)
+		require.NoError(t, db.Exec("UPDATE site_settings SET logo_full_light_file_id = ?, logo_symbol_light_file_id = ? WHERE id = 1", unready, ready).Error)
+		payload, _, err := NewRenderConfig().Snapshot(t.Context(), db, "https://cdn.example.com")
+		require.NoError(t, err)
+		var snapshot renderSnapshot
+		require.NoError(t, json.Unmarshal(payload, &snapshot))
+		require.NotNil(t, snapshot.LogoAsset)
+		require.Equal(t, assetID, snapshot.LogoAsset.AssetID)
+	})
 }
 
 func TestBrandingRejectsIncompatibleOrUnreadyLibraryAssets(t *testing.T) {
@@ -68,7 +102,7 @@ func TestBrandingRejectsIncompatibleOrUnreadyLibraryAssets(t *testing.T) {
 		t.Run(tc.kind+"/"+tc.extension+"/"+tc.state+"/"+tc.expected, func(t *testing.T) {
 			db := brandingAssetDB(t)
 			fileID, _ := seedBrandingAsset(t, db, tc.kind, tc.extension, tc.mime, tc.state)
-			_, err := NewAssets("https://cdn.example.com").BindReady(t.Context(), db, domain.AssetBinding{SourceFileID: fileID, Key: "logo:light", Kind: tc.expected})
+			_, err := NewAssets("https://cdn.example.com").BindReady(t.Context(), db, domain.AssetBinding{SourceFileID: fileID, Key: "logo_full_light", Kind: tc.expected})
 			require.Error(t, err)
 			var count int64
 			require.NoError(t, db.Model(&model.PublicAssetBinding{}).Count(&count).Error)
@@ -81,7 +115,7 @@ func TestBrandingLibraryImageCannotAttachAfterSourceDeletionIntent(t *testing.T)
 	db := brandingAssetDB(t)
 	fileID, _ := seedBrandingAsset(t, db, "image", "svg", "image/svg+xml", model.PublicAssetStatusReady)
 	require.NoError(t, db.Exec("UPDATE file SET delete_requested_at = ? WHERE id = ?", time.Now().UTC(), fileID).Error)
-	_, err := NewAssets("https://cdn.example.com").BindReady(t.Context(), db, domain.AssetBinding{SourceFileID: fileID, Key: "logo:light", Kind: "logo"})
+	_, err := NewAssets("https://cdn.example.com").BindReady(t.Context(), db, domain.AssetBinding{SourceFileID: fileID, Key: "logo_full_light", Kind: "logo"})
 	require.ErrorContains(t, err, "file is pending deletion")
 }
 

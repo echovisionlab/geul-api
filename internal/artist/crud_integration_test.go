@@ -228,7 +228,7 @@ func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 	var deleteBinding model.PublicAssetBinding
 	require.NoError(t, db.Where(
 		"owner_type = ? AND owner_id = ? AND binding_key = ?",
-		"artist", created.Msg.Id, "image:"+thirdFileID,
+		"artist", created.Msg.Id, "image_"+thirdFileID,
 	).Take(&deleteBinding).Error)
 	preview, err := service.PreviewDeleteArtist(ctx, connect.NewRequest(&managev1.PreviewDeleteArtistRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)

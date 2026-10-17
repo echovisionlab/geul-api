@@ -785,7 +785,7 @@ func (s *LabelService) DeleteLabel(
 			return err
 		}
 		if err := s.runtime.ReleaseExactPublicAssetBindings(
-			ctx, tx, "label", req.Msg.Id, []string{"logo:light", "logo:dark"},
+			ctx, tx, "label", req.Msg.Id, []string{"logo_light", "logo_dark"},
 		); err != nil {
 			return err
 		}

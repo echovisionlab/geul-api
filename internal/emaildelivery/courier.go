@@ -249,7 +249,7 @@ func canonicalAutomaticEmailTemplateData(
 
 func identityCourierTemplateVariableNames(eventKey email.EventKey) []string {
 	names := []string{
-		"site_name", "site_origin", "logo_email_url",
+		"site_name", "site_origin", "logo_email_url", "logo_email_dark_url",
 		"recipient_email", "identity_email", "to",
 	}
 	switch eventKey {
