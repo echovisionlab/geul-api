@@ -37,6 +37,7 @@ func TestArchivedPostUnpublishStoresDirectDraftTransitionIntegration(t *testing.
 		postruntime.ContentBlockMedia{}, postadapter.NewMemberSummaries(db, ""),
 		postruntime.VersionRestore{}, apitelemetry.NewDurableWriter(db),
 		postdomain.WithPostContentBlockStore(testutil.NewPostContentBlockStore(t)),
+		postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
 	)
 	created, err := service.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
 		Title: "Archived Post withdrawn directly", Document: testutil.EmptyPostDocument("en"),

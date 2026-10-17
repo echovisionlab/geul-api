@@ -57,6 +57,7 @@ func TestPostDomainAuditClosesLifecycleVersionAndDeleteBoundariesIntegration(t *
 		postruntime.VersionRestore{},
 		writer,
 		postdomain.WithPostContentBlockStore(contentBlocks),
+		postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
 	)
 	internalService := postdomain.NewInternalPostService(
 		db,
@@ -67,6 +68,7 @@ func TestPostDomainAuditClosesLifecycleVersionAndDeleteBoundariesIntegration(t *
 		postruntime.ContentBlockMedia{},
 		postdomain.WithInternalPostDomainAuditWriter(writer),
 		postdomain.WithInternalPostContentBlockStore(contentBlocks),
+		postdomain.WithInternalPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
 	)
 
 	created, err := postService.CreatePost(memberCtx, connect.NewRequest(&managev1.CreatePostRequest{

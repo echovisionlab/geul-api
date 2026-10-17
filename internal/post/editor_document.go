@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -38,7 +39,7 @@ func (s *PostService) GetPostEditorDocument(ctx context.Context, req *connect.Re
 	}
 	var response *managev1.GetPostEditorDocumentResponse
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		loader := &InternalPostService{db: tx, spiceDB: s.spiceDB, contentBlocks: s.contentBlocks, mediaLoader: s.mediaLoader}
+		loader := &InternalPostService{db: tx, spiceDB: s.spiceDB, contentBlocks: s.contentBlocks, mediaLoader: s.mediaLoader, mediaHydrator: s.mediaHydrator}
 		loaded, err := loader.LoadPostBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPostBlockDocumentRequest{
 			PostId: req.Msg.PostId, Locale: req.Msg.Locale, Principal: &intrav1.CollaborationPrincipal{SessionId: string(user.SessionID)},
 		}))
@@ -72,7 +73,7 @@ func (s *PostService) GetPostEditorDocument(ctx context.Context, req *connect.Re
 			Title: metadata.Title, Summary: metadata.Summary,
 		}
 		return nil
-	})
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
 			return nil, errs.NotFound("post", req.Msg.PostId)

@@ -259,6 +259,7 @@ func newAuditedPostConfigurationService(
 		postruntime.VersionRestore{},
 		apitelemetry.NewDurableWriter(db),
 		postdomain.WithPostContentBlockStore(store),
+		postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
 	)
 }
 

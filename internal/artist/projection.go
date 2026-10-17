@@ -220,13 +220,14 @@ func (s *ArtistService) toProtoArtist(
 	ogAsset *commonv1.AssetRef,
 ) *managev1.Artist {
 	artist := &managev1.Artist{
-		Id:        a.ID,
-		Name:      a.Name,
-		Document:  a.ContentDocument,
-		Status:    a.Status,
-		CreatedAt: timestamppb.New(a.CreatedAt),
-		OgAsset:   ogAsset,
-		Revision:  a.ContentRevision,
+		Id:           a.ID,
+		SourceLocale: a.SourceLocale,
+		Name:         a.Name,
+		Document:     a.ContentDocument,
+		Status:       a.Status,
+		CreatedAt:    timestamppb.New(a.CreatedAt),
+		OgAsset:      ogAsset,
+		Revision:     a.ContentRevision,
 	}
 
 	if a.Slug != nil {

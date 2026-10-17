@@ -70,6 +70,17 @@ func (mediaLoader) LoadContentBlockMediaReferences(
 	return nil, nil
 }
 
+// MediaHydrator keeps attachment-only fixtures independent of delivery signing.
+// Tests of real delivery use the FileService implementation.
+type MediaHydrator struct{}
+
+func (MediaHydrator) HydrateAuthorizedPostBlockMediaWithDB(
+	_ context.Context, _ *gorm.DB, _ string, _ uuid.UUID, _ *auth.UserInfo,
+	items []*contentv1.ContentBlockMediaItem,
+) ([]*contentv1.ContentBlockMediaItem, error) {
+	return items, nil
+}
+
 type versionRestore struct{}
 
 func (versionRestore) LoadUnavailableVersionAttachmentKinds(
@@ -136,6 +147,7 @@ func NewPostDomainServiceWithFileService(
 		postadapter.NewMemberSummaries(db, cdnDomain),
 		versionRestore{},
 		postdomain.WithPostContentBlockStore(store),
+		postdomain.WithPostContentBlockMediaHydrator(MediaHydrator{}),
 	)
 }
 
@@ -160,6 +172,7 @@ func NewInternalPostDomainService(
 		mediaLoader{},
 		postdomain.WithInternalPostDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
 		postdomain.WithInternalPostContentBlockStore(store),
+		postdomain.WithInternalPostContentBlockMediaHydrator(MediaHydrator{}),
 	)
 }
 

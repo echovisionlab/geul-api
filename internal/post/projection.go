@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -252,21 +253,37 @@ func (s *PostService) hydratePostContentProjection(ctx context.Context, post *mo
 	if err != nil {
 		return err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshot(ctx, s.db, documentID, post.SourceLocale)
-	if err != nil {
-		return normalizePostContentBlockError(err)
+	if s.mediaHydrator == nil {
+		return errs.InternalMsg("Post Block media hydrator is not configured")
 	}
-	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
-	if err != nil {
-		return normalizePostContentBlockError(err)
-	}
-	post.ContentDocument = document
-	post.ContentRevision = snapshot.Document.Revision.String()
-	post.BlockMedia, err = s.mediaLoader.LoadContentBlockMediaReferences(ctx, s.db, documentID)
-	if err != nil {
-		return errs.Internal(fmt.Errorf("load Post content media references: %w", err))
-	}
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		root, err := lockPostContentDocumentRoot(ctx, tx, post.ID, documentID, true)
+		if err != nil {
+			return err
+		}
+		if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, root.Status); err != nil {
+			return err
+		}
+		if root.SourceLocale != post.SourceLocale {
+			return errs.FailedPrecondition("Post source locale changed; reload before reading")
+		}
+		snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, post.SourceLocale)
+		if err != nil {
+			return normalizePostContentBlockError(err)
+		}
+		document, err := contentblock.SnapshotToRichTextDocument(snapshot)
+		if err != nil {
+			return normalizePostContentBlockError(err)
+		}
+		mediaItems, err := loadPostBlockMedia(ctx, tx, post.ID, documentID, auth.GetUser(ctx), s.mediaLoader, s.mediaHydrator)
+		if err != nil {
+			return err
+		}
+		post.ContentDocument = document
+		post.ContentRevision = snapshot.Document.Revision.String()
+		post.BlockMedia = mediaItems
+		return nil
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 }
 
 func (s *PostService) hydratePostContentProjections(ctx context.Context, posts []model.Post) error {

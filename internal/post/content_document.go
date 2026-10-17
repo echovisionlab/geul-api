@@ -123,13 +123,13 @@ func authorizePostBlockBootstrap(
 	postID string,
 	documentID uuid.UUID,
 	principalMessage *intrav1.CollaborationPrincipal,
-) error {
+) (*auth.UserInfo, error) {
 	if principalMessage == nil {
-		return errs.InvalidArgument("principal", "is required")
+		return nil, errs.InvalidArgument("principal", "is required")
 	}
 	root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
 		ctx,
@@ -137,55 +137,55 @@ func authorizePostBlockBootstrap(
 		principalMessage.GetSessionId(),
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		return errs.AuthenticationRequired()
+		return nil, errs.AuthenticationRequired()
 	}
 	if err != nil {
-		return errs.Internal(fmt.Errorf("resolve Post collaboration principal: %w", err))
+		return nil, errs.Internal(fmt.Errorf("resolve Post collaboration principal: %w", err))
 	}
 	if principal == nil || principal.Banned || !principal.Onboarded {
-		return errs.NoPermission("edit", "post")
+		return nil, errs.NoPermission("edit", "post")
 	}
 	principalContext := auth.WithUser(ctx, principal)
 	if root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
 		can, canErr := policyv1.Post.ViewArchived(postID)
 		if canErr != nil {
 			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(canErr))
-			return errs.InvalidArgument("post_id", "must be a canonical UUID")
+			return nil, errs.InvalidArgument("post_id", "must be a canonical UUID")
 		}
 		decision, decisionErr := auth.AuthorizationDecision(principalContext, can)
 		if decisionErr != nil {
 			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(decisionErr))
-			return errs.AuthenticationRequired()
+			return nil, errs.AuthenticationRequired()
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
 			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(checkErr))
-			return errs.DependencyUnavailable("SpiceDB")
+			return nil, errs.DependencyUnavailable("SpiceDB")
 		}
 		if !allowed {
-			return errs.NoPermission("view", "post")
+			return nil, errs.NoPermission("view", "post")
 		}
-		return nil
+		return principal, nil
 	}
 	can, err := policyv1.Post.Edit(postID)
 	if err != nil {
 		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
-		return errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return nil, errs.InvalidArgument("post_id", "must be a canonical UUID")
 	}
 	decision, err := auth.AuthorizationDecision(principalContext, can)
 	if err != nil {
 		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return nil, errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
 		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.authorizePostBlockBootstrap", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
-		return errs.NoPermission("edit", "post")
+		return nil, errs.NoPermission("edit", "post")
 	}
-	return nil
+	return principal, nil
 }
 
 func postLockedDocumentFence(

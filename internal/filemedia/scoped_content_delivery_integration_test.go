@@ -61,6 +61,46 @@ func TestResolveAuthorizedPostFeaturedImageRejectsChangedOrPendingExactSlotInteg
 	}
 }
 
+// Post editor delivery must use the exact Post owner and active attachment,
+// including when original downloads are disabled for the current editor.
+func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
+	for _, state := range []string{"active", "detached", "replaced", "deleting", "wrong owner"} {
+		t.Run(state, func(t *testing.T) {
+			db := newConcurrentServiceIntegrationDB(t)
+			fixture := seedScopedPageBlockFixture(t, db)
+			postID := uuid.NewString()
+			require.NoError(t, db.Exec(`INSERT INTO post (id, status, content_document_id) VALUES (?::uuid, ?, ?::uuid)`, postID, managev1.PostStatus_POST_STATUS_DRAFT.String(), fixture.documentID).Error)
+			switch state {
+			case "detached":
+				require.NoError(t, db.Exec(`DELETE FROM content_block_attachment WHERE block_id = ?::uuid`, fixture.blockID).Error)
+			case "replaced":
+				require.NoError(t, db.Exec(`UPDATE content_block_attachment SET file_id = ?::uuid WHERE block_id = ?::uuid`, fixture.replacementFileID, fixture.blockID).Error)
+			case "deleting":
+				require.NoError(t, db.Exec(`UPDATE file SET delete_requested_at = CURRENT_TIMESTAMP WHERE id = ?::uuid`, fixture.fileID).Error)
+			case "wrong owner":
+				postID = uuid.NewString()
+			}
+			var items []*contentv1.ContentBlockMediaItem
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Exec(`SELECT id FROM post WHERE id = ?::uuid FOR SHARE`, postID).Error; err != nil {
+					return err
+				}
+				var err error
+				items, err = fixture.service.HydrateAuthorizedPostBlockMediaWithDB(t.Context(), tx, postID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
+				return err
+			}))
+			require.Len(t, items, 1)
+			if state == "active" {
+				require.NotNil(t, items[0].GetDelivery().GetInline())
+			} else {
+				require.Nil(t, items[0].GetDelivery())
+			}
+			require.Nil(t, items[0].GetDelivery().GetDownload())
+			require.Equal(t, contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE, items[0].GetDownloadAvailability())
+		})
+	}
+}
+
 func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIntegration(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string

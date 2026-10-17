@@ -46,6 +46,7 @@ type PostService struct {
 	asyncPublisher AsyncPublisher
 	shareLinks     ShareLinkValidator
 	mediaLoader    ContentBlockMediaLoader
+	mediaHydrator  ContentBlockMediaHydrator
 	members        MemberSummaryLoader
 	versionRestore VersionRestoreSupport
 	auditWriter    domainaudit.Appender
@@ -54,6 +55,10 @@ type PostService struct {
 }
 
 type PostServiceOption func(*PostService)
+
+func WithPostContentBlockMediaHydrator(hydrator ContentBlockMediaHydrator) PostServiceOption {
+	return func(s *PostService) { s.mediaHydrator = hydrator }
+}
 
 func WithPostContentBlockStore(store *contentblock.Store) PostServiceOption {
 	return func(service *PostService) {
