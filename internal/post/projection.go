@@ -493,6 +493,7 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 	post := &managev1.Post{
 		Id:                    p.ID,
 		Title:                 p.Title,
+		SourceLocale:          p.SourceLocale,
 		Document:              p.ContentDocument,
 		Revision:              p.ContentRevision,
 		ConfigurationRevision: p.ConfigurationRevision,
