@@ -197,8 +197,7 @@ func (*RenderConfig) Snapshot(ctx context.Context, db *gorm.DB, cdnDomain string
 		snapshot.OGImageConfig = canonical
 	}
 	if settings.LogoLightFileID != nil {
-		asset, err := mediaasset.NewLifecycle(db, cdnDomain).
-			ReadyAssetRefForSourceFile(ctx, *settings.LogoLightFileID, "logo")
+		asset, _, err := readySiteSettingAsset(ctx, db, cdnDomain, *settings.LogoLightFileID, "logo")
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, "", err
 		}
