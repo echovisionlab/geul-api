@@ -47,6 +47,8 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 
 func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	id := uuid.NewString()
+	revision, configurationRevision, mapPlaceID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	layout := model.DefaultDocumentLayout()
 	now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	document := &contentv1.RichTextDocument{SourceLocale: "ko"}
 	media := []*contentv1.ContentBlockMediaItem{{Delivery: &commonv1.MediaDelivery{FileId: uuid.NewString()}}}
@@ -59,11 +61,11 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	og := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example/og.webp"}
 	response := new(PostService).toProtoPostWithProjection(&model.Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
-		ContentDocument: document, ContentRevision: uuid.NewString(), ConfigurationRevision: uuid.NewString(),
+		ContentDocument: document, ContentRevision: revision, ConfigurationRevision: configurationRevision,
 		BlockMedia: media, Status: model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
-		CommentsEnabled: true, DocumentLayout: model.DefaultDocumentLayout(),
+		CommentsEnabled: true, DocumentLayout: layout,
 		CreatedAt: now, UpdatedAt: now, PublishedAt: &now, ScheduledAt: &now, ScheduledTimeZone: new("Asia/Seoul"),
-		SeriesOrder: new(int32(3)), MapPlaceID: new(uuid.NewString()),
+		SeriesOrder: new(int32(3)), MapPlaceID: &mapPlaceID,
 		Categories: []model.Category{{ID: "category-1", Name: "Category", Slug: "category", CreatedAt: now}},
 		Tags:       []model.Tag{{ID: "tag-1", Name: "Tag", Slug: "tag", CreatedAt: now}},
 		Series:     &model.Series{ID: "series-1", Title: "Series", Slug: "series", SourceLocale: "ja", Status: "published", CreatedAt: now},
@@ -78,13 +80,13 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.Equal(t, "Summary", decoded.GetSummary())
 	require.Equal(t, "ko", decoded.SourceLocale)
 	require.True(t, proto.Equal(document, decoded.Document))
-	require.Equal(t, response.Revision, decoded.Revision)
-	require.Equal(t, response.ConfigurationRevision, decoded.ConfigurationRevision)
+	require.Equal(t, revision, decoded.Revision)
+	require.Equal(t, configurationRevision, decoded.ConfigurationRevision)
 	require.True(t, proto.Equal(media[0], decoded.BlockMedia[0]))
 	require.True(t, proto.Equal(author, decoded.AuthorMembers[0]))
 	require.True(t, proto.Equal(featured, decoded.FeaturedImageDelivery))
 	require.True(t, proto.Equal(og, decoded.OgAsset))
-	require.True(t, proto.Equal(response.DocumentLayout, decoded.DocumentLayout))
+	require.True(t, proto.Equal(layout.Proto(), decoded.DocumentLayout))
 	require.True(t, decoded.CommentsEnabled)
 	require.Equal(t, managev1.PostStatus_POST_STATUS_DRAFT, decoded.Status)
 	require.Contains(t, decoded.AllowedActions, managev1.PostAction_POST_ACTION_EDIT)
@@ -93,7 +95,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	}
 	require.Equal(t, "Asia/Seoul", decoded.GetScheduledTimeZone())
 	require.EqualValues(t, 3, decoded.GetSeriesOrder())
-	require.Equal(t, response.GetMapPlaceId(), decoded.GetMapPlaceId())
+	require.Equal(t, mapPlaceID, decoded.GetMapPlaceId())
 	require.Equal(t, "category-1", decoded.Categories[0].Id)
 	require.Equal(t, "tag-1", decoded.Tags[0].Id)
 	require.Equal(t, "series-1", decoded.Series.Id)
