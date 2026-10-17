@@ -105,8 +105,10 @@ func translationAISystemPrompt(req ProviderRequest) string {
 		"track titles, handles, URLs, catalog numbers, or other canonical entity names unless the source already " +
 		"includes a localized form. %s %s %s %s %s Field names indicate whether a unit is a title, summary, " +
 		"or body slot. Source format indicates whether the unit came from plain text or an HTML text node. " +
-		"For each unit, translate sourceInline into translated_inline. Preserve every pc/ph tag, id, dataRef, " +
-		"dataRefStart, dataRefEnd, canCopy, and canDelete value exactly. You may reorder complete top-level pc/ph " +
+		"For each unit, translate sourceInline into translated_inline. sourceInline is authoritative; sourceText is context only. " +
+		"Preserve every pc/ph tag and id exactly. These opaque codes represent placeholders, protected terms, or formatting. " +
+		"Never replace a code with its literal spelling from sourceText or ProtectedTerms, and never add code attributes. " +
+		"The server restores all native references from the source. You may reorder complete top-level pc/ph " +
 		"tokens when target-language grammar requires it, but must not move a child outside its original parent pc. " +
 		"Do not put translated text outside the styled pc runs when sourceInline uses them. Path, containerType, and " +
 		"containerId identify where the unit will be applied back into the structured document."
@@ -183,7 +185,7 @@ func translationAIUnitFromXLIFF(unit XLIFFUnit, emailTemplate ...bool) (translat
 	if err != nil {
 		return translationAIUnitPayload{}, err
 	}
-	inline, err := MarshalXLIFFInlineFragment(normalized.SourceInline)
+	inline, err := MarshalXLIFFInlineFragment(aiSourceInline(normalized.SourceInline))
 	if err != nil {
 		return translationAIUnitPayload{}, err
 	}

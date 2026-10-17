@@ -262,7 +262,7 @@ func TestParseTranslationProviderResponseRejectsTextOutsideStyledRun(t *testing.
 		}},
 	})
 	_, err := parseTranslationProviderResponse(request, translationJSONResponse("body", translationJSONUnit{
-		UnitID: "u1", TranslatedInline: `안녕<pc id="r1" dataRefStart="d1" dataRefEnd="d2"></pc>`,
+		UnitID: "u1", TranslatedInline: `안녕<pc id="r1"></pc>`,
 	}))
 	require.ErrorIs(t, err, ErrProviderResponseInvalid)
 }
