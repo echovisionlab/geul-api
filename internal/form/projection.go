@@ -111,10 +111,11 @@ func toProtoFormSummaryWithSubmissionCount(
 
 func (s *FormService) toProtoSubmission(sub *model.FormSubmission) *managev1.FormSubmission {
 	submission := &managev1.FormSubmission{
-		Id:        sub.ID,
-		FormId:    sub.FormID,
-		Data:      sub.Data,
-		CreatedAt: timestamppb.New(sub.CreatedAt),
+		Id:          sub.ID,
+		FormId:      sub.FormID,
+		CountryCode: sub.CountryCode,
+		Data:        sub.Data,
+		CreatedAt:   timestamppb.New(sub.CreatedAt),
 	}
 
 	if sub.MemberID != nil {

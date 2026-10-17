@@ -551,9 +551,10 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 		post.Categories = make([]*managev1.Category, len(p.Categories))
 		for i, cat := range p.Categories {
 			post.Categories[i] = &managev1.Category{
-				Id:   cat.ID,
-				Name: cat.Name,
-				Slug: &cat.Slug,
+				Id:        cat.ID,
+				Name:      cat.Name,
+				CreatedAt: timestamppb.New(cat.CreatedAt),
+				Slug:      &cat.Slug,
 			}
 			if cat.Description != nil {
 				post.Categories[i].Description = cat.Description
@@ -566,9 +567,10 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 		post.Tags = make([]*managev1.Tag, len(p.Tags))
 		for i, tag := range p.Tags {
 			post.Tags[i] = &managev1.Tag{
-				Id:   tag.ID,
-				Name: tag.Name,
-				Slug: &tag.Slug,
+				Id:        tag.ID,
+				Name:      tag.Name,
+				CreatedAt: timestamppb.New(tag.CreatedAt),
+				Slug:      &tag.Slug,
 			}
 		}
 	}
@@ -579,6 +581,8 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 			Id:           p.Series.ID,
 			SourceLocale: p.Series.SourceLocale,
 			Title:        p.Series.Title,
+			Status:       p.Series.Status,
+			CreatedAt:    timestamppb.New(p.Series.CreatedAt),
 			Slug:         p.Series.Slug,
 		}
 		if p.Series.Description != nil {

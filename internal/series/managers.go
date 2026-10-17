@@ -50,25 +50,9 @@ func (s *SeriesService) GetSeriesWithManagers(
 		return nil, err
 	}
 
-	memberIDs, err := loadSeriesManagerMemberIDs(ctx, s.db, req.Msg.Id)
+	protoMembers, err := s.loadSeriesManagerProjections(ctx, req.Msg.Id)
 	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	var protoMembers []*managev1.SeriesManager
-	if len(memberIDs) > 0 {
-		summaries, err := s.members.LoadSeriesManagers(ctx, memberIDs)
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
-		protoMembers = make([]*managev1.SeriesManager, 0, len(memberIDs))
-		for _, memberID := range memberIDs {
-			summary := summaries[memberID]
-			if summary == nil {
-				return nil, errs.InternalMsg("series manager member was not found")
-			}
-			protoMembers = append(protoMembers, summary)
-		}
+		return nil, err
 	}
 
 	ogAsset, err := s.media.ReadyAsset(ctx, series.OgAssetID)
@@ -113,28 +97,9 @@ func (s *SeriesService) ListSeriesManagers(
 		return nil, errs.Internal(err)
 	}
 
-	memberIDs, err := loadSeriesManagerMemberIDs(ctx, s.db, req.Msg.SeriesId)
+	protoMembers, err := s.loadSeriesManagerProjections(ctx, req.Msg.SeriesId)
 	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if len(memberIDs) == 0 {
-		return connect.NewResponse(&managev1.ListSeriesManagersResponse{
-			Managers: []*managev1.SeriesManager{},
-		}), nil
-	}
-
-	summaries, err := s.members.LoadSeriesManagers(ctx, memberIDs)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoMembers := make([]*managev1.SeriesManager, 0, len(memberIDs))
-	for _, memberID := range memberIDs {
-		summary := summaries[memberID]
-		if summary == nil {
-			return nil, errs.InternalMsg("series manager member was not found")
-		}
-		protoMembers = append(protoMembers, summary)
+		return nil, err
 	}
 
 	return connect.NewResponse(&managev1.ListSeriesManagersResponse{

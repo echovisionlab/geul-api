@@ -22,7 +22,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -118,12 +117,8 @@ func (s *TranslationService) ListTranslationProviders(
 	}
 
 	resp := &managev1.ListTranslationProvidersResponse{
-		Providers: make([]*managev1.TranslationProvider, 0, len(providers)),
-		Pagination: &commonv1.PaginationResponse{
-			Total:  int32(total),
-			Limit:  limit,
-			Offset: offset,
-		},
+		Providers:  make([]*managev1.TranslationProvider, 0, len(providers)),
+		Pagination: (queryutil.Pagination{Limit: limit, Offset: offset}).BuildResponse(total),
 	}
 	for i := range providers {
 		resp.Providers = append(resp.Providers, toProtoTranslationProvider(&providers[i], false))

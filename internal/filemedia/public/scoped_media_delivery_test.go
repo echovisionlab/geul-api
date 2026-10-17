@@ -35,6 +35,7 @@ func TestProjectScopedMediaURLPublishesReadyDerivativesForDrafts(t *testing.T) {
 		assert.Equal(t, "https://cdn.example.com/asset/"+imageAssetID+"/image.png", got.GetAsset().GetUrl())
 		assert.Equal(t, got.GetAsset(), got.GetThumbnail())
 		assert.Nil(t, got.GetInline())
+		assert.Nil(t, got.DurationSeconds, "unknown durations must remain absent")
 	})
 
 	t.Run("ready HLS waveform and spectrogram are stable even for a direct draft", func(t *testing.T) {
@@ -46,7 +47,7 @@ func TestProjectScopedMediaURLPublishesReadyDerivativesForDrafts(t *testing.T) {
 			"https://media.example.com",
 			unitMediaSigningSecret,
 			resolvedMediaAccess{directDraft: true},
-			scopedMediaFile{ID: audioID, Extension: "flac", MimeType: "audio/flac", FileSize: 456},
+			scopedMediaFile{ID: audioID, Extension: "flac", MimeType: "audio/flac", FileSize: 456, DurationSeconds: new(123)},
 			map[string]scopedMediaDerivative{
 				managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String(): {
 					FileID: audioID, Type: managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String(), MediaGenerationID: &hlsGenerationID,
@@ -70,6 +71,7 @@ func TestProjectScopedMediaURLPublishesReadyDerivativesForDrafts(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "https://media.example.com/media/"+audioID+"/hls/"+hlsID+"/master.m3u8", got.GetPlayback().GetUrl())
 		assert.Equal(t, hlsID, got.GetPlayback().GetGenerationId())
+		assert.EqualValues(t, 123, got.GetDurationSeconds())
 		assert.Equal(t, "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp", got.GetSpectrogram().GetUrl())
 		assert.Equal(t, "https://media.example.com/asset/"+waveformID+"/waveform.json", got.GetWaveform().GetUrl())
 	})
