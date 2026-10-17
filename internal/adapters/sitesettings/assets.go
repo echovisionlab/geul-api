@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
-
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -66,8 +64,8 @@ func (Assets) ValidateAttachment(ctx context.Context, db *gorm.DB, key, fileID s
 	if _, ok := allowed[mimeType]; !ok {
 		return errs.InvalidArgument("file_id", fmt.Sprintf("%s does not accept %s", key, mimeType))
 	}
-	if key == "logo_email_file_id" && mimeType != "image/png" {
-		return errs.InvalidArgument("file_id", "logo_email_file_id requires image/png")
+	if (key == "logo_email_light_file_id" || key == "logo_email_dark_file_id") && mimeType != "image/png" {
+		return errs.InvalidArgument("file_id", key+" requires image/png")
 	}
 	if file.FileSize < config.MinSize || file.FileSize > config.MaxSize {
 		return errs.InvalidArgument("file_id", fmt.Sprintf("%s file size is outside the supported range", key))
@@ -77,7 +75,9 @@ func (Assets) ValidateAttachment(ctx context.Context, db *gorm.DB, key, fileID s
 
 func siteSettingAssetUploadType(key string) (managev1.UploadType, bool) {
 	switch key {
-	case "logo_light_file_id", "logo_dark_file_id", "logo_email_file_id":
+	case "logo_full_light_file_id", "logo_full_dark_file_id",
+		"logo_symbol_light_file_id", "logo_symbol_dark_file_id",
+		"logo_email_light_file_id", "logo_email_dark_file_id":
 		return managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, true
 	case "favicon_file_id":
 		return managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON, true
@@ -166,15 +166,15 @@ func (a Assets) ReplaceFavicon(ctx context.Context, db *gorm.DB, fileID *string)
 func siteSettingsFaviconBindings(set *commonv1.FaviconAssetSet) []faviconBinding {
 	bindings := []faviconBinding{
 		{key: "favicon", asset: set.GetIconPng_32()},
-		{key: "favicon:ico", asset: set.GetIconIco()},
-		{key: "favicon:png16", asset: set.GetIconPng_16()},
-		{key: "favicon:png48", asset: set.GetIconPng_48()},
-		{key: "favicon:apple180", asset: set.GetAppleTouchIcon_180()},
-		{key: "favicon:manifest192", asset: set.GetManifestIcon_192()},
-		{key: "favicon:manifest512", asset: set.GetManifestIcon_512()},
+		{key: "favicon_ico", asset: set.GetIconIco()},
+		{key: "favicon_png16", asset: set.GetIconPng_16()},
+		{key: "favicon_png48", asset: set.GetIconPng_48()},
+		{key: "favicon_apple180", asset: set.GetAppleTouchIcon_180()},
+		{key: "favicon_manifest192", asset: set.GetManifestIcon_192()},
+		{key: "favicon_manifest512", asset: set.GetManifestIcon_512()},
 	}
 	if set.GetIconSvg() != nil {
-		bindings = append(bindings, faviconBinding{key: "favicon:svg", asset: set.GetIconSvg()})
+		bindings = append(bindings, faviconBinding{key: "favicon_svg", asset: set.GetIconSvg()})
 	}
 	return bindings
 }
@@ -189,24 +189,8 @@ func (a Assets) ReadyRef(
 	return ref, err
 }
 
-// A File-library image can be used in a branding slot without changing its
-// immutable asset kind or copying its bytes. Dedicated logo uploads remain valid.
-// Keep assignment, public settings and OG snapshots on the same resolution path.
 func readySiteSettingAsset(ctx context.Context, db *gorm.DB, cdnDomain, fileID, kind string) (*commonv1.AssetRef, string, error) {
-	lifecycle := mediaasset.NewLifecycle(db, cdnDomain)
-	ref, err := lifecycle.ReadyAssetRefForSourceFile(ctx, fileID, kind)
-	if err == nil || connect.CodeOf(err) != connect.CodeNotFound || (kind != "logo" && kind != "email_image") {
-		return ref, kind, err
-	}
-	ref, err = lifecycle.ReadyAssetRefForSourceFile(ctx, fileID, "image")
-	if err != nil {
-		return nil, kind, err
-	}
-	mimeType := normalizeSiteSettingMIME(ref.GetMimeType())
-	if mimeType != "image/png" && (kind != "logo" || mimeType != "image/svg+xml") {
-		return nil, kind, errs.InvalidArgument("file_id", "branding requires PNG or SVG; email branding requires PNG")
-	}
-	return ref, "image", nil
+	return mediaasset.NewLifecycle(db, cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind)
 }
 
 func (a Assets) ReadyAsset(

@@ -85,10 +85,10 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 	orphanThumbID, _ := seedWorkerAssetDerivative(t, db, orphanFileID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL, "thumbnail", "webp", "image/webp")
 	seedWorkerHLSGenerationDerivative(t, db, orphanFileID)
 	require.NoError(t, db.Exec(`
-		INSERT INTO site_settings (id, logo_light_file_id, default_map_theme_id)
+		INSERT INTO site_settings (id, logo_full_light_file_id, default_map_theme_id)
 		VALUES (1, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET
-			logo_light_file_id = EXCLUDED.logo_light_file_id,
+			logo_full_light_file_id = EXCLUDED.logo_full_light_file_id,
 			default_map_theme_id = EXCLUDED.default_map_theme_id
 	`, referencedFileID, defaultMapThemeID).Error)
 	require.NoError(t, db.Exec(`

@@ -143,9 +143,9 @@ func (s *LabelService) SetLabelImage(
 			return gorm.ErrRecordNotFound
 		}
 
-		bindingKey := "logo:light"
+		bindingKey := "logo_light"
 		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo:dark"
+			bindingKey = "logo_dark"
 		}
 		_, err = s.runtime.BindReadyAssetForSourceFile(
 			ctx, tx, req.Msg.FileId, "label", req.Msg.LabelId, bindingKey, "logo",
@@ -240,9 +240,9 @@ func (s *LabelService) DeleteLabelImage(
 			return err
 		}
 
-		bindingKey := "logo:light"
+		bindingKey := "logo_light"
 		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo:dark"
+			bindingKey = "logo_dark"
 		}
 		if err := s.runtime.ReleasePublicAssetBindings(
 			ctx, tx, "label", req.Msg.LabelId, bindingKey,

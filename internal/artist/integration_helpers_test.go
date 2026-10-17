@@ -334,8 +334,10 @@ func (r *artistIntegrationRuntime) ReplaceArtistImageBindings(ctx context.Contex
 		return err
 	}
 	var current []string
-	if err := tx.Model(&model.PublicAssetBinding{}).Where("owner_type = ? AND owner_id = ?", "artist", artistID).
-		Where("binding_key = ? OR binding_key LIKE ?", "image", "image:%").Pluck("binding_key", &current).Error; err != nil {
+	if err := mediaasset.WhereBindingKeyFamily(
+		tx.Model(&model.PublicAssetBinding{}).Where("owner_type = ? AND owner_id = ?", "artist", artistID),
+		"image",
+	).Pluck("binding_key", &current).Error; err != nil {
 		return err
 	}
 	if err := tx.Where("artist_id = ?", artistID).Delete(&model.ArtistFile{}).Error; err != nil {
@@ -351,7 +353,7 @@ func (r *artistIntegrationRuntime) ReplaceArtistImageBindings(ctx context.Contex
 		if err != nil {
 			return err
 		}
-		key := "image:" + fileID
+		key := "image_" + fileID
 		next[key] = struct{}{}
 		if err := lifecycle.BindPublicAsset(ctx, mediaasset.Binding{AssetID: asset.GetAssetId(), OwnerType: "artist", OwnerID: artistID, BindingKey: key, SourceFileID: &fileID}); err != nil {
 			return err

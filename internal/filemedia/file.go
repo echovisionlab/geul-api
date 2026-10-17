@@ -61,10 +61,7 @@ var (
 	errStoredObjectMIMEMismatch        = errors.New("stored object MIME mismatch")
 )
 
-const (
-	siteEmailLogoSlotID     = "logo_email"
-	siteEmailLogoStableMime = "image/png"
-)
+const siteEmailLogoStableMime = "image/png"
 
 func optionalNonEmptyString(value string) *string {
 	value = strings.TrimSpace(value)
@@ -342,8 +339,11 @@ func (s *FileService) buildManagedFileKey(
 }
 
 func isSiteEmailLogoUpload(uploadType managev1.UploadType, slotID string) bool {
-	return uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_LOGO &&
-		strings.TrimSpace(slotID) == siteEmailLogoSlotID
+	if uploadType != managev1.UploadType_UPLOAD_TYPE_SITE_LOGO {
+		return false
+	}
+	slot := strings.TrimSpace(slotID)
+	return slot == siteLogoSlotEmailLight || slot == siteLogoSlotEmailDark
 }
 
 func validateSiteEmailLogoMime(uploadType managev1.UploadType, slotID string, mimeType string) error {
@@ -620,14 +620,37 @@ func (s *FileService) readStoredObjectPrefix(
 	return prefix, nil
 }
 
+// Site logo upload slots. Each slot owns a stable upload entity; the full light,
+// full dark and email light slots keep the entities of the logos they replace.
 const (
-	siteUploadEntityIDLogoLight        = "00000000-0000-0000-0000-000000000201"
-	siteUploadEntityIDEmailLogo        = "00000000-0000-0000-0000-000000000202"
+	siteLogoSlotFullLight   = "logo_full_light"
+	siteLogoSlotFullDark    = "logo_full_dark"
+	siteLogoSlotSymbolLight = "logo_symbol_light"
+	siteLogoSlotSymbolDark  = "logo_symbol_dark"
+	siteLogoSlotEmailLight  = "logo_email_light"
+	siteLogoSlotEmailDark   = "logo_email_dark"
+)
+
+const (
+	siteUploadEntityIDLogoFullLight    = "00000000-0000-0000-0000-000000000201"
+	siteUploadEntityIDLogoEmailLight   = "00000000-0000-0000-0000-000000000202"
 	siteUploadEntityIDFavicon          = "00000000-0000-0000-0000-000000000203"
 	siteUploadEntityIDLoader           = "00000000-0000-0000-0000-000000000204"
 	siteUploadEntityIDSiteOgBackground = "00000000-0000-0000-0000-000000000205"
-	siteUploadEntityIDLogoDark         = "00000000-0000-0000-0000-000000000206"
+	siteUploadEntityIDLogoFullDark     = "00000000-0000-0000-0000-000000000206"
+	siteUploadEntityIDLogoSymbolLight  = "00000000-0000-0000-0000-000000000207"
+	siteUploadEntityIDLogoSymbolDark   = "00000000-0000-0000-0000-000000000208"
+	siteUploadEntityIDLogoEmailDark    = "00000000-0000-0000-0000-000000000209"
 )
+
+var siteLogoUploadEntityIDs = map[string]string{
+	siteLogoSlotFullLight:   siteUploadEntityIDLogoFullLight,
+	siteLogoSlotFullDark:    siteUploadEntityIDLogoFullDark,
+	siteLogoSlotSymbolLight: siteUploadEntityIDLogoSymbolLight,
+	siteLogoSlotSymbolDark:  siteUploadEntityIDLogoSymbolDark,
+	siteLogoSlotEmailLight:  siteUploadEntityIDLogoEmailLight,
+	siteLogoSlotEmailDark:   siteUploadEntityIDLogoEmailDark,
+}
 
 func resolveSiteUploadEntityID(
 	legalRoutes LegalRouteIdentity,
@@ -638,16 +661,10 @@ func resolveSiteUploadEntityID(
 
 	switch uploadType {
 	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO:
-		switch slot {
-		case "", "logo", "logo_light":
-			return siteUploadEntityIDLogoLight, nil
-		case "logo_dark":
-			return siteUploadEntityIDLogoDark, nil
-		case "logo_email":
-			return siteUploadEntityIDEmailLogo, nil
-		default:
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
+		if entityID, ok := siteLogoUploadEntityIDs[slot]; ok {
+			return entityID, nil
 		}
+		return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
 
 	case managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON:
 		if slot != "" && slot != "favicon" {

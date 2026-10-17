@@ -89,7 +89,7 @@ func setupOgLifecycleUnitTables(t *testing.T, db *gorm.DB) {
 	for _, statement := range []string{
 		`CREATE TABLE site_settings (
 			id integer PRIMARY KEY, site_title text NOT NULL DEFAULT '',
-			primary_color text NOT NULL DEFAULT '#b02d23', logo_light_file_id text,
+			primary_color text NOT NULL DEFAULT '#b02d23', logo_full_light_file_id text, logo_full_dark_file_id text, logo_symbol_light_file_id text, logo_symbol_dark_file_id text,
 			site_og_asset_id text, og_image_config blob,
 			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP

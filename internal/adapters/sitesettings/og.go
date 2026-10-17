@@ -10,14 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	settingsdomain "github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -196,14 +199,30 @@ func (*RenderConfig) Snapshot(ctx context.Context, db *gorm.DB, cdnDomain string
 		}
 		snapshot.OGImageConfig = canonical
 	}
-	if settings.LogoLightFileID != nil {
-		asset, _, err := readySiteSettingAsset(ctx, db, cdnDomain, *settings.LogoLightFileID, "logo")
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	// OG images draw the full light logo, falling back like every display logo.
+	logos := sitelogo.Display[commonv1.AssetRef]{}
+	for _, slot := range []struct {
+		fileID *string
+		target **commonv1.AssetRef
+	}{
+		{settings.LogoFullLightFileID, &logos.FullLight},
+		{settings.LogoFullDarkFileID, &logos.FullDark},
+		{settings.LogoSymbolLightFileID, &logos.SymbolLight},
+		{settings.LogoSymbolDarkFileID, &logos.SymbolDark},
+	} {
+		if slot.fileID == nil {
+			continue
+		}
+		asset, _, err := readySiteSettingAsset(ctx, db, cdnDomain, *slot.fileID, "logo")
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) && connect.CodeOf(err) != connect.CodeNotFound {
 			return nil, "", err
 		}
 		if err == nil {
-			snapshot.LogoAsset = snapshotRef(asset)
+			*slot.target = asset
 		}
+	}
+	if logo := logos.Resolve(sitelogo.Full, sitelogo.Light); logo != nil {
+		snapshot.LogoAsset = snapshotRef(logo)
 	}
 	payload, err := json.Marshal(snapshot)
 	if err != nil {

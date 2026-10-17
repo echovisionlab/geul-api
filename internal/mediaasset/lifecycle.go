@@ -552,6 +552,11 @@ func (s *Lifecycle) RequestPublicAssetDeletion(ctx context.Context, assetID stri
 	})
 }
 
+// ReleasePublicAssetBindings releases the binding family identified by
+// bindingPrefix for one owner: the exact key `prefix` and every key of the
+// form `prefix_*` (for example "og" releases "og" and "og_ko"). Binding keys
+// use underscores only, so the family separator is "_". The prefix is matched
+// literally rather than through LIKE, because "_" is a LIKE wildcard.
 func (s *Lifecycle) ReleasePublicAssetBindings(
 	ctx context.Context,
 	ownerType string,
@@ -566,15 +571,30 @@ func (s *Lifecycle) ReleasePublicAssetBindings(
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var bindingKeys []string
-		if err := tx.Model(&model.PublicAssetBinding{}).
-			Where("owner_type = ? AND owner_id = ?", ownerType, ownerID).
-			Where("binding_key = ? OR binding_key LIKE ?", bindingPrefix, bindingPrefix+":%").
+		if err := WhereBindingKeyFamily(
+			tx.Model(&model.PublicAssetBinding{}).
+				Where("owner_type = ? AND owner_id = ?", ownerType, ownerID),
+			bindingPrefix,
+		).
 			Order("binding_key ASC").
 			Pluck("binding_key", &bindingKeys).Error; err != nil {
 			return errs.Internal(err)
 		}
 		return releaseExactPublicAssetBindings(ctx, tx, ownerType, ownerID, bindingKeys, s.now().UTC())
 	})
+}
+
+// bindingKeyFamilyCondition matches the exact key (first argument) or any key
+// starting with the second argument, which must be repeated as the third
+// argument. substr/length are used instead of LIKE (where "_" is a wildcard)
+// or starts_with (PostgreSQL-only) so the predicate is literal and runs on
+// both PostgreSQL and the SQLite unit-test database.
+const bindingKeyFamilyCondition = "binding_key = ? OR substr(binding_key, 1, length(CAST(? AS TEXT))) = ?"
+
+// WhereBindingKeyFamily scopes a public_asset_binding query to the binding
+// family of prefix: the exact key `prefix` and every `prefix_*` key.
+func WhereBindingKeyFamily(db *gorm.DB, prefix string) *gorm.DB {
+	return db.Where(bindingKeyFamilyCondition, prefix, prefix+"_", prefix+"_")
 }
 
 func (s *Lifecycle) ReleaseExactPublicAssetBindings(

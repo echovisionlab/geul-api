@@ -22,9 +22,12 @@ var defaultSettings = siteSettingObject{
 	"legal_email":                   "",
 	"contact_email":                 "",
 	"social_links":                  siteSettingObject{},
-	"logo_light_file_id":            nil,
-	"logo_dark_file_id":             nil,
-	"logo_email_file_id":            nil,
+	"logo_full_light_file_id":       nil,
+	"logo_full_dark_file_id":        nil,
+	"logo_symbol_light_file_id":     nil,
+	"logo_symbol_dark_file_id":      nil,
+	"logo_email_light_file_id":      nil,
+	"logo_email_dark_file_id":       nil,
 	"favicon_file_id":               nil,
 	"site_og_background_file_id":    nil,
 	"privacy_og_background_file_id": nil,
@@ -267,12 +270,18 @@ func settingValue(settings *model.SiteSettings, key string) (siteSettingValue, b
 		return settings.ContactEmail, true
 	case "social_links":
 		return jsonColumnToMap(settings.SocialLinks, "social_links", true), true
-	case "logo_light_file_id":
-		return optionalString(settings.LogoLightFileID), true
-	case "logo_dark_file_id":
-		return optionalString(settings.LogoDarkFileID), true
-	case "logo_email_file_id":
-		return optionalString(settings.LogoEmailFileID), true
+	case "logo_full_light_file_id":
+		return optionalString(settings.LogoFullLightFileID), true
+	case "logo_full_dark_file_id":
+		return optionalString(settings.LogoFullDarkFileID), true
+	case "logo_symbol_light_file_id":
+		return optionalString(settings.LogoSymbolLightFileID), true
+	case "logo_symbol_dark_file_id":
+		return optionalString(settings.LogoSymbolDarkFileID), true
+	case "logo_email_light_file_id":
+		return optionalString(settings.LogoEmailLightFileID), true
+	case "logo_email_dark_file_id":
+		return optionalString(settings.LogoEmailDarkFileID), true
 	case "favicon_file_id":
 		return optionalString(settings.FaviconFileID), true
 	case "site_og_background_file_id":
@@ -326,7 +335,9 @@ func (s *SiteSettingService) applySettingValue(settings *model.SiteSettings, key
 			return err
 		}
 		settings.SocialLinks = v
-	case "logo_light_file_id", "logo_dark_file_id", "logo_email_file_id",
+	case "logo_full_light_file_id", "logo_full_dark_file_id",
+		"logo_symbol_light_file_id", "logo_symbol_dark_file_id",
+		"logo_email_light_file_id", "logo_email_dark_file_id",
 		"favicon_file_id", "site_og_background_file_id", "privacy_og_background_file_id",
 		"terms_og_background_file_id", "homepage_page_id", "menu_header_id",
 		"menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id":
@@ -415,12 +426,18 @@ func applyOptionalStringSiteSetting(settings *model.SiteSettings, key string, va
 		return err
 	}
 	switch key {
-	case "logo_light_file_id":
-		settings.LogoLightFileID = parsed
-	case "logo_dark_file_id":
-		settings.LogoDarkFileID = parsed
-	case "logo_email_file_id":
-		settings.LogoEmailFileID = parsed
+	case "logo_full_light_file_id":
+		settings.LogoFullLightFileID = parsed
+	case "logo_full_dark_file_id":
+		settings.LogoFullDarkFileID = parsed
+	case "logo_symbol_light_file_id":
+		settings.LogoSymbolLightFileID = parsed
+	case "logo_symbol_dark_file_id":
+		settings.LogoSymbolDarkFileID = parsed
+	case "logo_email_light_file_id":
+		settings.LogoEmailLightFileID = parsed
+	case "logo_email_dark_file_id":
+		settings.LogoEmailDarkFileID = parsed
 	case "favicon_file_id":
 		settings.FaviconFileID = parsed
 	case "site_og_background_file_id":

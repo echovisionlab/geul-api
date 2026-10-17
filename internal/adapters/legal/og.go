@@ -504,7 +504,7 @@ func validateTarget(target og.Target) error {
 
 func bindingKey(locale *string) string {
 	if normalized := optionalString(locale); normalized != nil {
-		return "og:" + *normalized
+		return "og_" + *normalized
 	}
 	return "og"
 }

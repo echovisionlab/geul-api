@@ -45,7 +45,7 @@ func TestManifestProjectsCurrentSiteAssetsOnCanonicalStaticRoutesIntegration(t *
 	loaderFileID, loaderAssetID := seedCanonicalPublicFileFixture(t, db, "loader.webp", "image/webp", "loader")
 	_, ogAssetID := seedCanonicalPublicFileFixture(t, db, "og.webp", "image/webp", "og")
 	require.NoError(t, db.Exec(
-		`UPDATE site_settings SET logo_light_file_id = ?, site_og_asset_id = ? WHERE id = 1`,
+		`UPDATE site_settings SET logo_full_light_file_id = ?, site_og_asset_id = ? WHERE id = 1`,
 		logoFileID,
 		ogAssetID,
 	).Error)
@@ -56,7 +56,13 @@ func TestManifestProjectsCurrentSiteAssetsOnCanonicalStaticRoutesIntegration(t *
 
 	response, err := service.Get(t.Context(), connect.NewRequest(&openv1.GetRequest{}))
 	require.NoError(t, err)
-	require.Equal(t, cdnDomain+"/asset/"+logoAssetID+"/logo.png", response.Msg.GetSettings().GetLogoLightAsset().GetUrl())
+	// Only the full light logo is configured, so every display slot resolves to it.
+	for _, logo := range []*commonv1.AssetRef{
+		response.Msg.GetSettings().GetLogoFullLightAsset(), response.Msg.GetSettings().GetLogoFullDarkAsset(),
+		response.Msg.GetSettings().GetLogoSymbolLightAsset(), response.Msg.GetSettings().GetLogoSymbolDarkAsset(),
+	} {
+		require.Equal(t, cdnDomain+"/asset/"+logoAssetID+"/logo.png", logo.GetUrl())
+	}
 	require.Equal(t, cdnDomain+"/asset/"+ogAssetID+"/og.webp", response.Msg.GetSettings().GetSiteOgAsset().GetUrl())
 	require.Len(t, response.Msg.GetSettings().GetLoaderAssets(), 1)
 	require.Equal(t, cdnDomain+"/asset/"+loaderAssetID+"/loader.webp", response.Msg.GetSettings().GetLoaderAssets()[0].GetUrl())

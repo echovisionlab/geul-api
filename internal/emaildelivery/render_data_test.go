@@ -14,7 +14,7 @@ func TestBuildEmailRenderDataUsesCanonicalSiteTitleAndRuntimeOrigin(t *testing.T
 		&emailSiteSettings{
 			SiteTitle: " Example Studio ",
 		},
-		nil,
+		emailLogoURLs{},
 	)
 
 	if got := data["site_name"]; got != "Example Studio" {
@@ -28,21 +28,38 @@ func TestBuildEmailRenderDataUsesCanonicalSiteTitleAndRuntimeOrigin(t *testing.T
 	}
 }
 
-func TestBuildEmailRenderDataUsesOriginalEmailLogoURL(t *testing.T) {
-	logoFileID := "f77f6bcf-61f4-4c60-9f59-9c3efdf4a0a1"
-	logoURL := "https://cdn.example.com/media/site/logo/" + logoFileID + ".png"
-
-	data := buildEmailRenderDataWithDefaults(
-		"https://cdn.example.com",
-		"https://studio.example.com",
-		"ko",
-		map[string]string{},
-		&emailSiteSettings{LogoEmailFileID: &logoFileID},
-		&logoURL,
-	)
-
-	if got := data["logo_email_url"]; got != logoURL {
-		t.Fatalf("expected original media logo URL %q, got %q", logoURL, got)
+func TestBuildEmailRenderDataResolvesLightAndDarkEmailLogos(t *testing.T) {
+	light := "https://cdn.example.com/asset/light.png"
+	dark := "https://cdn.example.com/asset/dark.png"
+	for _, tc := range []struct {
+		name                string
+		logos               emailLogoURLs
+		input               map[string]string
+		wantLight, wantDark string
+	}{
+		{name: "both themes", logos: emailLogoURLs{Light: &light, Dark: &dark}, wantLight: light, wantDark: dark},
+		{name: "light only serves both", logos: emailLogoURLs{Light: &light}, wantLight: light, wantDark: light},
+		{name: "dark only serves both", logos: emailLogoURLs{Dark: &dark}, wantLight: dark, wantDark: dark},
+		{name: "none renders empty placeholders", logos: emailLogoURLs{}},
+		{
+			name: "explicit template input wins", logos: emailLogoURLs{Light: &light, Dark: &dark},
+			input:     map[string]string{"logo_email_url": "https://override/l.png", "logo_email_dark_url": "https://override/d.png"},
+			wantLight: "https://override/l.png", wantDark: "https://override/d.png",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := tc.input
+			if input == nil {
+				input = map[string]string{}
+			}
+			data := buildEmailRenderDataWithDefaults("https://cdn.example.com", "https://studio.example.com", "ko", input, &emailSiteSettings{}, tc.logos)
+			if got := data["logo_email_url"]; got != tc.wantLight {
+				t.Errorf("logo_email_url = %q, want %q", got, tc.wantLight)
+			}
+			if got := data["logo_email_dark_url"]; got != tc.wantDark {
+				t.Errorf("logo_email_dark_url = %q, want %q", got, tc.wantDark)
+			}
+		})
 	}
 }
 
@@ -128,7 +145,7 @@ func TestNormalizeEmailRenderLocaleUsesCanonicalRegistry(t *testing.T) {
 
 func TestReservedSiteVariablesOverrideCallerCaseAliases(t *testing.T) {
 	input := map[string]string{"site.title": "attacker", "SITE.TITLE": "attacker", "contact.legalemail": "attacker", "CONTACT.SUPPORTEMAIL": "attacker", "contact.supportEmail": "attacker", "contact.privacyEmail": "attacker", "CONTACT.EMAIL": "attacker", "contact.email": "attacker", "site.url": "https://evil.test"}
-	data := buildEmailRenderDataWithDefaults("", "https://www.rawsector.com/", "en", input, &emailSiteSettings{SiteTitle: "rawsector", CompanyName: "Company", LegalEmail: "legal@example.test", ContactEmail: "contact@example.test"}, nil)
+	data := buildEmailRenderDataWithDefaults("", "https://www.rawsector.com/", "en", input, &emailSiteSettings{SiteTitle: "rawsector", CompanyName: "Company", LegalEmail: "legal@example.test", ContactEmail: "contact@example.test"}, emailLogoURLs{})
 	for key, want := range map[string]string{"site.title": "rawsector", "site.url": "https://www.rawsector.com", "site.companyName": "Company", "contact.legalEmail": "legal@example.test", "contact.email": "contact@example.test"} {
 		if data[key] != want {
 			t.Fatalf("%s = %q, want %q", key, data[key], want)

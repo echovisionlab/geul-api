@@ -101,7 +101,7 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 			"owner_type = ? AND owner_id = ? AND binding_key = ?",
 			kind,
 			routeID,
-			"og:"+strings.TrimSpace(locale),
+			"og_"+strings.TrimSpace(locale),
 		).
 		Take(&binding).Error
 	if err == gorm.ErrRecordNotFound {

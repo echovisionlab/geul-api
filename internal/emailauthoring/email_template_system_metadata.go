@@ -13,6 +13,7 @@ var (
 		"site_name",
 		"site_origin",
 		"logo_email_url",
+		"logo_email_dark_url",
 	}
 	emailTemplateNameAliasVariables = []string{
 		"name",
@@ -32,7 +33,7 @@ var (
 // The source of truth is the backend send path:
 //   - direct events publish concrete TemplateData keys
 //   - bulk events add recipient_email before enqueue
-//   - BuildEmailRenderData adds site_* / logo_email_url and alias normalization
+//   - BuildEmailRenderData adds site_* / logo_email_url / logo_email_dark_url and alias normalization
 //
 // We intentionally do not include speculative variables here.
 func verifiedSystemEmailTemplateVariableNames(eventKey interface{ String() string }) []string {

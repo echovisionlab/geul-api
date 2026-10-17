@@ -204,7 +204,7 @@ func (s *SiteSettingService) AddSiteLoaderAsset(
 			return nil
 		}
 		if _, err := s.assets.BindReady(ctx, tx, AssetBinding{
-			SourceFileID: fileID, Key: "loader:" + fileID, Kind: "loader",
+			SourceFileID: fileID, Key: "loader_" + fileID, Kind: "loader",
 		}); err != nil {
 			return err
 		}
@@ -264,7 +264,7 @@ func (s *SiteSettingService) RemoveSiteLoaderAsset(
 		if result.RowsAffected == 0 {
 			return nil
 		}
-		if err := s.assets.Release(ctx, tx, "loader:"+fileID); err != nil {
+		if err := s.assets.Release(ctx, tx, "loader_"+fileID); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.SiteSettings{}).Where("id = ?", 1).Update("updated_at", time.Now()).Error; err != nil {

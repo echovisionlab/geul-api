@@ -115,9 +115,12 @@ UNION ALL SELECT w.featured_image_file_id, 'work', w.id::text, 'featured_image',
 UNION ALL SELECT featured_image_file_id, 'form', id::text, 'featured_image', NULL::text, NULL::text, NULL::text FROM form WHERE featured_image_file_id IS NOT NULL
 UNION ALL SELECT image_file_id, 'map_place', id::text, 'image', NULL::text, NULL::text, name::text FROM map_place WHERE image_file_id IS NOT NULL
 UNION ALL SELECT poster_file_id, 'program_event', id::text, 'series_poster', NULL::text, NULL::text, title::text FROM program_event_series WHERE poster_file_id IS NOT NULL
-UNION ALL SELECT logo_light_file_id, 'site_settings', id::text, 'logo_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_light_file_id IS NOT NULL
-UNION ALL SELECT logo_dark_file_id, 'site_settings', id::text, 'logo_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_dark_file_id IS NOT NULL
-UNION ALL SELECT logo_email_file_id, 'site_settings', id::text, 'logo_email', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_email_file_id IS NOT NULL
+UNION ALL SELECT logo_full_light_file_id, 'site_settings', id::text, 'logo_full_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_full_light_file_id IS NOT NULL
+UNION ALL SELECT logo_full_dark_file_id, 'site_settings', id::text, 'logo_full_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_full_dark_file_id IS NOT NULL
+UNION ALL SELECT logo_symbol_light_file_id, 'site_settings', id::text, 'logo_symbol_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_symbol_light_file_id IS NOT NULL
+UNION ALL SELECT logo_symbol_dark_file_id, 'site_settings', id::text, 'logo_symbol_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_symbol_dark_file_id IS NOT NULL
+UNION ALL SELECT logo_email_light_file_id, 'site_settings', id::text, 'logo_email_light', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_email_light_file_id IS NOT NULL
+UNION ALL SELECT logo_email_dark_file_id, 'site_settings', id::text, 'logo_email_dark', NULL::text, NULL::text, NULL::text FROM site_settings WHERE logo_email_dark_file_id IS NOT NULL
 UNION ALL SELECT favicon_file_id, 'site_settings', id::text, 'favicon', NULL::text, NULL::text, NULL::text FROM site_settings WHERE favicon_file_id IS NOT NULL
 UNION ALL SELECT site_og_background_file_id, 'site_settings', id::text, 'site_og_background', NULL::text, NULL::text, NULL::text FROM site_settings WHERE site_og_background_file_id IS NOT NULL
 UNION ALL SELECT privacy_og_background_file_id, 'site_settings', id::text, 'privacy_og_background', NULL::text, NULL::text, NULL::text FROM site_settings WHERE privacy_og_background_file_id IS NOT NULL

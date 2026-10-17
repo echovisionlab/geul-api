@@ -82,7 +82,7 @@ func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyInte
 		Where("entity_id = ? AND locale = ?", seriesID, "en").
 		Update("og_asset_id", oldAsset.GetAssetId()).Error)
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
-		AssetID: oldAsset.GetAssetId(), OwnerType: "series", OwnerID: seriesID, BindingKey: "og:en",
+		AssetID: oldAsset.GetAssetId(), OwnerType: "series", OwnerID: seriesID, BindingKey: "og_en",
 	}).Error)
 
 	var plan *og.Plan
@@ -113,7 +113,7 @@ func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyInte
 
 	var bindingCount int64
 	require.NoError(t, db.Model(&model.PublicAssetBinding{}).
-		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "series", seriesID, "og:en").
+		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "series", seriesID, "og_en").
 		Count(&bindingCount).Error)
 	require.Zero(t, bindingCount)
 	requirePublicAssetDeletePending(t, db, oldAsset.GetAssetId())

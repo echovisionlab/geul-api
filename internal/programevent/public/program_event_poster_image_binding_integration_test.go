@@ -67,7 +67,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, added.Msg.Media.IsPrimary)
 			var binding model.PublicAssetBinding
-			require.NoError(t, db.Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "program_event", event.Msg.Id, "media:"+added.Msg.Media.Id).Take(&binding).Error)
+			require.NoError(t, db.Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "program_event", event.Msg.Id, "media_"+added.Msg.Media.Id).Take(&binding).Error)
 			require.Equal(t, assetID, binding.AssetID)
 			require.Equal(t, fileID, *binding.SourceFileID)
 			var assets []model.PublicAsset

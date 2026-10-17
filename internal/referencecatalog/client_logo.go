@@ -105,9 +105,9 @@ func (s *ClientService) SetClientLogo(
 			return gorm.ErrRecordNotFound
 		}
 
-		bindingKey := "logo:light"
+		bindingKey := "logo_light"
 		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo:dark"
+			bindingKey = "logo_dark"
 		}
 		logoRef, err := s.assets.BindReady(ctx, tx, AssetBinding{
 			SourceFileID: req.Msg.FileId,
@@ -222,9 +222,9 @@ func (s *ClientService) DeleteClientLogo(
 			return gorm.ErrRecordNotFound
 		}
 
-		bindingKey := "logo:light"
+		bindingKey := "logo_light"
 		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo:dark"
+			bindingKey = "logo_dark"
 		}
 		if err := s.assets.Release(ctx, tx, AssetRelease{
 			Owner:         AssetOwner{Type: "client", ID: req.Msg.ClientId},

@@ -366,7 +366,7 @@ func bindProgramEventMediaPublicAsset(ctx context.Context, db *gorm.DB, mediaAss
 		return nil
 	}
 	_, err := mediaAssets.BindReadyAssetForSourceFile(
-		ctx, db, media.FileID, "program_event", media.EventID, "media:"+media.ID, assetKind,
+		ctx, db, media.FileID, "program_event", media.EventID, "media_"+media.ID, assetKind,
 	)
 	return err
 }
@@ -410,7 +410,7 @@ func deleteProgramEventMedia(ctx context.Context, db *gorm.DB, mediaAssets Media
 			return "", err
 		}
 	}
-	if err := mediaAssets.ReleasePublicAssetBindings(ctx, db, "program_event", eventID, "media:"+media.ID); err != nil {
+	if err := mediaAssets.ReleasePublicAssetBindings(ctx, db, "program_event", eventID, "media_"+media.ID); err != nil {
 		return "", err
 	}
 	return media.FileID, nil
@@ -557,7 +557,7 @@ func deleteDefaultProgramEventPosterMedia(ctx context.Context, db *gorm.DB, medi
 		return errs.Internal(err)
 	}
 	for _, row := range media {
-		if err := mediaAssets.ReleasePublicAssetBindings(ctx, db, "program_event", eventID, "media:"+row.ID); err != nil {
+		if err := mediaAssets.ReleasePublicAssetBindings(ctx, db, "program_event", eventID, "media_"+row.ID); err != nil {
 			return err
 		}
 	}

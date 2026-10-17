@@ -162,7 +162,7 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
 			Update("logo_dark_file_id", nil).Error)
 		require.NoError(t, mediaasset.NewLifecycle(db, "").ReleaseExactPublicAssetBindings(
-			ctx, "label", labelID, []string{"logo:dark"},
+			ctx, "label", labelID, []string{"logo_dark"},
 		))
 
 		staleOgAssetID := seedReadyLabelOgAsset(t, db, "label-global-stale-og")

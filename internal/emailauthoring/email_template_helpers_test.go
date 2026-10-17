@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -148,7 +149,7 @@ func TestEmailTemplateTestSendUsesPreviewSamplesForEverySystemEvent(t *testing.T
 	for _, event := range automaticEmailEventKeys() {
 		t.Run(event.String(), func(t *testing.T) {
 			for _, key := range verifiedSystemEmailTemplateVariableNames(event) {
-				if key == "site_name" || key == "site_origin" || key == "logo_email_url" {
+				if slices.Contains(emailTemplateSiteVariables, key) {
 					continue // Site branding is resolved by BuildEmailRenderData at delivery.
 				}
 				_, err := email.RenderSubjectVarsStrict("{{"+key+"}}", job.TemplateData)

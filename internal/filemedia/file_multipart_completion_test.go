@@ -32,7 +32,7 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 	t.Parallel()
 
 	cfg := model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_LOGO]
-	emailSlotID := siteEmailLogoSlotID
+	emailSlotID := siteLogoSlotEmailLight
 	regularSlotID := "logo"
 	svgMime := "image/svg+xml"
 
@@ -83,7 +83,7 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 	t.Parallel()
 
 	detectedMime := "image/png"
-	slotID := siteEmailLogoSlotID
+	slotID := siteLogoSlotEmailLight
 	attemptID := "attempt-1"
 	session := model.UploadSession{
 		FileID:       "file-1",
@@ -99,7 +99,7 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 		"file_name":         "email-logo",
 		"mime_type":         "image/png",
 		"file_size":         int64(512),
-		"ingest_slot_id":    siteEmailLogoSlotID,
+		"ingest_slot_id":    siteLogoSlotEmailLight,
 		"ingest_attempt_id": "attempt-1",
 	}, completedMultipartFileRecord(session))
 }

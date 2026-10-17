@@ -75,7 +75,7 @@ func formOgBindingKey(locale string) string {
 	if locale == "" {
 		return "og"
 	}
-	return "og:" + locale
+	return "og_" + locale
 }
 
 var _ og.Projection = (*Projection)(nil)

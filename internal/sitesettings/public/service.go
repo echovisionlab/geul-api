@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
@@ -15,6 +16,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -158,12 +160,14 @@ func (s *ManifestService) buildSettings(ctx context.Context, settings *model.Sit
 	if settings.GoogleAnalyticsID != nil && *settings.GoogleAnalyticsID != "" {
 		result.GoogleAnalyticsId = settings.GoogleAnalyticsID
 	}
-	if settings.LogoLightFileID != nil {
-		result.LogoLightAsset = s.projection.ReadySourceAsset(ctx, *settings.LogoLightFileID, "logo")
-	}
-	if settings.LogoDarkFileID != nil {
-		result.LogoDarkAsset = s.projection.ReadySourceAsset(ctx, *settings.LogoDarkFileID, "logo")
-	}
+	logos := sitelogo.Display[commonv1.AssetRef]{
+		FullLight:   s.readyLogo(ctx, settings.LogoFullLightFileID),
+		FullDark:    s.readyLogo(ctx, settings.LogoFullDarkFileID),
+		SymbolLight: s.readyLogo(ctx, settings.LogoSymbolLightFileID),
+		SymbolDark:  s.readyLogo(ctx, settings.LogoSymbolDarkFileID),
+	}.Resolved()
+	result.LogoFullLightAsset, result.LogoFullDarkAsset = logos.FullLight, logos.FullDark
+	result.LogoSymbolLightAsset, result.LogoSymbolDarkAsset = logos.SymbolLight, logos.SymbolDark
 	if settings.FaviconFileID != nil {
 		result.FaviconAsset, result.FaviconAssetSet = s.projection.Favicon(ctx, *settings.FaviconFileID)
 	}
@@ -265,4 +269,13 @@ func (s *ManifestService) convertItem(ctx context.Context, item *model.MenuItem,
 		result.Children = s.filterAndConvertItems(ctx, item.Children, user)
 	}
 	return result
+}
+
+// readyLogo returns the ready display asset for a configured logo slot, or nil
+// when the slot is unset or its asset is not ready, so resolution falls back.
+func (s *ManifestService) readyLogo(ctx context.Context, fileID *string) *commonv1.AssetRef {
+	if fileID == nil || strings.TrimSpace(*fileID) == "" {
+		return nil
+	}
+	return s.projection.ReadySourceAsset(ctx, *fileID, "logo")
 }

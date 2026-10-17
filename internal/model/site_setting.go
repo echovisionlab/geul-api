@@ -19,9 +19,12 @@ type SiteSettings struct {
 	SocialLinks    []byte `gorm:"column:social_links;type:jsonb;not null;default:'{}'::jsonb"`
 
 	// Branding
-	LogoLightFileID           *string `gorm:"column:logo_light_file_id;type:uuid"`
-	LogoDarkFileID            *string `gorm:"column:logo_dark_file_id;type:uuid"`
-	LogoEmailFileID           *string `gorm:"column:logo_email_file_id;type:uuid"`
+	LogoFullLightFileID       *string `gorm:"column:logo_full_light_file_id;type:uuid"`
+	LogoFullDarkFileID        *string `gorm:"column:logo_full_dark_file_id;type:uuid"`
+	LogoSymbolLightFileID     *string `gorm:"column:logo_symbol_light_file_id;type:uuid"`
+	LogoSymbolDarkFileID      *string `gorm:"column:logo_symbol_dark_file_id;type:uuid"`
+	LogoEmailLightFileID      *string `gorm:"column:logo_email_light_file_id;type:uuid"`
+	LogoEmailDarkFileID       *string `gorm:"column:logo_email_dark_file_id;type:uuid"`
 	FaviconFileID             *string `gorm:"column:favicon_file_id;type:uuid"`
 	PrimaryColor              string  `gorm:"column:primary_color;type:varchar(7);not null;default:'#b02d23'"`
 	SiteOgBackgroundFileID    *string `gorm:"column:site_og_background_file_id;type:uuid"`
