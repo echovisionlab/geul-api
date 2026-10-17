@@ -14,6 +14,7 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 			service := &PostService{}
 			response := service.toProtoPost(&model.Post{
 				SourceLocale: locale, DocumentLayout: model.DefaultDocumentLayout(),
+				Series: &model.Series{SourceLocale: "ja"},
 			}, nil)
 			if response.GetSourceLocale() != locale {
 				t.Fatalf("source locale = %q, want %q", response.GetSourceLocale(), locale)
@@ -29,6 +30,9 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 			}
 			if decoded.GetSourceLocale() != locale {
 				t.Fatalf("wire source locale missing: %s", wire)
+			}
+			if decoded.GetSeries().GetSourceLocale() != "ja" {
+				t.Fatalf("nested Series must keep its own source locale: %s", wire)
 			}
 		})
 	}

@@ -21,6 +21,7 @@ func (s *FormService) toProtoForm(ctx context.Context, f *model.Form) (*managev1
 	}
 	form := &managev1.Form{
 		Id:           f.ID,
+		SourceLocale: f.SourceLocale,
 		Title:        resolveFormTitle(sourceState.Title),
 		Schema:       sourceState.ContentJSON,
 		Status:       managev1.FormStatus(managev1.FormStatus_value[string(f.Status)]),

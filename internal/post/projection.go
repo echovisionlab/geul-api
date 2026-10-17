@@ -576,9 +576,10 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 	// Convert series
 	if p.Series != nil {
 		post.Series = &managev1.Series{
-			Id:    p.Series.ID,
-			Title: p.Series.Title,
-			Slug:  p.Series.Slug,
+			Id:           p.Series.ID,
+			SourceLocale: p.Series.SourceLocale,
+			Title:        p.Series.Title,
+			Slug:         p.Series.Slug,
 		}
 		if p.Series.Description != nil {
 			post.Series.Description = p.Series.Description

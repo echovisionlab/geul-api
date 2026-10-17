@@ -15,6 +15,7 @@ func toProtoEmailTemplate(t *model.EmailTemplate) *managev1.EmailTemplate {
 
 	proto := &managev1.EmailTemplate{
 		Id:               t.ID,
+		SourceLocale:     t.SourceLocale,
 		Key:              t.Key,
 		Name:             t.Name,
 		Subject:          t.Subject,
