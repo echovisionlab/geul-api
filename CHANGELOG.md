@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/echovisionlab/geul-api/compare/v2.0.5...v3.0.0) (2026-10-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* full, symbol and email site logos with underscore binding keys ([#143](https://github.com/echovisionlab/geul-api/issues/143))
+
+### Features
+
+* full, symbol and email site logos with underscore binding keys ([#143](https://github.com/echovisionlab/geul-api/issues/143)) ([5f9b5d9](https://github.com/echovisionlab/geul-api/commit/5f9b5d938b2a4fbaec717314aa77a7a9b140f50d))
+
 ## [2.0.5](https://github.com/echovisionlab/geul-api/compare/v2.0.4...v2.0.5) (2026-10-17)
 
 
