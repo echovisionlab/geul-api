@@ -75,18 +75,21 @@ func (s *CommentService) ListCommentsByPost(
 		return nil, errs.Required("post_id")
 	}
 
-	// Check if post exists and get its status
-	var post model.Post
-	if err := s.db.WithContext(ctx).Select("id, status").Where("id = ?", req.Msg.PostId).First(&post).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("post not found")
-		}
-		return nil, errs.Internal(err)
-	}
+	var response *connect.Response[managev1.ListCommentsByPostResponse]
+	err := s.withReadablePost(ctx, req.Msg.PostId, func(reader *CommentService) error {
+		var err error
+		response, err = reader.ReadCommentsByPost(ctx, req)
+		return err
+	})
+	return response, err
+}
 
-	if err := requirePublicCommentPost(post); err != nil {
-		return nil, err
-	}
+// ReadCommentsByPost reads within the caller's authorized Post snapshot.
+// The caller must hold the Post root lock and check visibility and comments_enabled.
+func (s *CommentService) ReadCommentsByPost(
+	ctx context.Context,
+	req *connect.Request[managev1.ListCommentsByPostRequest],
+) (*connect.Response[managev1.ListCommentsByPostResponse], error) {
 
 	// Normalize pagination params
 	limit := int(req.Msg.Limit)
@@ -260,21 +263,21 @@ func (s *CommentService) LoadMoreReplies(
 		return nil, errs.Internal(err)
 	}
 
-	// Check if post is accessible
-	var post model.Post
-	if err := s.db.WithContext(ctx).Select("id, status").Where("id = ?", parentComment.PostID).First(&post).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, errs.NotFoundMsg("post not found")
-		}
-		return nil, errs.Internal(err)
-	}
+	var response *connect.Response[managev1.LoadMoreRepliesResponse]
+	err := s.withReadablePost(ctx, parentComment.PostID, func(reader *CommentService) error {
+		var err error
+		response, err = reader.ReadCommentReplies(ctx, req, parentComment)
+		return err
+	})
+	return response, err
+}
 
-	if err := requirePublicCommentPost(post); err != nil {
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			return nil, errs.NotFoundMsg("comment not found")
-		}
-		return nil, err
-	}
+// ReadCommentReplies reads replies within the caller's authorized Post snapshot.
+func (s *CommentService) ReadCommentReplies(
+	ctx context.Context,
+	req *connect.Request[managev1.LoadMoreRepliesRequest],
+	parentComment model.Comment,
+) (*connect.Response[managev1.LoadMoreRepliesResponse], error) {
 
 	// Normalize limit
 	limit := int(req.Msg.Limit)
@@ -696,12 +699,36 @@ func (s *CommentService) DeleteComment(
 	}), nil
 }
 
-func requirePublicCommentPost(post model.Post) error {
-	if post.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) ||
-		post.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-		return nil
+func (s *CommentService) withReadablePost(ctx context.Context, postID string, read func(*CommentService) error) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var post model.Post
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errs.NotFoundMsg("post not found")
+			}
+			return errs.Internal(err)
+		}
+		if err := s.requireCommentPostView(ctx, post); err != nil {
+			return err
+		}
+		return read(NewCommentService(tx, s.spiceDB, s.members))
+	})
+}
+
+func (s *CommentService) requireCommentPostView(ctx context.Context, post model.Post) error {
+	if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) &&
+		post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+		if s.spiceDB == nil {
+			return errs.DependencyUnavailable("SpiceDB")
+		}
+		if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, post.Status); err != nil {
+			return err
+		}
 	}
-	return errs.NotFoundMsg("post not found")
+	if !post.CommentsEnabled {
+		return errs.FailedPrecondition(errs.MsgCommentsDisabled)
+	}
+	return nil
 }
 
 // Helper to get comment depth using recursive CTE within a transaction
