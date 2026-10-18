@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/echovisionlab/geul-api/compare/v3.0.0...v3.1.0) (2026-10-18)
+
+
+### Features
+
+* accept xs and xl collection item sizes ([#145](https://github.com/echovisionlab/geul-api/issues/145)) ([f090f7e](https://github.com/echovisionlab/geul-api/commit/f090f7e9e72a76db87bec07424a49110977af52a))
+
 ## [3.0.0](https://github.com/echovisionlab/geul-api/compare/v2.0.5...v3.0.0) (2026-10-17)
 
 
