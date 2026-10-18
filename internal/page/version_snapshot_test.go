@@ -165,3 +165,13 @@ func mapKeys[V any](values map[string]V) []string {
 	}
 	return keys
 }
+
+func TestStaleCatalogSnapshotKeepsEarlierCheckpointsAsHistory(t *testing.T) {
+	t.Parallel()
+	// Checkpoints written before a block catalog change carry the earlier fingerprint
+	// and must not be decoded against the current catalog when the next edit checkpoints.
+	assert.True(t, staleCatalogSnapshot([]byte(`{"document":{"blockCatalogFingerprint":"732d62ad"}}`)))
+	assert.False(t, staleCatalogSnapshot([]byte(`{"document":{"blockCatalogFingerprint":"`+contentv1.ContentBlockCatalogFingerprint+`"}}`)))
+	assert.False(t, staleCatalogSnapshot([]byte(`{"document":{}}`)))
+	assert.False(t, staleCatalogSnapshot([]byte(`not json`)))
+}

@@ -121,6 +121,20 @@ func DecodeVersionContentSnapshot(data []byte) (VersionContentSnapshot, *content
 	}, document, nil
 }
 
+// staleCatalogSnapshot reports a checkpoint written under an earlier block catalog.
+func staleCatalogSnapshot(encoded []byte) bool {
+	var envelope struct {
+		Document struct {
+			BlockCatalogFingerprint string `json:"blockCatalogFingerprint"`
+		} `json:"document"`
+	}
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		return false
+	}
+	fingerprint := envelope.Document.BlockCatalogFingerprint
+	return fingerprint != "" && fingerprint != contentv1.ContentBlockCatalogFingerprint
+}
+
 func requireSnapshotEOF(decoder *json.Decoder) error {
 	var extra any
 	err := decoder.Decode(&extra)

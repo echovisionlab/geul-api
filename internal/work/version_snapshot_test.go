@@ -113,3 +113,11 @@ func TestDecodeVersionContentSnapshotFailsClosed(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestSameSnapshotTreatsEarlierCatalogCheckpointAsChanged(t *testing.T) {
+	t.Parallel()
+	stale := []byte(`{"schemaVersion":1,"sourceLocale":"en","title":null,"summary":null,"document":{"blockCatalogFingerprint":"732d62ad"}}`)
+	same, err := sameWorkVersionContentSnapshot(stale, []byte(`{}`))
+	require.NoError(t, err)
+	require.False(t, same)
+}

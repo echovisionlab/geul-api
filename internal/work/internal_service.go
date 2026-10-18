@@ -704,7 +704,9 @@ func (s *InternalWorkService) CreateWorkVersionCheckpoint(
 }
 
 func sameWorkVersionContentSnapshot(current []byte, desired []byte) (bool, error) {
-	if len(current) == 0 {
+	// A checkpoint from an earlier block catalog cannot equal current content;
+	// keep it as history rather than decoding it against today's catalog.
+	if len(current) == 0 || staleCatalogSnapshot(current) {
 		return false, nil
 	}
 	currentEnvelope, currentDocument, err := DecodeVersionContentSnapshot(current)
