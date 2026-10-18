@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/echovisionlab/geul-api/compare/v3.1.0...v3.1.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* authorize comment reads and persist outline visibility ([#147](https://github.com/echovisionlab/geul-api/issues/147)) ([a9e12a2](https://github.com/echovisionlab/geul-api/commit/a9e12a295ca597fe472bf5164d0b32e3c454b402))
+
 ## [3.1.0](https://github.com/echovisionlab/geul-api/compare/v3.0.0...v3.1.0) (2026-10-18)
 
 
