@@ -20,7 +20,6 @@ func newMediaHTTPServer(cfg *config.Config) (*http.Server, error) {
 		S3UseSSL:   strings.HasPrefix(cfg.S3Endpoint, "https://"),
 		S3Region:   cfg.S3Region, S3AccessKeyID: cfg.S3AccessKeyID, S3SecretAccessKey: cfg.S3SecretAccessKey,
 		S3CacheBucket: cfg.S3CacheBucket, S3MediaBucket: cfg.S3Bucket,
-		FontS3Prefix: cfg.Media.FontS3Prefix, FontUpstreamURL: cfg.Media.FontUpstreamURL, FontCSSUpstream: cfg.Media.FontCSSUpstream, FontCacheMaxAge: cfg.Media.FontCacheMaxAge,
 		ImgproxyURL: cfg.Media.ImgproxyURL, ImgproxyKey: cfg.Media.ImgproxyKey, ImgproxySalt: cfg.Media.ImgproxySalt,
 		CDNPublicURL: cfg.CDNURL, MediaSigningSecret: cfg.MediaSigningSecret, AllowedOrigins: cfg.CORSOrigins,
 	}

@@ -38,10 +38,6 @@ type MediaConfig struct {
 	NodePath               string `envconfig:"NODE_BINARY_PATH" default:"node"`
 	GLTFTransformPath      string `envconfig:"GLTF_TRANSFORM_PATH" default:"/app/media/asset-optimizer/scripts/asset-transform.mjs"`
 	ParticleMeshScriptPath string `envconfig:"PARTICLE_MESH_SCRIPT_PATH" default:"/app/media/asset-optimizer/scripts/optimize-particle-mesh.mjs"`
-	FontS3Prefix           string `envconfig:"CDN_FONT_S3_PREFIX" default:"fonts/"`
-	FontUpstreamURL        string `envconfig:"CDN_FONT_UPSTREAM_URL" default:"https://fonts.gstatic.com"`
-	FontCSSUpstream        string `envconfig:"CDN_FONT_CSS_UPSTREAM" default:"https://fonts.googleapis.com"`
-	FontCacheMaxAge        int    `envconfig:"CDN_FONT_CACHE_MAX_AGE" default:"31536000"`
 }
 
 func (m MediaConfig) validate(apiPort, privatePort int) error {
