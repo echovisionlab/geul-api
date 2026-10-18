@@ -14,7 +14,7 @@ import (
 // storage rows, and the public renderer projection for every collection kind.
 func TestCollectionSizeSurvivesPageJSONAndStorageRoundTrip(t *testing.T) {
 	for _, kind := range []string{"postList", "workList", "programEventList", "releaseList", "artistList", "labelList", "authorList"} {
-		for _, size := range []string{"", "ITEM_SIZE_S", "ITEM_SIZE_M", "ITEM_SIZE_L"} {
+		for _, size := range []string{"", "ITEM_SIZE_XS", "ITEM_SIZE_S", "ITEM_SIZE_M", "ITEM_SIZE_L", "ITEM_SIZE_XL"} {
 			t.Run(kind+"/"+size, func(t *testing.T) {
 				sectionID := uuid.New().String()
 				inputProps := map[string]any{}
