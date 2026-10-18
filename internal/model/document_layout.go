@@ -30,9 +30,10 @@ const (
 
 // DocumentLayout is the strict JSONB representation shared by page and post roots.
 type DocumentLayout struct {
-	ContentHeight DocumentContentHeight   `json:"contentHeight"`
-	PageChrome    DocumentRegionPlacement `json:"pageChrome"`
-	Footer        DocumentRegionPlacement `json:"footer"`
+	ContentHeight       DocumentContentHeight   `json:"contentHeight"`
+	PageChrome          DocumentRegionPlacement `json:"pageChrome"`
+	Footer              DocumentRegionPlacement `json:"footer"`
+	HideTableOfContents bool                    `json:"hideTableOfContents,omitempty"`
 }
 
 func DefaultDocumentLayout() DocumentLayout {
@@ -109,7 +110,7 @@ func DocumentLayoutFromProto(layout *commonv1.DocumentLayout) (DocumentLayout, e
 		return DocumentLayout{}, fmt.Errorf("document layout is required")
 	}
 
-	result := DocumentLayout{}
+	result := DocumentLayout{HideTableOfContents: layout.HideTableOfContents}
 	switch layout.ContentHeight {
 	case commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT:
 		result.ContentHeight = DocumentContentHeightContent
@@ -144,7 +145,7 @@ func (l DocumentLayout) Proto() *commonv1.DocumentLayout {
 		panic(fmt.Sprintf("invalid persisted document layout: %v", err))
 	}
 
-	result := &commonv1.DocumentLayout{}
+	result := &commonv1.DocumentLayout{HideTableOfContents: l.HideTableOfContents}
 	switch l.ContentHeight {
 	case DocumentContentHeightContent:
 		result.ContentHeight = commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT

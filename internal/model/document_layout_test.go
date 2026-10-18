@@ -91,9 +91,10 @@ func TestDocumentLayoutProtoMappingRejectsUnspecifiedValues(t *testing.T) {
 	t.Parallel()
 
 	valid := &commonv1.DocumentLayout{
-		ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT,
-		PageChrome:    commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED,
-		Footer:        commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW,
+		HideTableOfContents: true,
+		ContentHeight:       commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT,
+		PageChrome:          commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED,
+		Footer:              commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW,
 	}
 	mapped, err := DocumentLayoutFromProto(valid)
 	require.NoError(t, err)
@@ -101,6 +102,12 @@ func TestDocumentLayoutProtoMappingRejectsUnspecifiedValues(t *testing.T) {
 	assert.Equal(t, DocumentRegionPlacementPinned, mapped.PageChrome)
 	assert.Equal(t, DocumentRegionPlacementFlow, mapped.Footer)
 	assert.Equal(t, valid, mapped.Proto())
+	persisted, err := mapped.Value()
+	require.NoError(t, err)
+	var loaded DocumentLayout
+	require.NoError(t, loaded.Scan(persisted))
+	assert.True(t, loaded.HideTableOfContents)
+	assert.Equal(t, valid, loaded.Proto())
 
 	alternate := &commonv1.DocumentLayout{
 		ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT,
