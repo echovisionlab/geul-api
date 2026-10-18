@@ -33,7 +33,11 @@ const (
 type emailLogoURLs = sitelogo.Email[string]
 
 const defaultEmailRenderLocale = localization.LocaleEnglish
-const emailNotoFontStylesheetPath = "/fonts/css2?family=Noto+Sans:wght@100..900&family=Noto+Sans+Arabic:wght@100..900&family=Noto+Sans+KR:wght@100..900&family=Noto+Sans+JP:wght@100..900&family=Noto+Sans+SC:wght@100..900&family=Noto+Sans+TC:wght@100..900&family=Noto+Sans+HK:wght@100..900&family=Noto+Sans+Mono:wght@100..900&family=Noto+Color+Emoji&display=swap"
+
+// emailFontBaseURL serves geul-web's Geul font system with public CORS, so mail
+// clients can load it from any origin. Each profile alias carries the Han forms
+// of its locale; Arabic and Thai are part of Geul Sans.
+const emailFontBaseURL = "https://static.rawsector.com/fonts"
 
 // BuildEmailRenderData merges explicit template data with site-level defaults.
 // site_origin is always projected from runtime configuration and cannot be
@@ -144,7 +148,7 @@ func buildEmailRenderDataWithDefaults(
 		data["email_font_family"] = emailRenderLocaleFontFamily(normalizedLocale)
 	}
 	if _, ok := data["email_font_stylesheet_url"]; !ok || strings.TrimSpace(data["email_font_stylesheet_url"]) == "" {
-		data["email_font_stylesheet_url"] = buildEmailFontStylesheetURL(cdnDomain)
+		data["email_font_stylesheet_url"] = buildEmailFontStylesheetURL(normalizedLocale)
 	}
 
 	normalizeEmailRecipientAliases(data)
@@ -238,30 +242,31 @@ func emailRenderLocaleDirection(locale string) string {
 	}
 }
 
-func emailRenderLocaleFontFamily(locale string) string {
+func emailRenderLocaleFontProfile(locale string) (profile string, han string) {
 	switch strings.ToLower(normalizeEmailRenderLocale(locale)) {
 	case localization.LocaleKorean:
-		return "'Noto Sans KR', 'Noto Sans', 'Noto Color Emoji', sans-serif"
+		return "ko", "Geul Sans Han TC"
 	case localization.LocaleJapanese:
-		return "'Noto Sans JP', 'Noto Sans', 'Noto Color Emoji', sans-serif"
+		return "ja", "Geul Sans Han JP"
 	case strings.ToLower(localization.LocaleChineseSimplified):
-		return "'Noto Sans SC', 'Noto Sans', 'Noto Color Emoji', sans-serif"
+		return "zh-hans", "Geul Sans Han SC"
 	case strings.ToLower(localization.LocaleChineseTraditional):
-		return "'Noto Sans TC', 'Noto Sans', 'Noto Color Emoji', sans-serif"
-	case localization.LocaleArabic:
-		return "'Noto Sans Arabic', 'Noto Sans', 'Noto Color Emoji', sans-serif"
+		return "zh-hant", "Geul Sans Han TC"
 	default:
-		return "'Noto Sans', 'Noto Color Emoji', sans-serif"
+		return "base", ""
 	}
 }
 
-func buildEmailFontStylesheetURL(cdnDomain string) string {
-	cdnDomain = strings.TrimSpace(cdnDomain)
-	cdnDomain = strings.TrimRight(cdnDomain, "/")
-	if cdnDomain == "" {
-		return emailNotoFontStylesheetPath
+func emailRenderLocaleFontFamily(locale string) string {
+	if _, han := emailRenderLocaleFontProfile(locale); han != "" {
+		return "'Geul Sans', '" + han + "', 'Geul Emoji', sans-serif"
 	}
-	return cdnDomain + emailNotoFontStylesheetPath
+	return "'Geul Sans', 'Geul Emoji', sans-serif"
+}
+
+func buildEmailFontStylesheetURL(locale string) string {
+	profile, _ := emailRenderLocaleFontProfile(locale)
+	return emailFontBaseURL + "/geul-" + profile + ".css"
 }
 
 func cloneEmailRenderData(src map[string]string) map[string]string {

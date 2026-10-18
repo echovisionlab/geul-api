@@ -13,15 +13,11 @@ func NewHandler(
 	cfg *config.Config,
 	minioClient *storage.MinioClient,
 ) http.Handler {
-	fontProxy := proxy.NewFontProxy(cfg, minioClient)
-	fontCSSProxy := proxy.NewFontCSSProxy(cfg, minioClient)
 	imageProxy := proxy.NewImageProxy(cfg)
 	mediaProxy := proxy.NewMediaProxy(minioClient.Client(), cfg.S3MediaBucket)
 	mediaRouter := proxy.NewMediaRouter(cfg, minioClient.Client(), cfg.S3MediaBucket, imageProxy, mediaProxy)
 
 	mux := http.NewServeMux()
-	mux.Handle("/fonts/css2", fontCSSProxy)
-	mux.Handle("/fonts/", fontProxy)
 	mux.Handle("/asset/", mediaRouter)
 	mux.Handle("/media/", mediaRouter)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {

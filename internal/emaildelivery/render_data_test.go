@@ -96,10 +96,10 @@ func TestBuildEmailRenderDataNormalizesRecipientAliasesFromEmail(t *testing.T) {
 	if got := data["email_direction"]; got != "ltr" {
 		t.Fatalf("expected email_direction=ltr, got %q", got)
 	}
-	if got := data["email_font_family"]; got != "'Noto Sans', 'Noto Color Emoji', sans-serif" {
+	if got := data["email_font_family"]; got != "'Geul Sans', 'Geul Emoji', sans-serif" {
 		t.Fatalf("unexpected email_font_family: %q", got)
 	}
-	if got := data["email_font_stylesheet_url"]; got != "https://cdn.example.com/fonts/css2?family=Noto+Sans:wght@100..900&family=Noto+Sans+Arabic:wght@100..900&family=Noto+Sans+KR:wght@100..900&family=Noto+Sans+JP:wght@100..900&family=Noto+Sans+SC:wght@100..900&family=Noto+Sans+TC:wght@100..900&family=Noto+Sans+HK:wght@100..900&family=Noto+Sans+Mono:wght@100..900&family=Noto+Color+Emoji&display=swap" {
+	if got := data["email_font_stylesheet_url"]; got != "https://static.rawsector.com/fonts/geul-base.css" {
 		t.Fatalf("unexpected email_font_stylesheet_url: %q", got)
 	}
 }
@@ -120,10 +120,10 @@ func TestBuildEmailRenderDataUsesLocaleSpecificEmailFontMetadata(t *testing.T) {
 	if got := data["email_direction"]; got != "ltr" {
 		t.Fatalf("expected email_direction=ltr, got %q", got)
 	}
-	if got := data["email_font_family"]; got != "'Noto Sans KR', 'Noto Sans', 'Noto Color Emoji', sans-serif" {
+	if got := data["email_font_family"]; got != "'Geul Sans', 'Geul Sans Han TC', 'Geul Emoji', sans-serif" {
 		t.Fatalf("unexpected email_font_family: %q", got)
 	}
-	if got := data["email_font_stylesheet_url"]; got != "https://cdn.example.com/fonts/css2?family=Noto+Sans:wght@100..900&family=Noto+Sans+Arabic:wght@100..900&family=Noto+Sans+KR:wght@100..900&family=Noto+Sans+JP:wght@100..900&family=Noto+Sans+SC:wght@100..900&family=Noto+Sans+TC:wght@100..900&family=Noto+Sans+HK:wght@100..900&family=Noto+Sans+Mono:wght@100..900&family=Noto+Color+Emoji&display=swap" {
+	if got := data["email_font_stylesheet_url"]; got != "https://static.rawsector.com/fonts/geul-ko.css" {
 		t.Fatalf("unexpected email_font_stylesheet_url: %q", got)
 	}
 }

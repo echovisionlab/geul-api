@@ -20,12 +20,7 @@ type Config struct {
 	S3MediaBucket     string `envconfig:"S3_MEDIA_BUCKET" required:"true"`
 	S3UseSSL          bool   `ignored:"true"` // Derived from S3Endpoint
 
-	// Font Proxy
-	FontS3Prefix    string `envconfig:"CDN_FONT_S3_PREFIX" required:"true"`
-	FontUpstreamURL string `envconfig:"CDN_FONT_UPSTREAM_URL" required:"true"`
-	FontCSSUpstream string `envconfig:"CDN_FONT_CSS_UPSTREAM" required:"true"`
-	FontCacheMaxAge int    `envconfig:"CDN_FONT_CACHE_MAX_AGE" required:"true"`
-	CDNPublicURL    string `envconfig:"CDN_PUBLIC_URL" required:"true"`
+	CDNPublicURL string `envconfig:"CDN_PUBLIC_URL" required:"true"`
 
 	// Image Proxy
 	ImgproxyURL  string `envconfig:"CDN_IMGPROXY_URL" required:"true"`
