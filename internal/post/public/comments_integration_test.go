@@ -36,6 +36,11 @@ func TestCommentReadsFollowPostVisibilityAndSettingIntegration(t *testing.T) {
 	testutil.GrantPostIntegrationRole(t, stack.SpiceDBClient, identityID, policyv1.Role.Admin())
 	publicID := testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String())
 	draftID := testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String())
+	// Seeded rows skip CreatePost, so link the draft to the site policy that grants admins view.
+	draftPolicy, err := policyv1.Post.TouchPolicy(draftID)
+	require.NoError(t, err)
+	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), draftPolicy)
+	require.NoError(t, err)
 	root := model.Comment{PostID: draftID, Content: "Existing thread in a draft"}
 	require.NoError(t, db.Create(&root).Error)
 	reply := model.Comment{PostID: draftID, ParentID: &root.ID, Content: "Existing reply"}
@@ -45,9 +50,10 @@ func TestCommentReadsFollowPostVisibilityAndSettingIntegration(t *testing.T) {
 	password := "comment-preview-password"
 	hash, err := crypto.NewPasswordHasher(nil).Hash(password)
 	require.NoError(t, err)
+	// An earlier creation time lets the expiry test move expires_at into the past within chk_share_link_expiry.
 	expires := time.Now().Add(time.Hour)
 	link := model.ShareLink{Token: uuid.NewString(), EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST.String(),
-		EntityID: draftID, PasswordHash: &hash, ExpiresAt: &expires}
+		EntityID: draftID, PasswordHash: &hash, ExpiresAt: &expires, CreatedAt: time.Now().Add(-time.Hour)}
 	require.NoError(t, db.Create(&link).Error)
 
 	t.Run("anonymous published thread", func(t *testing.T) {
