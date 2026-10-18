@@ -832,7 +832,7 @@ func (s *InternalPageService) CreatePageVersionCheckpoint(
 			Where("page_id = ?", req.Msg.PageId).
 			Order("version DESC").
 			First(&previous)
-		if previousResult.Error == nil {
+		if previousResult.Error == nil && !staleCatalogSnapshot(previous.ContentSnapshot) {
 			previousSnapshot, decodeErr := DecodeVersionContentSnapshot(previous.ContentSnapshot)
 			if decodeErr != nil {
 				return decodeErr

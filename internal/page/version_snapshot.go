@@ -137,6 +137,22 @@ func validateVersionContentSnapshot(snapshot *VersionContentSnapshot) error {
 	return nil
 }
 
+// staleCatalogSnapshot reports a checkpoint written under an earlier block
+// catalog. It cannot equal current content, so checkpointing keeps it as
+// history instead of decoding it against today's catalog.
+func staleCatalogSnapshot(encoded []byte) bool {
+	var envelope struct {
+		Document struct {
+			BlockCatalogFingerprint string `json:"blockCatalogFingerprint"`
+		} `json:"document"`
+	}
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		return false
+	}
+	fingerprint := envelope.Document.BlockCatalogFingerprint
+	return fingerprint != "" && fingerprint != contentv1.ContentBlockCatalogFingerprint
+}
+
 func consumeJSONEOF(decoder *json.Decoder) error {
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
