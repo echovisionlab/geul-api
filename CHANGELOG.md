@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/echovisionlab/geul-api/compare/v3.1.1...v3.2.0) (2026-10-18)
+
+
+### Features
+
+* serve email fonts from the Geul font system and drop the font proxy ([#150](https://github.com/echovisionlab/geul-api/issues/150)) ([7cbac12](https://github.com/echovisionlab/geul-api/commit/7cbac1258870915ad2f7866a53d54a362ef89e63))
+
 ## [3.1.1](https://github.com/echovisionlab/geul-api/compare/v3.1.0...v3.1.1) (2026-10-18)
 
 
