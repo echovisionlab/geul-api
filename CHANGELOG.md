@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.2](https://github.com/echovisionlab/geul-api/compare/v3.3.1...v3.3.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* show the default locale before the original when a translation is missing ([#159](https://github.com/echovisionlab/geul-api/issues/159)) ([115d08e](https://github.com/echovisionlab/geul-api/commit/115d08e4052df3ac0f65d9353ccc0f655c535cd1))
+
 ## [3.3.1](https://github.com/echovisionlab/geul-api/compare/v3.3.0...v3.3.1) (2026-10-19)
 
 
