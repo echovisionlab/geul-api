@@ -53,28 +53,32 @@ func ResolvePublicLocalization(
 		sourceLocale = *normalized
 	}
 
-	locales := []string{requestedLocale}
-	if requestedLocale != sourceLocale {
-		locales = append(locales, sourceLocale)
-	}
-	rows, err := loadFormLocalizationRows(ctx, db, formID, locales)
+	policy := localization.ServingPolicy{DefaultLocale: settings.DefaultLocale}
+	rows, err := loadFormLocalizationRows(
+		ctx, db, formID, localization.FallbackLocales(requestedLocale, sourceLocale, policy),
+	)
 	if err != nil {
 		return formSourceFallbackSelection(requestedLocale, sourceLocale), err
 	}
+	storedLocales := make(map[string]struct{}, len(rows))
+	for locale := range rows {
+		storedLocales[locale] = struct{}{}
+	}
+	// Select applies requested -> default locale -> source; a non-source
+	// decision always names a stored target row.
+	decision := localization.Select(requestedLocale, sourceLocale, storedLocales, policy)
 
 	sourceRow, hasSourceRow := rows[sourceLocale]
 	displayedLocale := sourceLocale
 	row := sourceRow
 	unitFallback := false
-	if targetRow, hasTargetRow := rows[requestedLocale]; requestedLocale != sourceLocale && hasTargetRow {
+	if targetRow, hasTargetRow := rows[decision.DisplayedLocale]; decision.DisplayedLocale != sourceLocale && hasTargetRow {
 		localized, overlayFallback, overlayErr := overlayFormLocalizationRow(sourceRow, targetRow)
 		if overlayErr != nil {
 			return formSourceFallbackSelection(requestedLocale, sourceLocale), overlayErr
 		}
-		displayedLocale = requestedLocale
+		displayedLocale = decision.DisplayedLocale
 		row, unitFallback = localized, overlayFallback
-	} else if requestedLocale == sourceLocale {
-		displayedLocale = sourceLocale
 	}
 	selection := LocalizationSelection{
 		RequestedLocale: requestedLocale, DisplayedLocale: displayedLocale,
@@ -83,7 +87,7 @@ func ResolvePublicLocalization(
 		FallbackReason:   formLocalizationFallbackReason(displayedLocale != requestedLocale || unitFallback),
 		AvailableLocales: []string{sourceLocale},
 	}
-	if hasSourceRow || displayedLocale == requestedLocale {
+	if hasSourceRow || displayedLocale != sourceLocale {
 		selection.Title = row.Title
 		selection.ContentJSON = row.ContentJSON
 		selection.ContentText = row.ContentText

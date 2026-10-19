@@ -52,7 +52,8 @@ func (ManifestMenus) Localize(
 		return sourceItems, err
 	}
 
-	locales := collectManifestMenuLocales(sourceItems, requested, sourceLocale)
+	policy := localization.ServingPolicy{DefaultLocale: settings.DefaultLocale}
+	locales := collectManifestMenuLocales(sourceItems, localization.FallbackLocales(requested, sourceLocale, policy))
 	rows, err := loadManifestMenuRows(ctx, db, menuID, locales)
 	if err != nil {
 		return sourceItems, err
@@ -68,12 +69,17 @@ func (ManifestMenus) Localize(
 	for locale := range rows {
 		storedLocales[locale] = struct{}{}
 	}
-	decision := localization.Select(requested, sourceLocale, storedLocales, localization.ServingPolicy{DefaultLocale: settings.DefaultLocale})
+	decision := localization.Select(requested, sourceLocale, storedLocales, policy)
 	return projectManifestMenuLabels(sourceItems, labels, storedLocales, decision.DisplayedLocale, sourceLocale), nil
 }
 
-func collectManifestMenuLocales(items []model.MenuItem, requested, source string) []string {
-	seen := map[string]struct{}{source: {}, requested: {}}
+// collectManifestMenuLocales returns the selectable locales (requested,
+// default, and source) plus every fixed item locale.
+func collectManifestMenuLocales(items []model.MenuItem, selectable []string) []string {
+	seen := make(map[string]struct{}, len(selectable))
+	for _, locale := range selectable {
+		seen[locale] = struct{}{}
+	}
 	var walk func([]model.MenuItem)
 	walk = func(current []model.MenuItem) {
 		for i := range current {

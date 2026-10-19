@@ -80,6 +80,29 @@ func TestResolveBatchReportsEveryStoredTargetLocale(t *testing.T) {
 	require.Equal(t, "en", selections[entityID].DisplayedLocale)
 }
 
+func TestResolveLoadsDefaultLocaleRowForMissingRequestedLocale(t *testing.T) {
+	db := newLocalizationTestDB(t)
+	entityID := uuid.NewString()
+	require.NoError(t, db.Exec(`INSERT INTO series (id, source_locale) VALUES (?, 'ko')`, entityID).Error)
+	require.NoError(t, db.Exec(`INSERT INTO series_translation (entity_id, locale, title) VALUES (?, 'ko', '한국어'), (?, 'en', 'English'), (?, 'ja', '日本語')`, entityID, entityID, entityID).Error)
+	spec := Spec{EntityType: "series", TableName: "series_translation", SelectClause: "locale, title, content_text"}
+	settings := translation.DefaultRuntimeSettings()
+
+	single, err := ResolveWithPolicy(t.Context(), db, spec, entityID, "nl", settings)
+	require.NoError(t, err)
+	batched, err := ResolveBatchWithPolicy(t.Context(), db, spec, []string{entityID}, "nl", settings)
+	require.NoError(t, err)
+	for name, selection := range map[string]Selection{"single": single, "batch": batched[entityID]} {
+		require.Equal(t, "nl", selection.RequestedLocale, name)
+		require.Equal(t, "en", selection.DisplayedLocale, name)
+		require.Equal(t, "ko", selection.SourceLocale, name)
+		require.True(t, selection.IsFallback, name)
+		require.False(t, selection.IsOriginal, name)
+		require.NotNil(t, selection.Title, name)
+		require.Equal(t, "English", *selection.Title, name)
+	}
+}
+
 func newLocalizationTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})

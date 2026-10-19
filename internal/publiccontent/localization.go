@@ -111,10 +111,9 @@ func ResolveWithPolicy(
 		return sourceFallback(requestedLocale, fallback), err
 	}
 
-	locales := []string{requestedLocale}
-	if requestedLocale != sourceLocale {
-		locales = append(locales, sourceLocale)
-	}
+	locales := localization.FallbackLocales(
+		requestedLocale, sourceLocale, localization.ServingPolicy{DefaultLocale: settings.DefaultLocale},
+	)
 	rows, err := loadRows(ctx, db, spec, entityID, locales)
 	if err != nil {
 		return sourceFallback(requestedLocale, sourceLocale), err
@@ -195,6 +194,9 @@ func ResolveBatchWithPolicy(
 	}
 
 	locales := []string{requested}
+	if fallback := normalizedLocale(settings.DefaultLocale, defaultLocale); fallback != requested {
+		locales = append(locales, fallback)
+	}
 	for _, entityID := range ids {
 		source := sourceByID[entityID]
 		if source == "" {
@@ -437,6 +439,25 @@ func selectWithPolicy(
 		selection.FallbackReason = openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE
 	}
 	return selection
+}
+
+// DocumentFallbackLocale returns the locale a domain should re-resolve when
+// selection's displayed locale has no complete domain-owned document (for
+// example a Block overlay). It keeps the requested -> default -> source order:
+// the default locale is returned when it has a document and was not already
+// the rejected choice; otherwise the source locale is returned.
+func DocumentFallbackLocale(
+	selection Selection,
+	documentLocales map[string]struct{},
+	settings translation.RuntimeSettings,
+) string {
+	fallback := normalizedLocale(settings.DefaultLocale, defaultLocale)
+	if fallback != selection.DisplayedLocale && fallback != selection.SourceLocale {
+		if _, ok := documentLocales[fallback]; ok {
+			return fallback
+		}
+	}
+	return selection.SourceLocale
 }
 
 func applyMissingSourceFields(selection *Selection, target translationRow, source translationRow) bool {

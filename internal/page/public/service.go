@@ -102,14 +102,17 @@ func resolvePageLocalizedMetadataSelection(
 	if selection.DisplayedLocale != selection.SourceLocale {
 		if _, exists := documentLocales[selection.DisplayedLocale]; !exists {
 			requestedLocale := selection.RequestedLocale
+			// Re-resolving with the default locale yields its row only when it is
+			// stored; otherwise ResolveWithPolicy already falls back to source.
 			selection, err = publiccontent.ResolveWithPolicy(
-				ctx, db, pageLocalizationSpec, pageID, selection.SourceLocale, settings,
+				ctx, db, pageLocalizationSpec, pageID,
+				publiccontent.DocumentFallbackLocale(selection, documentLocales, settings), settings,
 			)
 			if err != nil {
 				return publiccontent.Selection{}, err
 			}
 			selection.RequestedLocale = requestedLocale
-			selection.IsFallback = requestedLocale != selection.SourceLocale
+			selection.IsFallback = requestedLocale != selection.DisplayedLocale
 			selection.FallbackReason = openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE
 		}
 	}
