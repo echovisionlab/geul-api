@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.3.1](https://github.com/echovisionlab/geul-api/compare/v3.3.0...v3.3.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* expose create-tool arguments to clients without schema conditionals ([#156](https://github.com/echovisionlab/geul-api/issues/156)) ([41b770f](https://github.com/echovisionlab/geul-api/commit/41b770f2dc3ff75c58dca49d66d5ad15c4d35909))
+* keep every MCP tool input schema a plain object at the root ([#158](https://github.com/echovisionlab/geul-api/issues/158)) ([f1977f2](https://github.com/echovisionlab/geul-api/commit/f1977f237115b2928c7166c0662f558b7a2013de))
+
 ## [3.3.0](https://github.com/echovisionlab/geul-api/compare/v3.2.1...v3.3.0) (2026-10-19)
 
 
