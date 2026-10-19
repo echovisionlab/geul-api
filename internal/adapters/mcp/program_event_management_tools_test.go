@@ -192,6 +192,8 @@ func TestProgramEventManagementRejectsInvalidArgumentsBeforeOwnerCall(t *testing
 		{"invalid timezone", ToolProgramEventCreate, "timezone", "not/a/timezone"},
 		{"implicit machine timezone", ToolProgramEventCreate, "timezone", "Local"},
 		{"missing location mode", ToolProgramEventCreate, "location_mode", ""},
+		{"map place mode without place", ToolProgramEventCreate, "location_mode", "map_place"},
+		{"hybrid mode without place", ToolProgramEventCreate, "location_mode", "hybrid"},
 		{"missing artists baseline", ToolProgramEventSettingsUpdate, "artists", []any{}},
 		{"missing labels baseline", ToolProgramEventSettingsUpdate, "labels", []any{}},
 		{"missing clients baseline", ToolProgramEventSettingsUpdate, "clients", []any{}},

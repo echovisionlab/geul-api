@@ -129,6 +129,9 @@ func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments 
 	if err != nil {
 		return executionError(err)
 	}
+	if (mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE || mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID) && (input.MapPlaceID == nil || strings.TrimSpace(*input.MapPlaceID) == "") {
+		return executionError(fmt.Errorf("map_place_id is required when location_mode is %s", input.LocationMode))
+	}
 	request := connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title: input.Title, Slug: input.Slug, SourceLocale: input.SourceLocale, TypeId: input.TypeID,
 		StartsAt: startsAt, EndsAt: endsAt, Timezone: input.Timezone, AllDay: input.AllDay,

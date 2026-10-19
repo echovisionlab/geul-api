@@ -43,14 +43,13 @@ const programEventCreateInputJSONSchema = `{
     "ends_at":{"type":"string","format":"date-time","description":"Optional RFC 3339 end instant, at or after starts_at."},
     "timezone":{"type":"string","minLength":1,"maxLength":100,"description":"IANA timezone for local event display, such as Asia/Seoul or UTC. The timestamp offset specifies the instant independently."},
     "all_day":{"type":"boolean","default":false},"location_mode":` + programEventLocationModeJSONSchema + `,
-    "map_place_id":{"description":"Map Place UUID from map_place_list.","allOf":[` + uuidJSONSchema + `]},
+    "map_place_id":{"description":"Map Place UUID from map_place_list. Required when location_mode is map_place or hybrid.","allOf":[` + uuidJSONSchema + `]},
     "summary":{"type":"string"},"series_id":{"description":"Series UUID from program_event_series_list.","allOf":[` + uuidJSONSchema + `]},"series_order":{"type":"integer"},
     "poster_file_id":{"description":"File UUID from file_list, file_upload, or file_transfer.","allOf":[` + uuidJSONSchema + `]},
     "ticket_url":{"type":"string"},"stream_url":{"type":"string"},"external_url":{"type":"string"},
     "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"labels":{"description":"Label IDs from label_list.","allOf":[` + programEventLabelsJSONSchema + `]},
     "clients":{"description":"Client IDs from reference_search with reference_type=client.","allOf":[` + programEventClientsJSONSchema + `]},"credits":{"description":"Resolve Artist IDs with reference_search reference_type=artist and Member IDs with member_admin_list or reference_search reference_type=member.","allOf":[` + programEventCreditsJSONSchema + `]}
-  },
-  "allOf":[{"if":{"properties":{"location_mode":{"enum":["map_place","hybrid"]}},"required":["location_mode"]},"then":{"required":["map_place_id"]}}]
+  }
 }`
 
 const programEventSettingsUpdateInputJSONSchema = `{
@@ -70,16 +69,11 @@ const programEventSettingsUpdateInputJSONSchema = `{
     "ticket_url":{"type":"string","description":"An empty string removes the URL."},
     "stream_url":{"type":"string","description":"An empty string removes the URL."},
     "external_url":{"type":"string","description":"An empty string removes the URL."},
-    "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"observed_artists":` + programEventArtistsJSONSchema + `,
-    "labels":{"description":"Label IDs from label_list.","allOf":[` + programEventLabelsJSONSchema + `]},"observed_labels":` + programEventLabelsJSONSchema + `,
-    "clients":{"description":"Client IDs from reference_search with reference_type=client.","allOf":[` + programEventClientsJSONSchema + `]},"observed_clients":` + programEventClientsJSONSchema + `,
+    "artists":{"description":"Artist IDs from reference_search with reference_type=artist.","allOf":[` + programEventArtistsJSONSchema + `]},"observed_artists":{"description":"Unchanged artists from program_event_settings_get. Required with artists.","allOf":[` + programEventArtistsJSONSchema + `]},
+    "labels":{"description":"Label IDs from label_list.","allOf":[` + programEventLabelsJSONSchema + `]},"observed_labels":{"description":"Unchanged labels from program_event_settings_get. Required with labels.","allOf":[` + programEventLabelsJSONSchema + `]},
+    "clients":{"description":"Client IDs from reference_search with reference_type=client.","allOf":[` + programEventClientsJSONSchema + `]},"observed_clients":{"description":"Unchanged clients from program_event_settings_get. Required with clients.","allOf":[` + programEventClientsJSONSchema + `]},
     "credits":{"description":"Retain existing credit IDs from program_event_settings_get. Resolve Artist IDs with reference_search reference_type=artist and Member IDs with member_admin_list or reference_search reference_type=member.","allOf":[` + programEventCreditsJSONSchema + `]}
-  },
-  "allOf":[
-    {"if":{"required":["artists"]},"then":{"required":["observed_artists"]}},
-    {"if":{"required":["labels"]},"then":{"required":["observed_labels"]}},
-    {"if":{"required":["clients"]},"then":{"required":["observed_clients"]}}
-  ]
+  }
 }`
 
 const programEventSettingsOutputJSONSchema = `{

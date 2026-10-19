@@ -65,29 +65,52 @@ func TestContentManagementToolDescriptors(t *testing.T) {
 	}
 }
 
-func TestWorkCreateSchemaAdvertisesExactDateRangeAlternatives(t *testing.T) {
-	var schema struct {
-		OneOf []map[string]any `json:"oneOf"`
+func TestWorkSchemasHaveNoRootCombinators(t *testing.T) {
+	for name, raw := range map[string]string{"work_create": workCreateInputJSONSchema, "work_settings_update": workSettingsUpdateInputJSONSchema} {
+		var schema map[string]any
+		if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+			t.Fatal(err)
+		}
+		for _, keyword := range []string{"allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentRequired", "dependentSchemas"} {
+			if _, present := schema[keyword]; present {
+				t.Fatalf("%s input schema has root %s", name, keyword)
+			}
+		}
+		if schema["type"] != "object" || schema["additionalProperties"] != false {
+			t.Fatalf("%s input schema root = %#v", name, schema)
+		}
 	}
-	if err := json.Unmarshal([]byte(workCreateInputJSONSchema), &schema); err != nil {
+}
+
+func TestWorkCreateRejectsInvalidDateRangeBeforeOwner(t *testing.T) {
+	base := `"title":"Work","source_locale":"en","type":"portfolio","year":2026,"month":8`
+	for _, test := range []struct{ arguments, message string }{
+		{`{` + base + `,"is_present":true,"until_year":2026}`, "until_year and until_month must be omitted when is_present is true"},
+		{`{` + base + `,"is_present":true,"until_month":9}`, "until_year and until_month must be omitted when is_present is true"},
+		{`{` + base + `}`, "until_year and until_month are required unless is_present is true"},
+		{`{` + base + `,"is_present":false,"until_year":2026}`, "until_year and until_month are required unless is_present is true"},
+		{`{` + base + `,"until_month":9}`, "until_year and until_month are required unless is_present is true"},
+	} {
+		t.Run(test.arguments, func(t *testing.T) {
+			works := &recordingWorkManagement{}
+			tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkCreate, toolArguments(t, test.arguments))
+			var executionErr *mcpserver.ToolExecutionError
+			if !errors.As(err, &executionErr) || executionErr.Message != test.message || works.create != nil {
+				t.Fatalf("err = %v, create called = %v", err, works.create != nil)
+			}
+		})
+	}
+	works := &recordingWorkManagement{}
+	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := []map[string]any{
-		{
-			"required":   []any{"is_present"},
-			"properties": map[string]any{"is_present": map[string]any{"const": true}},
-			"not": map[string]any{"anyOf": []any{
-				map[string]any{"required": []any{"until_year"}},
-				map[string]any{"required": []any{"until_month"}},
-			}},
-		},
-		{
-			"required":   []any{"until_year", "until_month"},
-			"properties": map[string]any{"is_present": map[string]any{"const": false}},
-		},
-	}
-	if !reflect.DeepEqual(schema.OneOf, want) {
-		t.Fatalf("Work create date alternatives = %#v, want %#v", schema.OneOf, want)
+	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkCreate, toolArguments(t, `{`+base+`,"is_present":true}`)); err != nil || works.create == nil {
+		t.Fatalf("present Work create err = %v", err)
 	}
 }
 
@@ -616,18 +639,22 @@ func TestWorkSettingsGetDoesNotReturnBaselineWhenOwningReadFails(t *testing.T) {
 	}
 }
 
-func TestWorkSettingsSchemaConditionallyRequiresObservedValues(t *testing.T) {
-	var schema struct {
-		AllOf []map[string]any `json:"allOf"`
-	}
-	if err := json.Unmarshal([]byte(workSettingsUpdateInputJSONSchema), &schema); err != nil {
-		t.Fatal(err)
-	}
-	want := []map[string]any{
-		{"if": map[string]any{"required": []any{"metadata"}}, "then": map[string]any{"required": []any{"observed_metadata"}}},
-		{"if": map[string]any{"required": []any{"client_ids"}}, "then": map[string]any{"required": []any{"observed_client_ids"}}},
-	}
-	if !reflect.DeepEqual(schema.AllOf, want) {
-		t.Fatalf("baseline schema = %#v", schema.AllOf)
+func TestWorkSettingsUpdateRequiresObservedValuesBeforeOwner(t *testing.T) {
+	for _, test := range []struct{ arguments, message string }{
+		{`{"document_id":"` + managementWorkID + `","metadata":{"key":"value"}}`, "observed_metadata is required when updating metadata"},
+		{`{"document_id":"` + managementWorkID + `","client_ids":[]}`, "observed_client_ids is required when updating client_ids"},
+	} {
+		t.Run(test.message, func(t *testing.T) {
+			works := &recordingWorkManagement{}
+			tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkSettingsUpdate, toolArguments(t, test.arguments))
+			var executionErr *mcpserver.ToolExecutionError
+			if !errors.As(err, &executionErr) || executionErr.Message != test.message || works.update != nil {
+				t.Fatalf("err = %v, update called = %v", err, works.update != nil)
+			}
+		})
 	}
 }

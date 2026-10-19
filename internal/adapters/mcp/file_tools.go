@@ -24,6 +24,8 @@ var fileTools = []mcpserver.Tool{
 	{
 		Name: ToolFileTransfer, Title: "Transfer a File",
 		Description: "Begin, inspect, or complete one File ingest through the existing File authority. " +
+			"Field sets per action: begin multipart (t=browser_upload_page|presigned_multipart) takes k,t,n,m,s and optional lm; " +
+			"begin remote_https takes k,t,u and correlation_id; status takes h; complete takes h and optional client_media_bundle_id. Other fields are rejected. " +
 			"Multipart bytes use the existing authenticated browser upload flow. Direct audio/video requires browser-prepared derivatives; " +
 			"complete must pass the client_media_bundle_id returned by status after browser preparation. " +
 			"For a public HTTPS source, remote_https uses the existing server import and processing flow; all kinds except general require a stable correlation_id reused on retry. " +
@@ -160,7 +162,10 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 		if err := decodeArguments(arguments, &input); err != nil {
 			return executionError(err)
 		}
-		if err := rejectNullArguments(arguments, "track_id", "expected_current_file_id", "correlation_id"); err != nil {
+		if err := rejectNullArguments(arguments, "k", "t", "n", "m", "s", "lm", "u", "track_id", "expected_current_file_id", "correlation_id"); err != nil {
+			return executionError(err)
+		}
+		if err := validateFileBeginFields(arguments, input); err != nil {
 			return executionError(err)
 		}
 		result, err = tools.files.Begin(ctx, filemedia.MCPFileBeginInput{
@@ -174,6 +179,9 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 		if err := decodeArguments(arguments, &input); err != nil {
 			return executionError(err)
 		}
+		if err := rejectNullArguments(arguments, "h"); err != nil {
+			return executionError(err)
+		}
 		handle, handleErr := fileSessionHandle(input.Handle)
 		if handleErr != nil {
 			return executionError(handleErr)
@@ -182,6 +190,9 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 	case "complete":
 		var input fileCompleteArguments
 		if err := decodeArguments(arguments, &input); err != nil {
+			return executionError(err)
+		}
+		if err := rejectNullArguments(arguments, "h", "client_media_bundle_id"); err != nil {
 			return executionError(err)
 		}
 		handle, handleErr := fileSessionHandle(input.Handle)
@@ -233,6 +244,64 @@ func fileTransferAction(arguments mcpserver.ToolArguments) (string, error) {
 		return "", errors.New("file transfer action is required")
 	}
 	return action, nil
+}
+
+// validateFileBeginFields enforces the per-transport and per-kind field sets
+// that the flat file_transfer input schema can no longer express. Strict
+// decoding already rejects fields foreign to begin (h, client_media_bundle_id);
+// this check rejects present-but-inapplicable fields even when empty, before
+// the facade validates values.
+func validateFileBeginFields(arguments mcpserver.ToolArguments, input fileBeginArguments) error {
+	for _, name := range []string{"k", "t"} {
+		if _, ok := arguments[name]; !ok {
+			return fmt.Errorf("begin requires %s", name)
+		}
+	}
+	switch input.Transport {
+	case filemedia.MCPFileTransportBrowserUploadPage, filemedia.MCPFileTransportPresignedMultipart:
+		if err := requireFileArguments(arguments, "begin multipart", "n", "m", "s"); err != nil {
+			return err
+		}
+		if err := forbidFileArguments(arguments, "begin multipart", "u", "correlation_id"); err != nil {
+			return err
+		}
+	case filemedia.MCPFileTransportRemoteHTTPS:
+		if err := requireFileArguments(arguments, "begin remote_https", "u"); err != nil {
+			return err
+		}
+		if err := forbidFileArguments(arguments, "begin remote_https", "n", "m", "s", "lm"); err != nil {
+			return err
+		}
+		if input.Kind != filemedia.MCPFileKindGeneral {
+			if err := requireFileArguments(arguments, "begin remote_https for kind "+string(input.Kind), "correlation_id"); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("t must be browser_upload_page, presigned_multipart, or remote_https, got %q", input.Transport)
+	}
+	if input.Kind == filemedia.MCPFileKindTrackAudio {
+		return requireFileArguments(arguments, "begin track_audio", "track_id")
+	}
+	return forbidFileArguments(arguments, "begin for kind "+string(input.Kind), "track_id", "expected_current_file_id")
+}
+
+func requireFileArguments(arguments mcpserver.ToolArguments, scope string, names ...string) error {
+	for _, name := range names {
+		if _, ok := arguments[name]; !ok {
+			return fmt.Errorf("%s requires %s", scope, name)
+		}
+	}
+	return nil
+}
+
+func forbidFileArguments(arguments mcpserver.ToolArguments, scope string, names ...string) error {
+	for _, name := range names {
+		if _, ok := arguments[name]; ok {
+			return fmt.Errorf("%s must not include %s", scope, name)
+		}
+	}
+	return nil
 }
 
 func fileSessionHandle(values []string) (filemedia.MCPFileSessionHandle, error) {

@@ -63,8 +63,8 @@ const translationJobInputJSONSchema = `{
 const translationJobsListInputJSONSchema = `{
   "type":"object","additionalProperties":false,
   "properties":{
-    "p":` + translationProfileJSONSchema + `,
-    "d":{"type":"string","description":"Exact document reference. Non-admin callers must provide both p and d.","minLength":1,"maxLength":256},
+    "p":{"description":"Document profile filter. Requires d.","allOf":[` + domainJSONSchema + `]},
+    "d":{"type":"string","description":"Exact document reference filter. Requires p. Non-admin callers must provide both p and d.","minLength":1,"maxLength":256},
     "tl":{"description":"Filter by exact target locale.","allOf":[` + localeJSONSchema + `]},
     "sl":{"description":"Filter by exact source locale.","allOf":[` + localeJSONSchema + `]},
     "s":{"type":"array","description":"Active statuses to include; omission or an empty array includes both statuses.","maxItems":2,"uniqueItems":true,"items":{"enum":["queued","running"]}},
@@ -72,8 +72,7 @@ const translationJobsListInputJSONSchema = `{
     "o":{"type":"integer","description":"Number of matching jobs to skip; defaults to zero.","minimum":0},
     "k":{"description":"Sort field. Omission uses updated_at descending. Job ID is the final tie-breaker.","enum":["requested_at","updated_at","target_locale","status"]},
     "z":{"type":"boolean","description":"Descending when true, ascending when false; requires k. Defaults to false with an explicit k."}
-  },
-  "dependentRequired":{"p":["d"],"d":["p"],"z":["k"]}
+  }
 }`
 
 const translationRegenerateInputJSONSchema = `{
@@ -93,11 +92,7 @@ const translationXLIFFExportInputJSONSchema = `{
     "l":` + localeJSONSchema + `,
     "m":{"description":"patch exports the explicit u selection; replace exports the complete current unit manifest.","enum":["patch","replace"]},
     "u":{"type":"array","description":"Opaque unit IDs from an exported XLIFF manifest. Required and non-empty for patch; omitted or empty for replace.","maxItems":1000,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}}
-  },
-  "allOf":[
-    {"if":{"properties":{"m":{"const":"patch"}},"required":["m"]},"then":{"required":["u"],"properties":{"u":{"minItems":1}}}},
-    {"if":{"properties":{"m":{"const":"replace"}},"required":["m"]},"then":{"properties":{"u":{"maxItems":0}}}}
-  ]
+  }
 }`
 
 const translationXLIFFImportInputJSONSchema = `{

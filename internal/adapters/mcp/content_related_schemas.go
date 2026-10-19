@@ -32,18 +32,16 @@ const workCreditGroupDeleteInputJSONSchema = `{
 
 const workCreditAddInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["document_id"],
-  "oneOf":[{"required":["artist_id"]},{"required":["member_id"]},{"required":["name"]}],
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,"group_id":{"description":"Credit group UUID from work_credits_get.","allOf":[` + uuidJSONSchema + `]},
-    "artist_id":{"description":"Artist UUID from reference_search with reference_type=artist.","allOf":[` + uuidJSONSchema + `]},"member_id":{"description":"Member UUID from member_admin_list or reference_search with reference_type=member.","allOf":[` + uuidJSONSchema + `]},
-    "name":{"type":"string","minLength":1},"credit_role":{"type":"string","minLength":1}
+    "artist_id":{"description":"Artist UUID from reference_search with reference_type=artist. Supply exactly one of artist_id, member_id, or name.","allOf":[` + uuidJSONSchema + `]},"member_id":{"description":"Member UUID from member_admin_list or reference_search with reference_type=member. Supply exactly one of artist_id, member_id, or name.","allOf":[` + uuidJSONSchema + `]},
+    "name":{"type":"string","minLength":1,"description":"Literal credit name. Supply exactly one of artist_id, member_id, or name."},"credit_role":{"type":"string","minLength":1}
   }
 }`
 
 const workCreditUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["credit_id"],
-  "anyOf":[{"required":["group_id"]},{"required":["credit_role"]}],
-  "properties":{"credit_id":{"description":"Credit UUID from work_credits_get.","allOf":[` + uuidJSONSchema + `]},"group_id":{"type":"string","description":"Credit group UUID from work_credits_get, or an empty string to remove the group relation."},"credit_role":{"type":"string"}}
+  "properties":{"credit_id":{"description":"Credit UUID from work_credits_get.","allOf":[` + uuidJSONSchema + `]},"group_id":{"type":"string","description":"Credit group UUID from work_credits_get, or an empty string to remove the group relation. Supply group_id, credit_role, or both."},"credit_role":{"type":"string","description":"New credit role. Supply group_id, credit_role, or both."}}
 }`
 
 const workCreditDeleteInputJSONSchema = `{
