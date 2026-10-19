@@ -181,8 +181,7 @@ const paragraphCreateInputJSONSchema = `{
     "parent_block_id":{"type":"string","minLength":1,"maxLength":160,"description":"Existing parent Block handle returned by document_read. Required for Page documents and must identify a rich-text section."},
     "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert. Omit to insert at the beginning of the selected parent, or at the top level when parent_block_id is omitted."},
     "text":{"type":"string","description":"Plain text for the new Paragraph Block."}
-  },
-  "allOf":[{"if":{"properties":{"document_type":{"const":"page"}},"required":["document_type"]},"then":{"required":["parent_block_id"]}}]
+  }
 }`
 
 const paragraphUpdateInputJSONSchema = `{

@@ -15,8 +15,7 @@ const documentFileAddInputJSONSchema = `{
     "after_block_id":{"type":"string","maxLength":160,"description":"Existing sibling Block handle after which to insert the File Block."},
     "file_id":` + uuidJSONSchema + `,
     "caption":{"type":"string","description":"Optional plain-text caption saved atomically with the new attachment. Empty string is an explicit empty caption."}
-  },
-  "allOf":[{"if":{"properties":{"document_type":{"const":"page"}},"required":["document_type"]},"then":{"required":["parent_block_id"]}}]
+  }
 }`
 
 const documentFileReplaceInputJSONSchema = `{
