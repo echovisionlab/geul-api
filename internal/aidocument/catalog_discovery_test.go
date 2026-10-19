@@ -106,7 +106,9 @@ func TestDescribeRejectsInvalidRequestOrLoadedDocument(t *testing.T) {
 
 func TestDescribeOwnsRecursiveCatalogSnapshot(t *testing.T) {
 	document := testDocument("en", true)
-	text := FieldSchema{Kind: ValueKindText, Ownership: FieldOwnershipSource}
+	minimum, maximum := 1.0, 3.0
+	text := FieldSchema{Kind: ValueKindText, Ownership: FieldOwnershipSource, EnumValues: []any{"a", "b"}, Minimum: &minimum, Maximum: &maximum, ExclusiveMinimum: &minimum}
+	document.Catalog.BlockRules = []BlockKindRule{{Kind: "paragraph", Category: "rich_block", AllowedParents: []BlockKind{"rich-text"}}}
 	object := FieldSchema{Kind: ValueKindObject, Ownership: FieldOwnershipSource, Fields: []NestedFieldRule{{Field: "title", Schema: text}}}
 	list := FieldSchema{Kind: ValueKindList, Ownership: FieldOwnershipSource, Item: &object, Identity: ListIdentityRule{Kind: ListIdentityFixed, Handles: []RelationItemID{"first"}}}
 	document.Catalog.Fields = append(document.Catalog.Fields, FieldRule{BlockKind: "document", Field: "units", ValueKind: ValueKindList, Ownership: FieldOwnershipSource, Schema: &list})
@@ -122,6 +124,11 @@ func TestDescribeOwnsRecursiveCatalogSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	result.Catalog.BlockKinds[0] = "changed"
+	result.Catalog.BlockRules[0].AllowedParents[0] = "changed"
+	result.Catalog.Fields[len(result.Catalog.Fields)-1].Schema.Item.Fields[0].Schema.EnumValues[0] = "changed"
+	*result.Catalog.Fields[len(result.Catalog.Fields)-1].Schema.Item.Fields[0].Schema.Minimum = -100
+	*result.Catalog.Fields[len(result.Catalog.Fields)-1].Schema.Item.Fields[0].Schema.Maximum = 100
+	*result.Catalog.Fields[len(result.Catalog.Fields)-1].Schema.Item.Fields[0].Schema.ExclusiveMinimum = -100
 	result.Catalog.Fields[0].Field = "changed"
 	result.Catalog.Relations[0].ItemKinds[0] = "changed"
 	result.Catalog.Fields[len(result.Catalog.Fields)-1].Schema.Item.Fields[0].Field = "changed"

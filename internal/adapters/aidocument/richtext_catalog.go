@@ -67,9 +67,7 @@ func contentFieldRule(block core.BlockKind, field contentv1.ContentFieldDescript
 		BlockKind: block, Field: core.FieldID(field.Name), ValueKind: schema.Kind,
 		Ownership: schema.Ownership, Translatable: schema.Translatable, File: schema.File,
 	}
-	if schema.Kind == core.ValueKindList || schema.Kind == core.ValueKindObject {
-		rule.Schema = &schema
-	}
+	rule.Schema = &schema
 	return rule, nil
 }
 
@@ -79,6 +77,7 @@ func contentFieldSchema(field contentv1.ContentFieldDescriptor) (core.FieldSchem
 		return core.FieldSchema{}, err
 	}
 	schema := core.FieldSchema{Ownership: ownership, Translatable: field.Translatable}
+	applyContentConstraints(&schema, field)
 	switch field.Type {
 	case "string", "uri", "uuid", "enum", "editor_color", "hex_color":
 		schema.Kind = core.ValueKindText
@@ -115,6 +114,12 @@ func contentFieldSchema(field contentv1.ContentFieldDescriptor) (core.FieldSchem
 		return core.FieldSchema{}, fmt.Errorf("unsupported generated field type %q", field.Type)
 	}
 	return schema, nil
+}
+
+func applyContentConstraints(schema *core.FieldSchema, field contentv1.ContentFieldDescriptor) {
+	schema.EnumValues = append([]any(nil), field.Values...)
+	schema.Minimum, schema.Maximum, schema.Required = field.Min, field.Max, field.Required
+	schema.ExclusiveMinimum = field.MinExclusive
 }
 
 func contentOwnership(value string) (core.FieldOwnership, error) {
@@ -175,11 +180,17 @@ func tableFieldRules(block core.BlockKind, table contentv1.ContentTableDescripto
 	// remain present in each typed object so lossless round trips can be checked
 	// against the generated row_id/cell_id contract.
 	cellObject.Fields = append(cellObject.Fields, core.NestedFieldRule{Field: core.FieldID(table.CellIdentity.Name), Schema: core.FieldSchema{Kind: core.ValueKindText, Ownership: core.FieldOwnershipShared}})
+	for index := range cellObject.Fields {
+		if cellObject.Fields[index].Field == core.FieldID(table.CellIdentity.Name) {
+			applyContentConstraints(&cellObject.Fields[index].Schema, table.CellIdentity)
+		}
+	}
 	cellList.Item = &cellObject
 	rowObject := core.FieldSchema{Kind: core.ValueKindObject, Ownership: core.FieldOwnershipShared, Fields: []core.NestedFieldRule{
 		{Field: core.FieldID(table.RowIdentity.Name), Schema: core.FieldSchema{Kind: core.ValueKindText, Ownership: core.FieldOwnershipShared}},
 		{Field: richTextTableCellsField, Schema: cellList},
 	}}
+	applyContentConstraints(&rowObject.Fields[0].Schema, table.RowIdentity)
 	rowList := core.FieldSchema{Kind: core.ValueKindList, Ownership: core.FieldOwnershipShared, Item: &rowObject, Identity: core.ListIdentityRule{Kind: core.ListIdentityField, Field: core.FieldID(table.RowIdentity.Name)}}
 	sharedObject.Fields = append(sharedObject.Fields, core.NestedFieldRule{Field: richTextTableRowsField, Schema: rowList})
 
@@ -187,11 +198,13 @@ func tableFieldRules(block core.BlockKind, table contentv1.ContentTableDescripto
 		{Field: core.FieldID(table.CellIdentity.Name), Schema: core.FieldSchema{Kind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true}},
 		{Field: richTextTableCellContent, Schema: core.FieldSchema{Kind: core.ValueKindInline, Ownership: core.FieldOwnershipLocale, Translatable: true}},
 	}}
+	applyContentConstraints(&localeCellObject.Fields[0].Schema, table.CellIdentity)
 	localeCellList := core.FieldSchema{Kind: core.ValueKindList, Ownership: core.FieldOwnershipLocale, Translatable: true, Item: &localeCellObject, Identity: core.ListIdentityRule{Kind: core.ListIdentityField, Field: core.FieldID(table.CellIdentity.Name)}}
 	localeRowObject := core.FieldSchema{Kind: core.ValueKindObject, Ownership: core.FieldOwnershipLocale, Translatable: true, Fields: []core.NestedFieldRule{
 		{Field: core.FieldID(table.RowIdentity.Name), Schema: core.FieldSchema{Kind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true}},
 		{Field: richTextTableCellsField, Schema: localeCellList},
 	}}
+	applyContentConstraints(&localeRowObject.Fields[0].Schema, table.RowIdentity)
 	localeRows := core.FieldSchema{Kind: core.ValueKindList, Ownership: core.FieldOwnershipLocale, Translatable: true, Item: &localeRowObject, Identity: core.ListIdentityRule{Kind: core.ListIdentityField, Field: core.FieldID(table.RowIdentity.Name)}}
 	localeObject := core.FieldSchema{Kind: core.ValueKindObject, Ownership: core.FieldOwnershipLocale, Translatable: true, Fields: []core.NestedFieldRule{{Field: richTextTableRowsField, Schema: localeRows}}}
 	return core.FieldRule{BlockKind: block, Field: richTextTableField, ValueKind: core.ValueKindObject, Ownership: core.FieldOwnershipShared, Schema: &sharedObject},

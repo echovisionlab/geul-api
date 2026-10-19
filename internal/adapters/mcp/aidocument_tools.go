@@ -19,6 +19,9 @@ const (
 	ToolDocumentRead     = "document_read"
 	ToolParagraphCreate  = "document_paragraph_create"
 	ToolParagraphUpdate  = "document_paragraph_update"
+	ToolHeadingCreate    = "document_heading_create"
+	ToolHeadingUpdate    = "document_heading_update"
+	ToolTableCreate      = "document_table_create"
 	ToolBlockDelete      = "document_block_delete"
 	ToolMetadataUpdate   = "document_metadata_update"
 	ToolDocumentValidate = "document_validate"
@@ -63,6 +66,16 @@ var documentTools = []mcpserver.Tool{
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
 	},
+	{Name: ToolHeadingCreate, Title: "Create document heading",
+		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Pass exact current revisions. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
+		InputSchema: headingInputSchema(false), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()},
+	{Name: ToolHeadingUpdate, Title: "Update document heading",
+		Description: "Replace an existing heading's plain text and level (1..3), with optional alignment, in a Page or Post. Pass its stable block_id and exact current revisions. Omitted alignment is preserved." + syncRequiredGuidance,
+		InputSchema: headingInputSchema(true), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta()},
+	{Name: ToolTableCreate, Title: "Create document table",
+		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Pass exact current revisions. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
+		InputSchema: tableCreateInputSchema(), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()},
+
 	{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
@@ -93,8 +106,8 @@ var documentTools = []mcpserver.Tool{
 	},
 	{
 		Name: ToolDocumentApply, Title: "Apply AI document mutation",
-		Description: "Apply an advanced typed DCDP/1 operation batch that the focused paragraph tools cannot represent. " +
-			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run." + syncRequiredGuidance,
+		Description: "Apply an advanced typed DCDP/1 operation batch that the focused tools cannot represent. " +
+			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run. Page rich blocks require a rich-text section parent. Heading level is ['n','1'|'2'|'3']. Tables use bi plus fs table (shared UUID rows/cells, id equal to handle, header flags) and fs tableContent (locale cell inline content). Pages forbid inline math. See document_catalog." + syncRequiredGuidance,
 		InputSchema: mutationInputSchema(), OutputSchema: acceptedOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
@@ -164,6 +177,12 @@ func (tools *AIDocumentTools) CallTool(ctx context.Context, _ mcpserver.Principa
 		return tools.createParagraph(ctx, arguments)
 	case ToolParagraphUpdate:
 		return tools.updateParagraph(ctx, arguments)
+	case ToolHeadingCreate:
+		return tools.mutateHeading(ctx, arguments, false)
+	case ToolHeadingUpdate:
+		return tools.mutateHeading(ctx, arguments, true)
+	case ToolTableCreate:
+		return tools.createTable(ctx, arguments)
 	case ToolBlockDelete:
 		return tools.deleteBlock(ctx, arguments)
 	case ToolMetadataUpdate:
@@ -478,7 +497,7 @@ func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.App
 		}
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
-			slog.WarnContext(ctx, "MCP document mutation rejected", "failure_cause", failurecause.Message(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
+			slog.WarnContext(ctx, "MCP document mutation rejected", "issues", core.ValidationIssueSummaries(validationError.Result.Issues), "issue_count", len(validationError.Result.Issues), "failure_cause", failurecause.Message(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
 			encoded, encodeErr := encodeValidation(validationError.Result)
 			if encodeErr != nil {
 				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document rejection: %w", encodeErr)

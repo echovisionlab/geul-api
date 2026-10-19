@@ -3,6 +3,8 @@ package mcp
 import "encoding/json"
 
 const catalogShapePropertiesJSONSchema = `
+  "enum_values":{"type":"array","minItems":1,"items":{"type":["string","number","boolean"]}},
+  "exclusive_minimum":{"type":"number"},"minimum":{"type":"number"},"maximum":{"type":"number"},"required":{"type":"boolean","description":"Required generated value or list identity field."},
   "kind":{"enum":["t","b","n","i","l","o"],"description":"DCDP typed value tag. Omitted for File bindings, which use fa/fd operations instead of typed values."},
   "ownership":{"enum":["shared","source","locale"]},
   "translatable":{"type":"boolean"},
@@ -27,6 +29,10 @@ const documentCatalogOutputJSONSchema = `{
     "dr":{"type":"string","minLength":1,"maxLength":256},"tr":{"type":"string","minLength":1,"maxLength":256},
     "s":{"type":"string","minLength":1,"maxLength":35},"l":{"type":"string","minLength":1,"maxLength":35},
     "lr":{"enum":["source","non_source"]},"le":{"type":"boolean"},
+    "block_rules":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["kind","category"],"properties":{
+      "kind":{"type":"string"},"category":{"enum":["rich_block","page_section","page_column"]},
+      "allowed_parents":{"type":"array","items":{"type":"string"},"description":"Allowed parent kinds; rich Page blocks require a rich-text section."}
+    }}},
     "block_kinds":{"type":"array","items":{"type":"string","minLength":1}},
     "fields":{"type":"array","items":{"type":"object","additionalProperties":false,
       "required":["block_kind","field","ownership","translatable","file"],"properties":{

@@ -54,6 +54,10 @@ func NewPageCodec() (*PageCodec, error) {
 		codec.localeCase[codec.sectionKind(field.JSONName())] = field
 	}
 	catalog := rich.Catalog()
+	for _, kind := range catalog.BlockKinds {
+		catalog.BlockRules = append(catalog.BlockRules, core.BlockKindRule{Kind: kind, Category: "rich_block", AllowedParents: []core.BlockKind{"rich-text"}})
+	}
+	catalog.BlockRules = append(catalog.BlockRules, core.BlockKindRule{Kind: pageColumnBlockKind, Category: "page_column", AllowedParents: []core.BlockKind{"columns"}})
 	catalog.BlockKinds = append(catalog.BlockKinds, pageColumnBlockKind)
 	catalog.Fields = append(catalog.Fields, core.FieldRule{
 		BlockKind: pageColumnBlockKind, Field: pageColumnRatioField,
@@ -61,6 +65,7 @@ func NewPageCodec() (*PageCodec, error) {
 	})
 	for kind, field := range codec.baseCases {
 		catalog.BlockKinds = append(catalog.BlockKinds, kind)
+		catalog.BlockRules = append(catalog.BlockRules, core.BlockKindRule{Kind: kind, Category: "page_section"})
 		settingsSchema, err := pageMessageSchema((&contentv1.PageSectionSettings{}).ProtoReflect().Descriptor(), core.FieldOwnershipShared)
 		if err != nil {
 			return nil, err
@@ -97,6 +102,7 @@ func NewPageCodec() (*PageCodec, error) {
 			}
 		}
 	}
+	enrichPageCatalogConstraints(&catalog)
 	catalog.Fingerprint = contentv1.ContentBlockCatalogFingerprint
 	codec.catalog = catalog
 	return codec, nil
@@ -315,6 +321,22 @@ func pageSingularSchema(field protoreflect.FieldDescriptor, ownership core.Field
 			schema.Kind = core.ValueKindNumber
 		} else {
 			schema.Kind = core.ValueKindText
+		}
+		values := field.Enum().Values()
+		for index := 0; index < values.Len(); index++ {
+			canonical, err := pageCanonicalEnum(field, values.Get(index))
+			if err != nil {
+				continue
+			}
+			if schema.Kind == core.ValueKindNumber {
+				number, err := strconv.ParseFloat(canonical, 64)
+				if err != nil {
+					return core.FieldSchema{}, err
+				}
+				schema.EnumValues = append(schema.EnumValues, number)
+			} else {
+				schema.EnumValues = append(schema.EnumValues, canonical)
+			}
 		}
 	case protoreflect.MessageKind:
 		if pageIsFileAttachment(field.Message()) {

@@ -15,7 +15,7 @@ const ToolDocumentCatalog = "document_catalog"
 
 var documentCatalogTools = []mcpserver.Tool{{
 	Name: ToolDocumentCatalog, Title: "Describe document catalog",
-	Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints; this catalog does not specify defaults, required values, or enum ranges.",
+	Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified.",
 	InputSchema: openInputSchema(), OutputSchema: documentCatalogOutputSchema(),
 	SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
 }}
@@ -65,20 +65,32 @@ func (tools *DocumentCatalogTools) CallTool(ctx context.Context, _ mcpserver.Pri
 
 type documentCatalogOutput struct {
 	core.OpenMetadata
+	BlockRules     []catalogBlockRule     `json:"block_rules,omitempty"`
 	BlockKinds     []core.BlockKind       `json:"block_kinds"`
 	Fields         []catalogField         `json:"fields"`
 	Relations      []catalogRelation      `json:"relations"`
 	RelationFields []catalogRelationField `json:"relation_fields"`
 }
 
+type catalogBlockRule struct {
+	Kind           core.BlockKind   `json:"kind"`
+	Category       string           `json:"category"`
+	AllowedParents []core.BlockKind `json:"allowed_parents,omitempty"`
+}
+
 type catalogShape struct {
-	Kind         core.ValueKind       `json:"kind,omitempty"`
-	Ownership    core.FieldOwnership  `json:"ownership"`
-	Translatable bool                 `json:"translatable"`
-	File         bool                 `json:"file"`
-	Item         *catalogShape        `json:"item,omitempty"`
-	Fields       []catalogNestedField `json:"fields,omitempty"`
-	Identity     *catalogListIdentity `json:"identity,omitempty"`
+	EnumValues       []any                `json:"enum_values,omitempty"`
+	ExclusiveMinimum *float64             `json:"exclusive_minimum,omitempty"`
+	Minimum          *float64             `json:"minimum,omitempty"`
+	Maximum          *float64             `json:"maximum,omitempty"`
+	Required         bool                 `json:"required,omitempty"`
+	Kind             core.ValueKind       `json:"kind,omitempty"`
+	Ownership        core.FieldOwnership  `json:"ownership"`
+	Translatable     bool                 `json:"translatable"`
+	File             bool                 `json:"file"`
+	Item             *catalogShape        `json:"item,omitempty"`
+	Fields           []catalogNestedField `json:"fields,omitempty"`
+	Identity         *catalogListIdentity `json:"identity,omitempty"`
 }
 
 type catalogNestedField struct {
@@ -119,6 +131,10 @@ func projectDocumentCatalog(description core.DescribeResult) documentCatalogOutp
 		Fields: make([]catalogField, 0, len(catalog.Fields)), Relations: make([]catalogRelation, 0, len(catalog.Relations)),
 		RelationFields: make([]catalogRelationField, 0, len(catalog.RelationFields)),
 	}
+	for _, rule := range catalog.BlockRules {
+		output.BlockRules = append(output.BlockRules, catalogBlockRule{Kind: rule.Kind, Category: rule.Category, AllowedParents: append([]core.BlockKind(nil), rule.AllowedParents...)})
+	}
+	sort.Slice(output.BlockRules, func(i, j int) bool { return output.BlockRules[i].Kind < output.BlockRules[j].Kind })
 	for _, rule := range catalog.Fields {
 		shape := core.FieldSchema{Kind: rule.ValueKind, Ownership: rule.Ownership, Translatable: rule.Translatable, File: rule.File}
 		if rule.Schema != nil {
@@ -170,9 +186,16 @@ func projectDocumentCatalog(description core.DescribeResult) documentCatalogOutp
 }
 
 func projectCatalogShape(schema core.FieldSchema) catalogShape {
-	shape := catalogShape{Kind: schema.Kind, Ownership: schema.Ownership, Translatable: schema.Translatable, File: schema.File}
+	shape := catalogShape{EnumValues: append([]any(nil), schema.EnumValues...), ExclusiveMinimum: schema.ExclusiveMinimum, Minimum: schema.Minimum, Maximum: schema.Maximum, Required: schema.Required, Kind: schema.Kind, Ownership: schema.Ownership, Translatable: schema.Translatable, File: schema.File}
 	if schema.Item != nil {
 		item := projectCatalogShape(*schema.Item)
+		if schema.Identity.Kind == core.ListIdentityField {
+			for index := range item.Fields {
+				if item.Fields[index].Field == schema.Identity.Field {
+					item.Fields[index].Schema.Required = true
+				}
+			}
+		}
 		shape.Item = &item
 	}
 	for _, field := range schema.Fields {
