@@ -110,11 +110,31 @@ func TestResolvePageLocalizedMetadataDoesNotRequireLegacyBodyColumns(t *testing.
 	)
 	require.NoError(t, err)
 	require.NotNil(t, englishFallback.Title)
-	assert.Equal(t, "Source fr", *englishFallback.Title)
-	assert.Equal(t, "fr", englishFallback.DisplayedLocale)
+	assert.Equal(t, "English", *englishFallback.Title)
+	assert.Equal(t, "ko", englishFallback.RequestedLocale)
+	assert.Equal(t, "en", englishFallback.DisplayedLocale)
+	assert.Equal(t, "fr", englishFallback.SourceLocale)
 	assert.True(t, englishFallback.IsFallback)
+	assert.False(t, englishFallback.IsOriginal)
+	assert.Equal(t, openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE, englishFallback.FallbackReason)
 	assert.Contains(t, englishFallback.AvailableLocales, "en")
 	assert.NotContains(t, englishFallback.AvailableLocales, "ko")
+
+	missingTargetFallback, err := resolvePageLocalizedMetadataSelection(
+		t.Context(),
+		db,
+		"page-2",
+		"nl",
+		map[string]struct{}{"en": {}, "ko": {}},
+		translation.DefaultRuntimeSettings(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, missingTargetFallback.Title)
+	assert.Equal(t, "English", *missingTargetFallback.Title)
+	assert.Equal(t, "nl", missingTargetFallback.RequestedLocale)
+	assert.Equal(t, "en", missingTargetFallback.DisplayedLocale)
+	assert.True(t, missingTargetFallback.IsFallback)
+	assert.False(t, missingTargetFallback.IsOriginal)
 
 	frenchFallback, err := resolvePageLocalizedMetadataSelection(
 		t.Context(),

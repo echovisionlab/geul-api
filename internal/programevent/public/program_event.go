@@ -1042,8 +1042,14 @@ func resolveProgramEventLocalization(
 	if selection.DisplayedLocale != sourceLocale {
 		if _, ok := complete[selection.DisplayedLocale]; !ok {
 			requestedLocale := selection.RequestedLocale
+			// Re-resolving with the default locale yields its row only when it is
+			// stored; otherwise ResolveWithPolicy already falls back to source.
+			fallbackLocale := publiccontent.DocumentFallbackLocale(selection, complete, settings)
+			if fallbackLocale == selection.SourceLocale {
+				fallbackLocale = sourceLocale
+			}
 			selection, err = publiccontent.ResolveWithPolicy(
-				ctx, db, programEventLocalizationSpec, eventID, sourceLocale, settings,
+				ctx, db, programEventLocalizationSpec, eventID, fallbackLocale, settings,
 			)
 			if err != nil {
 				return publiccontent.Selection{}, errs.Internal(err)

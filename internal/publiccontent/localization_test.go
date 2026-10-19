@@ -87,6 +87,39 @@ func TestSelectWithPolicyFillsOnlyMissingTargetFieldsFromSource(t *testing.T) {
 	assert.Equal(t, openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE, selection.FallbackReason)
 }
 
+func TestSelectWithPolicyFallsBackToDefaultLocaleBeforeSource(t *testing.T) {
+	t.Parallel()
+
+	sourceTitle := "Korean title"
+	sourceBody := "Korean body"
+	defaultTitle := "English title"
+	selection := selectWithPolicy("nl", "ko", map[string]translationRow{
+		"ko": {Locale: "ko", Title: &sourceTitle, ContentText: &sourceBody},
+		"en": {Locale: "en", Title: &defaultTitle},
+		"ja": {Locale: "ja", Title: new("Japanese title")},
+	}, translation.DefaultRuntimeSettings())
+
+	assert.Equal(t, "nl", selection.RequestedLocale)
+	assert.Equal(t, "en", selection.DisplayedLocale)
+	assert.Equal(t, "ko", selection.SourceLocale)
+	assert.True(t, selection.IsFallback)
+	assert.False(t, selection.IsOriginal)
+	assert.Equal(t, openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE, selection.FallbackReason)
+	assert.Equal(t, &defaultTitle, selection.Title)
+	assert.Equal(t, &sourceBody, selection.ContentText, "missing default-locale fields still fall back to source")
+}
+
+func TestDocumentFallbackLocale(t *testing.T) {
+	t.Parallel()
+	settings := translation.DefaultRuntimeSettings()
+	rejectedTarget := Selection{RequestedLocale: "ja", DisplayedLocale: "ja", SourceLocale: "ko"}
+	rejectedDefault := Selection{RequestedLocale: "nl", DisplayedLocale: "en", SourceLocale: "ko"}
+
+	assert.Equal(t, "en", DocumentFallbackLocale(rejectedTarget, map[string]struct{}{"en": {}}, settings))
+	assert.Equal(t, "ko", DocumentFallbackLocale(rejectedTarget, map[string]struct{}{}, settings))
+	assert.Equal(t, "ko", DocumentFallbackLocale(rejectedDefault, map[string]struct{}{"en": {}}, settings))
+}
+
 func TestToProtoLocalizationInfoPreservesAvailableLocales(t *testing.T) {
 	t.Parallel()
 

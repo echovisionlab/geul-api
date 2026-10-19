@@ -42,8 +42,13 @@ func NormalizeWithDefault(value, defaultLocale string) string {
 	return LocaleEnglish
 }
 
-// Select chooses an exact stored target or the source projection without
-// depending on target status, source-currentness, quality, or provenance.
+// Select chooses, in order, the exact stored requested locale, the stored
+// default-locale row, and finally the source projection, without depending on
+// target status, source-currentness, quality, or provenance.
+//
+// Both fallback steps report FallbackSource: the public contract has no
+// separate default-locale reason, so clients tell them apart by comparing
+// DisplayedLocale with SourceLocale.
 func Select(
 	requestedLocale string,
 	sourceLocale string,
@@ -52,6 +57,7 @@ func Select(
 ) Decision {
 	requestedLocale = NormalizeWithDefault(requestedLocale, policy.DefaultLocale)
 	sourceLocale = NormalizeWithDefault(sourceLocale, policy.DefaultLocale)
+	defaultLocale := NormalizeWithDefault(policy.DefaultLocale, LocaleEnglish)
 	decision := Decision{
 		RequestedLocale: requestedLocale,
 		DisplayedLocale: sourceLocale,
@@ -74,10 +80,37 @@ func Select(
 
 	decision.IsFallback = true
 	decision.FallbackReason = FallbackSource
+	if defaultLocale != requestedLocale && defaultLocale != sourceLocale {
+		if _, ok := storedLocales[defaultLocale]; ok {
+			applyStoredLocale(&decision, defaultLocale)
+			decision.IsOriginal = false
+			return decision
+		}
+	}
 	if _, ok := storedLocales[sourceLocale]; ok {
 		applyStoredLocale(&decision, sourceLocale)
 	}
 	return decision
+}
+
+// FallbackLocales returns the locales whose stored rows Select may display for
+// requestedLocale: the requested locale, then the default locale, then the
+// source, canonicalized and without duplicates. Callers that load a bounded
+// set of rows use it so the default-locale fallback row is always present.
+func FallbackLocales(requestedLocale, sourceLocale string, policy ServingPolicy) []string {
+	requestedLocale = NormalizeWithDefault(requestedLocale, policy.DefaultLocale)
+	sourceLocale = NormalizeWithDefault(sourceLocale, policy.DefaultLocale)
+	if requestedLocale == sourceLocale {
+		return []string{sourceLocale}
+	}
+	result := []string{requestedLocale}
+	if defaultLocale := NormalizeWithDefault(policy.DefaultLocale, LocaleEnglish); !slices.Contains(result, defaultLocale) {
+		result = append(result, defaultLocale)
+	}
+	if !slices.Contains(result, sourceLocale) {
+		result = append(result, sourceLocale)
+	}
+	return result
 }
 
 // AvailableLocales returns the canonical source followed by every canonical
