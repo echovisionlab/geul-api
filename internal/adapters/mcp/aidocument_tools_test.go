@@ -329,27 +329,28 @@ func TestAIDocumentProjectionSchemaCoversRecursiveCompactWire(t *testing.T) {
 	}
 }
 
-func TestParagraphCreateSchemaRequiresPageRichTextParent(t *testing.T) {
-	var schema struct {
-		Properties map[string]json.RawMessage `json:"properties"`
-		AllOf      []struct {
-			If struct {
-				Properties map[string]struct {
-					Const string `json:"const"`
-				} `json:"properties"`
-			} `json:"if"`
-			Then struct {
-				Required []string `json:"required"`
-			} `json:"then"`
-		} `json:"allOf"`
-	}
-	if err := json.Unmarshal([]byte(paragraphCreateInputJSONSchema), &schema); err != nil {
-		t.Fatal(err)
-	}
-	if schema.Properties["parent_block_id"] == nil || len(schema.AllOf) != 1 ||
-		schema.AllOf[0].If.Properties["document_type"].Const != "page" ||
-		!reflect.DeepEqual(schema.AllOf[0].Then.Required, []string{"parent_block_id"}) {
-		t.Fatalf("Page paragraph parent contract = %#v", schema)
+// Codex lists a tool whose input schema has a top-level allOf/if-then as
+// "args: unknown", so create tools describe the Page parent rule in text and
+// the handlers enforce it instead.
+func TestCreateSchemasAvoidTopLevelConditionals(t *testing.T) {
+	for name, raw := range map[string]json.RawMessage{
+		ToolParagraphCreate: json.RawMessage(paragraphCreateInputJSONSchema),
+		ToolHeadingCreate:   headingInputSchema(false),
+		ToolTableCreate:     tableCreateInputSchema(),
+		ToolDocumentFileAdd: json.RawMessage(documentFileAddInputJSONSchema),
+	} {
+		var schema map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if schema["properties"] == nil {
+			t.Fatalf("%s schema has no properties", name)
+		}
+		for _, keyword := range []string{"allOf", "anyOf", "oneOf", "if", "then", "not"} {
+			if _, ok := schema[keyword]; ok {
+				t.Errorf("%s schema has top-level %s", name, keyword)
+			}
+		}
 	}
 }
 
