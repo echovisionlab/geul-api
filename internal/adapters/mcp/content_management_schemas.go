@@ -107,14 +107,10 @@ const workCreateInputJSONSchema = `{
     "metadata":{"type":"object"},"featured":{"type":"boolean"},
     "year":{"type":"integer","minimum":1,"maximum":9999},
     "month":{"type":"integer","minimum":1,"maximum":12},
-    "until_year":{"type":"integer","minimum":1,"maximum":9999},
-    "until_month":{"type":"integer","minimum":1,"maximum":12},
+    "until_year":{"type":"integer","minimum":1,"maximum":9999,"description":"Required with until_month unless is_present is true; must be omitted when is_present is true."},
+    "until_month":{"type":"integer","minimum":1,"maximum":12,"description":"Required with until_year unless is_present is true; must be omitted when is_present is true."},
     "is_present":{"type":"boolean","description":"When true, until_year and until_month must be omitted. Otherwise both fields are required."}
-  },
-  "oneOf":[
-    {"required":["is_present"],"properties":{"is_present":{"const":true}},"not":{"anyOf":[{"required":["until_year"]},{"required":["until_month"]}]}},
-    {"required":["until_year","until_month"],"properties":{"is_present":{"const":false}}}
-  ]
+  }
 }`
 
 const workSettingsUpdateInputJSONSchema = `{
@@ -123,22 +119,18 @@ const workSettingsUpdateInputJSONSchema = `{
     "document_id":` + documentReferenceJSONSchema + `,
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
     "type":{"enum":["music_project","portfolio","article","contribution"]},
-    "metadata":{"type":"object"},
-    "observed_metadata":{"type":"object","description":"Copy metadata returned by work_settings_get before editing. Preserve unchanged fields to keep concurrent peer edits."},
+    "metadata":{"type":"object","description":"Requires observed_metadata in the same call."},
+    "observed_metadata":{"type":"object","description":"Required when metadata is supplied. Copy metadata returned by work_settings_get before editing. Preserve unchanged fields to keep concurrent peer edits."},
     "featured":{"type":"boolean"},
-    "client_ids":{"description":"Client IDs from reference_search with reference_type=client.","type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `},
-    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"Copy client_ids returned by work_settings_get before editing, including an empty array when no clients were present."},
+    "client_ids":{"description":"Client IDs from reference_search with reference_type=client. Requires observed_client_ids in the same call.","type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `},
+    "observed_client_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"Required when client_ids is supplied. Copy client_ids returned by work_settings_get before editing, including an empty array when no clients were present."},
     "year":{"type":"integer","minimum":1,"maximum":9999},
     "month":{"type":"integer","minimum":1,"maximum":12},
     "map_place_id":{"type":"string","description":"Map Place UUID from map_place_list or reference_search with reference_type=map_place, or an empty string to remove the relation."},
     "until_year":{"type":"integer","minimum":1,"maximum":9999},
     "until_month":{"type":"integer","minimum":1,"maximum":12},
     "is_present":{"type":"boolean","description":"Setting true clears the stored until date. Setting false for a currently present Work requires until_year and until_month in the same call."}
-  },
-  "allOf":[
-    {"if":{"required":["metadata"]},"then":{"required":["observed_metadata"]}},
-    {"if":{"required":["client_ids"]},"then":{"required":["observed_client_ids"]}}
-  ]
+  }
 }`
 
 const workSettingsOutputJSONSchema = `{

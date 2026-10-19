@@ -21,10 +21,9 @@ const fileUploadInputJSONSchema = `{
  }
 }`
 
-const fileKindJSONSchema = `{"enum":["general","image","video","audio","attachment","mesh","track_audio"],"description":"File ingest kind. track_audio attaches original audio through existing Track authority and CAS; audio remains an independent editor File."}`
 const fileMultipartTransportJSONSchema = `{"enum":["browser_upload_page","presigned_multipart"],"description":"Byte transport through the existing authenticated browser upload flow; MCP carries metadata only."}`
-const fileSessionHandleJSONSchema = `{
-  "oneOf":[{
+const fileSessionHandleJSONSchema = `{"oneOf":` + fileSessionHandleVariantsJSONSchema + `}`
+const fileSessionHandleVariantsJSONSchema = `[{
   "type":"array","description":"Independent File session: [transport, kind, File UUID, upload ID]. Pass all four values unchanged.","prefixItems":[
     ` + fileMultipartTransportJSONSchema + `,
     {"enum":["general","image","video","audio","attachment","mesh"]},
@@ -35,53 +34,28 @@ const fileSessionHandleJSONSchema = `{
     "type":"array","description":"Track audio session: [transport, track_audio, File UUID, upload ID, Track UUID, expected current audio File UUID or empty string]. Pass all six values unchanged; empty CAS means the Track had no original audio.",
     "prefixItems":[` + fileMultipartTransportJSONSchema + `,{"const":"track_audio"},{"type":"string","format":"uuid"},{"type":"string","minLength":1,"maxLength":512},{"type":"string","format":"uuid"},{"oneOf":[{"const":""},{"type":"string","format":"uuid","minLength":1}]}],
     "items":false,"minItems":6,"maxItems":6
-  }]
-}`
+  }]`
 
-const fileTrackTargetConditionJSONSchema = `{
-  "if":{"properties":{"k":{"const":"track_audio"}},"required":["k"]},
-  "then":{"required":["track_id"]},
-  "else":{"not":{"anyOf":[{"required":["track_id"]},{"required":["expected_current_file_id"]}]}}
-}`
-
+// fileTransferInputJSONSchema is one flat root object so function-calling
+// clients can render its arguments; per-action and per-transport field rules
+// are enforced by FileTools.transfer and the MCP File facade.
 const fileTransferInputJSONSchema = `{
-  "type":"object",
-  "oneOf":[
-    {
-      "additionalProperties":false,"required":["a","k","t","n","m","s"],"allOf":[` + fileTrackTargetConditionJSONSchema + `],
-      "properties":{
-        "a":{"const":"begin","description":"Start one File transfer."},"k":` + fileKindJSONSchema + `,"t":` + fileMultipartTransportJSONSchema + `,
-        "n":{"type":"string","minLength":1,"maxLength":512,"description":"Original filename including its extension."},
-        "m":{"type":"string","minLength":1,"maxLength":255,"description":"Original MIME type; must match the filename and verified bytes."},
-        "s":{"type":"integer","minimum":1,"description":"Original File size in bytes."},
-        "lm":{"type":"integer","minimum":0,"description":"Original last-modified time in Unix epoch milliseconds, used for upload resumption."},
-        "track_id":{"type":"string","format":"uuid","description":"Required only for track_audio; existing Track UUID."},
-        "expected_current_file_id":{"type":"string","format":"uuid","description":"Track audio replacement CAS: copy the current original audio File UUID. Omit only when no original audio is attached."}
-      }
-    },
-    {
-      "additionalProperties":false,"required":["a","k","t","u"],
-      "allOf":[` + fileTrackTargetConditionJSONSchema + `,{"if":{"properties":{"k":{"enum":["image","video","audio","attachment","mesh","track_audio"]}},"required":["k"]},"then":{"required":["correlation_id"]}}],
-      "properties":{
-		"a":{"const":"begin"},"k":` + fileKindJSONSchema + `,"t":{"const":"remote_https"},
-			"u":{"type":"string","format":"uri","pattern":"^https://.+$","minLength":1,"maxLength":4096,"description":"Public HTTPS source URL without credentials or a fragment. Server import verifies bytes and uses existing media processing."},
-        "track_id":{"type":"string","format":"uuid","description":"Required only for track_audio; existing Track UUID."},
-        "expected_current_file_id":{"type":"string","format":"uuid","description":"Track audio replacement CAS: current original audio File UUID; omit only when no audio is attached."},
-        "correlation_id":{"type":"string","format":"uuid","description":"Stable UUID for one durable remote import. Required except for general File import. Reuse the same UUID on retry; use a new UUID for a different source import."}
-      }
-    },
-    {
-      "additionalProperties":false,"required":["a","h"],
-      "properties":{"a":{"const":"status"},"h":` + fileSessionHandleJSONSchema + `}
-    },
-    {
-      "additionalProperties":false,"required":["a","h"],
-      "properties":{
-        "a":{"const":"complete"},"h":` + fileSessionHandleJSONSchema + `,
-        "client_media_bundle_id":{"type":"string","format":"uuid","description":"Prepared browser media bundle ID from status. Required by FileService for direct audio/video completion; prepare browser derivatives first."}
-      }
-    }
-  ]
+  "type":"object","additionalProperties":false,"required":["a"],
+  "properties":{
+    "a":{"enum":["begin","status","complete"],"description":"Action. begin starts one File transfer (requires k and t); status inspects and complete finishes a multipart session (both require h). Send only the fields listed for the chosen action/transport."},
+    "k":{"enum":["general","image","video","audio","attachment","mesh","track_audio"],"description":"begin only, required. File ingest kind. track_audio attaches original audio through existing Track authority and CAS; audio remains an independent editor File."},
+    "t":{"enum":["browser_upload_page","presigned_multipart","remote_https"],"description":"begin only, required. browser_upload_page/presigned_multipart: multipart bytes through the existing authenticated browser upload flow (MCP carries metadata only). remote_https: server import from a public HTTPS URL."},
+    "n":{"type":"string","minLength":1,"maxLength":512,"description":"begin multipart: required; forbidden for remote_https. Original filename including its extension."},
+    "m":{"type":"string","minLength":1,"maxLength":255,"description":"begin multipart: required; forbidden for remote_https. Original MIME type; must match the filename and verified bytes."},
+    "s":{"type":"integer","minimum":1,"description":"begin multipart: required; forbidden for remote_https. Original File size in bytes."},
+    "lm":{"type":"integer","minimum":0,"description":"begin multipart: optional; forbidden for remote_https. Original last-modified time in Unix epoch milliseconds, used for upload resumption."},
+    "u":{"type":"string","format":"uri","pattern":"^https://.+$","minLength":1,"maxLength":4096,"description":"begin remote_https: required; forbidden for multipart. Public HTTPS source URL without credentials or a fragment. Server import verifies bytes and uses existing media processing."},
+    "track_id":{"type":"string","format":"uuid","description":"begin: required when k is track_audio, forbidden otherwise. Existing Track UUID."},
+    "expected_current_file_id":{"type":"string","format":"uuid","description":"begin, k=track_audio only: Track audio replacement CAS; copy the current original audio File UUID. Omit only when no original audio is attached. Forbidden for other kinds."},
+    "correlation_id":{"type":"string","format":"uuid","description":"begin remote_https only: stable UUID for one durable remote import; required for every kind except general. Reuse the same UUID on retry; use a new UUID for a different source import. Forbidden for multipart."},
+    "h":{"description":"status/complete: required; forbidden for begin. Session handle returned by begin or status; pass it unchanged.","oneOf":` + fileSessionHandleVariantsJSONSchema + `},
+    "client_media_bundle_id":{"type":"string","format":"uuid","description":"complete only, optional. Prepared browser media bundle ID from status. Required by FileService for direct audio/video completion; prepare browser derivatives first."}
+  }
 }`
 
 const fileReadInputJSONSchema = `{

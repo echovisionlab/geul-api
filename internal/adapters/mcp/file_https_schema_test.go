@@ -20,15 +20,13 @@ func TestFileHTTPSInputSchemasMatchCompleteURLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var transfer struct {
-		OneOf []struct {
-			Properties map[string]json.RawMessage `json:"properties"`
-		} `json:"oneOf"`
+		Properties map[string]json.RawMessage `json:"properties"`
 	}
 	if err := json.Unmarshal(fileTransferInputSchema(), &transfer); err != nil {
 		t.Fatal(err)
 	}
-	if len(transfer.OneOf) < 2 {
-		t.Fatal("remote HTTPS transfer schema is missing")
+	if transfer.Properties["u"] == nil {
+		t.Fatal("remote HTTPS transfer URL property is missing")
 	}
 
 	for _, schema := range []struct {
@@ -36,7 +34,7 @@ func TestFileHTTPSInputSchemasMatchCompleteURLs(t *testing.T) {
 		property json.RawMessage
 	}{
 		{name: "file_upload.download_url", property: file.Properties["download_url"]},
-		{name: "file_transfer.remote_https.u", property: transfer.OneOf[1].Properties["u"]},
+		{name: "file_transfer.remote_https.u", property: transfer.Properties["u"]},
 	} {
 		t.Run(schema.name, func(t *testing.T) {
 			var property struct {

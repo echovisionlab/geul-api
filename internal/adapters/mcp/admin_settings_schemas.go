@@ -79,7 +79,6 @@ const mailAdapterListOutputJSONSchema = `{
 
 const mailAdapterSenderUpdateInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["id"],
-  "anyOf":[{"required":["from_name"]},{"required":["from_email"]},{"required":["is_active"]},{"required":["priority"]}],
   "properties":{
     "id":{"description":"Mail adapter UUID from mail_adapter_list.","allOf":[` + uuidJSONSchema + `]},
     "from_name":{"type":"string","description":"Sender display name. Empty clears it; omission preserves it."},

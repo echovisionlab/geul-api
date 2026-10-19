@@ -25,8 +25,7 @@ const releaseSettingsUpdateInputJSONSchema = `{
     "release_date":{"type":"string","format":"date-time","description":"RFC 3339 instant with an explicit offset. Omit clear_release_date or set it false when supplying this field."},
     "clear_release_date":{"type":"boolean","default":false,"description":"Remove the release date through the native clear-release-date oneof. release_date must be omitted when true."},
     "spotify_url":{"type":"string"},"apple_music_url":{"type":"string"},"bandcamp_url":{"type":"string"},"youtube_music_url":{"type":"string"}
-  },
-  "allOf":[{"if":{"required":["clear_release_date"],"properties":{"clear_release_date":{"const":true}}},"then":{"not":{"required":["release_date"]}}}]
+  }
 }`
 
 const releaseSettingsOutputJSONSchema = `{

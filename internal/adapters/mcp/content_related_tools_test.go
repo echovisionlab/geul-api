@@ -274,11 +274,50 @@ func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, request *co
 	return connect.NewResponse(&managev1.CheckSlugAvailableResponse{Available: true}), nil
 }
 
+func TestWorkCreditSchemasHaveNoRootCombinators(t *testing.T) {
+	for name, raw := range map[string]string{"work_credit_add": workCreditAddInputJSONSchema, "work_credit_update": workCreditUpdateInputJSONSchema} {
+		var schema map[string]any
+		if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+			t.Fatal(err)
+		}
+		for _, keyword := range []string{"allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentRequired", "dependentSchemas"} {
+			if _, present := schema[keyword]; present {
+				t.Fatalf("%s input schema has root %s", name, keyword)
+			}
+		}
+	}
+}
+
+func TestWorkCreditMutationsRejectInvalidSubjectsBeforeOwner(t *testing.T) {
+	const creditID = "77777777-7777-4777-8777-777777777777"
+	artistID, memberID := "88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999"
+	for _, test := range []struct{ tool, arguments, message string }{
+		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","credit_role":"sound"}`, "exactly one of artist_id, member_id, or name is required"},
+		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","artist_id":"` + artistID + `","name":"Sound designer"}`, "exactly one of artist_id, member_id, or name is required"},
+		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","artist_id":"` + artistID + `","member_id":"` + memberID + `"}`, "exactly one of artist_id, member_id, or name is required"},
+		{ToolWorkCreditUpdate, `{"credit_id":"` + creditID + `"}`, "at least one of group_id or credit_role is required"},
+	} {
+		t.Run(test.tool+"/"+test.arguments, func(t *testing.T) {
+			works := &recordingWorkRelated{}
+			tools, err := NewContentRelatedTools(&recordingPostRelated{}, works, &recordingPageRelated{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, test.tool, toolArguments(t, test.arguments))
+			var executionErr *mcpserver.ToolExecutionError
+			if !errors.As(err, &executionErr) || executionErr.Message != test.message || works.credit != nil || works.creditUpdate != nil {
+				t.Fatalf("err = %v, owner called = %v", err, works.credit != nil || works.creditUpdate != nil)
+			}
+		})
+	}
+}
+
 type recordingWorkRelated struct {
 	managev1connect.UnimplementedWorkServiceHandler
-	versions *connect.Request[managev1.ListWorkVersionsRequest]
-	featured *connect.Request[managev1.SetWorkFeaturedImageRequest]
-	credit   *connect.Request[managev1.AddWorkCreditRequest]
+	versions     *connect.Request[managev1.ListWorkVersionsRequest]
+	featured     *connect.Request[managev1.SetWorkFeaturedImageRequest]
+	credit       *connect.Request[managev1.AddWorkCreditRequest]
+	creditUpdate *connect.Request[managev1.UpdateWorkCreditRequest]
 }
 
 func (r *recordingWorkRelated) ListWorkVersions(_ context.Context, request *connect.Request[managev1.ListWorkVersionsRequest]) (*connect.Response[managev1.ListWorkVersionsResponse], error) {
@@ -301,6 +340,7 @@ func (r *recordingWorkRelated) UpdateWorkCreditGroup(_ context.Context, request 
 }
 
 func (r *recordingWorkRelated) UpdateWorkCredit(_ context.Context, request *connect.Request[managev1.UpdateWorkCreditRequest]) (*connect.Response[managev1.WorkCredit], error) {
+	r.creditUpdate = request
 	return connect.NewResponse(&managev1.WorkCredit{Id: request.Msg.CreditId, CreditRole: request.Msg.CreditRole}), nil
 }
 

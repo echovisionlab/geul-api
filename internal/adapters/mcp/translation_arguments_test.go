@@ -43,6 +43,18 @@ func TestTranslationJobSortAcceptsSupportedFields(t *testing.T) {
 	}
 }
 
+func TestTranslationJobListRequiresProfileAndDocumentTogether(t *testing.T) {
+	for _, arguments := range []string{`{"p":"post"}`, `{"d":"post-a"}`} {
+		var input translationJobsListArguments
+		if err := decodeArguments(toolArguments(t, arguments), &input); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := translationJobsListRequest(input); err == nil {
+			t.Fatalf("partial document filter was accepted: %s", arguments)
+		}
+	}
+}
+
 func TestTranslationJobSortDirectionRequiresExplicitField(t *testing.T) {
 	for _, arguments := range []string{`{"z":false}`, `{"z":true}`} {
 		var input translationJobsListArguments

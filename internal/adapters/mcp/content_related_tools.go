@@ -45,8 +45,8 @@ var contentRelatedTools = []mcpserver.Tool{
 	oauthTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
 	oauthTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true),
 	oauthTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
+	oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group. Supply exactly one of artist_id, member_id, or name.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
+	oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields. Supply group_id, credit_role, or both.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
 	oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
 	oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false),
 	oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true),
@@ -331,6 +331,15 @@ func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName
 	output := map[string]any{"resource_type": "work_credit"}
 	switch toolName {
 	case ToolWorkCreditAdd:
+		subjects := 0
+		for _, present := range []bool{input.ArtistID != nil, input.MemberID != nil, input.Name != nil} {
+			if present {
+				subjects++
+			}
+		}
+		if subjects != 1 {
+			return executionError(errors.New("exactly one of artist_id, member_id, or name is required"))
+		}
 		response, err := tools.works.AddWorkCredit(ctx, connect.NewRequest(&managev1.AddWorkCreditRequest{WorkId: input.DocumentID, GroupId: input.GroupID, ArtistId: input.ArtistID, MemberId: input.MemberID, Name: input.Name, CreditRole: input.CreditRole}))
 		if err != nil {
 			return expectedToolError(err)
@@ -339,6 +348,9 @@ func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName
 		output["changed"] = true
 		copyWorkCreditMutationFields(output, response.Msg)
 	case ToolWorkCreditUpdate:
+		if input.GroupID == nil && input.CreditRole == nil {
+			return executionError(errors.New("at least one of group_id or credit_role is required"))
+		}
 		response, err := tools.works.UpdateWorkCredit(ctx, connect.NewRequest(&managev1.UpdateWorkCreditRequest{CreditId: input.CreditID, GroupId: input.GroupID, CreditRole: input.CreditRole}))
 		if err != nil {
 			return expectedToolError(err)

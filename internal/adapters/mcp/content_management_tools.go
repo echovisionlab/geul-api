@@ -53,7 +53,7 @@ var contentManagementTools = []mcpserver.Tool{
 	contentTool(ToolPostScheduleCancel, "Cancel Post schedule", "Cancel the current Post publication schedule.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostRepublish, "Republish Post", "Move an archived Post back to published.", contentIDInputJSONSchema, true),
 	contentTool(ToolPostDelete, "Delete Post", "Permanently delete a Post allowed by its current lifecycle state.", contentIDInputJSONSchema, true),
-	contentTool(ToolWorkCreate, "Create Work", "Create a new draft Work with an empty typed document in the requested source locale.", workCreateInputJSONSchema, false),
+	contentTool(ToolWorkCreate, "Create Work", "Create a new draft Work with an empty typed document in the requested source locale. Set is_present true for an ongoing Work, or supply both until_year and until_month.", workCreateInputJSONSchema, false),
 	oauthTool(ToolWorkSettingsGet, "Get Work settings", "Read current Work settings through the authorized Work service. Before editing metadata or client_ids, copy the returned metadata to observed_metadata and client_ids to observed_client_ids for work_settings_update.", contentIDInputJSONSchema, workSettingsOutputJSONSchema, true, false),
 	contentTool(ToolWorkSettingsUpdate, "Update Work settings", "Update Work slug, type, metadata, featured flag, clients, period, or Map Place relation. Read work_settings_get before editing metadata or client_ids and supply its unchanged values as observed_metadata or observed_client_ids; concurrent peer edits are merged using that observed baseline. Use document_metadata_update for title or summary.", workSettingsUpdateInputJSONSchema, true),
 	contentTool(ToolWorkPublish, "Publish Work", "Publish a draft Work or restore a legacy archived Work to published.", contentIDInputJSONSchema, true),
@@ -416,6 +416,13 @@ func (tools *ContentManagementTools) createWork(ctx context.Context, arguments m
 	workType, err := parseWorkType(input.Type)
 	if err != nil {
 		return executionError(err)
+	}
+	if input.IsPresent != nil && *input.IsPresent {
+		if input.UntilYear != nil || input.UntilMonth != nil {
+			return executionError(errors.New("until_year and until_month must be omitted when is_present is true"))
+		}
+	} else if input.UntilYear == nil || input.UntilMonth == nil {
+		return executionError(errors.New("until_year and until_month are required unless is_present is true"))
 	}
 	request := connect.NewRequest(&managev1.CreateWorkRequest{Title: input.Title, Slug: input.Slug, Type: workType, Summary: input.Summary, Metadata: metadata, Featured: input.Featured, Year: input.Year, Month: input.Month, UntilYear: input.UntilYear, UntilMonth: input.UntilMonth, IsPresent: input.IsPresent, SourceLocale: input.SourceLocale, Document: emptyRichTextDocument(contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, input.SourceLocale)})
 	request.Header().Set("Accept-Language", input.SourceLocale)

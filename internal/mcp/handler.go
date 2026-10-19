@@ -731,6 +731,9 @@ func validateTool(tool Tool) error {
 	if !isObjectSchema(tool.InputSchema) {
 		return errors.New("mcp: invalid tool input schema")
 	}
+	if keyword := topLevelSchemaCombinator(tool.InputSchema); keyword != "" {
+		return fmt.Errorf("mcp: tool %s input schema has top-level %s", tool.Name, keyword)
+	}
 	if len(tool.OutputSchema) != 0 && !isObjectSchema(tool.OutputSchema) {
 		return errors.New("mcp: invalid tool output schema")
 	}
@@ -777,6 +780,23 @@ func equalSecuritySchemes(left, right []ToolSecurityScheme) bool {
 		}
 	}
 	return true
+}
+
+// topLevelSchemaCombinator reports a combinator or conditional at the root of
+// an input schema. Clients such as Codex and OpenAI function calling require a
+// plain object root and list such tools without arguments, so cross-field
+// rules belong in descriptions and handler validation.
+func topLevelSchemaCombinator(raw json.RawMessage) string {
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return ""
+	}
+	for _, keyword := range []string{"allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentRequired", "dependentSchemas"} {
+		if _, ok := schema[keyword]; ok {
+			return keyword
+		}
+	}
+	return ""
 }
 
 func isObjectSchema(raw json.RawMessage) bool {

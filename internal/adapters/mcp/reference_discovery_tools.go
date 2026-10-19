@@ -20,8 +20,7 @@ const (
 
 const referenceSearchInputJSONSchema = `{
   "type":"object","additionalProperties":false,"required":["reference_type","query"],
-  "properties":{"reference_type":{"enum":["category","tag","client","map_place","member","artist"]},"query":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20}},
-  "allOf":[{"if":{"properties":{"reference_type":{"enum":["client","map_place"]}},"required":["reference_type"]},"then":{"properties":{"limit":{"maximum":50}}}}]
+  "properties":{"reference_type":{"enum":["category","tag","client","map_place","member","artist"]},"query":{"type":"string","minLength":1},"limit":{"type":"integer","minimum":1,"maximum":100,"default":20,"description":"Maximum results. At most 50 for client and map_place; 100 for other types."}}
 }`
 
 const referenceSearchOutputJSONSchema = `{
