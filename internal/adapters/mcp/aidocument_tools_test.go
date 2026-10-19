@@ -28,7 +28,7 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 	}
 	wantNames := []string{
 		ToolDocumentOpen, ToolDocumentRead,
-		ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete,
+		ToolParagraphCreate, ToolParagraphUpdate, ToolHeadingCreate, ToolHeadingUpdate, ToolTableCreate, ToolBlockDelete,
 		ToolMetadataUpdate,
 		ToolDocumentValidate, ToolDocumentApply,
 	}
@@ -37,6 +37,9 @@ func TestAIDocumentToolsListCompactTypedSurface(t *testing.T) {
 		ToolDocumentRead:     toolAnnotations(true, false, false),
 		ToolParagraphCreate:  toolAnnotations(false, false, false),
 		ToolParagraphUpdate:  toolAnnotations(false, true, false),
+		ToolHeadingCreate:    toolAnnotations(false, false, false),
+		ToolHeadingUpdate:    toolAnnotations(false, true, false),
+		ToolTableCreate:      toolAnnotations(false, false, false),
 		ToolBlockDelete:      toolAnnotations(false, true, false),
 		ToolMetadataUpdate:   toolAnnotations(false, true, false),
 		ToolDocumentValidate: toolAnnotations(true, false, false),
@@ -186,7 +189,7 @@ func TestParagraphCreateRejectsNullPlacementHandles(t *testing.T) {
 
 func TestMutationToolsDeclareStructuredValidationRejections(t *testing.T) {
 	operation := core.SetFieldOperation("paragraph-a", "content", core.Text("wrong kind"))
-	for _, name := range []string{ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply} {
+	for _, name := range []string{ToolParagraphCreate, ToolParagraphUpdate, ToolHeadingCreate, ToolHeadingUpdate, ToolTableCreate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply} {
 		t.Run(name, func(t *testing.T) {
 			application := &recordingAIDocumentApplication{applyError: &core.ValidationError{Result: core.ValidationResult{
 				Normalized: []core.Operation{operation},
@@ -194,6 +197,15 @@ func TestMutationToolsDeclareStructuredValidationRejections(t *testing.T) {
 			}}}
 			arguments := toolArguments(t, `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"ko","expected_document_revision":"revision-a"}`)
 			switch name {
+			case ToolHeadingCreate, ToolHeadingUpdate:
+				arguments["text"] = json.RawMessage(`"heading"`)
+				arguments["level"] = json.RawMessage(`2`)
+				if name == ToolHeadingUpdate {
+					arguments["block_id"] = json.RawMessage(`"heading-a"`)
+				}
+			case ToolTableCreate:
+				arguments["rows"] = json.RawMessage(`[["cell"]]`)
+				arguments["after_block_id"] = json.RawMessage(`"paragraph-a"`)
 			case ToolParagraphCreate:
 				arguments["text"] = json.RawMessage(`"paragraph"`)
 			case ToolParagraphUpdate:
@@ -519,7 +531,7 @@ func TestAIDocumentToolsServeListAndCallThroughAuthenticatedHTTPAssembly(t *test
 	}
 	for _, name := range []string{
 		ToolDocumentOpen, ToolDocumentRead,
-		ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete,
+		ToolParagraphCreate, ToolParagraphUpdate, ToolHeadingCreate, ToolHeadingUpdate, ToolTableCreate, ToolBlockDelete,
 		ToolDocumentValidate, ToolDocumentApply,
 	} {
 		if !strings.Contains(listResponse.Body.String(), `"name":"`+name+`"`) {

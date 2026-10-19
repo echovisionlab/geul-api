@@ -273,6 +273,10 @@ func documentOpenMetadata(document Document) OpenMetadata {
 
 func cloneDiscoveryCatalog(catalog Catalog) Catalog {
 	catalog.BlockKinds = append([]BlockKind(nil), catalog.BlockKinds...)
+	catalog.BlockRules = append([]BlockKindRule(nil), catalog.BlockRules...)
+	for index := range catalog.BlockRules {
+		catalog.BlockRules[index].AllowedParents = append([]BlockKind(nil), catalog.BlockRules[index].AllowedParents...)
+	}
 	catalog.Fields = append([]FieldRule(nil), catalog.Fields...)
 	for index := range catalog.Fields {
 		catalog.Fields[index].Schema = cloneDiscoverySchema(catalog.Fields[index].Schema)
@@ -293,6 +297,19 @@ func cloneDiscoverySchema(schema *FieldSchema) *FieldSchema {
 		return nil
 	}
 	cloned := *schema
+	cloned.EnumValues = append([]any(nil), schema.EnumValues...)
+	if schema.ExclusiveMinimum != nil {
+		v := *schema.ExclusiveMinimum
+		cloned.ExclusiveMinimum = &v
+	}
+	if schema.Minimum != nil {
+		v := *schema.Minimum
+		cloned.Minimum = &v
+	}
+	if schema.Maximum != nil {
+		v := *schema.Maximum
+		cloned.Maximum = &v
+	}
 	cloned.Item = cloneDiscoverySchema(schema.Item)
 	cloned.Identity.Handles = append([]RelationItemID(nil), schema.Identity.Handles...)
 	cloned.Fields = append([]NestedFieldRule(nil), schema.Fields...)

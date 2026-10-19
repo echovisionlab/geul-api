@@ -245,7 +245,7 @@ func TestDocumentSyncSchemasPreserveSuccessAndRootReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed = append(listed, files...)
-	originals := map[string]string{ToolDocumentRead: projectionOutputJSONSchema, ToolParagraphCreate: focusedMutationOutputJSONSchema, ToolParagraphUpdate: focusedMutationOutputJSONSchema, ToolBlockDelete: focusedMutationOutputJSONSchema, ToolMetadataUpdate: focusedMutationOutputJSONSchema, ToolDocumentApply: acceptedOutputJSONSchema, ToolDocumentValidate: validationOutputJSONSchema, ToolDocumentFileAdd: documentFileMutationOutputJSONSchema, ToolDocumentFileReplace: documentFileMutationOutputJSONSchema, ToolDocumentFileRemove: documentFileMutationOutputJSONSchema}
+	originals := map[string]string{ToolHeadingCreate: focusedMutationOutputJSONSchema, ToolHeadingUpdate: focusedMutationOutputJSONSchema, ToolTableCreate: focusedMutationOutputJSONSchema, ToolDocumentRead: projectionOutputJSONSchema, ToolParagraphCreate: focusedMutationOutputJSONSchema, ToolParagraphUpdate: focusedMutationOutputJSONSchema, ToolBlockDelete: focusedMutationOutputJSONSchema, ToolMetadataUpdate: focusedMutationOutputJSONSchema, ToolDocumentApply: acceptedOutputJSONSchema, ToolDocumentValidate: validationOutputJSONSchema, ToolDocumentFileAdd: documentFileMutationOutputJSONSchema, ToolDocumentFileReplace: documentFileMutationOutputJSONSchema, ToolDocumentFileRemove: documentFileMutationOutputJSONSchema}
 	for _, tool := range listed {
 		original, ok := originals[tool.Name]
 		if !ok {
@@ -266,7 +266,7 @@ func TestDocumentSyncSchemasPreserveSuccessAndRootReferences(t *testing.T) {
 				defs := expected["$defs"]
 				delete(expected, "$defs")
 				switch tool.Name {
-				case ToolParagraphCreate, ToolParagraphUpdate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply:
+				case ToolParagraphCreate, ToolParagraphUpdate, ToolHeadingCreate, ToolHeadingUpdate, ToolTableCreate, ToolBlockDelete, ToolMetadataUpdate, ToolDocumentApply:
 					var rejection map[string]any
 					if err := json.Unmarshal([]byte(validationOutputJSONSchema), &rejection); err != nil {
 						t.Fatal(err)

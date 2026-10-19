@@ -124,6 +124,9 @@ func (p *pagePort) executeMutation(
 			if err := run.validateLoaded(current, request); err != nil {
 				return pagedomain.AIDocumentMutation{}, err
 			}
+			if err := run.rejectIssues(p.codec.validateRichOperations(current.Nodes, run.command.Operations)); err != nil {
+				return pagedomain.AIDocumentMutation{}, err
+			}
 			contributor, err := canonicalPageContributor(state.ViewerMemberID)
 			if err != nil {
 				return pagedomain.AIDocumentMutation{}, err

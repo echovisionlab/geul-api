@@ -223,12 +223,12 @@ func TestDocumentCatalogToolSchemasAndRegistry(t *testing.T) {
 		}
 	}
 	shape := schema["$defs"].(map[string]any)["shape"].(map[string]any)["properties"].(map[string]any)
-	for _, name := range []string{"kind", "ownership", "translatable", "file", "item", "fields", "identity"} {
+	for _, name := range []string{"kind", "ownership", "translatable", "file", "item", "fields", "identity", "enum_values", "minimum", "maximum", "required"} {
 		if shape[name] == nil {
 			t.Fatalf("missing recursive property %s", name)
 		}
 	}
-	for _, invented := range []string{"default", "minimum", "maximum", "enum_values", "required_value"} {
+	for _, invented := range []string{"default", "required_value"} {
 		if shape[invented] != nil {
 			t.Fatalf("invented domain constraint %s", invented)
 		}

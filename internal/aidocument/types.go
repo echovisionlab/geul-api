@@ -506,16 +506,21 @@ const (
 )
 
 // FieldSchema is the recursive, generated catalog projection consumed by the
-// generic DCDP validator. It describes shape and stable list identity only;
+// generic DCDP validator. Generated constraints are also exposed for discovery;
 // owning-domain required/default constraints stay at the compiler boundary.
 type FieldSchema struct {
-	Kind         ValueKind
-	Ownership    FieldOwnership
-	Translatable bool
-	File         bool
-	Item         *FieldSchema
-	Fields       []NestedFieldRule
-	Identity     ListIdentityRule
+	EnumValues       []any
+	ExclusiveMinimum *float64
+	Minimum          *float64
+	Maximum          *float64
+	Required         bool
+	Kind             ValueKind
+	Ownership        FieldOwnership
+	Translatable     bool
+	File             bool
+	Item             *FieldSchema
+	Fields           []NestedFieldRule
+	Identity         ListIdentityRule
 }
 
 type NestedFieldRule struct {
@@ -547,7 +552,14 @@ type RelationFieldRule struct {
 	Schema       *FieldSchema
 }
 
+type BlockKindRule struct {
+	Kind           BlockKind
+	Category       string
+	AllowedParents []BlockKind
+}
+
 type Catalog struct {
+	BlockRules     []BlockKindRule
 	Fingerprint    string
 	BlockKinds     []BlockKind
 	Fields         []FieldRule
