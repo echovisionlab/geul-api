@@ -97,7 +97,7 @@ func ArtistSourceTitleSQL(tableAlias string) string {
 	if alias == "" {
 		alias = "artist"
 	}
-	return "COALESCE((SELECT at.title FROM artist_translation AS at JOIN artist AS source ON source.id = at.entity_id AND source.source_locale = at.locale WHERE at.id = " + alias + ".id LIMIT 1), '')"
+	return "COALESCE((SELECT at.title FROM artist_translation AS at WHERE at.entity_id = " + alias + ".id AND at.locale = " + alias + ".source_locale LIMIT 1), '')"
 }
 
 func validateWorkDatePoint(yearField, monthField string, year, month int32) error {
