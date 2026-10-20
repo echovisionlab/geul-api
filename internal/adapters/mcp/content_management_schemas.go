@@ -6,11 +6,12 @@ const contentIDInputJSONSchema = `{
 }`
 
 const managementDocumentLayoutJSONSchema = `{
-  "type":"object","additionalProperties":false,"required":["content_height","page_chrome","footer"],
+  "type":"object","additionalProperties":false,"required":["content_height","page_chrome","footer","hide_table_of_contents"],
   "properties":{
     "content_height":{"enum":["DOCUMENT_CONTENT_HEIGHT_CONTENT","DOCUMENT_CONTENT_HEIGHT_VIEWPORT"]},
     "page_chrome":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]},
-    "footer":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]}
+    "footer":{"enum":["DOCUMENT_REGION_PLACEMENT_FLOW","DOCUMENT_REGION_PLACEMENT_PINNED"]},
+    "hide_table_of_contents":{"type":"boolean"}
   }
 }`
 

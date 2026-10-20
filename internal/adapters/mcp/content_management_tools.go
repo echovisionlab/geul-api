@@ -207,9 +207,10 @@ type postSettingsArguments struct {
 }
 
 type documentLayoutArguments struct {
-	ContentHeight string `json:"content_height"`
-	PageChrome    string `json:"page_chrome"`
-	Footer        string `json:"footer"`
+	ContentHeight       string `json:"content_height"`
+	PageChrome          string `json:"page_chrome"`
+	Footer              string `json:"footer"`
+	HideTableOfContents *bool  `json:"hide_table_of_contents"`
 }
 
 func (input documentLayoutArguments) proto() (*commonv1.DocumentLayout, error) {
@@ -225,14 +226,18 @@ func (input documentLayoutArguments) proto() (*commonv1.DocumentLayout, error) {
 	if !ok || (footer != int32(commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW) && footer != int32(commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED)) {
 		return nil, errors.New("document_layout.footer must be DOCUMENT_REGION_PLACEMENT_FLOW or DOCUMENT_REGION_PLACEMENT_PINNED")
 	}
-	return &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight(height), PageChrome: commonv1.DocumentRegionPlacement(chrome), Footer: commonv1.DocumentRegionPlacement(footer)}, nil
+	if input.HideTableOfContents == nil {
+		return nil, errors.New("document_layout.hide_table_of_contents is required")
+	}
+	return &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight(height), PageChrome: commonv1.DocumentRegionPlacement(chrome), Footer: commonv1.DocumentRegionPlacement(footer), HideTableOfContents: *input.HideTableOfContents}, nil
 }
 
 func documentLayoutOutput(layout *commonv1.DocumentLayout) any {
 	if layout == nil {
 		return nil
 	}
-	return documentLayoutArguments{ContentHeight: layout.ContentHeight.String(), PageChrome: layout.PageChrome.String(), Footer: layout.Footer.String()}
+	hideTableOfContents := layout.HideTableOfContents
+	return documentLayoutArguments{ContentHeight: layout.ContentHeight.String(), PageChrome: layout.PageChrome.String(), Footer: layout.Footer.String(), HideTableOfContents: &hideTableOfContents}
 }
 
 func (tools *ContentManagementTools) getPostSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {

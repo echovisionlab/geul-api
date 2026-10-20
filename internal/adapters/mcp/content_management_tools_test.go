@@ -115,7 +115,7 @@ func TestWorkCreateRejectsInvalidDateRangeBeforeOwner(t *testing.T) {
 }
 
 func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T) {
-	layout := &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT, PageChrome: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED, Footer: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW}
+	layout := &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT, PageChrome: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED, Footer: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW, HideTableOfContents: true}
 	slug, summary, zone := "source-slug", "source-summary", "Asia/Seoul"
 	mapPlaceID := managementPageID
 	stamp := timestamppb.New(time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC))
@@ -140,7 +140,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLayout := map[string]any{"content_height": "DOCUMENT_CONTENT_HEIGHT_VIEWPORT", "page_chrome": "DOCUMENT_REGION_PLACEMENT_PINNED", "footer": "DOCUMENT_REGION_PLACEMENT_FLOW"}
+	wantLayout := map[string]any{"content_height": "DOCUMENT_CONTENT_HEIGHT_VIEWPORT", "page_chrome": "DOCUMENT_REGION_PLACEMENT_PINNED", "footer": "DOCUMENT_REGION_PLACEMENT_FLOW", "hide_table_of_contents": true}
 	for _, test := range []struct {
 		name, id string
 		want     map[string]any
@@ -296,19 +296,19 @@ func TestPostSettingsLayoutUsesExactNativeEnumsAndAuthoritativeResponse(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPostSettingsUpdate, toolArguments(t, `{"document_id":"`+managementPostID+`","expected_configuration_revision":"`+managementPostConfigurationRevision+`","comments_enabled":true,"document_layout":{"content_height":"DOCUMENT_CONTENT_HEIGHT_VIEWPORT","page_chrome":"DOCUMENT_REGION_PLACEMENT_PINNED","footer":"DOCUMENT_REGION_PLACEMENT_PINNED"}}`))
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPostSettingsUpdate, toolArguments(t, `{"document_id":"`+managementPostID+`","expected_configuration_revision":"`+managementPostConfigurationRevision+`","comments_enabled":true,"document_layout":{"content_height":"DOCUMENT_CONTENT_HEIGHT_VIEWPORT","page_chrome":"DOCUMENT_REGION_PLACEMENT_PINNED","footer":"DOCUMENT_REGION_PLACEMENT_PINNED","hide_table_of_contents":true}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := posts.update.Msg
-	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT || request.DocumentLayout.PageChrome != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || request.DocumentLayout.Footer != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED {
+	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT || request.DocumentLayout.PageChrome != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || request.DocumentLayout.Footer != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || !request.DocumentLayout.HideTableOfContents {
 		t.Fatalf("layout request=%+v", request)
 	}
 	if result.StructuredContent["changed"] != false || result.StructuredContent["comments_enabled"] != false || result.StructuredContent["slug"] != storedSlug || result.StructuredContent["map_place_id"] != storedPlace || result.StructuredContent["configuration_revision"] != managementPostConfigurationRevision {
 		t.Fatalf("request values replaced owning response: %+v", result.StructuredContent)
 	}
 	layout := result.StructuredContent["document_layout"].(map[string]any)
-	if layout["content_height"] != "DOCUMENT_CONTENT_HEIGHT_CONTENT" || layout["page_chrome"] != "DOCUMENT_REGION_PLACEMENT_FLOW" {
+	if layout["content_height"] != "DOCUMENT_CONTENT_HEIGHT_CONTENT" || layout["page_chrome"] != "DOCUMENT_REGION_PLACEMENT_FLOW" || layout["hide_table_of_contents"] != false {
 		t.Fatalf("layout response=%+v", layout)
 	}
 }
@@ -323,7 +323,7 @@ func TestPostSettingsLayoutSchemaAdvertisesExactNativeEnums(t *testing.T) {
 	if err := json.Unmarshal([]byte(managementDocumentLayoutJSONSchema), &schema); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(schema.Required, []string{"content_height", "page_chrome", "footer"}) {
+	if !reflect.DeepEqual(schema.Required, []string{"content_height", "page_chrome", "footer", "hide_table_of_contents"}) {
 		t.Fatalf("layout required=%+v", schema.Required)
 	}
 	if !reflect.DeepEqual(schema.Properties["content_height"].Enum, []string{commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT.String(), commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT.String()}) {
@@ -345,6 +345,8 @@ func TestPostSettingsLayoutRejectsInvalidOrPartialNativeEnumsBeforeMutation(t *t
 		`{"content_height":"DOCUMENT_CONTENT_HEIGHT_CONTENT","page_chrome":"DOCUMENT_REGION_PLACEMENT_UNSPECIFIED","footer":"DOCUMENT_REGION_PLACEMENT_FLOW"}`,
 		`{"content_height":"DOCUMENT_CONTENT_HEIGHT_CONTENT","page_chrome":"DOCUMENT_REGION_PLACEMENT_FLOW"}`,
 		`{"content_height":2,"page_chrome":"DOCUMENT_REGION_PLACEMENT_FLOW","footer":"DOCUMENT_REGION_PLACEMENT_FLOW"}`,
+		`{"content_height":"DOCUMENT_CONTENT_HEIGHT_CONTENT","page_chrome":"DOCUMENT_REGION_PLACEMENT_FLOW","footer":"DOCUMENT_REGION_PLACEMENT_FLOW","hide_table_of_contents":null}`,
+		`{"content_height":"DOCUMENT_CONTENT_HEIGHT_CONTENT","page_chrome":"DOCUMENT_REGION_PLACEMENT_FLOW","footer":"DOCUMENT_REGION_PLACEMENT_FLOW","hide_table_of_contents":"true"}`,
 	} {
 		t.Run(layout, func(t *testing.T) {
 			posts := &recordingPostManagement{}

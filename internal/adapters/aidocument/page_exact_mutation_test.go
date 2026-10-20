@@ -115,6 +115,9 @@ func TestPageExactDocumentLayoutProjectionAndAtomicCompilation(t *testing.T) {
 	height, found := coreObjectValue(layout, "contentHeight")
 	require.True(t, found)
 	require.Equal(t, "DOCUMENT_CONTENT_HEIGHT_CONTENT", height.Text)
+	hidden, found := coreObjectValue(layout, "hideTableOfContents")
+	require.True(t, found)
+	require.Equal(t, core.Boolean(false), hidden)
 	api.result = pagedomain.AIDocumentMutationResult{DocumentRevision: uuid.NewString(), Changed: true}
 	service, err := core.NewService(port)
 	require.NoError(t, err)
@@ -124,8 +127,10 @@ func TestPageExactDocumentLayoutProjectionAndAtomicCompilation(t *testing.T) {
 			core.ObjectValue("contentHeight", core.Text("DOCUMENT_CONTENT_HEIGHT_VIEWPORT")),
 			core.ObjectValue("pageChrome", core.Text("DOCUMENT_REGION_PLACEMENT_PINNED")),
 			core.ObjectValue("footer", core.Text("DOCUMENT_REGION_PLACEMENT_FLOW")),
+			core.ObjectValue("hideTableOfContents", core.Boolean(false)),
 		)),
 		core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")}, core.Text("DOCUMENT_REGION_PLACEMENT_PINNED")),
+		core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("hideTableOfContents")}, core.Boolean(true)),
 		core.SetNestedFieldOperation(section, pageSectionDataField, []core.FieldPathSegment{core.ObjectPath("props"), core.ObjectPath("uri")}, core.Text("https://example.com/changed")),
 	)
 	_, err = service.Apply(t.Context(), request)
@@ -133,7 +138,7 @@ func TestPageExactDocumentLayoutProjectionAndAtomicCompilation(t *testing.T) {
 	require.Len(t, api.mutations, 1)
 	mutation := api.mutations[0]
 	require.True(t, mutation.Metadata.SetDocumentLayout)
-	require.Equal(t, model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned}, mutation.Metadata.DocumentLayout)
+	require.Equal(t, model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned, HideTableOfContents: true}, mutation.Metadata.DocumentLayout)
 	require.Len(t, mutation.Batch.Upserts, 1)
 	require.Contains(t, string(mutation.Batch.Upserts[0].SharedData), "https://example.com/changed")
 	require.Equal(t, model.DefaultDocumentLayout(), api.state.Page.DocumentLayout)
@@ -150,6 +155,12 @@ func TestPageExactDocumentLayoutRejectsTargetInvalidAndUnset(t *testing.T) {
 		{"unset leaf", "en", core.UnsetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")})},
 		{"invalid enum", "en", core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("footer")}, core.Text("pinned"))},
 		{"incomplete replacement", "en", core.SetFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, core.Object(core.ObjectValue("footer", core.Text("DOCUMENT_REGION_PLACEMENT_PINNED"))))},
+		{"replacement without table of contents flag", "en", core.SetFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, core.Object(
+			core.ObjectValue("contentHeight", core.Text("DOCUMENT_CONTENT_HEIGHT_CONTENT")),
+			core.ObjectValue("pageChrome", core.Text("DOCUMENT_REGION_PLACEMENT_FLOW")),
+			core.ObjectValue("footer", core.Text("DOCUMENT_REGION_PLACEMENT_FLOW")),
+		))},
+		{"text table of contents flag", "en", core.SetNestedFieldOperation(pageMetadataBlockID, pageDocumentLayoutField, []core.FieldPathSegment{core.ObjectPath("hideTableOfContents")}, core.Text("true"))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			port, api, identity := newExactPagePortForLocale(t, test.locale, true)
