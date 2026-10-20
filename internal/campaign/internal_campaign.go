@@ -70,11 +70,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "ApplyBlockBatch", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -242,11 +238,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "UpdateCampaignLocaleMetadata", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -396,11 +388,7 @@ func (s *InternalCampaignService) LoadDocument(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 

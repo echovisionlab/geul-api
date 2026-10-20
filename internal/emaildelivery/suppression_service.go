@@ -56,11 +56,7 @@ func (s *EmailSuppressionService) GetEmailSuppression(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "GetEmailSuppression", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, req.Msg.Email))
 	}()
 
@@ -88,11 +84,7 @@ func (s *EmailSuppressionService) ReleaseEmailSuppression(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "ReleaseEmailSuppression", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, req.Msg.Email))
 	}()
 

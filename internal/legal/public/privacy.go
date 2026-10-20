@@ -53,11 +53,7 @@ func (s *PrivacyService) Get(
 ) (rpcResponse *connect.Response[openv1.GetPrivacyResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr, optionalStringValue(req.Msg.ShareToken), optionalStringValue(req.Msg.SharePassword))
 			slog.Log(ctx, level, "RPC failed", "service", "public.Privacy", "method", "Get", "failure_cause", cause)
 		}
@@ -112,11 +108,7 @@ func (s *PrivacyService) List(
 ) (rpcResponse *connect.Response[openv1.ListPrivacyResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "service", "public.Privacy", "method", "List", "failure_cause", cause)
 		}

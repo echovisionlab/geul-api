@@ -130,11 +130,7 @@ func (s *AIDocumentService) Load(ctx context.Context, templateID, locale string)
 		return err
 	})
 	if err != nil {
-		level := slog.LevelWarn
-		switch connect.CodeOf(err) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(err)
 		slog.Log(ctx, level, "AI document load failed", "domain", "emailauthoring", "event", "emailauthoring.document_load_failed", "outcome", "failed", "entity_id", templateID, "locale", locale, failurecause.Attr(err))
 	}
 	return state, err

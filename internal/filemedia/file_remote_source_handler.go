@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -37,22 +38,14 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	request, err := s.prepareRemoteImport(r.Context(), opts)
 	if err != nil {
-		level := slog.LevelWarn
-		switch connect.CodeOf(err) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(err)
 		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
 		writeUploadSourceError(w, err)
 		return
 	}
 	source, err := s.openBrowserUploadSource(r.Context(), request)
 	if err != nil {
-		level := slog.LevelWarn
-		switch connect.CodeOf(err) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(err)
 		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
 		writeUploadSourceError(w, err)
 		return

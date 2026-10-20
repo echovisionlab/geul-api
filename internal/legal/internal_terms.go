@@ -66,11 +66,7 @@ func (s *InternalTermsService) LoadTermsBlockDocument(
 ) (rpcResponse *connect.Response[intrav1.LoadTermsBlockDocumentResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "LoadTermsBlockDocument", "failure_cause", cause)
 		}
@@ -107,11 +103,7 @@ func (s *InternalTermsService) ApplyTermsBlockBatch(
 ) (rpcResponse *connect.Response[intrav1.ApplyTermsBlockBatchResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ApplyTermsBlockBatch", "failure_cause", cause)
 		}
@@ -136,11 +128,7 @@ func (s *InternalTermsService) UpdateTermsLocaleMetadata(
 ) (rpcResponse *connect.Response[intrav1.UpdateTermsLocaleMetadataResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "UpdateTermsLocaleMetadata", "failure_cause", cause)
 		}

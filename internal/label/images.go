@@ -93,11 +93,7 @@ func (s *LabelService) SetLabelImage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.SetLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
 	}()
 
@@ -197,11 +193,7 @@ func (s *LabelService) DeleteLabelImage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
 	}()
 

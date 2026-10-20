@@ -51,11 +51,7 @@ func (handler *PersonalAccessTokenHandler) CreateMyPersonalAccessToken(
 ) (rpcResponse *connect.Response[managev1.CreateMyPersonalAccessTokenResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "CreateMyPersonalAccessToken", "failure_cause", cause)
 		}
@@ -73,11 +69,7 @@ func (handler *PersonalAccessTokenHandler) CreateAccountPersonalAccessToken(
 ) (rpcResponse *connect.Response[managev1.CreateMyPersonalAccessTokenResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "CreateAccountPersonalAccessToken", "failure_cause", cause)
 		}
@@ -116,11 +108,7 @@ func (handler *PersonalAccessTokenHandler) ListMyPersonalAccessTokens(
 ) (rpcResponse *connect.Response[managev1.ListMyPersonalAccessTokensResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ListMyPersonalAccessTokens", "failure_cause", cause)
 		}
@@ -138,11 +126,7 @@ func (handler *PersonalAccessTokenHandler) ListAccountPersonalAccessTokens(
 ) (rpcResponse *connect.Response[managev1.ListMyPersonalAccessTokensResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ListAccountPersonalAccessTokens", "failure_cause", cause)
 		}
@@ -184,11 +168,7 @@ func (handler *PersonalAccessTokenHandler) RegenerateMyPersonalAccessToken(
 ) (rpcResponse *connect.Response[managev1.RegenerateMyPersonalAccessTokenResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "RegenerateMyPersonalAccessToken", "failure_cause", cause)
 		}
@@ -210,11 +190,7 @@ func (handler *PersonalAccessTokenHandler) RegenerateAccountPersonalAccessToken(
 ) (rpcResponse *connect.Response[managev1.RegenerateMyPersonalAccessTokenResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "RegenerateAccountPersonalAccessToken", "failure_cause", cause)
 		}
@@ -255,11 +231,7 @@ func (handler *PersonalAccessTokenHandler) DeleteMyPersonalAccessToken(
 ) (rpcResponse *connect.Response[managev1.DeleteMyPersonalAccessTokenResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "DeleteMyPersonalAccessToken", "failure_cause", cause)
 		}
@@ -281,11 +253,7 @@ func (handler *PersonalAccessTokenHandler) DeleteAccountPersonalAccessToken(
 ) (rpcResponse *connect.Response[managev1.DeleteMyPersonalAccessTokenResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "DeleteAccountPersonalAccessToken", "failure_cause", cause)
 		}

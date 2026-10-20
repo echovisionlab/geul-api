@@ -28,11 +28,7 @@ func (s *LabelService) CheckLabelSlugAvailable(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.CheckLabelSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 

@@ -76,11 +76,7 @@ func (s *Service) GetDashboardStats(
 ) (rpcResponse *connect.Response[managev1.GetDashboardStatsResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "GetDashboardStats", "failure_cause", failurecause.Message(returnErr))
 		}
 	}()

@@ -58,11 +58,7 @@ func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[manag
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.ListShareLinks", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr))
 	}()
 
@@ -91,11 +87,7 @@ func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[mana
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		private := []string{req.Msg.GetPassword()}
 		if link != nil {
 			private = append(private, link.Token)
@@ -128,11 +120,7 @@ func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[mana
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		private := []string{link.Token}
 		if link.PasswordHash != nil {
 			private = append(private, *link.PasswordHash)

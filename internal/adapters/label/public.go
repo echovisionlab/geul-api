@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -147,11 +146,7 @@ func (runtime *PublicRuntime) Require(ctx context.Context, labelID, token, passw
 	_, err := sharelink.ValidateForEntity(ctx, runtime.db, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
 	if err != nil {
 		cause := failurecause.Message(err, token, password)
-		level := slog.LevelWarn
-		switch connect.CodeOf(err) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(err)
 		slog.Log(ctx, level, "Label share access rejected", "failure_cause", cause, "entity_id", labelID)
 		return errs.NotFoundMsg("label not found")
 	}

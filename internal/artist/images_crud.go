@@ -2,6 +2,7 @@ package artist
 
 import (
 	"context"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -18,11 +19,7 @@ func (s *ArtistService) SetArtistImage(
 ) (_ *connect.Response[managev1.SetArtistImageResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "SetArtistImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -51,11 +48,7 @@ func (s *ArtistService) DeleteArtistImage(
 ) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "DeleteArtistImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()

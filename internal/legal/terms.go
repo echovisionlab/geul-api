@@ -113,11 +113,7 @@ func (s *TermsService) GetTermsVersion(
 ) (rpcResponse *connect.Response[managev1.Terms], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "GetTermsVersion", "failure_cause", cause)
 		}
@@ -150,11 +146,7 @@ func (s *TermsService) ListTermsVersions(
 ) (rpcResponse *connect.Response[managev1.ListTermsVersionsResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ListTermsVersions", "failure_cause", cause)
 		}
@@ -223,11 +215,7 @@ func (s *TermsService) CreateTermsVersion(
 ) (rpcResponse *connect.Response[managev1.Terms], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "CreateTermsVersion", "failure_cause", cause)
 		}
@@ -328,11 +316,7 @@ func (s *TermsService) ScheduleTerms(
 ) (rpcResponse *connect.Response[managev1.TermsLifecycleMutationResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ScheduleTerms", "failure_cause", cause)
 		}
@@ -448,11 +432,7 @@ func (s *TermsService) CancelTermsSchedule(
 ) (rpcResponse *connect.Response[managev1.TermsLifecycleMutationResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "CancelTermsSchedule", "failure_cause", cause)
 		}
@@ -580,11 +560,7 @@ func (s *TermsService) ActivateTermsNow(
 ) (rpcResponse *connect.Response[managev1.TermsLifecycleMutationResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ActivateTermsNow", "failure_cause", cause)
 		}
@@ -681,11 +657,7 @@ func (s *TermsService) DeleteTerms(
 ) (rpcResponse *connect.Response[managev1.DeleteResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "DeleteTerms", "failure_cause", cause)
 		}
@@ -784,11 +756,7 @@ func (s *TermsService) RegenerateTermsDerivedContent(
 ) (rpcResponse *connect.Response[managev1.RegenerateTermsDerivedContentResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "RegenerateTermsDerivedContent", "failure_cause", cause)
 		}

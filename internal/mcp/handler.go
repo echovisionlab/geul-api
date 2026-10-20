@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -15,7 +16,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
@@ -507,11 +507,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 			if cause == nil {
 				cause = executionErr
 			}
-			level := slog.LevelWarn
-			switch connect.CodeOf(cause) {
-			case connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(cause)
 			// The normalizing handler converts error to error_type; error_cause
 			// retains the sanitized diagnostic text through that handler.
 			slog.Log(request.Context(), level, "MCP tool execution rejected", "failure_cause", failurecause.Message(cause, private...), "tool", params.Name)

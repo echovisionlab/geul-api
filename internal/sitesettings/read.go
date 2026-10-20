@@ -24,11 +24,7 @@ func (s *SiteSettingService) GetSettings(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSettings", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -135,11 +131,7 @@ func (s *SiteSettingService) GetSetting(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSetting", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
