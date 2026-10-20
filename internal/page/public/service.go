@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"log/slog"
 	"strings"
 
@@ -284,119 +285,126 @@ func (s *PageService) buildPageResponse(
 	var mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
 	visible := false
 	accessReason := commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "SHARE"}).
-			Where(read.column+" = ?", read.value).
-			Take(&page).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				if read.notFoundAsEmpty {
+	// A concurrent Page write aborts this repeatable read (SQLSTATE 40001); the
+	// read is retried after it commits, starting from empty state each time.
+	err := dberrors.RetrySerializationFailure(ctx, func() error {
+		sourceMetadata, localization, snapshot, document, blockMedia = nil, publiccontent.Selection{}, contentblock.Snapshot{}, nil, nil
+		page, mediaAuthorization = model.Page{}, mediaasset.ContentDownloadOwnerAuthorization{}
+		visible, accessReason = false, commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var err error
+			if err := tx.WithContext(ctx).
+				Clauses(clause.Locking{Strength: "SHARE"}).
+				Where(read.column+" = ?", read.value).
+				Take(&page).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					if read.notFoundAsEmpty {
+						return nil
+					}
+					return errs.NotFoundMsg("page not found")
+				}
+				return errs.Internal(err)
+			}
+			if read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
+				return nil
+			}
+			if !read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
+				allowed, permissionErr := s.draftAccess.CanViewPageDraft(ctx, page.ID)
+				if permissionErr != nil {
+					return errs.Internal(fmt.Errorf("check page draft view permission: %w", permissionErr))
+				}
+				if !allowed {
+					shareToken := ""
+					if read.shareToken != nil {
+						shareToken = *read.shareToken
+					}
+					link, shareErr := s.shareLinks.RequirePageShareLinkAccess(
+						ctx, tx, shareToken, read.sharePassword, page.ID,
+					)
+					if shareErr != nil {
+						return shareErr
+					}
+					mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
+					mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+				} else {
+					mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
+					if user := auth.GetUser(ctx); user != nil {
+						mediaAuthorization.IdentityID = user.IdentityID.String()
+						mediaAuthorization.MemberID = user.MemberID.String()
+					}
+				}
+			} else {
+				accessReason, err = pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
+				if err != nil {
+					return errs.Internal(err)
+				}
+				if accessReason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
 					return nil
 				}
-				return errs.NotFoundMsg("page not found")
+				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessPublic
 			}
-			return errs.Internal(err)
-		}
-		if read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
-			return nil
-		}
-		if !read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
-			allowed, permissionErr := s.draftAccess.CanViewPageDraft(ctx, page.ID)
-			if permissionErr != nil {
-				return errs.Internal(fmt.Errorf("check page draft view permission: %w", permissionErr))
+			visible = true
+			accessReason = commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED
+
+			documentID, err := pagedomain.LoadPageContentDocumentIDForPublicRead(ctx, tx, page.ID)
+			if err != nil {
+				return err
 			}
-			if !allowed {
-				shareToken := ""
-				if read.shareToken != nil {
-					shareToken = *read.shareToken
-				}
-				link, shareErr := s.shareLinks.RequirePageShareLinkAccess(
-					ctx, tx, shareToken, read.sharePassword, page.ID,
-				)
-				if shareErr != nil {
-					return shareErr
-				}
-				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-				mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-			} else {
-				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
-				if user := auth.GetUser(ctx); user != nil {
-					mediaAuthorization.IdentityID = user.IdentityID.String()
-					mediaAuthorization.MemberID = user.MemberID.String()
-				}
+			mediaAuthorization.ResourceType = "page"
+			mediaAuthorization.ResourceID = page.ID
+			mediaAuthorization.Status = string(page.Status)
+			mediaAuthorization.DocumentID = documentID.String()
+			sourceMetadata, err = pagedomain.LoadPageSourceLocaleMetadataForPublic(ctx, tx, page.ID)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("load Page source locale metadata: %w", err))
 			}
-		} else {
-			accessReason, err = pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
+			if sourceMetadata == nil {
+				return errs.InternalMsg("Page source locale metadata is not initialized")
+			}
+			snapshot, err = s.blocks.LoadSnapshotInTransaction(
+				ctx,
+				tx,
+				documentID,
+				sourceMetadata.Locale,
+			)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("load Page content document: %w", err))
+			}
+			localization, err = resolvePageLocalizedMetadataSelection(
+				ctx,
+				tx,
+				page.ID,
+				acceptLanguage,
+				pageDocumentLocales(snapshot),
+				settings,
+			)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("select Page locale: %w", err))
+			}
+			localization, err = publiccontent.ResolveOGConsistency(
+				ctx, tx, pageLocalizationSpec, page.ID, localization,
+				func(ctx context.Context, assetID string) (bool, error) {
+					asset, err := s.media.ResolvePageOGAsset(ctx, nil, &assetID)
+					return asset != nil, err
+				},
+			)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("select Page OG locale: %w", err))
+			}
+			document, err = pagedomain.MaterializeLocalizedPageContentDocument(
+				snapshot,
+				localization.DisplayedLocale,
+			)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
+			}
+			blockMedia, err = pagedomain.LoadContentBlockMediaReferences(ctx, tx, documentID)
 			if err != nil {
 				return errs.Internal(err)
 			}
-			if accessReason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
-				return nil
-			}
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessPublic
-		}
-		visible = true
-		accessReason = commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED
-
-		documentID, err := pagedomain.LoadPageContentDocumentIDForPublicRead(ctx, tx, page.ID)
-		if err != nil {
-			return err
-		}
-		mediaAuthorization.ResourceType = "page"
-		mediaAuthorization.ResourceID = page.ID
-		mediaAuthorization.Status = string(page.Status)
-		mediaAuthorization.DocumentID = documentID.String()
-		sourceMetadata, err = pagedomain.LoadPageSourceLocaleMetadataForPublic(ctx, tx, page.ID)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("load Page source locale metadata: %w", err))
-		}
-		if sourceMetadata == nil {
-			return errs.InternalMsg("Page source locale metadata is not initialized")
-		}
-		snapshot, err = s.blocks.LoadSnapshotInTransaction(
-			ctx,
-			tx,
-			documentID,
-			sourceMetadata.Locale,
-		)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("load Page content document: %w", err))
-		}
-		localization, err = resolvePageLocalizedMetadataSelection(
-			ctx,
-			tx,
-			page.ID,
-			acceptLanguage,
-			pageDocumentLocales(snapshot),
-			settings,
-		)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("select Page locale: %w", err))
-		}
-		localization, err = publiccontent.ResolveOGConsistency(
-			ctx, tx, pageLocalizationSpec, page.ID, localization,
-			func(ctx context.Context, assetID string) (bool, error) {
-				asset, err := s.media.ResolvePageOGAsset(ctx, nil, &assetID)
-				return asset != nil, err
-			},
-		)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("select Page OG locale: %w", err))
-		}
-		document, err = pagedomain.MaterializeLocalizedPageContentDocument(
-			snapshot,
-			localization.DisplayedLocale,
-		)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
-		}
-		blockMedia, err = pagedomain.LoadContentBlockMediaReferences(ctx, tx, documentID)
-		if err != nil {
-			return errs.Internal(err)
-		}
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+			return nil
+		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	if err != nil {
 		return nil, err
 	}
