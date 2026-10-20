@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.6](https://github.com/echovisionlab/geul-api/compare/v3.3.5...v3.3.6) (2026-10-20)
+
+
+### Bug Fixes
+
+* request a locale's OG image when an AI document saves its title ([#169](https://github.com/echovisionlab/geul-api/issues/169)) ([18f1ca6](https://github.com/echovisionlab/geul-api/commit/18f1ca62983c76498cb3f036ddb22cfa8c4c698f))
+
 ## [3.3.5](https://github.com/echovisionlab/geul-api/compare/v3.3.4...v3.3.5) (2026-10-20)
 
 
