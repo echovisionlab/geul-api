@@ -405,13 +405,15 @@ func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcps
 		operations = append(operations, core.SetFieldOperation("document", "tagIds", value))
 	}
 	if input.DocumentLayout != nil {
-		if _, err := input.DocumentLayout.proto(); err != nil {
+		layout, err := input.DocumentLayout.proto()
+		if err != nil {
 			return executionError(err)
 		}
 		operations = append(operations, core.SetFieldOperation("document", "documentLayout", core.Object(
 			core.ObjectValue("contentHeight", core.Text(input.DocumentLayout.ContentHeight)),
 			core.ObjectValue("pageChrome", core.Text(input.DocumentLayout.PageChrome)),
 			core.ObjectValue("footer", core.Text(input.DocumentLayout.Footer)),
+			core.ObjectValue("hideTableOfContents", core.Boolean(layout.HideTableOfContents)),
 		)))
 	}
 	if len(operations) == 0 {

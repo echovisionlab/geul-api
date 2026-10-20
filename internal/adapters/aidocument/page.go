@@ -60,8 +60,10 @@ func pageCatalog(codec *PageCodec) core.Catalog {
 	catalog := codec.Catalog()
 	catalog.BlockKinds = append(catalog.BlockKinds, pageMetadataBlockKind)
 	text := core.FieldSchema{Kind: core.ValueKindText, Ownership: core.FieldOwnershipShared}
+	boolean := core.FieldSchema{Kind: core.ValueKindBoolean, Ownership: core.FieldOwnershipShared}
 	layout := core.FieldSchema{Kind: core.ValueKindObject, Ownership: core.FieldOwnershipShared, Fields: []core.NestedFieldRule{
 		{Field: "contentHeight", Schema: text}, {Field: "pageChrome", Schema: text}, {Field: "footer", Schema: text},
+		{Field: "hideTableOfContents", Schema: boolean},
 	}}
 	catalog.Fields = append(catalog.Fields,
 		core.FieldRule{BlockKind: pageMetadataBlockKind, Field: pageTitleField, ValueKind: core.ValueKindText, Ownership: core.FieldOwnershipLocale, Translatable: true},
@@ -206,6 +208,7 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 		core.ObjectValue("contentHeight", core.Text(layout.ContentHeight.String())),
 		core.ObjectValue("pageChrome", core.Text(layout.PageChrome.String())),
 		core.ObjectValue("footer", core.Text(layout.Footer.String())),
+		core.ObjectValue("hideTableOfContents", core.Boolean(layout.HideTableOfContents)),
 	)}}
 	if state.Title != nil {
 		metadata.Localized = append(metadata.Localized, core.FieldValue{ID: pageTitleField, Value: core.Text(*state.Title)})
@@ -329,7 +332,15 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 		next = current.Proto()
 		fields = []core.ObjectField{core.ObjectValue(target.Path[0].Field, value)}
 	}
+	hideTableOfContentsSet := false
 	for _, field := range fields {
+		if field.ID == "hideTableOfContents" {
+			if field.Value.Kind != core.ValueKindBoolean {
+				return issue(core.IssueValueKindMismatch, "Page document layout hideTableOfContents uses a boolean")
+			}
+			next.HideTableOfContents, hideTableOfContentsSet = field.Value.Boolean, true
+			continue
+		}
 		if field.Value.Kind != core.ValueKindText {
 			return issue(core.IssueValueKindMismatch, "Page document layout fields use native enum text")
 		}
@@ -343,6 +354,10 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 		default:
 			return issue(core.IssueUnknownField, "unsupported Page document layout field")
 		}
+	}
+	// A replacement that omitted the flag would silently show a hidden table of contents again.
+	if len(target.Path) == 0 && !hideTableOfContentsSet {
+		return issue(core.IssueInvalidOperation, "Page document layout replacement requires hideTableOfContents")
 	}
 	layout, err := model.DocumentLayoutFromProto(next)
 	if err != nil {
