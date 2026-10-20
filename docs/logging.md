@@ -53,8 +53,9 @@ under `service_name="api"`; Tempo stores the spans.
 
 Request IDs are minted inside the cluster. The edge proxy removes a client's
 `X-Request-Id`, and the API adopts a propagated ID only from a request that
-passes the internal-service check. A rejected propagated ID logs the route,
-method and whether the header was missing or malformed.
+passes the internal-service check. A trusted hop that forwards no ID, such as
+Oathkeeper in front of `/mcp`, gets a new request context. A malformed
+propagated ID is a Warn with the route and method of the caller.
 
 ## Finding a failure
 
