@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.7](https://github.com/echovisionlab/geul-api/compare/v3.3.6...v3.3.7) (2026-10-20)
+
+
+### Bug Fixes
+
+* **mcp:** keep the page table-of-contents setting in layout edits ([#171](https://github.com/echovisionlab/geul-api/issues/171)) ([b36f14e](https://github.com/echovisionlab/geul-api/commit/b36f14e0b906f2036863ea06518b79e3ee2bd713))
+
 ## [3.3.6](https://github.com/echovisionlab/geul-api/compare/v3.3.5...v3.3.6) (2026-10-20)
 
 
