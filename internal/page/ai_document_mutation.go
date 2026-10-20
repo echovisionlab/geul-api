@@ -144,6 +144,16 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		if !result.Changed {
 			return nil
 		}
+		// Like the editor, a new title requests that locale's OG image. Public
+		// reads show a translation only once its OG generation exists.
+		if pageAIDocumentTitleChanged(state, mutation) {
+			if _, err := s.internal.og.RequestCurrentWithDB(
+				ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
+				mutation.PageID, mutation.Locale, false, "page_ai_document_saved",
+			); err != nil {
+				return err
+			}
+		}
 		return publishContentUpdatedEvent(ctx, tx, s.internal.asyncPublisher, buildPageContentUpdatedEvent(
 			mutation.PageID,
 			pageAIDocumentContentUpdatedFields(mutation),
@@ -283,4 +293,23 @@ func pageAuthorizedAIDocumentFence(
 		}
 		return domain, nil
 	}
+}
+
+// pageAIDocumentTitleChanged reports whether the mutation saved a different
+// title for its locale, including the first title of a new translation.
+func pageAIDocumentTitleChanged(state AIDocumentState, mutation AIDocumentMutation) bool {
+	if !mutation.Metadata.SetTitle || mutation.DeleteTranslation {
+		return false
+	}
+	if !state.LocaleExists {
+		return true
+	}
+	return optionalPageAIDocumentText(state.Title) != optionalPageAIDocumentText(mutation.Metadata.Title)
+}
+
+func optionalPageAIDocumentText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
