@@ -180,7 +180,7 @@ func (p *programEventPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == programeventdomain.AIDocumentExecutionValidate,
+			ctx, request, err, mode == programeventdomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

@@ -17,12 +17,12 @@ func TestHandleExactMutationValidationErrorPreservesValidateAndApplyShape(t *tes
 	}
 	rejected := rejectExactMutation("Post", validation)
 
-	result, err, handled := handleExactMutationValidationError(rejected, true)
+	result, err, handled := handleExactMutationValidationError(t.Context(), core.ApplyRequest{}, rejected, true)
 	require.True(t, handled)
 	require.NoError(t, err)
 	require.Equal(t, validation, result)
 
-	result, err, handled = handleExactMutationValidationError(rejected, false)
+	result, err, handled = handleExactMutationValidationError(t.Context(), core.ApplyRequest{}, rejected, false)
 	require.True(t, handled)
 	require.Empty(t, result)
 	var validationError *core.ValidationError
@@ -33,13 +33,13 @@ func TestHandleExactMutationValidationErrorPreservesValidateAndApplyShape(t *tes
 		Code: core.ConflictDocumentRevision, CurrentDocumentRevision: "revision-2",
 	}
 	rejected = rejectExactMutation("Post", core.ValidationResult{Conflict: &conflict})
-	_, err, handled = handleExactMutationValidationError(rejected, false)
+	_, err, handled = handleExactMutationValidationError(t.Context(), core.ApplyRequest{}, rejected, false)
 	require.True(t, handled)
 	var conflictError *core.ConflictError
 	require.ErrorAs(t, err, &conflictError)
 	require.Equal(t, conflict, conflictError.Conflict)
 
-	_, err, handled = handleExactMutationValidationError(errors.New("domain unavailable"), true)
+	_, err, handled = handleExactMutationValidationError(t.Context(), core.ApplyRequest{}, errors.New("domain unavailable"), true)
 	require.False(t, handled)
 	require.NoError(t, err)
 }

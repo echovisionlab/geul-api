@@ -195,7 +195,7 @@ func (p *emailRichTextPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == emailRichTextExecutionValidate,
+			ctx, request, err, mode == emailRichTextExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

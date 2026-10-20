@@ -2,7 +2,6 @@ package translation
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -50,7 +49,7 @@ func (g *aiTranslationGenerator) Translate(
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), translationAISessionCloseTimeout)
 		defer cancel()
 		if logErr := session.Close(closeCtx); logErr != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(logErr), "request_id", req.RequestID)
+			LogProviderEvent(ctx, slog.LevelError, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(logErr), "request_id", req.RequestID)
 		}
 	}()
 
@@ -103,14 +102,7 @@ func (s *aiTranslationGeneratorSession) Translate(
 	}
 	response, parseErr := parseTranslationProviderResponse(req, text)
 	if parseErr != nil {
-		event := "translation.provider.response_invalid"
-		cause := parseErr
-		var responseErr *translationResponseError
-		if errors.As(parseErr, &responseErr) {
-			event = "translation.provider." + responseErr.event
-			cause = responseErr.cause
-		}
-		slog.ErrorContext(ctx, "Operation failed", "domain", "translation", "event", event, "outcome", "failed", failurecause.Attr(cause), "request_id", req.RequestID, "operation_id", req.OperationID)
+		LogProviderResponseFailure(ctx, req, parseErr)
 	}
 	if response == nil {
 		response = &ProviderResponse{}

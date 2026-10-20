@@ -143,7 +143,7 @@ func (p *postPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == postdomain.AIDocumentExecutionValidate,
+			ctx, request, err, mode == postdomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

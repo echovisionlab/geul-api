@@ -80,11 +80,7 @@ func (s *PostService) ListPostVersions(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostVersions", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -159,11 +155,7 @@ func (s *PostService) RestorePostVersion(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RestorePostVersion", "outcome", "failed", "post_id", req.Msg.GetPostId(), "version_id", req.Msg.GetVersionId(), failurecause.Attr(returnErr))
 	}()
 

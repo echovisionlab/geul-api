@@ -1,6 +1,10 @@
 package telemetry
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"testing"
 
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -24,5 +28,20 @@ func TestCanonicalResourceServiceNameCannotBeOverriddenByEnvironment(t *testing.
 func TestInitRejectsUnknownServiceNameBeforeCreatingExporters(t *testing.T) {
 	if result, err := Init(t.Context(), sharedtelemetry.ServiceName("wrong-service")); result != nil || err == nil {
 		t.Fatalf("Init() result = %#v, error = %v", result, err)
+	}
+}
+
+func TestShutdownLogLevelKeepsInterruptedShutdownOutOfErrors(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want slog.Level
+	}{
+		{fmt.Errorf("trace provider shutdown: %w", context.Canceled), slog.LevelInfo},
+		{context.DeadlineExceeded, slog.LevelInfo},
+		{errors.New("exporter rejected batch"), slog.LevelError},
+	} {
+		if got := ShutdownLogLevel(tc.err); got != tc.want {
+			t.Errorf("ShutdownLogLevel(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

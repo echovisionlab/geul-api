@@ -130,7 +130,7 @@ func (p *releasePort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == releasedomain.AIDocumentExecutionValidate,
+			ctx, request, err, mode == releasedomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

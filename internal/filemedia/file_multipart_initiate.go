@@ -40,11 +40,7 @@ func (s *FileService) InitiateMultipartUpload(
 ) (_ *connect.Response[managev1.InitiateMultipartUploadResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			privateName := ""
 			if req != nil && req.Msg != nil {
 				privateName = req.Msg.GetFileName()

@@ -86,7 +86,7 @@ func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connec
 	if err != nil {
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
-			slog.WarnContext(ctx, "AI document mutation rejected", "issues", core.ValidationIssueSummaries(validationError.Result.Issues), "issue_count", len(validationError.Result.Issues), "failure_cause", failurecause.Message(err))
+			slog.WarnContext(ctx, "AI document mutation rejected", failurecause.Attr(err), "document_id", string(mutation.Document), "locale", string(mutation.Locale), "domain", string(mutation.Profile), "issue_count", len(validationError.Result.Issues), core.IssuesLogAttr(validationError.Result.Issues))
 			validation, conversionErr := validationToProto(validationError.Result)
 			if conversionErr != nil {
 				return nil, fmt.Errorf("convert AI document rejection: %w", conversionErr)

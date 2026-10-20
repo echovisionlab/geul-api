@@ -33,11 +33,7 @@ func (s *FileService) AuthorizeDownload(
 ) (_ *connect.Response[openv1.AuthorizeDownloadResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AuthorizeDownload", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

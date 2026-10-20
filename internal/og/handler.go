@@ -49,11 +49,7 @@ func (s *InternalService) ClaimOgGeneration(
 ) (_ *connect.Response[intrav1.ClaimOgGenerationResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ClaimOgGeneration", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -93,11 +89,7 @@ func (s *InternalService) CompleteOgGeneration(
 ) (_ *connect.Response[intrav1.CompleteOgGenerationResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "CompleteOgGeneration", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -129,11 +121,7 @@ func (s *InternalService) FailOgGeneration(
 ) (_ *connect.Response[intrav1.FailOgGenerationResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "FailOgGeneration", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

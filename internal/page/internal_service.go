@@ -109,11 +109,7 @@ func (s *InternalPageService) LoadPageBlockDocument(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.LoadPageBlockDocument", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
 	}()
 
@@ -204,11 +200,7 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ApplyPageBlockBatch", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
 	}()
 
@@ -400,11 +392,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePageLocaleMetadata", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
 	}()
 
@@ -678,11 +666,7 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePageDocumentMetadata", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
 	}()
 
@@ -760,11 +744,7 @@ func (s *InternalPageService) CreatePageVersionCheckpoint(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CreatePageVersionCheckpoint", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
 	}()
 

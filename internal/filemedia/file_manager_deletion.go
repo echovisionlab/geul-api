@@ -20,11 +20,7 @@ import (
 func (s *FileService) GetFileDeletionImpact(ctx context.Context, req *connect.Request[managev1.GetFileDeletionImpactRequest]) (_ *connect.Response[managev1.GetFileDeletionImpactResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetFileDeletionImpact", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -54,11 +50,7 @@ func (s *FileService) GetFileDeletionImpact(ctx context.Context, req *connect.Re
 func (s *FileService) DeleteFiles(ctx context.Context, req *connect.Request[managev1.DeleteFilesRequest]) (_ *connect.Response[managev1.DeleteFilesResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DeleteFiles", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -168,11 +160,7 @@ func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []str
 func (s *FileService) DeleteFileFolder(ctx context.Context, req *connect.Request[managev1.DeleteFileFolderRequest]) (_ *connect.Response[managev1.DeleteFileFolderResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DeleteFileFolder", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

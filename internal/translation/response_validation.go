@@ -1,7 +1,6 @@
 package translation
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -33,7 +32,7 @@ func ValidateResponse(
 	var placeholderMismatchUnitIDs []string
 	var unknownUnits []string
 	var duplicateUnits []string
-	parseIssues := validateXLIFFResponseIdentity(expected, response.Document)
+	issues := validateXLIFFResponseIdentity(expected, response.Document)
 
 	for _, bundle := range response.Document.File.Groups {
 		for _, unit := range bundle.TranslationUnit {
@@ -48,17 +47,17 @@ func ValidateResponse(
 				unknownUnits = append(unknownUnits, unit.ID)
 			} else {
 				if strings.TrimSpace(*unit.Target) == "" && strings.TrimSpace(expectedUnitTexts[unit.ID]) != "" {
-					parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q target is empty", unit.ID))
+					issues = append(issues, ResponseIssue{Kind: responseIssueTargetEmpty, ID: unit.ID})
 				}
 				if err := validateXLIFFUnitInline(unit, true, isEmailTemplateFile(expected.File.ID)); err != nil {
-					parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q inline structure changed", unit.ID))
+					issues = append(issues, ResponseIssue{Kind: responseIssueInlineStructureChanged, ID: unit.ID, Reason: err.Error()})
 				}
 				if CountLineBreaks(expectedUnitTexts[unit.ID]) != CountLineBreaks(*unit.Target) {
 					lineBreakMismatchUnits = append(lineBreakMismatchUnits, unit.ID)
 				}
 				for _, term := range protectedTerms {
 					if term != "" && strings.Count(expectedUnitTexts[unit.ID], term) != strings.Count(*unit.Target, term) {
-						parseIssues = append(parseIssues, fmt.Sprintf("XLIFF unit %q protected term count changed", unit.ID))
+						issues = append(issues, ResponseIssue{Kind: responseIssueProtectedTermCountChanged, ID: unit.ID})
 						break
 					}
 				}
@@ -101,10 +100,14 @@ func ValidateResponse(
 
 	passed := len(missingUnits) == 0 && len(lineBreakMismatchUnits) == 0 &&
 		len(placeholderMismatchUnitIDs) == 0 && len(unknownUnits) == 0 && len(duplicateUnits) == 0 &&
-		len(missingPlaceholders) == 0 && len(unexpectedPlaceholders) == 0 && len(parseIssues) == 0
+		len(missingPlaceholders) == 0 && len(unexpectedPlaceholders) == 0 && len(issues) == 0
 	var parseError *string
-	if len(parseIssues) > 0 {
-		message := strings.Join(parseIssues, "; ")
+	if len(issues) > 0 {
+		messages := make([]string, len(issues))
+		for index, issue := range issues {
+			messages[index] = issue.message()
+		}
+		message := strings.Join(messages, "; ")
 		parseError = &message
 	}
 	return HardValidationResult{
@@ -117,43 +120,47 @@ func ValidateResponse(
 		MissingPlaceholders:        missingPlaceholders,
 		UnexpectedPlaceholders:     unexpectedPlaceholders,
 		ParseError:                 parseError,
+		Issues:                     issues,
 	}
 }
 
-func validateXLIFFResponseIdentity(expected XLIFFDocument, response XLIFFDocument) []string {
-	issues := make([]string, 0)
+// validateXLIFFResponseIdentity reports identity drift. Every issue ID is taken
+// from the expected source document so provider-controlled values never become
+// diagnostic identifiers.
+func validateXLIFFResponseIdentity(expected XLIFFDocument, response XLIFFDocument) []ResponseIssue {
+	issues := make([]ResponseIssue, 0)
 	if response.Version != expected.Version {
-		issues = append(issues, "XLIFF version changed")
+		issues = append(issues, ResponseIssue{Kind: responseIssueVersionChanged})
 	}
 	if response.SourceLocale != expected.SourceLocale {
-		issues = append(issues, "XLIFF source locale changed")
+		issues = append(issues, ResponseIssue{Kind: responseIssueSourceLocaleChanged})
 	}
 	if response.TargetLocale != expected.TargetLocale {
-		issues = append(issues, "XLIFF target locale changed")
+		issues = append(issues, ResponseIssue{Kind: responseIssueTargetLocaleChanged})
 	}
 	if response.File.ID != expected.File.ID {
-		issues = append(issues, "XLIFF file id changed")
+		issues = append(issues, ResponseIssue{Kind: responseIssueFileIDChanged})
 	}
 	if len(response.File.Groups) != len(expected.File.Groups) {
-		issues = append(issues, "XLIFF group count changed")
+		issues = append(issues, ResponseIssue{Kind: responseIssueGroupCountChanged})
 	}
 
 	expectedSources := make(map[string]string)
 	for groupIndex, group := range expected.File.Groups {
 		if groupIndex >= len(response.File.Groups) || response.File.Groups[groupIndex].ID != group.ID {
-			issues = append(issues, fmt.Sprintf("XLIFF group %q changed", group.ID))
+			issues = append(issues, ResponseIssue{Kind: responseIssueGroupChanged, ID: group.ID})
 		} else {
 			responseGroup := response.File.Groups[groupIndex]
 			if responseGroup.SequenceIndex != group.SequenceIndex || responseGroup.SequenceTotal != group.SequenceTotal ||
 				pointerValue(responseGroup.ContextTitle) != pointerValue(group.ContextTitle) ||
 				pointerValue(responseGroup.ContextBefore) != pointerValue(group.ContextBefore) ||
 				pointerValue(responseGroup.ContextAfter) != pointerValue(group.ContextAfter) {
-				issues = append(issues, fmt.Sprintf("XLIFF group %q metadata changed", group.ID))
+				issues = append(issues, ResponseIssue{Kind: responseIssueGroupMetadataChanged, ID: group.ID})
 			}
 			if len(responseGroup.TranslationUnit) == len(group.TranslationUnit) {
 				for unitIndex, unit := range group.TranslationUnit {
 					if responseGroup.TranslationUnit[unitIndex].ID != unit.ID {
-						issues = append(issues, fmt.Sprintf("XLIFF group %q unit order changed", group.ID))
+						issues = append(issues, ResponseIssue{Kind: responseIssueUnitOrderChanged, ID: group.ID})
 						break
 					}
 				}
@@ -166,7 +173,7 @@ func validateXLIFFResponseIdentity(expected XLIFFDocument, response XLIFFDocumen
 	for _, group := range response.File.Groups {
 		for _, unit := range group.TranslationUnit {
 			if source, known := expectedSources[unit.ID]; known && unit.Source != source {
-				issues = append(issues, fmt.Sprintf("XLIFF unit %q source changed", unit.ID))
+				issues = append(issues, ResponseIssue{Kind: responseIssueSourceChanged, ID: unit.ID})
 			}
 		}
 	}

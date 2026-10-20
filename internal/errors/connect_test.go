@@ -162,6 +162,36 @@ func TestWrapLogsCauseBeforeDiscardingOperationContext(t *testing.T) {
 	}
 }
 
+func TestOperationLogLevelKeepsExpectedClientOutcomesOutOfWarnings(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want slog.Level
+	}{
+		{NotFound("og_generation_target", "id"), slog.LevelDebug},
+		{InvalidArgumentMsg("invalid UUID length: 8"), slog.LevelDebug},
+		{AuthenticationRequired(), slog.LevelDebug},
+		{connect.NewError(connect.CodeCanceled, context.Canceled), slog.LevelDebug},
+		{connect.NewError(connect.CodePermissionDenied, stderrors.New("denied")), slog.LevelWarn},
+		{connect.NewError(connect.CodeFailedPrecondition, stderrors.New("stale")), slog.LevelWarn},
+		{connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded), slog.LevelError},
+		{InternalMsg("broken"), slog.LevelError},
+		{stderrors.New("unclassified"), slog.LevelError},
+	} {
+		if got := OperationLogLevel(tc.err); got != tc.want {
+			t.Errorf("OperationLogLevel(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found")))
+	if output.Len() != 0 {
+		t.Fatalf("wrapped not_found logged above Debug: %s", output.String())
+	}
+}
+
 func TestErrorWrappersPreserveClassifiedErrorsThroughNestedOperations(t *testing.T) {
 	for _, wrap := range []struct {
 		name string

@@ -156,7 +156,7 @@ func (p *emailLayoutPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == emailauthoring.EmailLayoutAIDocumentExecutionValidate,
+			ctx, request, err, mode == emailauthoring.EmailLayoutAIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

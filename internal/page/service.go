@@ -172,11 +172,7 @@ func (s *PageService) GetPage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -201,11 +197,7 @@ func (s *PageService) GetPageBySlug(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPageBySlug", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -221,11 +213,7 @@ func (s *PageService) ListPagesAdmin(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ListPagesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -303,11 +291,7 @@ func (s *PageService) CreatePage(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CreatePage", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -466,11 +450,7 @@ func (s *PageService) UpdatePage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -506,11 +486,7 @@ func (s *PageService) DeletePage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.DeletePage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -634,11 +610,7 @@ func (s *PageService) PublishPage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.PublishPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -740,11 +712,7 @@ func (s *PageService) UnpublishPage(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UnpublishPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 

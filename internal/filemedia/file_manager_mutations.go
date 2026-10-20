@@ -21,11 +21,7 @@ import (
 func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[managev1.RenameFileRequest]) (_ *connect.Response[managev1.RenameFileResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			privateName := ""
 			if req != nil && req.Msg != nil {
 				privateName = req.Msg.GetFileName()
@@ -88,11 +84,7 @@ func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[manag
 func (s *FileService) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (_ *connect.Response[managev1.MoveFilesResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "MoveFiles", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
