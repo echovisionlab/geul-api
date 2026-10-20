@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.3.4](https://github.com/echovisionlab/geul-api/compare/v3.3.3...v3.3.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* start a request context for trusted callers without a request ID ([#166](https://github.com/echovisionlab/geul-api/issues/166)) ([7bc70a1](https://github.com/echovisionlab/geul-api/commit/7bc70a1a739b10526539547904bf9564eba4d5d8))
+* use one log level policy for operation failures ([#164](https://github.com/echovisionlab/geul-api/issues/164)) ([5034257](https://github.com/echovisionlab/geul-api/commit/50342573f09119be84d071eca763e447d8616320))
+
 ## [3.3.3](https://github.com/echovisionlab/geul-api/compare/v3.3.2...v3.3.3) (2026-10-20)
 
 
