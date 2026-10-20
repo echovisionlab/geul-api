@@ -107,8 +107,10 @@ func NewHTTPHandler(mux *http.ServeMux, trustIncomingRequestID func(*http.Reques
 }
 
 func ingressRequestContext(mux *http.ServeMux, r *http.Request, trustIncomingRequestID func(*http.Request) bool) RequestContext {
-	if trustIncomingRequestID != nil && trustIncomingRequestID(r) {
-		incomingRequestID := r.Header.Get(RequestIDHeader)
+	// A trusted hop without a request ID (Oathkeeper in front of /mcp mints none,
+	// and the edge strips client IDs) starts a new request context below.
+	if incomingRequestID := r.Header.Get(RequestIDHeader); incomingRequestID != "" &&
+		trustIncomingRequestID != nil && trustIncomingRequestID(r) {
 		requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
 			incomingRequestID,
 			sharedtelemetry.AnonymousActor{},
@@ -116,16 +118,12 @@ func ingressRequestContext(mux *http.ServeMux, r *http.Request, trustIncomingReq
 		if err == nil {
 			return requestContext
 		}
-		// An authenticated internal caller must forward a valid request ID.
-		// The bounded route and header state identify that caller.
-		headerState := "malformed"
-		if incomingRequestID == "" {
-			headerState = "missing"
-		}
+		// An authenticated internal caller that forwards a request ID must forward
+		// a valid one. The bounded route identifies that caller.
 		slog.WarnContext(r.Context(), "Propagated HTTP request context rejected",
 			"http_method", r.Method,
 			"http_route", ingressRoute(mux, r),
-			"request_id_header", headerState,
+			"request_id_header", "malformed",
 			"failure_cause", failurecause.Message(err, incomingRequestID),
 		)
 	}

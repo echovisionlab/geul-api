@@ -199,7 +199,6 @@ func TestHTTPHandlerRejectionLogIdentifiesInternalCaller(t *testing.T) {
 	const clientRequestID = "client-chosen-request-id"
 	for _, tc := range []struct{ header, want string }{
 		{clientRequestID, "malformed"},
-		{"", "missing"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			logBuffer, restoreLogger := captureDefaultLogs()
@@ -226,6 +225,23 @@ func TestHTTPHandlerRejectionLogIdentifiesInternalCaller(t *testing.T) {
 			require.NotContains(t, logBuffer.String(), clientRequestID)
 		})
 	}
+}
+
+func TestHTTPHandlerStartsRequestContextForTrustedCallerWithoutRequestID(t *testing.T) {
+	logBuffer, restoreLogger := captureDefaultLogs()
+	defer restoreLogger()
+	mux := http.NewServeMux()
+	var requestID string
+	mux.HandleFunc("POST /mcp", func(w http.ResponseWriter, r *http.Request) {
+		requestID = RequestIDFromContext(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	})
+	response := httptest.NewRecorder()
+	NewHTTPHandler(mux, func(*http.Request) bool { return true }).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+
+	require.NotEmpty(t, requestID)
+	require.Equal(t, requestID, response.Header().Get(RequestIDHeader))
+	require.NotContains(t, logBuffer.String(), "Propagated HTTP request context rejected")
 }
 
 func TestHTTPHandlerNeverTrustsValidRequestIDFromUnauthenticatedCaller(t *testing.T) {
