@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.5](https://github.com/echovisionlab/geul-api/compare/v3.3.4...v3.3.5) (2026-10-20)
+
+
+### Bug Fixes
+
+* retry Page reads that lose a repeatable read race to a writer ([#167](https://github.com/echovisionlab/geul-api/issues/167)) ([1d7358b](https://github.com/echovisionlab/geul-api/commit/1d7358b41bcf57cc2db7a1ae6e208c92739a5860))
+
 ## [3.3.4](https://github.com/echovisionlab/geul-api/compare/v3.3.3...v3.3.4) (2026-10-20)
 
 
