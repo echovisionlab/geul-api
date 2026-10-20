@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -108,65 +109,70 @@ func (s *PageService) loadPageContentProjection(
 	var document *contentv1.PageDocument
 	var blockMedia []*contentv1.ContentBlockMediaItem
 	var principal *auth.UserInfo
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "SHARE"}).
-			Where(column+" = ?", value).
-			Take(&page).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+	// The repeatable read snapshot with a share lock on the root conflicts with a
+	// concurrent Page write (SQLSTATE 40001); the read is retried after it commits.
+	err := dberrors.RetrySerializationFailure(ctx, func() error {
+		page, sourceMetadata, snapshot, document, blockMedia, principal = model.Page{}, nil, contentblock.Snapshot{}, nil, nil, nil
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var err error
+			if err := tx.WithContext(ctx).
+				Clauses(clause.Locking{Strength: "SHARE"}).
+				Where(column+" = ?", value).
+				Take(&page).Error; err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return errs.NotFound("page", value)
+				}
+				return errs.Internal(err)
+			}
+			principal, err = authorizePagePermissionAfterRootLock(
+				ctx, tx, s.spiceDB, page.ID, policyv1.Page.View,
+			)
+			if err != nil {
+				level := slog.LevelError
+				switch connect.CodeOf(err) {
+				case connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeNotFound:
+					level = slog.LevelWarn
+				}
+				slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.loadPageContentProjection", "outcome", "failed", "page_id", page.ID, failurecause.Attr(err))
 				return errs.NotFound("page", value)
 			}
-			return errs.Internal(err)
-		}
-		principal, err = authorizePagePermissionAfterRootLock(
-			ctx, tx, s.spiceDB, page.ID, policyv1.Page.View,
-		)
-		if err != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(err) {
-			case connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeNotFound:
-				level = slog.LevelWarn
+			if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
+				return err
 			}
-			slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.loadPageContentProjection", "outcome", "failed", "page_id", page.ID, failurecause.Attr(err))
-			return errs.NotFound("page", value)
-		}
-		if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
-			return err
-		}
-		documentID, err := loadPageContentDocumentIDForRead(ctx, tx, page.ID)
-		if err != nil {
-			return err
-		}
-		sourceMetadata, err = loadRequiredPageSourceLocaleMetadata(ctx, tx, page.ID)
-		if err != nil {
-			return err
-		}
-		snapshot, err = s.contentBlocks.LoadSnapshotInTransaction(
-			ctx,
-			tx,
-			documentID,
-			sourceMetadata.Locale,
-		)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("load Page content document: %w", err))
-		}
-		document, err = MaterializePageContentDocument(snapshot)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
-		}
-		blockMedia, err = LoadContentBlockMediaReferences(ctx, tx, documentID)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("load Page Block media: %w", err))
-		}
-		blockMedia, err = s.mediaHydrator.HydrateAuthorizedPageBlockMediaWithDB(
-			auth.WithUser(ctx, principal), tx, page.ID, documentID, principal, blockMedia,
-		)
-		if err != nil {
-			return errs.Internal(fmt.Errorf("hydrate Page Block media: %w", err))
-		}
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+			documentID, err := loadPageContentDocumentIDForRead(ctx, tx, page.ID)
+			if err != nil {
+				return err
+			}
+			sourceMetadata, err = loadRequiredPageSourceLocaleMetadata(ctx, tx, page.ID)
+			if err != nil {
+				return err
+			}
+			snapshot, err = s.contentBlocks.LoadSnapshotInTransaction(
+				ctx,
+				tx,
+				documentID,
+				sourceMetadata.Locale,
+			)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("load Page content document: %w", err))
+			}
+			document, err = MaterializePageContentDocument(snapshot)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
+			}
+			blockMedia, err = LoadContentBlockMediaReferences(ctx, tx, documentID)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("load Page Block media: %w", err))
+			}
+			blockMedia, err = s.mediaHydrator.HydrateAuthorizedPageBlockMediaWithDB(
+				auth.WithUser(ctx, principal), tx, page.ID, documentID, principal, blockMedia,
+			)
+			if err != nil {
+				return errs.Internal(fmt.Errorf("hydrate Page Block media: %w", err))
+			}
+			return nil
+		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	if err != nil {
 		return nil, nil, contentblock.Snapshot{}, nil, nil, err
 	}
