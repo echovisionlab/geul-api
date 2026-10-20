@@ -62,11 +62,7 @@ func (s *AdminService) RegenerateOgImage(
 ) (_ *connect.Response[managev1.RegenerateOgImageResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "RegenerateOgImage", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -116,11 +112,7 @@ func (s *AdminService) RegenerateAllOgImages(
 ) (_ *connect.Response[managev1.RegenerateAllOgImagesResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "RegenerateAllOgImages", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

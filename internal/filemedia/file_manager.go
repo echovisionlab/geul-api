@@ -247,11 +247,7 @@ func (s *FileService) ListFileManagerItems(
 ) (_ *connect.Response[managev1.ListFileManagerItemsResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileManagerItems", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

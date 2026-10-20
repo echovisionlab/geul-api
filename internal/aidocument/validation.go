@@ -38,25 +38,6 @@ type OperationIssue struct {
 	Message   string    `json:"message"`
 }
 
-// ValidationIssueSummaries omits messages and values from bounded rejection logs.
-func ValidationIssueSummaries(issues []OperationIssue) []ValidationIssueSummary {
-	const limit = 20
-	if len(issues) > limit {
-		issues = issues[:limit]
-	}
-	summaries := make([]ValidationIssueSummary, 0, len(issues))
-	for _, issue := range issues {
-		summaries = append(summaries, ValidationIssueSummary{Operation: issue.Operation, Code: issue.Code, Handle: issue.Handle})
-	}
-	return summaries
-}
-
-type ValidationIssueSummary struct {
-	Operation int       `json:"operation"`
-	Code      IssueCode `json:"code"`
-	Handle    string    `json:"handle,omitempty"`
-}
-
 type ConflictCode string
 
 const (

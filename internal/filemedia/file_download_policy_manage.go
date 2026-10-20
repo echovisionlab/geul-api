@@ -57,11 +57,7 @@ func (s *FileService) GetFileDownloadPolicy(
 ) (_ *connect.Response[managev1.GetFileDownloadPolicyResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetFileDownloadPolicy", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -98,11 +94,7 @@ func (s *FileService) UpdateFileDownloadPolicy(
 ) (_ *connect.Response[managev1.UpdateFileDownloadPolicyResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "UpdateFileDownloadPolicy", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

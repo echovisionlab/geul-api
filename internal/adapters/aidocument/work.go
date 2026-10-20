@@ -136,7 +136,7 @@ func (p *workPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == workdomain.AIDocumentExecutionValidate,
+			ctx, request, err, mode == workdomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

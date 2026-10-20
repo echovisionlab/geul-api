@@ -3,9 +3,12 @@ package application
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/llm"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -139,5 +142,52 @@ func TestGenerateValidatedTranslationEmitsProviderGenerateSpan(t *testing.T) {
 	require.Equal(t, string(llm.ProviderExceptionGenAIAPI), attributes["exception_type"])
 	for _, value := range attributes {
 		require.NotContains(t, value, "Gemini response body")
+	}
+}
+
+func TestTranslationResponseIssuesReachSpansAndJobFailureLog(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+	validationErr := translation.ResponseValidationError(translation.HardValidationResult{
+		Issues: []translation.ResponseIssue{
+			{Kind: "target_empty", ID: "unit-1"},
+			{Kind: "inline_structure_changed", ID: "unit-2", Reason: "inline code identity or nesting changed"},
+		},
+	})
+
+	_, err := traceTranslationProviderOperation(context.Background(), "generate", "gemini",
+		func(context.Context) (struct{}, error) { return struct{}{}, validationErr })
+	require.ErrorIs(t, err, errTranslationProviderResponseInvalid)
+	ctx, deliverySpan := otel.Tracer("test").Start(context.Background(), "translation process")
+	job := &model.TranslationJob{ID: "job-1", OperationID: "op-1", EntityType: "page", EntityID: "page-9", TargetLocale: "ko"}
+	fields := translationJobFailedLogFields(ctx, job, pinTranslationProviderDocumentError(validationErr), validationErr)
+	deliverySpan.End()
+
+	// Read the fields the way slog does: key-value pairs mixed with slog.Attr values.
+	record := slog.NewRecord(time.Time{}, slog.LevelError, "", 0)
+	record.Add(fields...)
+	logged := make(map[string]any, record.NumAttrs())
+	record.Attrs(func(attr slog.Attr) bool {
+		logged[attr.Key] = attr.Value.Any()
+		return true
+	})
+	require.Equal(t, "page-9", logged["entity_id"])
+	require.Equal(t, "inline_structure_changed,target_empty", logged["response_issues"])
+	require.Equal(t, translationFailureProviderResponseInvalid, logged["reason"])
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 2)
+	for span, key := range map[sdktrace.ReadOnlySpan]string{spans[0]: "response_issues", spans[1]: "translation.response_issues"} {
+		attributes := make(map[string]string, len(span.Attributes()))
+		for _, attr := range span.Attributes() {
+			attributes[string(attr.Key)] = attr.Value.AsString()
+		}
+		require.Equal(t, "inline_structure_changed,target_empty", attributes[key], span.Name())
 	}
 }

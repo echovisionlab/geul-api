@@ -26,11 +26,7 @@ func (s *PostService) SchedulePost(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -109,11 +105,7 @@ func (s *PostService) CancelPostSchedule(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CancelPostSchedule", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -170,11 +162,7 @@ func (s *PostService) RepublishPost(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RepublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 

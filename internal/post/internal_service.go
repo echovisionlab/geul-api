@@ -100,11 +100,7 @@ func (s *InternalPostService) LoadPostBlockDocument(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadPostBlockDocument", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -229,11 +225,7 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ApplyPostBlockBatch", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -409,11 +401,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePostLocaleMetadata", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -613,11 +601,7 @@ func (s *InternalPostService) UpdatePostDocumentMetadata(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePostDocumentMetadata", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -724,11 +708,7 @@ func (s *InternalPostService) CreatePostVersionCheckpoint(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreatePostVersionCheckpoint", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 

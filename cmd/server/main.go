@@ -22,6 +22,8 @@ import (
 
 const healthReadinessTimeout = 2 * time.Second
 
+const telemetryShutdownTimeout = 5 * time.Second
+
 type healthReadinessCheck func(context.Context) error
 
 func run() int {
@@ -39,8 +41,12 @@ func run() int {
 		return logStartupFailure("initialize telemetry", err)
 	}
 	defer func() {
-		if err := otelResult.Shutdown(ctx); err != nil {
-			slog.Error("Telemetry shutdown failed", "failure_cause", failurecause.Message(err))
+		// ctx is already canceled once shutdown begins. Flush telemetry with a
+		// separate bounded context so the final spans and logs are exported.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), telemetryShutdownTimeout)
+		defer shutdownCancel()
+		if err := otelResult.Shutdown(shutdownCtx); err != nil {
+			slog.Log(shutdownCtx, telemetry.ShutdownLogLevel(err), "Telemetry shutdown failed", "failure_cause", failurecause.Message(err))
 		}
 	}()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(

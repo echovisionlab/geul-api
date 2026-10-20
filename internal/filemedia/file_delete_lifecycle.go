@@ -80,11 +80,7 @@ func (s *FileService) DeleteFile(
 ) (_ *connect.Response[managev1.DeleteFileResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DeleteFile", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

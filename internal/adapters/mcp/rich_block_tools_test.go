@@ -12,6 +12,7 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/telemetry"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -305,9 +306,11 @@ func TestPageCatalogExposesEnumsBoundsIdentityAndParentKinds(t *testing.T) {
 }
 
 func TestFocusedRichRejectionLogsIssueIdentityWithoutText(t *testing.T) {
+	// The production normalizer drops slice and struct values, so the log is
+	// captured through it to check what actually reaches Loki.
 	var logs bytes.Buffer
 	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&logs, nil))))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	app := &recordingAIDocumentApplication{applyError: &core.ValidationError{Result: core.ValidationResult{Issues: []core.OperationIssue{{Operation: 2, Code: core.IssueInvalidOperation, Handle: "heading", Message: "private document text"}}}}}
 	args := toolArguments(t, `{"document_type":"post","document_id":"44444444-4444-4444-8444-444444444444","locale":"en","expected_document_revision":"revision-a","block_id":"heading","text":"private input text","level":2}`)
@@ -318,13 +321,12 @@ func TestFocusedRichRejectionLogsIssueIdentityWithoutText(t *testing.T) {
 	if strings.Contains(logs.String(), "private") {
 		t.Fatal("rejection log contains document text")
 	}
-	var entry struct {
-		Issues []core.ValidationIssueSummary `json:"issues"`
-	}
+	var entry map[string]any
 	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
 		t.Fatal(err)
 	}
-	if len(entry.Issues) != 1 || entry.Issues[0].Operation != 2 || entry.Issues[0].Code != core.IssueInvalidOperation || entry.Issues[0].Handle != "heading" {
+	if entry["msg"] != "MCP document mutation rejected" || entry["issues"] != "op2:invalid_operation@heading" || entry["issue_count"] != float64(1) ||
+		entry["document_id"] != "44444444-4444-4444-8444-444444444444" || entry["locale"] != "en" || entry["domain"] != "post" {
 		t.Fatalf("issue identities missing: %s", logs.String())
 	}
 }

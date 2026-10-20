@@ -206,6 +206,9 @@ func TestValidateResponseRejectsXLIFFIdentityAndSourceChanges(t *testing.T) {
 	require.Contains(t, *result.ParseError, "XLIFF file id changed")
 	require.Contains(t, *result.ParseError, `XLIFF group "entity:meta" changed`)
 	require.Contains(t, *result.ParseError, `XLIFF unit "entity:title" source changed`)
+	require.Equal(t, []string{
+		"file_id_changed", "group_changed", "source_changed", "source_locale_changed", "target_locale_changed", "version_changed",
+	}, ProviderResponseIssueKinds(ResponseValidationError(result)))
 }
 
 func TestXLIFFTypedInlineRoundTripsNestedPairedCodesAndPlaceholders(t *testing.T) {

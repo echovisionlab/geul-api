@@ -1,6 +1,7 @@
 package aidocumentadapter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -64,6 +65,8 @@ func rejectExactMutation(domain string, result core.ValidationResult) error {
 }
 
 func handleExactMutationValidationError(
+	ctx context.Context,
+	request core.ApplyRequest,
 	err error,
 	validate bool,
 ) (core.ValidationResult, error, bool) {
@@ -71,7 +74,15 @@ func handleExactMutationValidationError(
 	if !errors.As(err, &invalid) {
 		return core.ValidationResult{}, nil, false
 	}
-	slog.Warn("AI document validation rejected operations", failurecause.Attr(err), "domain", invalid.domain, "issue_count", len(invalid.result.Issues))
+	slog.WarnContext(ctx, "AI document validation rejected operations",
+		failurecause.Attr(err),
+		"domain", invalid.domain,
+		"document_id", string(request.Document),
+		"locale", string(request.Locale),
+		"validate_only", validate,
+		"issue_count", len(invalid.result.Issues),
+		core.IssuesLogAttr(invalid.result.Issues),
+	)
 	if validate {
 		return invalid.result, nil, true
 	}

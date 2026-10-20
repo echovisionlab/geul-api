@@ -143,7 +143,7 @@ func (p *pagePort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == pagedomain.AIDocumentExecutionValidate,
+			ctx, request, err, mode == pagedomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

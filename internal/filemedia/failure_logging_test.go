@@ -37,7 +37,7 @@ func TestFileFolderConflictLogsOriginalCauseThroughNormalization(t *testing.T) {
 func TestMediaRPCFailureLoggingAllowsNilRequest(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
-	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
 	service := &FileService{}
@@ -46,7 +46,8 @@ func TestMediaRPCFailureLoggingAllowsNilRequest(t *testing.T) {
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
 	require.Equal(t, "PrepareClientMediaUpload", entry["operation"])
-	require.Equal(t, "WARN", entry["level"])
+	// The request log already records the rejected request at WARN.
+	require.Equal(t, "DEBUG", entry["level"])
 	require.NotEmpty(t, entry["failure_cause"])
 }
 

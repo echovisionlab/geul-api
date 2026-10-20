@@ -66,7 +66,7 @@ func NewHTTPHandler(mux *http.ServeMux, trustIncomingRequestID func(*http.Reques
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestContext := ingressRequestContext(r, trustIncomingRequestID)
+		requestContext := ingressRequestContext(mux, r, trustIncomingRequestID)
 		requestID := requestContext.RequestID
 		ctx := withRequestContext(r.Context(), requestContext)
 		ctx = withConnectRecordState(ctx)
@@ -106,16 +106,28 @@ func NewHTTPHandler(mux *http.ServeMux, trustIncomingRequestID func(*http.Reques
 	})
 }
 
-func ingressRequestContext(r *http.Request, trustIncomingRequestID func(*http.Request) bool) RequestContext {
+func ingressRequestContext(mux *http.ServeMux, r *http.Request, trustIncomingRequestID func(*http.Request) bool) RequestContext {
 	if trustIncomingRequestID != nil && trustIncomingRequestID(r) {
+		incomingRequestID := r.Header.Get(RequestIDHeader)
 		requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
-			r.Header.Get(RequestIDHeader),
+			incomingRequestID,
 			sharedtelemetry.AnonymousActor{},
 		)
 		if err == nil {
 			return requestContext
 		}
-		slog.WarnContext(r.Context(), "Propagated HTTP request context rejected", "failure_cause", failurecause.Message(err, r.Header.Get(RequestIDHeader)))
+		// An authenticated internal caller must forward a valid request ID.
+		// The bounded route and header state identify that caller.
+		headerState := "malformed"
+		if incomingRequestID == "" {
+			headerState = "missing"
+		}
+		slog.WarnContext(r.Context(), "Propagated HTTP request context rejected",
+			"http_method", r.Method,
+			"http_route", ingressRoute(mux, r),
+			"request_id_header", headerState,
+			"failure_cause", failurecause.Message(err, incomingRequestID),
+		)
 	}
 	requestContext, err := sharedtelemetry.NewPublicRequestContext(trustedSourceIP(r))
 	if err != nil {
@@ -123,6 +135,20 @@ func ingressRequestContext(r *http.Request, trustIncomingRequestID func(*http.Re
 		requestContext, _ = sharedtelemetry.NewPublicRequestContext("")
 	}
 	return requestContext
+}
+
+// ingressRoute resolves the normalized route before dispatch. Only the
+// rejection log needs it that early; normal requests still resolve it once.
+func ingressRoute(mux *http.ServeMux, r *http.Request) string {
+	route := ""
+	if mux != nil {
+		_, pattern := mux.Handler(r)
+		route = normalizeHTTPRoute(pattern, r.Method)
+	}
+	if route == "" {
+		return "unmatched"
+	}
+	return route
 }
 
 func normalizeHTTPRoute(pattern, method string) string {

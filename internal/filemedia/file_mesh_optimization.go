@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -29,11 +30,7 @@ func (s *FileService) ListMeshOptimizationCandidates(
 ) (_ *connect.Response[managev1.ListMeshOptimizationCandidatesResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListMeshOptimizationCandidates", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -66,11 +63,7 @@ func (s *FileService) GenerateMeshOptimizationCandidate(
 ) (_ *connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GenerateMeshOptimizationCandidate", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -104,11 +97,7 @@ func (s *FileService) UseMeshOptimizationCandidate(
 ) (_ *connect.Response[managev1.UseMeshOptimizationCandidateResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "UseMeshOptimizationCandidate", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -133,11 +122,7 @@ func (s *FileService) ClearMeshOptimizationCandidates(
 ) (_ *connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ClearMeshOptimizationCandidates", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

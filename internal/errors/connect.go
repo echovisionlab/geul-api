@@ -331,6 +331,21 @@ func InternalMsg(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%s", msg))
 }
 
+// OperationLogLevel selects the severity for an operation-level failure log.
+// The request log already records every failed request once, with its status
+// and failure cause. Expected client outcomes therefore stay at Debug here,
+// server faults stay at Error, and the remaining client rejections stay at Warn.
+func OperationLogLevel(err error) slog.Level {
+	switch connect.CodeOf(err) {
+	case connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeUnauthenticated, connect.CodeCanceled:
+		return slog.LevelDebug
+	case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+		return slog.LevelError
+	default:
+		return slog.LevelWarn
+	}
+}
+
 // Wrap returns a Connect error with the appropriate code based on the error type.
 // If err contains a *connect.Error, it is returned as-is, including its details.
 // Request cancellation and deadlines retain their transport classification.
@@ -339,13 +354,8 @@ func Wrap(err error) *connect.Error {
 	var connectErr *connect.Error
 	if stderrors.As(err, &connectErr) && connectErr != nil {
 		if err != connectErr {
-			level := slog.LevelWarn
-			switch connectErr.Code() {
-			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
 			// Returning the classified error discards the outer operation context.
-			slog.Log(context.Background(), level, "Classified RPC error", "error_code", connectErr.Code().String(), "failure_cause", failurecause.Message(err))
+			slog.Log(context.Background(), OperationLogLevel(connectErr), "Classified RPC error", "error_code", connectErr.Code().String(), "failure_cause", failurecause.Message(err))
 		}
 		return connectErr
 	}

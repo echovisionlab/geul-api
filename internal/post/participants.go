@@ -41,11 +41,7 @@ func (s *PostService) ListPostParticipants(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -160,11 +156,7 @@ func (s *PostService) AddPostAuthor(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -280,11 +272,7 @@ func (s *PostService) RemovePostAuthor(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -360,11 +348,7 @@ func (s *PostService) AddPostCollaborator(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -480,11 +464,7 @@ func (s *PostService) RemovePostCollaborator(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 

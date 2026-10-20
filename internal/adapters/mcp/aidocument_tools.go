@@ -497,7 +497,7 @@ func (tools *AIDocumentTools) applyRequest(ctx context.Context, request core.App
 		}
 		var validationError *core.ValidationError
 		if errors.As(err, &validationError) {
-			slog.WarnContext(ctx, "MCP document mutation rejected", "issues", core.ValidationIssueSummaries(validationError.Result.Issues), "issue_count", len(validationError.Result.Issues), "failure_cause", failurecause.Message(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
+			slog.WarnContext(ctx, "MCP document mutation rejected", failurecause.Attr(err), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile), "issue_count", len(validationError.Result.Issues), core.IssuesLogAttr(validationError.Result.Issues))
 			encoded, encodeErr := encodeValidation(validationError.Result)
 			if encodeErr != nil {
 				return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document rejection: %w", encodeErr)

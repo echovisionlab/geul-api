@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	contractcollaboration "github.com/echovisionlab/geul-event-contracts/go/collaboration"
 )
 
@@ -92,14 +93,89 @@ func (relay *InteractiveMutationRelay) RelayCommitted(
 		request.AcceptedTargetRevision = &accepted
 	}
 	if err := contractcollaboration.ValidateRelayInteractiveAIDocumentMutationRequest(request); err != nil {
-		return fmt.Errorf("validate interactive AI document mutation relay: %w", err)
+		return newInteractiveMutationRelayError(request, relayStageValidate, fmt.Errorf("validate interactive AI document mutation relay: %w", err))
 	}
 
 	_, err := relay.client.RelayInteractiveAIDocumentMutation(ctx, connect.NewRequest(request))
 	if err != nil {
-		return fmt.Errorf("relay committed interactive AI document mutation: %w", err)
+		return newInteractiveMutationRelayError(request, relayStageRPC, fmt.Errorf("relay committed interactive AI document mutation: %w", err))
 	}
 	return nil
+}
+
+const (
+	relayStageValidate = "validate"
+	relayStageRPC      = "rpc"
+)
+
+// InteractiveMutationRelayError describes one failed relay attempt using only
+// bounded identifiers. Collab logs its own "Interactive mutation relay failed"
+// record with the same mutation_id, and its Connect handler replaces
+// non-Connect errors with "internal error", so mutation_id is how an operator
+// finds the real cause on the Collab side.
+type InteractiveMutationRelayError struct {
+	MutationID     string
+	Stage          string
+	OperationCount int
+	OperationKinds string
+	err            error
+}
+
+func newInteractiveMutationRelayError(
+	request *intrav1.RelayInteractiveAIDocumentMutationRequest,
+	stage string,
+	err error,
+) *InteractiveMutationRelayError {
+	return &InteractiveMutationRelayError{
+		MutationID:     request.GetMutationId(),
+		Stage:          stage,
+		OperationCount: len(request.GetOperations()),
+		OperationKinds: relayOperationKinds(request.GetOperations()),
+		err:            err,
+	}
+}
+
+func (e *InteractiveMutationRelayError) Error() string { return e.err.Error() }
+
+func (e *InteractiveMutationRelayError) Unwrap() error { return e.err }
+
+// logAttrs adds the Connect code and whether Collab answered (wire error) or
+// the call failed before a response, such as a dial or timeout error.
+func (e *InteractiveMutationRelayError) logAttrs() []any {
+	attrs := []any{
+		"mutation_id", e.MutationID,
+		"relay_stage", e.Stage,
+		"operation_count", e.OperationCount,
+		"operation_kinds", e.OperationKinds,
+	}
+	if e.Stage == relayStageRPC {
+		attrs = append(attrs,
+			"connect_code", connect.CodeOf(e.err).String(),
+			"wire_error", connect.IsWireError(e.err),
+		)
+	}
+	return attrs
+}
+
+// relayOperationKinds lists the distinct operation kinds by their wire names
+// (for example "set_field") in first-seen order. Values are never included.
+func relayOperationKinds(operations []*managev1.AIDocumentOperation) string {
+	seen := map[string]struct{}{}
+	kinds := make([]string, 0, len(operations))
+	for _, operation := range operations {
+		message := operation.ProtoReflect()
+		field := message.WhichOneof(message.Descriptor().Oneofs().ByName("operation"))
+		kind := "unknown"
+		if field != nil {
+			kind = string(field.Name())
+		}
+		if _, exists := seen[kind]; exists {
+			continue
+		}
+		seen[kind] = struct{}{}
+		kinds = append(kinds, kind)
+	}
+	return strings.Join(kinds, "; ")
 }
 
 func interfaceNil(value any) bool {

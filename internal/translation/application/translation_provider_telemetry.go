@@ -2,8 +2,10 @@ package application
 
 import (
 	"context"
+	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/llm"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,6 +46,9 @@ func traceTranslationProviderOperation[T any](
 		}
 		if details, ok := llm.ProviderFailureDetailsFromError(err); ok && details.HTTPStatusClass != "" {
 			attributes = append(attributes, attribute.String("http.status_class", details.HTTPStatusClass))
+		}
+		if issues := translation.ProviderResponseIssueKinds(err); len(issues) > 0 {
+			attributes = append(attributes, attribute.String("response_issues", strings.Join(issues, ",")))
 		}
 		span.SetAttributes(attributes...)
 	}

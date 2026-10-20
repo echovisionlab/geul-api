@@ -216,6 +216,8 @@ type HardValidationResult struct {
 	MissingPlaceholders        []string
 	UnexpectedPlaceholders     []string
 	ParseError                 *string
+	// Issues lists structural failures with bounded kinds and source-owned IDs.
+	Issues []ResponseIssue
 }
 
 func ValidateGenerationProfile(profile GenerationProfile) error {

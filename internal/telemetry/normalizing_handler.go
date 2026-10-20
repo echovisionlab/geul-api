@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -70,6 +72,12 @@ func (h *diagnosticHandler) attrs(attrs []slog.Attr) []slog.Attr {
 			continue
 		} else if attr.Value.Kind() == slog.KindGroup {
 			attr.Value = slog.GroupValue(h.attrs(attr.Value.Group())...)
+		} else if !h.restore && attr.Value.Kind() == slog.KindAny {
+			// The shared handler drops every KindAny value. Keep lists of scalars and
+			// scalar Stringers (os.Signal) as text; structs and maps stay dropped.
+			if text, ok := scalarText(attr.Value.Any()); ok {
+				attr.Value = slog.StringValue(text)
+			}
 		}
 		if h.restore && attr.Value.Kind() == slog.KindGroup {
 			// Shared normalization may emit bound and record attributes in
@@ -92,4 +100,51 @@ func (h *diagnosticHandler) attrs(attrs []slog.Attr) []slog.Attr {
 		mapped = append(mapped, attr)
 	}
 	return mapped
+}
+
+const (
+	maxLoggedListItems = 50
+	maxLoggedListText  = 1024
+)
+
+// scalarText renders a slice or array of strings, booleans or numbers as a
+// comma-separated list (capped), and a non-struct fmt.Stringer as its String.
+func scalarText(value any) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Slice, reflect.Array:
+		if !isScalarKind(reflected.Type().Elem().Kind()) {
+			return "", false
+		}
+		items := make([]string, 0, min(reflected.Len(), maxLoggedListItems))
+		for i := 0; i < reflected.Len() && i < maxLoggedListItems; i++ {
+			items = append(items, fmt.Sprint(reflected.Index(i).Interface()))
+		}
+		text := strings.Join(items, ",")
+		if hidden := reflected.Len() - len(items); hidden > 0 {
+			text += fmt.Sprintf(",+%d more", hidden)
+		}
+		if runes := []rune(text); len(runes) > maxLoggedListText {
+			text = string(runes[:maxLoggedListText]) + "…"
+		}
+		return text, true
+	}
+	if stringer, ok := value.(fmt.Stringer); ok && isScalarKind(reflected.Kind()) {
+		return stringer.String(), true
+	}
+	return "", false
+}
+
+func isScalarKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.String, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
 }

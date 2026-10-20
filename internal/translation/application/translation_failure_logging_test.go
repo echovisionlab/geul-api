@@ -47,6 +47,8 @@ func TestTranslationTerminalMappingLogsOriginalCause(t *testing.T) {
 			require.Equal(t, job.ID, failure["job_id"])
 			require.Equal(t, job.OperationID, failure["operation_id"])
 			require.Equal(t, job.TargetLocale, failure["target_locale"])
+			require.Equal(t, job.EntityType, failure["entity_type"])
+			require.Equal(t, job.EntityID, failure["entity_id"])
 			require.Equal(t, translationFailureProviderUnavailable, failure["reason"])
 			require.Error(t, db.First(&model.TranslationJob{}, "id = ?", job.ID).Error)
 		})

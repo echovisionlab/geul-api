@@ -21,11 +21,7 @@ import (
 func (s *AdminService) GetOgGeneration(ctx context.Context, req *connect.Request[managev1.GetOgGenerationRequest]) (_ *connect.Response[managev1.GetOgGenerationResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetOgGeneration", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -52,11 +48,7 @@ func (s *AdminService) GetOgGeneration(ctx context.Context, req *connect.Request
 func (s *AdminService) GetLatestOgGeneration(ctx context.Context, req *connect.Request[managev1.GetLatestOgGenerationRequest]) (_ *connect.Response[managev1.GetLatestOgGenerationResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetLatestOgGeneration", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
@@ -107,11 +99,7 @@ func (s *AdminService) GetLatestOgGeneration(ctx context.Context, req *connect.R
 func (s *AdminService) GetOgGenerationRun(ctx context.Context, req *connect.Request[managev1.GetOgGenerationRunRequest]) (_ *connect.Response[managev1.GetOgGenerationRunResponse], resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetOgGenerationRun", "code", connect.CodeOf(resultErr).String())
 		}
 	}()

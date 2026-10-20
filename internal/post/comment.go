@@ -57,11 +57,7 @@ func (s *CommentService) ListCommentsByPost(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListCommentsByPost", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
 	}()
 
@@ -236,11 +232,7 @@ func (s *CommentService) LoadMoreReplies(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadMoreReplies", "outcome", "failed", "comment_id", req.Msg.GetCommentId(), failurecause.Attr(returnErr))
 	}()
 
@@ -391,11 +383,7 @@ func (s *CommentService) CreateComment(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreateComment", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -540,11 +528,7 @@ func (s *CommentService) UpdateComment(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdateComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -626,11 +610,7 @@ func (s *CommentService) DeleteComment(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeleteComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"syscall"
 	"testing"
 	"time"
 
@@ -161,4 +162,30 @@ func TestNormalizingHandlerKeepsDiagnosticSyntax(t *testing.T) {
 	require.Contains(t, entry["error"], "https://provider.example/render")
 	require.NotContains(t, output.String(), "person@example.test")
 	require.NotContains(t, output.String(), "private-token")
+}
+
+func TestNormalizingHandlerKeepsScalarListsAndDropsStructures(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	handler := NewNormalizingHandler(slog.NewJSONHandler(&output, nil))
+	logger := slog.New(handler)
+	many := make([]int, 52)
+	logger.Info("loaded",
+		"queues", []string{"og.generate", "translation.generate"},
+		"part_numbers", many,
+		"signal", syscall.SIGTERM,
+		"config", struct{ Secret string }{Secret: "do-not-log"},
+		"recipient", []string{"person@example.com"},
+	)
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &line))
+	require.Equal(t, "og.generate,translation.generate", line["queues"])
+	require.Contains(t, line["part_numbers"], ",+2 more")
+	require.Equal(t, "terminated", line["signal"])
+	require.NotContains(t, line, "config")
+	require.NotContains(t, output.String(), "do-not-log")
+	// Converting a value never bypasses the key denylist.
+	require.NotContains(t, output.String(), "person@example.com")
 }

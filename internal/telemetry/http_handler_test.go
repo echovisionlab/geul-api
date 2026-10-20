@@ -195,6 +195,58 @@ func TestHTTPHandlerReplacesMalformedAuthenticatedInternalRequestID(t *testing.T
 	require.NoError(t, sharedtelemetry.ValidateRequestID(requestID))
 }
 
+func TestHTTPHandlerRejectionLogIdentifiesInternalCaller(t *testing.T) {
+	const clientRequestID = "client-chosen-request-id"
+	for _, tc := range []struct{ header, want string }{
+		{clientRequestID, "malformed"},
+		{"", "missing"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			logBuffer, restoreLogger := captureDefaultLogs()
+			defer restoreLogger()
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /mcp/{session}", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+			request := httptest.NewRequest(http.MethodPost, "/mcp/session-1", nil)
+			request.Header.Set(RequestIDHeader, tc.header)
+			NewHTTPHandler(mux, func(*http.Request) bool { return true }).ServeHTTP(httptest.NewRecorder(), request)
+
+			var rejection structured.Fields
+			for _, entry := range decodeLogEntries(t, logBuffer.Bytes()) {
+				if entry["msg"] == "Propagated HTTP request context rejected" {
+					rejection = entry
+				}
+			}
+			require.NotNil(t, rejection, logBuffer.String())
+			require.Equal(t, "WARN", rejection["level"])
+			require.Equal(t, "POST", rejection["http_method"])
+			require.Equal(t, "/mcp/{session}", rejection["http_route"])
+			require.Equal(t, tc.want, rejection["request_id_header"])
+			require.NotContains(t, logBuffer.String(), clientRequestID)
+		})
+	}
+}
+
+func TestHTTPHandlerNeverTrustsValidRequestIDFromUnauthenticatedCaller(t *testing.T) {
+	const validRequestID = "018f47a2-8a3d-4e17-9d42-6f12c89b1234"
+	logBuffer, restoreLogger := captureDefaultLogs()
+	defer restoreLogger()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mcp", func(w http.ResponseWriter, r *http.Request) {
+		require.NotEqual(t, validRequestID, RequestIDFromContext(r.Context()))
+		w.WriteHeader(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request.Header.Set(RequestIDHeader, validRequestID)
+	response := httptest.NewRecorder()
+	NewHTTPHandler(mux, func(*http.Request) bool { return false }).ServeHTTP(response, request)
+
+	require.NotEqual(t, validRequestID, response.Header().Get(RequestIDHeader))
+	require.NotContains(t, logBuffer.String(), validRequestID)
+	require.NotContains(t, logBuffer.String(), "Propagated HTTP request context rejected")
+}
+
 func TestHTTPHandlerUsesSharedStatusClassifier(t *testing.T) {
 	tests := []struct {
 		statusCode  int

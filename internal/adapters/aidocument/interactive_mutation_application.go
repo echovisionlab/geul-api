@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
@@ -116,9 +117,26 @@ func (application *InteractiveMutationApplication) Apply(
 		return result, nil
 	}
 
-	slog.WarnContext(postCommitCtx, "Interactive AI document relay failed; transactional content event retained", "failure_cause", failurecause.Message(relayErr), "document_id", string(request.Document), "locale", string(request.Locale), "domain", string(request.Profile))
+	attrs := []any{
+		failurecause.Attr(relayErr),
+		"dependency", "editor_collab",
+		"origin", interactiveOriginLabel(application.origin),
+		"document_id", string(request.Document),
+		"locale", string(request.Locale),
+		"domain", string(request.Profile),
+	}
+	var relayFailure *InteractiveMutationRelayError
+	if errors.As(relayErr, &relayFailure) {
+		attrs = append(attrs, relayFailure.logAttrs()...)
+	}
+	slog.WarnContext(postCommitCtx, "Interactive AI document relay failed; transactional content event retained", attrs...)
 
 	return result, nil
+}
+
+// interactiveOriginLabel turns the origin enum into "mcp" or "in_editor_ai".
+func interactiveOriginLabel(origin intrav1.InteractiveAIDocumentMutationOrigin) string {
+	return strings.ToLower(strings.TrimPrefix(origin.String(), "INTERACTIVE_AI_DOCUMENT_MUTATION_ORIGIN_"))
 }
 
 func authenticatedMemberID(ctx context.Context) (auth.MemberID, error) {
