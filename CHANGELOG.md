@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.3.3](https://github.com/echovisionlab/geul-api/compare/v3.3.2...v3.3.3) (2026-10-20)
+
+
+### Bug Fixes
+
+* make failure logs diagnosable and keep expected outcomes out of warnings ([#161](https://github.com/echovisionlab/geul-api/issues/161)) ([b4ae5ea](https://github.com/echovisionlab/geul-api/commit/b4ae5ea2bac64b1344e1adf5445fda44e2ee978a))
+* read Work credit artist names from the artist's source locale ([#162](https://github.com/echovisionlab/geul-api/issues/162)) ([d053904](https://github.com/echovisionlab/geul-api/commit/d0539048e9bc189d215f51f6700ed0ba23411ec1))
+
 ## [3.3.2](https://github.com/echovisionlab/geul-api/compare/v3.3.1...v3.3.2) (2026-10-19)
 
 
