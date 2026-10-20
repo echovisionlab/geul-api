@@ -104,7 +104,37 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 		JOIN content_document AS document ON document.id = page.content_document_id
 		WHERE page.id = ?
 	`, created.Msg.Id).Row().Scan(&beforeTitle, &beforeRevision))
+	ogGenerations := func() int64 {
+		var count int64
+		require.NoError(t, db.Raw(`
+			SELECT count(*)
+			FROM og_generation AS generation
+			JOIN og_generation_target AS target ON target.id = generation.target_id
+			WHERE target.entity_type = 'page' AND target.entity_id = ? AND target.locale = 'en'
+		`, created.Msg.Id).Scan(&count).Error)
+		return count
+	}
+	generationsBefore := ogGenerations()
 	replacement := "Page Validate must roll back"
+	titleMutation := func(title *string) AIDocumentMutationCompiler {
+		return func(state AIDocumentState) (AIDocumentMutation, error) {
+			contributor := uuid.MustParse(state.ViewerMemberID)
+			return AIDocumentMutation{
+				PageID:               state.Page.ID,
+				Locale:               state.Locale,
+				ObservedSourceLocale: state.SourceLocale,
+				ExpectedRevision:     state.Snapshot.Document.Revision,
+				ObservedLocaleExists: state.LocaleExists,
+				ContributorMemberID:  state.ViewerMemberID,
+				Metadata:             AIDocumentMetadataPatch{SetTitle: true, Title: title},
+				Batch: contentblock.Batch{
+					DocumentID:           state.Snapshot.Document.ID,
+					ExpectedRevision:     state.Snapshot.Document.Revision,
+					ContributorMemberIDs: []uuid.UUID{contributor},
+				},
+			}, nil
+		}
+	}
 	result, err := application.ExecuteAIDocumentMutation(
 		ctx,
 		created.Msg.Id,
@@ -144,6 +174,14 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 	require.Equal(t, beforeTitle, afterTitle)
 	require.Equal(t, beforeRevision, afterRevision)
 	require.Equal(t, []string{"edit"}, checker.actions)
+	require.Equal(t, generationsBefore, ogGenerations(), "Validate must not request an OG image")
+
+	// An applied title requests that locale's OG image, as the editor does.
+	applied := "Page AI document title"
+	result, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply, titleMutation(&applied))
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, generationsBefore+1, ogGenerations())
 }
 
 func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
