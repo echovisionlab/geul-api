@@ -113,11 +113,7 @@ func (s *PrivacyService) GetPrivacyVersion(
 ) (rpcResponse *connect.Response[managev1.Privacy], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "GetPrivacyVersion", "failure_cause", cause)
 		}
@@ -150,11 +146,7 @@ func (s *PrivacyService) ListPrivacyVersions(
 ) (rpcResponse *connect.Response[managev1.ListPrivacyVersionsResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ListPrivacyVersions", "failure_cause", cause)
 		}
@@ -226,11 +218,7 @@ func (s *PrivacyService) CreatePrivacyVersion(
 ) (rpcResponse *connect.Response[managev1.Privacy], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "CreatePrivacyVersion", "failure_cause", cause)
 		}
@@ -331,11 +319,7 @@ func (s *PrivacyService) SchedulePrivacy(
 ) (rpcResponse *connect.Response[managev1.PrivacyLifecycleMutationResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "SchedulePrivacy", "failure_cause", cause)
 		}
@@ -449,11 +433,7 @@ func (s *PrivacyService) CancelPrivacySchedule(
 ) (rpcResponse *connect.Response[managev1.PrivacyLifecycleMutationResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "CancelPrivacySchedule", "failure_cause", cause)
 		}
@@ -581,11 +561,7 @@ func (s *PrivacyService) ActivatePrivacyNow(
 ) (rpcResponse *connect.Response[managev1.PrivacyLifecycleMutationResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ActivatePrivacyNow", "failure_cause", cause)
 		}
@@ -682,11 +658,7 @@ func (s *PrivacyService) DeletePrivacy(
 ) (rpcResponse *connect.Response[managev1.DeleteResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "DeletePrivacy", "failure_cause", cause)
 		}
@@ -785,11 +757,7 @@ func (s *PrivacyService) RegeneratePrivacyDerivedContent(
 ) (rpcResponse *connect.Response[managev1.RegeneratePrivacyDerivedContentResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "RegeneratePrivacyDerivedContent", "failure_cause", cause)
 		}

@@ -130,11 +130,7 @@ func (s *InternalArtistService) LoadArtistBlockDocument(
 ) (_ *connect.Response[intrav1.LoadArtistBlockDocumentResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "LoadArtistBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -203,11 +199,7 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 ) (_ *connect.Response[intrav1.ApplyArtistBlockBatchResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ApplyArtistBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -364,11 +356,7 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 ) (_ *connect.Response[intrav1.UpdateArtistLocaleMetadataResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UpdateArtistLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()

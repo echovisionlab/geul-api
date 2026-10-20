@@ -52,11 +52,7 @@ func (s *ClientService) Get(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.GetClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -81,11 +77,7 @@ func (s *ClientService) List(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.ListClients", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 

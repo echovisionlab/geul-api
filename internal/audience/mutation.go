@@ -35,11 +35,7 @@ func (s *AudienceService) CreateSegment(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "CreateSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -119,11 +115,7 @@ func (s *AudienceService) EstimateSegmentCount(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "EstimateSegmentCount", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -214,11 +206,7 @@ func (s *AudienceService) UpdateSegment(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "UpdateSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 

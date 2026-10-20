@@ -165,11 +165,7 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		status := clientArtifactHTTPStatus(err)
-		level := slog.LevelWarn
-		switch connect.CodeOf(err) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(err)
 		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadMediaArtifact", "code", connect.CodeOf(err).String())
 		http.Error(w, http.StatusText(status), status)
 		return

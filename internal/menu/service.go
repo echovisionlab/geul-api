@@ -109,11 +109,7 @@ func (s *MenuService) GetMenuById(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.GetMenuById", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -151,11 +147,7 @@ func (s *MenuService) ListMenus(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.ListMenus", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -228,11 +220,7 @@ func (s *MenuService) CreateMenu(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.CreateMenu", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -339,11 +327,7 @@ func (s *MenuService) UpdateMenu(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.UpdateMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -383,11 +367,7 @@ func (s *MenuService) DeleteMenu(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.DeleteMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 

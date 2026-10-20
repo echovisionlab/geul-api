@@ -57,11 +57,7 @@ func (s *InternalMenuService) LoadDocument(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.LoadDocument", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -109,11 +105,7 @@ func (s *InternalMenuService) SaveDocument(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.SaveDocument", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 

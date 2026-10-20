@@ -103,11 +103,7 @@ func (s *MailAdapterService) Create(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		private := []string{}
 		if cfg := req.Msg.GetSesConfig(); cfg != nil {
 			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
@@ -196,11 +192,7 @@ func (s *MailAdapterService) update(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		private := []string{}
 		if cfg := req.Msg.GetSesConfig(); cfg != nil {
 			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
@@ -370,11 +362,7 @@ func (s *MailAdapterService) Delete(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Delete", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -427,11 +415,7 @@ func (s *MailAdapterService) ListMailAdaptersAdmin(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "ListMailAdaptersAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -497,11 +481,7 @@ func (s *MailAdapterService) TestConfig(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "TestConfig", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
 	}()
 
@@ -558,11 +538,7 @@ func (s *MailAdapterService) Test(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Test", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
 	}()
 

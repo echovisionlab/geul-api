@@ -33,11 +33,7 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 			}
 		} else {
 			if terminalErr != nil {
-				level := slog.LevelWarn
-				switch connect.CodeOf(terminalErr) {
-				case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-					level = slog.LevelError
-				}
+				level := errs.OperationLogLevel(terminalErr)
 				slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 			}
 		}

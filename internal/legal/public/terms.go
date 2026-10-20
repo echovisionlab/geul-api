@@ -53,11 +53,7 @@ func (s *TermsService) Get(
 ) (rpcResponse *connect.Response[openv1.GetTermsResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr, optionalStringValue(req.Msg.ShareToken), optionalStringValue(req.Msg.SharePassword))
 			slog.Log(ctx, level, "RPC failed", "service", "public.Terms", "method", "Get", "failure_cause", cause)
 		}
@@ -112,11 +108,7 @@ func (s *TermsService) List(
 ) (rpcResponse *connect.Response[openv1.ListTermsResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "service", "public.Terms", "method", "List", "failure_cause", cause)
 		}

@@ -339,7 +339,7 @@ func OperationLogLevel(err error) slog.Level {
 	switch connect.CodeOf(err) {
 	case connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeUnauthenticated, connect.CodeCanceled:
 		return slog.LevelDebug
-	case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
+	case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded, connect.CodeUnimplemented:
 		return slog.LevelError
 	default:
 		return slog.LevelWarn

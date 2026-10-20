@@ -29,11 +29,7 @@ func (s *SiteSettingService) SetSetting(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.SetSetting", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -118,11 +114,7 @@ func (s *SiteSettingService) SetManySettings(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.SetManySettings", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -155,11 +147,7 @@ func (s *SiteSettingService) AddSiteLoaderAsset(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.AddSiteLoaderAsset", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -231,11 +219,7 @@ func (s *SiteSettingService) RemoveSiteLoaderAsset(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.RemoveSiteLoaderAsset", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 

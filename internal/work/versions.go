@@ -32,11 +32,7 @@ func (s *WorkService) ListWorkVersions(
 ) (_ *connect.Response[managev1.ListWorkVersionsResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListWorkVersions", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -118,11 +114,7 @@ func (s *WorkService) RestoreWorkVersion(
 ) (_ *connect.Response[managev1.Work], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "RestoreWorkVersion", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()

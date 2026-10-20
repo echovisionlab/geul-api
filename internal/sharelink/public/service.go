@@ -55,11 +55,7 @@ func (s *ShareLinkService) Validate(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		private := []string{req.Msg.GetToken(), req.Msg.GetPassword()}
 		if link.PasswordHash != nil {
 			private = append(private, *link.PasswordHash)

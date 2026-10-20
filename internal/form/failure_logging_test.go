@@ -28,7 +28,7 @@ func TestCorruptSubmissionStatsLogsCauseAndStillSkipsRow(t *testing.T) {
 func TestSaveDocumentNilRequestLogsRejectionWithoutPanicking(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	service := &InternalFormService{}
 	response, err := service.SaveDocument(t.Context(), nil)
@@ -36,7 +36,8 @@ func TestSaveDocumentNilRequestLogsRejectionWithoutPanicking(t *testing.T) {
 	require.Error(t, err)
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "WARN", entry["level"])
+	// An invalid argument is an expected client outcome; request.completed records it at Warn.
+	require.Equal(t, "DEBUG", entry["level"])
 	require.Equal(t, "SaveDocument", entry["operation"])
 	require.Equal(t, "invalid_argument", entry["reason"])
 	require.Contains(t, entry["failure_cause"], "request is required")

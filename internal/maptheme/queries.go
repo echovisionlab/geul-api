@@ -27,11 +27,7 @@ func (s *MapThemeService) ListMapThemes(
 ) (_ *connect.Response[managev1.ListMapThemesResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ListMapThemes", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -70,11 +66,7 @@ func (s *MapThemeService) ResolveMapTheme(
 ) (_ *connect.Response[managev1.ResolvedMapTheme], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ResolveMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -121,11 +113,7 @@ func (s *MapThemeService) GetMapTheme(
 ) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "GetMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -177,11 +165,7 @@ func (s *MapThemeService) CreateMapTheme(
 ) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "CreateMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -246,11 +230,7 @@ func (s *MapThemeService) DeleteMapTheme(
 ) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "DeleteMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -318,11 +298,7 @@ func (s *MapThemeService) CopyMapTheme(
 ) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "CopyMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -395,11 +371,7 @@ func (s *MapThemeService) SetDefaultMapTheme(
 ) (_ *connect.Response[managev1.SetDefaultMapThemeResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "SetDefaultMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()

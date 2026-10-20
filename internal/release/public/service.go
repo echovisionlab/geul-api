@@ -92,11 +92,7 @@ func (s *ReleaseService) Get(
 ) (_ *connect.Response[openv1.GetReleaseResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -165,11 +161,7 @@ func (s *ReleaseService) List(
 ) (_ *connect.Response[openv1.ListReleasesResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()

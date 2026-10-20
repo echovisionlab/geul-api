@@ -66,11 +66,7 @@ func (s *InternalPrivacyService) LoadPrivacyBlockDocument(
 ) (rpcResponse *connect.Response[intrav1.LoadPrivacyBlockDocumentResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "LoadPrivacyBlockDocument", "failure_cause", cause)
 		}
@@ -107,11 +103,7 @@ func (s *InternalPrivacyService) ApplyPrivacyBlockBatch(
 ) (rpcResponse *connect.Response[intrav1.ApplyPrivacyBlockBatchResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "ApplyPrivacyBlockBatch", "failure_cause", cause)
 		}
@@ -136,11 +128,7 @@ func (s *InternalPrivacyService) UpdatePrivacyLocaleMetadata(
 ) (rpcResponse *connect.Response[intrav1.UpdatePrivacyLocaleMetadataResponse], returnErr error) {
 	defer func() {
 		if returnErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(returnErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(returnErr)
 			cause := failurecause.Message(returnErr)
 			slog.Log(ctx, level, "RPC failed", "method", "UpdatePrivacyLocaleMetadata", "failure_cause", cause)
 		}

@@ -300,11 +300,7 @@ func (s *ProgramEventService) CreateProgramEvent(
 ) (_ *connect.Response[managev1.ProgramEvent], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -485,11 +481,7 @@ func (s *ProgramEventService) GetProgramEvent(
 ) (_ *connect.Response[managev1.ProgramEvent], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "GetProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -511,11 +503,7 @@ func (s *ProgramEventService) ListProgramEventsAdmin(
 ) (_ *connect.Response[managev1.ListProgramEventsAdminResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventsAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -572,11 +560,7 @@ func (s *ProgramEventService) DeleteProgramEvent(
 ) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -642,11 +626,7 @@ func (s *ProgramEventService) PublishProgramEvent(
 ) (_ *connect.Response[managev1.ProgramEventLifecycleMutationResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "PublishProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()
@@ -660,11 +640,7 @@ func (s *ProgramEventService) ArchiveProgramEvent(
 ) (_ *connect.Response[managev1.ProgramEventLifecycleMutationResponse], terminalErr error) {
 	defer func() {
 		if terminalErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(terminalErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss, connect.CodeUnavailable, connect.CodeUnimplemented, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(terminalErr)
 			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ArchiveProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
 		}
 	}()

@@ -198,11 +198,7 @@ func (s *LabelService) GetLabelEditorData(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.GetLabelEditorData", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -249,11 +245,7 @@ func (s *LabelService) ListLabels(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabels", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -339,11 +331,7 @@ func (s *LabelService) ListLabelsAdmin(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabelsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -476,11 +464,7 @@ func (s *LabelService) CreateLabel(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.CreateLabel", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 
@@ -674,11 +658,7 @@ func (s *LabelService) PreviewDeleteLabel(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.PreviewDeleteLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -708,11 +688,7 @@ func (s *LabelService) DeleteLabel(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -834,11 +810,7 @@ func (s *LabelService) PublishLabel(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.PublishLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 
@@ -894,11 +866,7 @@ func (s *LabelService) UnpublishLabel(
 		if returnErr == nil || req == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.UnpublishLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
 	}()
 

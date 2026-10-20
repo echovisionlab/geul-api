@@ -64,11 +64,7 @@ func (s *ManifestService) Get(
 		if returnErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(returnErr) {
-		case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(returnErr)
 		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings/public.Get", "outcome", "failed", failurecause.Attr(returnErr))
 	}()
 

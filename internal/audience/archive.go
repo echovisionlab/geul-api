@@ -36,11 +36,7 @@ func (s *AudienceService) ArchiveSegment(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "ArchiveSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 
@@ -78,11 +74,7 @@ func (s *AudienceService) RestoreSegment(
 		if rpcErr == nil {
 			return
 		}
-		level := slog.LevelWarn
-		switch connect.CodeOf(rpcErr) {
-		case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-			level = slog.LevelError
-		}
+		level := errs.OperationLogLevel(rpcErr)
 		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "RestoreSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
 	}()
 

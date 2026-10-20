@@ -119,11 +119,7 @@ type RemoteFileImportInput struct {
 func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			level := slog.LevelWarn
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss:
-				level = slog.LevelError
-			}
+			level := errs.OperationLogLevel(resultErr)
 			slog.Log(ctx, level, "Remote file import failed", failurecause.Attr(resultErr, input.FileName), "correlation_id", input.CorrelationID, "upload_type", input.UploadType.String())
 		}
 	}()
