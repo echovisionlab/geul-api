@@ -15,7 +15,7 @@ import (
 )
 
 func TestRichTextIntegerConversionHonorsProtobufWidth(t *testing.T) {
-	field := findMessageFieldDescriptor((&contentv1.ParagraphProps{}).ProtoReflect().Descriptor(), "previewWidth")
+	field := findMessageFieldDescriptor((&contentv1.ParagraphProps{}).ProtoReflect().Descriptor(), "displaySize")
 	descriptor := contentv1.ContentFieldDescriptor{Type: "integer"}
 	for _, input := range []string{"-2147483648", "0", "2147483647"} {
 		converted, err := scalarProtoValue(field, descriptor, core.Number(input))
@@ -35,14 +35,14 @@ func TestRichTextCodecRejectsIntegerOverflowBeforePersistence(t *testing.T) {
 	document := localizedParagraphDocument(block, "Before")
 	for _, input := range []string{"9", "101"} {
 		batch, issues, err := codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), []core.Operation{
-			core.SetFieldOperation(core.BlockID(block.String()), "previewWidth", core.Number(input)),
+			core.SetFieldOperation(core.BlockID(block.String()), "displaySize", core.Number(input)),
 		})
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err), input)
 		require.Empty(t, issues)
 		require.Empty(t, batch.Upserts)
 	}
 	for _, input := range []string{"4294967346", "-4294967246"} {
-		operation := core.SetFieldOperation(core.BlockID(block.String()), "previewWidth", core.Number(input))
+		operation := core.SetFieldOperation(core.BlockID(block.String()), "displaySize", core.Number(input))
 		validateRichTextOperationForTest(t, codec, document, operation)
 		batch, issues, err := codec.Compile(uuid.New(), document, core.LocaleRoleSource, core.Revision(uuid.NewString()), uuid.New(), []core.Operation{operation})
 		require.NoError(t, err)
@@ -54,17 +54,17 @@ func TestRichTextCodecRejectsIntegerOverflowBeforePersistence(t *testing.T) {
 	}
 	db, store, created := newCodecStoreForTest(t, "post")
 	batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), []core.Operation{
-		core.SetFieldOperation(core.BlockID(block.String()), "previewWidth", core.Number("50")),
+		core.SetFieldOperation(core.BlockID(block.String()), "displaySize", core.Number("50")),
 	})
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	snapshot := persistCodecBatchForTest(t, db, store, batch)
 	loaded, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, "en")
 	require.NoError(t, err)
-	require.Equal(t, int32(50), loaded.Base.Nodes[0].Block.GetParagraph().GetProps().GetPreviewWidth())
+	require.Equal(t, int32(50), loaded.Base.Nodes[0].Block.GetParagraph().GetProps().GetDisplaySize())
 	nodes, err := codec.Project(loaded)
 	require.NoError(t, err)
-	require.Equal(t, core.Number("50"), pageTestNodeField(t, nodes[0].Shared, "previewWidth"))
+	require.Equal(t, core.Number("50"), pageTestNodeField(t, nodes[0].Shared, "displaySize"))
 }
 
 func TestRichTextGeneratedCatalogEnumsRoundTripExactly(t *testing.T) {

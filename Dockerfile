@@ -20,9 +20,10 @@ RUN --mount=type=secret,id=private_deps_token,required=true \
 # Copy source code.
 COPY . .
 
-# Build the server and the reviewed one-time maintenance command.
+# Build the server and the reviewed one-time maintenance commands.
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o backend ./cmd/server
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o site-variable-migrate ./cmd/site-variable-migrate
+RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o display-size-migrate ./cmd/display-size-migrate
 
 FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS og-builder
 WORKDIR /app/media/og
@@ -53,6 +54,7 @@ RUN mkdir -p /coverdata
 
 COPY --from=builder /app/backend .
 COPY --from=builder /app/site-variable-migrate .
+COPY --from=builder /app/display-size-migrate .
 COPY --from=builder /app/assets ./assets
 COPY --from=og-builder /app/media/og/node_modules ./media/og/node_modules
 COPY --from=og-builder /app/media/og/dist ./media/og/dist

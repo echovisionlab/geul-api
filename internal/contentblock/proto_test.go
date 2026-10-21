@@ -462,8 +462,8 @@ func TestGeneratedContractTranslationSourceChangeIgnoresPresentationAndTracksSou
 	initialBlocks := replaceSourceBlocks(initial, document.GetSourceLocale())
 
 	contract := NewGeneratedContract()
-	previewWidth := int32(80)
-	document.GetBase().GetNodes()[0].GetBlock().GetParagraph().Props.PreviewWidth = &previewWidth
+	displaySize := int32(80)
+	document.GetBase().GetNodes()[0].GetBlock().GetParagraph().Props.DisplaySize = &displaySize
 	presentationOnly, err := ReplaceFromRichTextProto(uuid.New(), uuid.New(), document)
 	require.NoError(t, err)
 	presentationBlocks := replaceSourceBlocks(presentationOnly, document.GetSourceLocale())

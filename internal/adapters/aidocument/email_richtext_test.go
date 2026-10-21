@@ -346,7 +346,7 @@ func TestEmailRichTextBatchRangeErrorPreservesTransportRejection(t *testing.T) {
 			request := core.ApplyRequest{
 				Protocol: core.ProtocolVersion, Profile: domain, Document: identity.Reference,
 				Locale: "en", ExpectedDocumentRevision: document.DocumentRevision,
-				Operations: []core.Operation{core.SetFieldOperation(document.Nodes[1].ID, "previewWidth", core.Number("5"))},
+				Operations: []core.Operation{core.SetFieldOperation(document.Nodes[1].ID, "displaySize", core.Number("5"))},
 			}
 			_, generic := core.ValidateLoadedApply(document, request)
 			require.True(t, generic.Valid(), "%+v", generic)
