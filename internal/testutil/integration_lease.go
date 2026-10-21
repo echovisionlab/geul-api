@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const AppIntegrationPostgresImage = "registry.rawsector.com/echovisionlab/geul-postgres@sha256:41a2c6fb9e026ed327463e7662c92c5cc27e918bdaae6fa3447f45335d74494a"
+const AppIntegrationPostgresImage = "registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138"
 
 const AppIntegrationMinIOImage = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
 
