@@ -4,7 +4,7 @@ Geul API is a Go service for content, media, identity, and MCP operations.
 
 ## Quick start
 
-Requires Go 1.27.1, Node 24.22.0, pnpm 12.14.0, FFmpeg/FFprobe, ImageMagick,
+Requires Go 1.27.3, Node 24.22.0, pnpm 12.14.0, FFmpeg/FFprobe, ImageMagick,
 and the runtime values described by
 `internal/config.Config`. The trust boundary is configured explicitly with
 `AUTH_HEADER_NAME` and `INTERNAL_SERVICE_HEADER_NAME`. The internal header
