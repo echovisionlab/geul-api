@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/echovisionlab/geul-api/compare/v3.3.7...v3.4.0) (2026-10-21)
+
+
+### Features
+
+* read link previews for rich-text link cards ([#173](https://github.com/echovisionlab/geul-api/issues/173)) ([4e9d88f](https://github.com/echovisionlab/geul-api/commit/4e9d88ff584ee9cc0b8506815e53bcb7f87796d9))
+
 ## [3.3.7](https://github.com/echovisionlab/geul-api/compare/v3.3.6...v3.3.7) (2026-10-20)
 
 
