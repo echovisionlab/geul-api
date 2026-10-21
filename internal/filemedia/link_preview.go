@@ -35,7 +35,7 @@ const (
 	linkPreviewUserAgent     = "Mozilla/5.0 (compatible; GeulLinkPreview/1.0)"
 )
 
-// LinkPreviewService reads the preview metadata a page publishes about itself.
+// LinkPreviewService reads the preview metadata and site icon a page publishes about itself.
 // It fetches the page directly through the remote File import guard (HTTPS
 // only, public addresses, re-validated redirects) and stores nothing.
 type LinkPreviewService struct {
@@ -128,37 +128,54 @@ func (s *LinkPreviewService) GetLinkPreview(
 	case strings.HasPrefix(mediaType, "image/"):
 		// A direct image link previews as itself.
 		result.ImageSource = resolved.String()
+		result.IconSource = siteIconSource(resolved, nil)
 	case mediaType == "text/html" || mediaType == "application/xhtml+xml" || mediaType == "":
 		body, err := charset.NewReader(io.LimitReader(response.Body, linkPreviewMaxBytes), response.Header.Get("Content-Type"))
 		if err != nil {
 			return connect.NewResponse(result), nil
 		}
 		preview := parseLinkPreview(resolved, body)
-		result.Title, result.Description, result.SiteName, result.ImageSource =
-			preview.title, preview.description, preview.siteName, preview.imageSource
+		result.Title, result.Description, result.SiteName, result.ImageSource, result.IconSource =
+			preview.title, preview.description, preview.siteName, preview.imageSource, preview.iconSource
 	}
 	return connect.NewResponse(result), nil
 }
 
 type linkPreview struct {
-	title, description, siteName, imageSource string
+	title, description, siteName, imageSource, iconSource string
 }
 
 // parseLinkPreview reads the document head. Open Graph wins over Twitter
 // card metadata, which wins over the plain title and description.
 func parseLinkPreview(base *url.URL, body io.Reader) linkPreview {
 	meta := map[string]string{}
+	icons := map[string]string{}
 	var documentTitle string
 	tokenizer := html.NewTokenizer(body)
 	for {
 		switch tokenizer.Next() {
 		case html.ErrorToken:
-			return buildLinkPreview(base, meta, documentTitle)
+			return buildLinkPreview(base, meta, icons, documentTitle)
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, hasAttributes := tokenizer.TagName()
 			switch string(name) {
 			case "body":
-				return buildLinkPreview(base, meta, documentTitle)
+				return buildLinkPreview(base, meta, icons, documentTitle)
+			case "link":
+				var rel, href string
+				for hasAttributes {
+					var attribute, value []byte
+					attribute, value, hasAttributes = tokenizer.TagAttr()
+					switch string(attribute) {
+					case "rel":
+						rel = strings.Join(strings.Fields(strings.ToLower(string(value))), " ")
+					case "href":
+						href = string(value)
+					}
+				}
+				if _, seen := icons[rel]; rel != "" && !seen {
+					icons[rel] = href
+				}
 			case "title":
 				if documentTitle == "" && tokenizer.Next() == html.TextToken {
 					documentTitle = string(tokenizer.Text())
@@ -183,7 +200,7 @@ func parseLinkPreview(base *url.URL, body io.Reader) linkPreview {
 	}
 }
 
-func buildLinkPreview(base *url.URL, meta map[string]string, documentTitle string) linkPreview {
+func buildLinkPreview(base *url.URL, meta, icons map[string]string, documentTitle string) linkPreview {
 	first := func(limit int, values ...string) string {
 		for _, value := range values {
 			if text := clampRunes(strings.Join(strings.Fields(value), " "), limit); text != "" {
@@ -203,7 +220,19 @@ func buildLinkPreview(base *url.URL, meta map[string]string, documentTitle strin
 			break
 		}
 	}
+	preview.iconSource = siteIconSource(base, icons)
 	return preview
+}
+
+// siteIconSource prefers a declared icon, then the touch icon, then the
+// conventional /favicon.ico; the editor's import rejects anything not an image.
+func siteIconSource(base *url.URL, icons map[string]string) string {
+	for _, rel := range []string{"icon", "shortcut icon", "apple-touch-icon", "apple-touch-icon-precomposed"} {
+		if source := httpsReference(base, icons[rel]); source != "" {
+			return source
+		}
+	}
+	return httpsReference(base, "/favicon.ico")
 }
 
 // httpsReference resolves a declared image against the page and keeps it only

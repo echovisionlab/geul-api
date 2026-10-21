@@ -29,6 +29,8 @@ func TestParseLinkPreviewPrefersOpenGraphAndKeepsOnlyHTTPSImages(t *testing.T) {
 		<meta name="application-name" content="Discogs">
 		<meta property="og:image" content="http://img.discogs.com/insecure.jpg">
 		<meta name="twitter:image" content="/images/cover.jpg">
+		<link rel="apple-touch-icon" href="/touch.png">
+		<link rel="Shortcut  Icon" href="/favicon-32.png">
 		</head><body><meta property="og:title" content="Body title"></body></html>`))
 
 	want := linkPreview{
@@ -36,6 +38,7 @@ func TestParseLinkPreviewPrefersOpenGraphAndKeepsOnlyHTTPSImages(t *testing.T) {
 		description: "Card description",
 		siteName:    "Discogs",
 		imageSource: "https://www.discogs.com/images/cover.jpg",
+		iconSource:  "https://www.discogs.com/favicon-32.png",
 	}
 	if preview != want {
 		t.Fatalf("preview = %+v, want %+v", preview, want)
@@ -69,7 +72,8 @@ func TestGetLinkPreviewReadsPagesAndImagesThroughTheImportGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := page.Msg; got.GetResolvedUrl() != "https://www.example.com/video" || got.GetTitle() != "A video" || got.GetSiteName() != "Video Site" || got.GetImageSource() != "https://i.example.com/v.jpg" {
+	// Without a declared icon the site's conventional favicon is offered.
+	if got := page.Msg; got.GetResolvedUrl() != "https://www.example.com/video" || got.GetTitle() != "A video" || got.GetSiteName() != "Video Site" || got.GetImageSource() != "https://i.example.com/v.jpg" || got.GetIconSource() != "https://www.example.com/favicon.ico" {
 		t.Fatalf("page preview = %+v", got)
 	}
 	image, err := service.GetLinkPreview(t.Context(), connect.NewRequest(&managev1.GetLinkPreviewRequest{Url: "https://www.example.com/cover.png"}))
