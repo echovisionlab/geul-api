@@ -390,7 +390,7 @@ For local integration tests, pre-pull an alternative and select it explicitly:
 docker pull cgr.dev/chainguard/minio:latest
 GOWORK=off go run -tags=integration ./scripts/test/integration \
   --band ory --schema-root ../geul-schema \
-  --postgres-image registry.rawsector.com/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f \
+  --postgres-image registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138 \
   --minio-image cgr.dev/chainguard/minio:latest
 ```
 

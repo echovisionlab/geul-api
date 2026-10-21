@@ -193,7 +193,7 @@ jobs:
       GOPRIVATE: github.com/echovisionlab/*
       GOWORK: "off"
       INTEGRATION_SCHEMA_REVISION: f68cf0b0c0de6d0542b38fccc5fc4eaf169609b6
-      INTEGRATION_POSTGRES_IMAGE: registry.rawsector.com/echovisionlab/geul-postgres@sha256:313bc71d400dda733db87fe3ec00caea6db8a9a686b46eddb2f0f8d54c333d2f
+      INTEGRATION_POSTGRES_IMAGE: registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
