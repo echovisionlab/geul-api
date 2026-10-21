@@ -265,6 +265,12 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	filePath, fileHandler := managev1connect.NewFileServiceHandler(fileService, handlerOpts...)
 	mux.Handle(filePath, fileHandler)
 	slog.Info("Registered service", "path", filePath)
+	linkPreviewPath, linkPreviewHandler := managev1connect.NewLinkPreviewServiceHandler(
+		filemedia.NewLinkPreviewService(spicedbClient),
+		handlerOpts...,
+	)
+	mux.Handle(linkPreviewPath, linkPreviewHandler)
+	slog.Info("Registered service", "path", linkPreviewPath)
 	internalFileIngestService := filemedia.NewInternalFileIngestService(fileService)
 	internalFileIngestPath, internalFileIngestHandler := intrav1connect.NewInternalFileIngestServiceHandler(
 		internalFileIngestService,
