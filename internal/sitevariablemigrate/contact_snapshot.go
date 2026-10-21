@@ -27,9 +27,13 @@ var contactSourceCatalogs = map[string]bool{
 	// The reviewed target before contracts 0.11.0, which only appends the xs and xl
 	// collection item sizes: every snapshot valid there is valid in the new target.
 	"732d62ad223d3012770b10d0a1ab25a8dae2336c52b56ecd01cf276051e75637": true,
+	// The reviewed target before contracts 0.13.0, which only adds optional
+	// paragraph link presentation fields: every snapshot valid there is valid in
+	// the new target.
+	"d876a2c013cb49556f8953118b47c81ea0a13262db8f06581672048e48a761a6": true,
 }
 
-const contactTargetCatalog = "d876a2c013cb49556f8953118b47c81ea0a13262db8f06581672048e48a761a6"
+const contactTargetCatalog = "ebe3faa84fc5bd95f8ed1f459ce260f55415232036c709338efdce838e817252"
 
 func ContactSnapshotJSON(source []byte, kind string) ([]byte, error) {
 	if contentv1.ContentBlockCatalogFingerprint != contactTargetCatalog {
