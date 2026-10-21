@@ -10,7 +10,7 @@
     "url": "git+https://github.com/echovisionlab/geul-asset-optimizer.git"
   },
   "engines": {
-    "node": "24.21.0"
+    "node": "24.22.0"
   },
   "scripts": {
     "format": "prettier --write \"**/*.{js,mjs,json,md,yml,yaml}\"",
@@ -22,12 +22,12 @@
     "@gltf-transform/extensions": "4.5.1",
     "@gltf-transform/functions": "4.5.1",
     "csv-stringify": "6.9.0",
-    "draco3dgltf": "1.5.7",
+    "draco3dgltf": "1.5.9",
     "keyframe-resample": "0.1.0",
     "meshoptimizer": "1.3.0",
     "sharp": "0.35.5"
   },
   "devDependencies": {
-    "prettier": "^3.9.9"
+    "prettier": "^3.9.10"
   }
 }

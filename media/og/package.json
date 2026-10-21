@@ -14,7 +14,7 @@
   "bugs": {
     "url": "https://github.com/echovisionlab/geul-og/issues"
   },
-  "packageManager": "pnpm@12.9.1",
+  "packageManager": "pnpm@12.14.0",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsup",
@@ -33,17 +33,17 @@
     "smoke:release-syntax": "node --check dist/index.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1150.0",
+    "@aws-sdk/client-s3": "^3.1153.0",
     "@bufbuild/protobuf": "^2.16.0",
     "@connectrpc/connect": "^2.2.0",
     "@connectrpc/connect-node": "^2.2.0",
-    "@echovisionlab/geul-event": "0.7.1",
-    "@echovisionlab/geul-proto": "0.7.1",
+    "@echovisionlab/geul-event": "0.13.1",
+    "@echovisionlab/geul-proto": "0.13.1",
     "@echovisionlab/geul-telemetry": "0.2.1",
-    "@hono/node-server": "^2.1.4",
+    "@hono/node-server": "^2.1.5",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/api-logs": "0.223.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.81.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.81.2",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.223.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
     "@opentelemetry/sdk-metrics": "^2.12.0",
@@ -51,25 +51,25 @@
     "hono": "^4.13.13",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
-    "satori": "^0.51.0",
+    "satori": "^0.63.1",
     "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/coverage-v8": "^5.0.4",
-    "eslint": "^10.12.0",
-    "knip": "^6.41.0",
-    "tsup": "^8.5.1",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "^10.13.0",
+    "knip": "^6.42.1",
+    "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "typescript-eslint": "^8.71.2",
-    "vitest": "^5.0.4"
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
   },
   "engines": {
-    "node": "24.21.0"
+    "node": "24.22.0"
   }
 }
