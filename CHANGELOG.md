@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.1](https://github.com/echovisionlab/geul-api/compare/v3.4.0...v3.4.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **deps:** update dependencies, toolchain and base images to latest ([#175](https://github.com/echovisionlab/geul-api/issues/175)) ([2e9d848](https://github.com/echovisionlab/geul-api/commit/2e9d84850067337e65bfe4fd6672ce3f643c5938))
+
 ## [3.4.0](https://github.com/echovisionlab/geul-api/compare/v3.3.7...v3.4.0) (2026-10-21)
 
 
