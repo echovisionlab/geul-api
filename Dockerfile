@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.3-alpine3.24@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -24,9 +24,9 @@ COPY . .
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o backend ./cmd/server
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o site-variable-migrate ./cmd/site-variable-migrate
 
-FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS og-builder
+FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS og-builder
 WORKDIR /app/media/og
-RUN npm install --global pnpm@12.9.1
+RUN npm install --global pnpm@12.14.0
 COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml media/og/.npmrc ./
 # pnpm ignores environment-backed auth in the repository .npmrc; pass it as pnpm config.
 RUN --mount=type=secret,id=private_deps_token,required=true \
@@ -37,13 +37,13 @@ RUN --mount=type=secret,id=private_deps_token,required=true \
     env "pnpm_config_//npm.pkg.github.com/:_authToken=$(cat /run/secrets/private_deps_token)" \
     sh -c 'pnpm typecheck && pnpm build && pnpm prune --prod'
 
-FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS mesh-builder
+FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS mesh-builder
 WORKDIR /app/media/asset-optimizer
 COPY media/asset-optimizer/package.json media/asset-optimizer/package-lock.json ./
 RUN npm ci --omit=dev
 
 # A single API image owns delivery, durable consumers and native tools.
-FROM docker.io/library/node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
 
 RUN apk add --no-cache su-exec ca-certificates imagemagick rsvg-convert tzdata ffmpeg mesa-va-gallium font-noto-arabic font-noto-thai
 

@@ -1,5 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["scripts/ci/render-og-comparison.mjs"],
   "ignoreDependencies": ["@types/react"],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,mjs}", "*.{ts,mjs}"]
 }
