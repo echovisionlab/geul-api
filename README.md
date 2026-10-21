@@ -549,6 +549,11 @@ canonical-only API/Web/Collab release. The release image includes
 [`docs/contact-email-migration.md`](docs/contact-email-migration.md) for the
 mandatory writer shutdown, immutable delivery preflight and verification gate.
 
+Contracts 0.14.0 renames the shared block field `previewWidth` to `displaySize`
+with no read alias. The release image includes `/app/display-size-migrate`,
+which converts live Blocks and version history with row backups; see
+[`docs/display-size-migration.md`](docs/display-size-migration.md).
+
 Post configuration writes use `configuration_revision` as an optimistic
 concurrency token. Manage clients read it from `manage.v1.Post` and send it as
 `expected_configuration_revision` on every `UpdatePost` call. The API compares

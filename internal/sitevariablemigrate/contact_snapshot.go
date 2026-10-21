@@ -31,9 +31,13 @@ var contactSourceCatalogs = map[string]bool{
 	// paragraph link presentation fields: every snapshot valid there is valid in
 	// the new target.
 	"d876a2c013cb49556f8953118b47c81ea0a13262db8f06581672048e48a761a6": true,
+	// The reviewed target before contracts 0.14.0, which renames previewWidth to
+	// displaySize. That rename is not additive: run display-size-migrate first.
+	// A snapshot that still holds previewWidth fails the schema check below.
+	"ebe3faa84fc5bd95f8ed1f459ce260f55415232036c709338efdce838e817252": true,
 }
 
-const contactTargetCatalog = "ebe3faa84fc5bd95f8ed1f459ce260f55415232036c709338efdce838e817252"
+const contactTargetCatalog = "c3faf5bae48b1ef80f2f5496bdc3382130f53b9f744cd35dbe566beab4573fc5"
 
 func ContactSnapshotJSON(source []byte, kind string) ([]byte, error) {
 	if contentv1.ContentBlockCatalogFingerprint != contactTargetCatalog {

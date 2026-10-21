@@ -103,15 +103,15 @@ func TestLabelExactValidationUsesGeneratedRangesAndValuesOnlyTargetRule(t *testi
 	require.NoError(t, err)
 
 	widthRequest := labelRequest("en",
-		core.SetFieldOperation(labelBlockID, "previewWidth", core.Number("101")),
+		core.SetFieldOperation(labelBlockID, "displaySize", core.Number("101")),
 	)
 	validation, err := service.Validate(t.Context(), widthRequest)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	require.ErrorContains(t, err, "previewWidth")
+	require.ErrorContains(t, err, "displaySize")
 	require.Empty(t, validation.Issues)
 	_, err = service.Apply(t.Context(), widthRequest)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	require.ErrorContains(t, err, "previewWidth")
+	require.ErrorContains(t, err, "displaySize")
 	require.Empty(t, api.mutation, "generated validation must reject before domain mutation")
 	validation, err = service.Validate(t.Context(), labelRequest("en",
 		core.SetFieldOperation(labelBlockID, richTextContentField, core.RichText(core.InlineMath("x"))),
@@ -307,7 +307,7 @@ func labelSourceState() labeldomain.AIDocumentState {
 			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 			Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, Locale: "en",
 			Base: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{{
-				Block:     &contentv1.RichTextBlock{Id: labelBlockID, Value: &contentv1.RichTextBlock_Paragraph{Paragraph: &contentv1.ParagraphBlock{Props: &contentv1.ParagraphProps{TextAlignment: &left, PreviewWidth: &width}}}},
+				Block:     &contentv1.RichTextBlock{Id: labelBlockID, Value: &contentv1.RichTextBlock_Paragraph{Paragraph: &contentv1.ParagraphBlock{Props: &contentv1.ParagraphProps{TextAlignment: &left, DisplaySize: &width}}}},
 				Placement: &contentv1.ContentBlockPlacement{},
 			}}},
 			LocaleOverlay: &contentv1.RichTextLocaleOverlay{Locale: "en", Blocks: []*contentv1.RichTextBlockLocale{{

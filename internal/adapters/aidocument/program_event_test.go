@@ -294,7 +294,7 @@ func TestProgramEventBatchRangeErrorPreservesTransportRejection(t *testing.T) {
 	request := core.ApplyRequest{
 		Protocol: core.ProtocolVersion, Profile: core.DomainProgramEvent, Document: identity.Reference,
 		Locale: "en", ExpectedDocumentRevision: document.DocumentRevision,
-		Operations: []core.Operation{core.SetFieldOperation(programEventBlockID, "previewWidth", core.Number("5"))},
+		Operations: []core.Operation{core.SetFieldOperation(programEventBlockID, "displaySize", core.Number("5"))},
 	}
 	_, generic := core.ValidateLoadedApply(document, request)
 	require.True(t, generic.Valid(), "%+v", generic)
@@ -374,7 +374,7 @@ func TestProgramEventMetadataExactMutationCompilesWithBodyAndPreservesIndexes(t 
 		require.Equal(t, before, api.persistCalls)
 	}
 	request.Operations = validOperations
-	request.Operations[2] = core.SetFieldOperation(programEventBlockID, "previewWidth", core.Number("5"))
+	request.Operations[2] = core.SetFieldOperation(programEventBlockID, "displaySize", core.Number("5"))
 	_, err = service.Validate(t.Context(), request)
 	require.Error(t, err, "generated range errors remain transport rejection after metadata removal")
 }
