@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/echovisionlab/geul-api/compare/v3.4.1...v4.0.0) (2026-10-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* Run display-size-migrate --apply --writers-stopped and --verify before this API starts.
+
+### Features
+
+* read displaySize and convert stored previewWidth ([#178](https://github.com/echovisionlab/geul-api/issues/178)) ([3ba7322](https://github.com/echovisionlab/geul-api/commit/3ba7322e2986894d7c3de57f8a8f396fabea0e52))
+
 ## [3.4.1](https://github.com/echovisionlab/geul-api/compare/v3.4.0...v3.4.1) (2026-10-21)
 
 
