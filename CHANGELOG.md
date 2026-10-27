@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/echovisionlab/geul-api/compare/v4.0.0...v4.0.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* accept logo slot and contact email changes in settings audit ([#181](https://github.com/echovisionlab/geul-api/issues/181)) ([9d31d93](https://github.com/echovisionlab/geul-api/commit/9d31d9386402b4f03b977136c7fa74263c358337))
+
 ## [4.0.0](https://github.com/echovisionlab/geul-api/compare/v3.4.1...v4.0.0) (2026-10-21)
 
 
