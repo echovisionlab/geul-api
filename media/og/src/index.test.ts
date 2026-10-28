@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   startRuntime: vi.fn(),
   emitServiceFailed: vi.fn(),
+  shutdownTelemetry: vi.fn(async () => undefined),
 }));
 
-vi.mock('./telemetry.js', () => ({}));
+vi.mock('./telemetry.js', () => ({ shutdownTelemetry: mocks.shutdownTelemetry }));
 vi.mock('./runtime.js', () => ({ startRuntime: mocks.startRuntime }));
 vi.mock('./system_logging.js', () => ({ emitServiceFailed: mocks.emitServiceFailed }));
 
@@ -40,5 +41,9 @@ describe('service entrypoint', () => {
 
     expect(mocks.emitServiceFailed).toHaveBeenCalledWith(error);
     expect(exit).toHaveBeenCalledWith(1);
+    // The startup failure record is exported before the process exits.
+    expect(mocks.shutdownTelemetry.mock.invocationCallOrder[0]).toBeLessThan(
+      exit.mock.invocationCallOrder[0]
+    );
   });
 });

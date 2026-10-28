@@ -8,6 +8,11 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { SERVICE_OG } from '@echovisionlab/geul-telemetry';
 import { emitTelemetryPipelineDegraded } from './system_logging.js';
 
+// Leaves the rest of the pod's termination grace period for the runtime exit.
+const TELEMETRY_SHUTDOWN_TIMEOUT_MS = 5_000;
+
+let activeSdk: NodeSDK | undefined;
+
 const hasOtelEndpoint = Boolean(
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
   process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ||
@@ -51,15 +56,33 @@ function startTelemetry(): void {
   Promise.resolve(sdk.start()).catch((error: unknown) => {
     emitTelemetryPipelineDegraded(error);
   });
+  activeSdk = sdk;
+}
 
-  const shutdown = () => {
-    void sdk.shutdown().catch((error: unknown) => {
-      emitTelemetryPipelineDegraded(error);
-    });
-  };
-
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
+/**
+ * Flushes and stops the SDK. The runtime awaits this after its last log record
+ * and before it exits, so the batched records and spans are exported.
+ */
+export async function shutdownTelemetry(): Promise<void> {
+  const sdk = activeSdk;
+  activeSdk = undefined;
+  if (!sdk) {
+    return;
+  }
+  let timeout: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error('OpenTelemetry shutdown timed out')),
+      TELEMETRY_SHUTDOWN_TIMEOUT_MS
+    );
+  });
+  try {
+    await Promise.race([sdk.shutdown(), deadline]);
+  } catch (error) {
+    emitTelemetryPipelineDegraded(error);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 startTelemetry();

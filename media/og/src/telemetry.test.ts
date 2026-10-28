@@ -98,18 +98,14 @@ describe('telemetry', () => {
     expect(mocks.registerLoaderHook).not.toHaveBeenCalled();
   });
 
-  it('starts the SDK, enables debug logging, and registers signal shutdown handlers', async () => {
+  it('starts the SDK, enables debug logging, and leaves signals to the runtime', async () => {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://otel:4318';
     process.env.OTEL_DEBUG = 'true';
     process.env.OTEL_SERVICE_NAME = 'custom-og';
     process.env.OTEL_RESOURCE_ATTRIBUTES = 'service.name=also-custom,deployment.environment=test';
-    const signalHandlers = new Map<string, (...args: unknown[]) => void>();
-    process.once = vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
-      signalHandlers.set(String(event), listener);
-      return process;
-    }) as typeof process.once;
+    process.once = vi.fn(() => process) as typeof process.once;
 
-    await importTelemetry();
+    const telemetry = await importTelemetry();
     await Promise.resolve();
 
     expect(mocks.diag.setLogger).toHaveBeenCalledWith(expect.anything(), 1);
@@ -141,8 +137,10 @@ describe('telemetry', () => {
     );
     expect(mocks.nodeSdkStart).toHaveBeenCalledTimes(1);
 
-    signalHandlers.get('SIGTERM')?.();
-    await Promise.resolve();
+    expect(process.once).not.toHaveBeenCalled();
+
+    await telemetry.shutdownTelemetry();
+    await telemetry.shutdownTelemetry();
 
     expect(mocks.nodeSdkShutdown).toHaveBeenCalledTimes(1);
   });
@@ -151,18 +149,10 @@ describe('telemetry', () => {
     process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = 'http://otel:4318/v1/traces';
     mocks.nodeSdkStart.mockRejectedValueOnce(new Error('start failed'));
     mocks.nodeSdkShutdown.mockRejectedValueOnce(new Error('stop failed'));
-    let shutdown: (() => void) | undefined;
-    process.once = vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
-      if (event === 'SIGINT') {
-        shutdown = listener as () => void;
-      }
-      return process;
-    }) as typeof process.once;
 
-    await importTelemetry();
+    const telemetry = await importTelemetry();
     await Promise.resolve();
-    shutdown?.();
-    await Promise.resolve();
+    await telemetry.shutdownTelemetry();
 
     expect(mocks.emitTelemetryPipelineDegraded).toHaveBeenNthCalledWith(
       1,
@@ -180,18 +170,10 @@ describe('telemetry', () => {
     process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://otel:4318/v1/metrics';
     mocks.nodeSdkStart.mockRejectedValueOnce('start string');
     mocks.nodeSdkShutdown.mockRejectedValueOnce('stop string');
-    let shutdown: (() => void) | undefined;
-    process.once = vi.fn((event: string | symbol, listener: (...args: unknown[]) => void) => {
-      if (event === 'SIGTERM') {
-        shutdown = listener as () => void;
-      }
-      return process;
-    }) as typeof process.once;
 
-    await importTelemetry();
+    const telemetry = await importTelemetry();
     await Promise.resolve();
-    shutdown?.();
-    await Promise.resolve();
+    await telemetry.shutdownTelemetry();
 
     expect(mocks.emitTelemetryPipelineDegraded).toHaveBeenNthCalledWith(1, 'start string');
     expect(mocks.emitTelemetryPipelineDegraded).toHaveBeenNthCalledWith(2, 'stop string');
@@ -202,10 +184,39 @@ describe('telemetry', () => {
     delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
     delete process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
     process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = 'http://otel:4318/v1/logs';
-    process.once = vi.fn(() => process) as typeof process.once;
 
     await importTelemetry();
 
     expect(mocks.nodeSdkStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves immediately when telemetry never started', async () => {
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
+
+    const telemetry = await importTelemetry();
+    await telemetry.shutdownTelemetry();
+
+    expect(mocks.nodeSdkShutdown).not.toHaveBeenCalled();
+  });
+
+  it('stops waiting for a hung exporter so the process can still exit', async () => {
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://otel:4318';
+    mocks.nodeSdkShutdown.mockImplementationOnce(() => new Promise<undefined>(() => undefined));
+    const telemetry = await importTelemetry();
+    vi.useFakeTimers();
+    try {
+      const shutdown = telemetry.shutdownTelemetry();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await shutdown;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mocks.emitTelemetryPipelineDegraded).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'OpenTelemetry shutdown timed out' })
+    );
   });
 });
