@@ -1,4 +1,4 @@
-import './telemetry.js';
+import { shutdownTelemetry } from './telemetry.js';
 
 import { emitServiceFailed } from './system_logging.js';
 
@@ -8,7 +8,8 @@ export async function main(): Promise<void> {
   await startRuntime();
 }
 
-void main().catch((err: unknown) => {
+void main().catch(async (err: unknown) => {
   emitServiceFailed(err);
+  await shutdownTelemetry();
   process.exit(1);
 });

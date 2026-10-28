@@ -142,13 +142,43 @@ describe('OG runtime', () => {
     mocks.serve.mockReturnValue({ close });
     mocks.closeQueue.mockRejectedValueOnce(error);
     const exit = vi.fn();
+    const flushTelemetry = vi.fn(async () => undefined);
 
-    const runtime = await startRuntime({ registerSignal: vi.fn(), exit });
+    const runtime = await startRuntime({ registerSignal: vi.fn(), exit, flushTelemetry });
     await runtime.shutdown();
 
     expect(close).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledWith(1);
     expect(mocks.emitServiceFailed).toHaveBeenCalledWith(error);
+    // The failure record is exported before the process exits.
+    expect(mocks.emitServiceFailed.mock.invocationCallOrder[0]).toBeLessThan(
+      flushTelemetry.mock.invocationCallOrder[0]
+    );
+    expect(flushTelemetry.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
+  });
+
+  it('flushes telemetry after the stopping record and before a clean exit', async () => {
+    const close = vi.fn((callback?: () => void) => callback?.());
+    mocks.serve.mockReturnValue({ close });
+    const exit = vi.fn();
+    let finishFlush: (() => void) | undefined;
+    const flushTelemetry = vi.fn(
+      () => new Promise<void>((resolve) => {
+        finishFlush = resolve;
+      })
+    );
+
+    const runtime = await startRuntime({ registerSignal: vi.fn(), exit, flushTelemetry });
+    const shutdown = runtime.shutdown();
+    await vi.waitFor(() => expect(flushTelemetry).toHaveBeenCalledOnce());
+
+    expect(mocks.emitServiceStopping.mock.invocationCallOrder[0]).toBeLessThan(
+      flushTelemetry.mock.invocationCallOrder[0]
+    );
+    expect(exit).not.toHaveBeenCalled();
+    finishFlush?.();
+    await shutdown;
+    expect(exit).toHaveBeenCalledWith(0);
   });
 
   it('waits for queue shutdown and exits nonzero when the HTTP server close fails', async () => {

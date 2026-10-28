@@ -10,6 +10,7 @@ import {
   emitServiceReady,
   emitServiceStopping,
 } from './system_logging.js';
+import { shutdownTelemetry } from './telemetry.js';
 
 interface RuntimeDependencies {
   serveHttp: typeof serve;
@@ -20,6 +21,7 @@ interface RuntimeDependencies {
     signal: 'SIGTERM' | 'SIGINT',
     listener: () => void | Promise<void>
   ) => unknown;
+  flushTelemetry: () => Promise<void>;
   exit: (code: number) => void;
 }
 
@@ -31,6 +33,7 @@ const defaultDependencies: RuntimeDependencies = {
   closeQueue: closePGMQ,
   processEvent: processOgGenerate,
   registerSignal: (signal, listener) => process.on(signal, listener),
+  flushTelemetry: shutdownTelemetry,
   exit: (code) => process.exit(code),
 };
 
@@ -77,6 +80,7 @@ export async function startRuntime(
   const shutdown = (): Promise<void> => {
     shutdownPromise ??= (async () => {
       emitServiceStopping();
+      let exitCode = 0;
       try {
         const results = await Promise.allSettled([
           closeHttpServer(server),
@@ -88,11 +92,13 @@ export async function startRuntime(
         if (failure) {
           throw failure.reason;
         }
-        dependencies.exit(0);
       } catch (error) {
         emitServiceFailed(error);
-        dependencies.exit(1);
+        exitCode = 1;
       }
+      // Exiting first would drop the batched stopping and failure records.
+      await dependencies.flushTelemetry();
+      dependencies.exit(exitCode);
     })();
     return shutdownPromise;
   };
