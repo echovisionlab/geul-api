@@ -1,5 +1,11 @@
-import { context, isSpanContextValid, trace } from '@opentelemetry/api';
-import { logs, SeverityNumber, type AnyValueMap } from '@opentelemetry/api-logs';
+import {
+  context,
+  isSpanContextValid,
+  logs,
+  SeverityNumber,
+  trace,
+  type Attributes,
+} from '@opentelemetry/api';
 import {
   normalizeLogAttributes,
   SERVICE_OG,
@@ -86,7 +92,7 @@ function emitOpenTelemetryLog(
     severityText: severity.text,
     eventName: typeof attributes.event === 'string' ? attributes.event : undefined,
     body: message,
-    attributes: attributes as AnyValueMap,
+    attributes: attributes as Attributes,
     context: context.active(),
   });
 }

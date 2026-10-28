@@ -1,9 +1,10 @@
 import './telemetry.js';
 
-import { startRuntime } from './runtime.js';
 import { emitServiceFailed } from './system_logging.js';
 
 export async function main(): Promise<void> {
+  // Import the runtime only after telemetry registers its ESM loader hook.
+  const { startRuntime } = await import('./runtime.js');
   await startRuntime();
 }
 

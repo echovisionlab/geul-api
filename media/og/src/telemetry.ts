@@ -1,3 +1,4 @@
+import { register } from 'node:module';
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
@@ -22,15 +23,27 @@ function startTelemetry(): void {
     diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.INFO);
   }
 
+  // NodeSDK patches CommonJS require only. ESM imports of http, pg and the
+  // other instrumented modules are patched only when they load through this
+  // loader hook, so index.ts imports the runtime after this module runs.
+  register('@opentelemetry/instrumentation/hook.mjs', import.meta.url);
+
   const sdk = new NodeSDK({
     serviceName: SERVICE_OG,
     traceExporter: new OTLPTraceExporter(),
-    metricReader: new PeriodicExportingMetricReader({
-      exporter: new OTLPMetricExporter(),
-    }),
+    metricReaders: [
+      new PeriodicExportingMetricReader({
+        exporter: new OTLPMetricExporter(),
+      }),
+    ],
     instrumentations: [
       getNodeAutoInstrumentations({
         '@opentelemetry/instrumentation-fs': { enabled: false },
+        // The queue polls PostgreSQL continuously; keep only queries that run
+        // inside a traced delivery or request.
+        '@opentelemetry/instrumentation-pg': { requireParentSpan: true },
+        // logger.ts already emits every pino record as an OpenTelemetry log.
+        '@opentelemetry/instrumentation-pino': { enabled: false },
       }),
     ],
   });

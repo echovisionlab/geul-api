@@ -42,9 +42,6 @@ vi.mock('@opentelemetry/api', () => ({
   trace: {
     getSpan: mocks.getSpan,
   },
-}));
-
-vi.mock('@opentelemetry/api-logs', () => ({
   logs: {
     getLogger: mocks.getLogger,
   },

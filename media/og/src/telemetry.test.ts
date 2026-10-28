@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
     return { type: 'trace-exporter' };
   }),
   emitTelemetryPipelineDegraded: vi.fn(),
+  registerLoaderHook: vi.fn(),
+}));
+
+vi.mock('node:module', () => ({
+  register: mocks.registerLoaderHook,
 }));
 
 vi.mock('@opentelemetry/api', () => ({
@@ -90,6 +95,7 @@ describe('telemetry', () => {
     await importTelemetry();
 
     expect(mocks.nodeSdk).not.toHaveBeenCalled();
+    expect(mocks.registerLoaderHook).not.toHaveBeenCalled();
   });
 
   it('starts the SDK, enables debug logging, and registers signal shutdown handlers', async () => {
@@ -111,17 +117,28 @@ describe('telemetry', () => {
       expect.objectContaining({
         serviceName: 'geul-og',
         traceExporter: { type: 'trace-exporter' },
-        metricReader: expect.objectContaining({
-          options: {
-            exporter: { type: 'metric-exporter' },
-          },
-        }),
+        metricReaders: [
+          expect.objectContaining({
+            options: {
+              exporter: { type: 'metric-exporter' },
+            },
+          }),
+        ],
         instrumentations: [['instrumentation']],
       })
     );
     expect(mocks.getNodeAutoInstrumentations).toHaveBeenCalledWith({
       '@opentelemetry/instrumentation-fs': { enabled: false },
+      '@opentelemetry/instrumentation-pg': { requireParentSpan: true },
+      '@opentelemetry/instrumentation-pino': { enabled: false },
     });
+    expect(mocks.registerLoaderHook).toHaveBeenCalledWith(
+      '@opentelemetry/instrumentation/hook.mjs',
+      expect.stringMatching(/^file:/)
+    );
+    expect(mocks.registerLoaderHook.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.nodeSdkStart.mock.invocationCallOrder[0]
+    );
     expect(mocks.nodeSdkStart).toHaveBeenCalledTimes(1);
 
     signalHandlers.get('SIGTERM')?.();
