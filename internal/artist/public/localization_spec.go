@@ -11,5 +11,5 @@ var artistLocalizationSpec = publiccontent.Spec{
 var artistWorkLocalizationSpec = publiccontent.Spec{
 	EntityType:   "work",
 	TableName:    "work_translation",
-	SelectClause: "locale, title, summary, NULL::jsonb AS content_json, content_html, content_text, og_asset_id",
+	SelectClause: "locale, title, summary, NULL::jsonb AS content_json, NULL::text AS content_html, NULL::text AS content_text, og_asset_id",
 }

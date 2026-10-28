@@ -507,6 +507,9 @@ func (s *ArtistService) GetWorks(
 			work.Summary = w.Summary
 		}
 		if localized, ok := localizedSelections[w.ID]; ok {
+			if localized.Title != nil {
+				work.Title = *localized.Title
+			}
 			if localized.Summary != nil {
 				work.Summary = localized.Summary
 			}
