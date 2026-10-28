@@ -31,7 +31,7 @@ type Work struct {
 	Metadata             structured.Fields                  `gorm:"column:metadata;type:jsonb;serializer:json"`
 	Featured             bool                               `gorm:"column:featured;type:boolean;not null;default:false"`
 	Status               string                             `gorm:"column:status;type:varchar(50);not null;default:WORK_STATUS_DRAFT"`
-	OgAssetID            *string                            `gorm:"column:og_asset_id;type:uuid"`
+	OgAssetID            *string                            `gorm:"-"`
 	CreatedAt            time.Time                          `gorm:"column:created_at;not null;default:now()"`
 	UpdatedAt            time.Time                          `gorm:"column:updated_at;not null;default:now()"`
 	PublishedAt          *time.Time                         `gorm:"column:published_at"`

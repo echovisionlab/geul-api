@@ -416,6 +416,13 @@ func (s *WorkService) loadRestoredWork(ctx context.Context, workID string) (mode
 	}
 	work.Title = *source.Title
 	work.Summary = cloneOptionalString(source.Summary)
+	sourceState, err := loadWorkSourceLocaleDocumentState(ctx, s.db, work.ID)
+	if err != nil {
+		return model.Work{}, err
+	}
+	if sourceState != nil {
+		work.OgAssetID = sourceState.OgAssetID
+	}
 	return work, nil
 }
 

@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"crypto/sha256"
 	"strings"
 	"testing"
 	"time"
@@ -88,10 +89,21 @@ func TestWorkSourceEditAndSwitchPreserveTargetsAndJobsIntegration(t *testing.T) 
 	}
 	require.NoError(t, db.Create(&version).Error)
 
-	_, err = workService.RestoreWorkVersion(ctx, connect.NewRequest(&managev1.RestoreWorkVersionRequest{
+	seedWorkPointerOgAsset(t, db, created.Msg.Id, "ko")
+
+	restored, err := workService.RestoreWorkVersion(ctx, connect.NewRequest(&managev1.RestoreWorkVersionRequest{
 		WorkId: created.Msg.Id, VersionId: version.ID,
 	}))
 	require.NoError(t, err)
+	// The restored source content releases the stale Korean OG for regeneration,
+	// so the manage response carries the source locale's pending (empty) OG.
+	var restoredSourceOg struct {
+		OgAssetID *string `gorm:"column:og_asset_id"`
+	}
+	require.NoError(t, db.Table("work_translation").Select("og_asset_id::text AS og_asset_id").
+		Where("entity_id = ? AND locale = ?", created.Msg.Id, "ko").Take(&restoredSourceOg).Error)
+	require.Nil(t, restoredSourceOg.OgAssetID)
+	require.Nil(t, restored.Msg.GetOgAsset())
 	require.Equal(t, enBeforeSwitch, loadWorkPointerLocale(t, db, created.Msg.Id, "en"))
 	require.Equal(t, frBeforeSwitch, loadWorkPointerLocale(t, db, created.Msg.Id, "fr"))
 	require.Equal(t, jobsBeforeSwitch, loadWorkPointerJobs(t, db, created.Msg.Id))
@@ -110,6 +122,22 @@ type workPointerLocaleSnapshot struct {
 	Summary   *string   `gorm:"column:summary"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"`
+}
+
+func seedWorkPointerOgAsset(t *testing.T, db *gorm.DB, workID string, locale string) {
+	t.Helper()
+	assetID := integrationTestUUID()
+	digest := sha256.Sum256([]byte(assetID))
+	now := time.Now().UTC()
+	require.NoError(t, db.Exec(`
+		INSERT INTO public_asset (
+			id, kind, object_key, extension, mime_type, file_size, sha256, status, ready_at, created_at, updated_at
+		) VALUES (?::uuid, 'og', ?, 'webp', 'image/webp', 1, ?, 'ready', ?, ?, ?)
+	`, assetID, "asset/"+assetID+".webp", digest[:], now, now, now).Error)
+	require.NoError(t, db.Exec(
+		`UPDATE work_translation SET og_asset_id = ?::uuid WHERE entity_id = ?::uuid AND locale = ?`,
+		assetID, workID, locale,
+	).Error)
 }
 
 func seedWorkPointerTarget(

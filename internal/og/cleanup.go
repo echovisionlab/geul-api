@@ -186,14 +186,14 @@ func (s *Cleanup) IsPublicAssetProtected(ctx context.Context, tx *gorm.DB, asset
 			SELECT 1 FROM post WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM page WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM form WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM work WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM label WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM artist WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM release WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM series_translation WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM post_translation WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM page_translation WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM form_translation WHERE og_asset_id = ?
+			UNION ALL SELECT 1 FROM work_translation WHERE og_asset_id = ?
+			UNION ALL SELECT 1 FROM artist_translation WHERE og_asset_id = ?
 			UNION ALL SELECT 1 FROM site_settings WHERE site_og_asset_id = ?
 		) AS referenced`
 	var referenced bool

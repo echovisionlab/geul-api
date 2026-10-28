@@ -26,7 +26,7 @@ type Artist struct {
 	Website              *string                     `gorm:"column:website;type:varchar(500)"`
 	SocialLinks          map[string]string           `gorm:"column:social_links;type:jsonb;serializer:json"`
 	Metadata             structured.Fields           `gorm:"column:metadata;type:jsonb;serializer:json"`
-	OgAssetID            *string                     `gorm:"column:og_asset_id;type:uuid"`
+	OgAssetID            *string                     `gorm:"-"`
 	Status               string                      `gorm:"column:status;type:varchar(50);not null;default:ARTIST_STATUS_DRAFT"`
 	PublishedAt          *time.Time                  `gorm:"column:published_at"`
 	CreatedAt            time.Time                   `gorm:"column:created_at;not null;default:now()"`

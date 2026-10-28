@@ -29,9 +29,7 @@ func TestClearPendingOgProjectionCoversEveryGeneratedEntityShape(t *testing.T) {
 		CREATE TABLE form_translation (entity_id text, locale text, og_asset_id text);
 		CREATE TABLE work_translation (entity_id text, locale text, og_asset_id text);
 		CREATE TABLE artist_translation (entity_id text, locale text, og_asset_id text);
-		CREATE TABLE work (id text, og_asset_id text);
 		CREATE TABLE label (id text, og_asset_id text);
-		CREATE TABLE artist (id text, og_asset_id text);
 		CREATE TABLE site_settings (id integer, site_og_asset_id text);
 		CREATE TABLE public_asset_binding (
 			asset_id text, owner_type text, owner_id text, binding_key text,
@@ -42,7 +40,7 @@ func TestClearPendingOgProjectionCoversEveryGeneratedEntityShape(t *testing.T) {
 	for _, table := range []string{"post_translation", "page_translation", "series_translation", "form_translation", "work_translation", "artist_translation"} {
 		require.NoError(t, db.Exec("INSERT INTO "+table+" (entity_id, locale, og_asset_id) VALUES ('entity', 'ko', 'old')").Error)
 	}
-	for _, table := range []string{"work", "label", "artist"} {
+	for _, table := range []string{"label"} {
 		require.NoError(t, db.Exec("INSERT INTO "+table+" (id, og_asset_id) VALUES ('entity', 'old')").Error)
 	}
 	require.NoError(t, db.Exec("INSERT INTO site_settings (id, site_og_asset_id) VALUES (1, 'old')").Error)
