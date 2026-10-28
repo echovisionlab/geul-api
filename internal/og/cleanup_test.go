@@ -34,14 +34,14 @@ func TestMarkUnboundReadyOgAssetsRequiresThirtyDaysAndNoBindingOrPointer(t *test
 		{table: "post", column: "og_asset_id"},
 		{table: "page", column: "og_asset_id"},
 		{table: "form", column: "og_asset_id"},
-		{table: "work", column: "og_asset_id"},
 		{table: "label", column: "og_asset_id"},
-		{table: "artist", column: "og_asset_id"},
 		{table: "release", column: "og_asset_id"},
 		{table: "series_translation", column: "og_asset_id"},
 		{table: "post_translation", column: "og_asset_id"},
 		{table: "page_translation", column: "og_asset_id"},
 		{table: "form_translation", column: "og_asset_id"},
+		{table: "work_translation", column: "og_asset_id"},
+		{table: "artist_translation", column: "og_asset_id"},
 		{table: "site_settings", column: "site_og_asset_id"},
 	}
 	protected := make([]model.PublicAsset, 0, len(pointerTables))
@@ -83,10 +83,10 @@ func newOgCleanupUnitDB(t *testing.T) *gorm.DB {
 			updated_at datetime NOT NULL, PRIMARY KEY (owner_type, owner_id, binding_key)
 		);
 	`).Error)
-	for _, table := range []string{"post", "page", "form", "work", "label", "artist", "release"} {
+	for _, table := range []string{"post", "page", "form", "label", "release"} {
 		require.NoError(t, db.Exec(fmt.Sprintf("CREATE TABLE %s (id text PRIMARY KEY, og_asset_id text)", table)).Error)
 	}
-	for _, table := range []string{"post_translation", "page_translation", "series_translation", "form_translation"} {
+	for _, table := range []string{"post_translation", "page_translation", "series_translation", "form_translation", "work_translation", "artist_translation"} {
 		require.NoError(t, db.Exec(fmt.Sprintf("CREATE TABLE %s (id text PRIMARY KEY, og_asset_id text)", table)).Error)
 	}
 	require.NoError(t, db.Exec("CREATE TABLE site_settings (id text PRIMARY KEY, site_og_asset_id text)").Error)
