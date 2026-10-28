@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.5](https://github.com/echovisionlab/geul-api/compare/v4.0.4...v4.0.5) (2026-10-28)
+
+
+### Bug Fixes
+
+* **og:** move to OpenTelemetry SDK 3.0 and instrument ESM imports ([#189](https://github.com/echovisionlab/geul-api/issues/189)) ([85a65b0](https://github.com/echovisionlab/geul-api/commit/85a65b0ccfb3eed062d4c3fee68f42d2b9db266d))
+
 ## [4.0.4](https://github.com/echovisionlab/geul-api/compare/v4.0.3...v4.0.4) (2026-10-28)
 
 
