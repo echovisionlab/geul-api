@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.2](https://github.com/echovisionlab/geul-api/compare/v4.0.1...v4.0.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **og:** render SVG logos at the target size ([#183](https://github.com/echovisionlab/geul-api/issues/183)) ([09bf796](https://github.com/echovisionlab/geul-api/commit/09bf796fdec66fb91d3029a3e28c8710517e9dda))
+
 ## [4.0.1](https://github.com/echovisionlab/geul-api/compare/v4.0.0...v4.0.1) (2026-10-27)
 
 
