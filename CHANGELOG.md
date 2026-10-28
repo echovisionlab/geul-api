@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.4](https://github.com/echovisionlab/geul-api/compare/v4.0.3...v4.0.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* localize artist Work titles and refresh dependencies ([#187](https://github.com/echovisionlab/geul-api/issues/187)) ([cf0e390](https://github.com/echovisionlab/geul-api/commit/cf0e3906eee4bb041a29ec89ce1c8bf83168e0f9))
+
 ## [4.0.3](https://github.com/echovisionlab/geul-api/compare/v4.0.2...v4.0.3) (2026-10-28)
 
 
