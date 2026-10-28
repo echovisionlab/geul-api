@@ -131,4 +131,16 @@ describe('source image acquisition', () => {
     expect((await sharp(logo.buffer).metadata()).width).toBe(2);
     expect((await sharp(labelLogo.buffer).metadata()).width).toBe(2);
   });
+
+  it('renders a small SVG logo at the target box instead of enlarging its intrinsic raster', async () => {
+    const source = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="47" height="56" viewBox="0 0 47 56"><rect width="47" height="56" fill="#b02d23"/></svg>'
+    );
+    const logo = await sharp((await transformFetchedImage(source, 'logo')).buffer).metadata();
+    const labelLogo = await sharp((await transformFetchedImage(source, 'label-logo')).buffer).metadata();
+    const featured = await sharp((await transformFetchedImage(source, 'featured')).buffer).metadata();
+    expect([logo.width, logo.height]).toEqual([336, 400]);
+    expect(labelLogo.height).toBe(315);
+    expect([featured.width, featured.height]).toEqual([1200, 630]);
+  });
 });

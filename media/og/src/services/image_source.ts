@@ -23,11 +23,45 @@ interface TransformedImage {
   mimeType: 'image/jpeg' | 'image/png';
 }
 
+interface TargetBox {
+  width: number;
+  height: number;
+  fit: 'cover' | 'inside';
+}
+
+const TARGET_BOXES: Record<ImageUsage, TargetBox> = {
+  featured: { width: FEATURED_IMAGE_WIDTH, height: FEATURED_IMAGE_HEIGHT, fit: 'cover' },
+  logo: { width: LOGO_MAX_SIZE, height: LOGO_MAX_SIZE, fit: 'inside' },
+  'label-logo': { width: LABEL_LOGO_MAX_WIDTH, height: LABEL_LOGO_MAX_HEIGHT, fit: 'inside' },
+};
+
+const DEFAULT_VECTOR_DENSITY = 72;
+const MAX_VECTOR_DENSITY = 100_000;
+
+/**
+ * Vector sources rasterize at their intrinsic size, so a small SVG would be
+ * enlarged later and blur. Pick the density that renders it at the target box.
+ */
+async function vectorDensity(buffer: Buffer, box: TargetBox): Promise<number | undefined> {
+  const metadata = await sharp(buffer).metadata();
+  if (metadata.format !== 'svg' || !metadata.width || !metadata.height) {
+    return undefined;
+  }
+  const widthScale = box.width / metadata.width;
+  const heightScale = box.height / metadata.height;
+  const scale = box.fit === 'cover' ? Math.max(widthScale, heightScale) : Math.min(widthScale, heightScale);
+  if (scale <= 1) {
+    return undefined;
+  }
+  return Math.min(DEFAULT_VECTOR_DENSITY * scale, MAX_VECTOR_DENSITY);
+}
+
 export async function transformFetchedImage(
   buffer: Buffer,
   usage: ImageUsage
 ): Promise<TransformedImage> {
-  const image = sharp(buffer, { limitInputPixels: 40_000_000 }).rotate();
+  const density = await vectorDensity(buffer, TARGET_BOXES[usage]);
+  const image = sharp(buffer, { limitInputPixels: 40_000_000, density }).rotate();
   if (usage === 'featured') {
     const transformed = await image
       .resize({
