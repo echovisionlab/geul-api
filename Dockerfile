@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.3-alpine3.24@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -25,7 +25,7 @@ RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o site-variable-migrate ./cmd/site-variable-migrate
 RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -mod=readonly -o display-size-migrate ./cmd/display-size-migrate
 
-FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS og-builder
+FROM docker.io/library/node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS og-builder
 WORKDIR /app/media/og
 RUN npm install --global pnpm@12.14.0
 COPY media/og/package.json media/og/pnpm-lock.yaml media/og/pnpm-workspace.yaml media/og/.npmrc ./
@@ -38,13 +38,13 @@ RUN --mount=type=secret,id=private_deps_token,required=true \
     env "pnpm_config_//npm.pkg.github.com/:_authToken=$(cat /run/secrets/private_deps_token)" \
     sh -c 'pnpm typecheck && pnpm build && pnpm prune --prod'
 
-FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS mesh-builder
+FROM docker.io/library/node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS mesh-builder
 WORKDIR /app/media/asset-optimizer
 COPY media/asset-optimizer/package.json media/asset-optimizer/package-lock.json ./
 RUN npm ci --omit=dev
 
 # A single API image owns delivery, durable consumers and native tools.
-FROM docker.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+FROM docker.io/library/node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
 
 RUN apk add --no-cache su-exec ca-certificates imagemagick rsvg-convert tzdata ffmpeg mesa-va-gallium font-noto-arabic font-noto-thai
 

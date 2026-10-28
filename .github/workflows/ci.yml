@@ -95,7 +95,7 @@ jobs:
       - name: Set up Node for process tests
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.0"
+          node-version: "24.22.1"
 
       - name: Test
         run: make test
@@ -132,7 +132,7 @@ jobs:
       - name: Set up media tools
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24.22.0"
+          node-version: "24.22.1"
           # Writes the user-level npmrc that reads NODE_AUTH_TOKEN; pnpm ignores
           # environment-backed auth in the repository .npmrc.
           registry-url: https://npm.pkg.github.com

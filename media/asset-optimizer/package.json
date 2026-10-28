@@ -10,7 +10,7 @@
     "url": "git+https://github.com/echovisionlab/geul-asset-optimizer.git"
   },
   "engines": {
-    "node": "24.22.0"
+    "node": "24.22.1"
   },
   "scripts": {
     "format": "prettier --write \"**/*.{js,mjs,json,md,yml,yaml}\"",
