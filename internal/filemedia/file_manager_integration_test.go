@@ -350,13 +350,13 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 	require.Len(t, impact.Msg.Impacts[0].GetFirstUsages(), fileDeletionImpactPreviewSize)
 	require.True(t, impact.Msg.Impacts[0].GetHasMoreUsages())
 	require.Len(t, impact.Msg.Impacts[0].GetDomainCounts(), 1)
-	require.EqualValues(t, 8, impact.Msg.Impacts[0].GetDomainCounts()[0].GetCount())
+	require.EqualValues(t, 11, impact.Msg.Impacts[0].GetDomainCounts()[0].GetCount())
 
 	rejected, err := service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Empty(t, rejected.Msg.AcceptedFileIds)
 	require.Len(t, rejected.Msg.RejectedFiles, 1)
-	require.EqualValues(t, 8, rejected.Msg.RejectedFiles[0].GetTotalUsageCount())
+	require.EqualValues(t, 11, rejected.Msg.RejectedFiles[0].GetTotalUsageCount())
 	require.Len(t, rejected.Msg.RejectedFiles[0].GetFirstUsages(), fileDeletionImpactPreviewSize)
 }
 
