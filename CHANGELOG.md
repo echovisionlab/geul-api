@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.6](https://github.com/echovisionlab/geul-api/compare/v4.0.5...v4.0.6) (2026-10-28)
+
+
+### Bug Fixes
+
+* **og:** flush telemetry before the worker exits ([#191](https://github.com/echovisionlab/geul-api/issues/191)) ([682446d](https://github.com/echovisionlab/geul-api/commit/682446d4490129d735f5ab6fcadbc834f0648a97))
+
 ## [4.0.5](https://github.com/echovisionlab/geul-api/compare/v4.0.4...v4.0.5) (2026-10-28)
 
 
