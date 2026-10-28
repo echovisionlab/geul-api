@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.3](https://github.com/echovisionlab/geul-api/compare/v4.0.2...v4.0.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* read Work and Artist OG only from the source-locale translation ([#185](https://github.com/echovisionlab/geul-api/issues/185)) ([30ac3fb](https://github.com/echovisionlab/geul-api/commit/30ac3fb649eb0034043eb13f194ddb353dd02442))
+
 ## [4.0.2](https://github.com/echovisionlab/geul-api/compare/v4.0.1...v4.0.2) (2026-10-28)
 
 
