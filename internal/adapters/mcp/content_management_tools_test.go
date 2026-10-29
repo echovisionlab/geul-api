@@ -14,6 +14,8 @@ import (
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -131,6 +133,10 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 		Id: managementPageID, Title: "Source Page", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: managev1.PageStatus_PAGE_STATUS_PUBLISHED,
 		Revision: "actual-source-page-revision", ShowTitle: false, DocumentLayout: layout, PublishedAt: stamp, CreatedAt: stamp, UpdatedAt: stamp,
 		Document: &contentv1.PageDocument{}, FeaturedImageDelivery: &commonv1.MediaDelivery{FileId: managementWorkID},
+		AccessPolicy: &commonv1.PageAccessPolicy{
+			Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL,
+			AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_AUTHOR}, UserTagIds: []string{managementWorkID}, NewsletterSubscriber: true,
+		},
 	}}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, pages)
 	if err != nil {
@@ -146,7 +152,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 		want     map[string]any
 	}{
 		{ToolPostSettingsGet, managementPostID, map[string]any{"document_revision": "actual-source-post-revision", "configuration_revision": managementPostConfigurationRevision, "comments_enabled": false, "map_place_id": managementPageID, "status": "scheduled", "category_ids": []any{managementWorkID}, "tag_ids": []any{managementPageID}, "allowed_actions": []any{"edit", "cancel_schedule"}, "scheduled_time_zone": zone, "scheduled_at": "2026-10-05T01:02:03Z", "series_id": managementWorkID, "series_order": float64(4)}},
-		{ToolPageSettingsGet, managementPageID, map[string]any{"document_revision": "actual-source-page-revision", "show_title": false, "status": "published"}},
+		{ToolPageSettingsGet, managementPageID, map[string]any{"document_revision": "actual-source-page-revision", "show_title": false, "status": "published", "access_policy": map[string]any{"mode": "conditions", "match": "all", "allowed_roles": []any{"author"}, "user_tag_ids": []any{managementWorkID}, "newsletter_subscriber": true}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, test.name, toolArguments(t, `{"document_id":"`+test.id+`"}`))
@@ -377,6 +383,73 @@ func TestPageSettingsUpdateReturnsOwningValuesAndNoopStatus(t *testing.T) {
 		if pages.update.Msg.ShowTitle == nil || !*pages.update.Msg.ShowTitle || result.StructuredContent["show_title"] != false || result.StructuredContent["changed"] != changed {
 			t.Fatalf("request/owning response=%+v %+v", pages.update, result.StructuredContent)
 		}
+	}
+}
+
+func TestPageSettingsReadReportsPublicWhenPolicyIsAbsent(t *testing.T) {
+	pages := &recordingPageManagement{getResponse: &managev1.Page{Id: managementPageID, Title: "Page", SourceLocale: "en", Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "r"}}
+	tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPageSettingsGet, toolArguments(t, `{"document_id":"`+managementPageID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.StructuredContent["access_policy"], map[string]any{"mode": "public"}) {
+		t.Fatalf("access_policy = %#v", result.StructuredContent["access_policy"])
+	}
+}
+
+func TestPageSettingsUpdateForwardsAccessPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name, policy string
+		want         *commonv1.PageAccessPolicy
+	}{
+		{"authenticated", `{"mode":"authenticated"}`, &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_AUTHENTICATED, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ANY}},
+		{"conditions default any", `{"mode":"conditions","user_tag_ids":["` + managementWorkID + `"]}`, &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ANY, UserTagIds: []string{managementWorkID}}},
+		{"conditions all", `{"mode":"conditions","match":"all","allowed_roles":["admin","author"],"newsletter_subscriber":true}`, &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL, AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN, policyv1.AuthorizationRole_AUTHOR}, NewsletterSubscriber: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pages := &recordingPageManagement{updateResponse: &managev1.UpdatePageResponse{Id: managementPageID, Changed: true, AccessPolicy: test.want}}
+			tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPageSettingsUpdate, toolArguments(t, `{"document_id":"`+managementPageID+`","access_policy":`+test.policy+`}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(pages.update.Msg.AccessPolicy, test.want) || pages.update.Msg.Slug != nil || pages.update.Msg.ShowTitle != nil {
+				t.Fatalf("request = %+v", pages.update.Msg)
+			}
+			if !reflect.DeepEqual(result.StructuredContent["access_policy"], pageAccessPolicyOutput(test.want)) {
+				t.Fatalf("access_policy = %#v", result.StructuredContent["access_policy"])
+			}
+		})
+	}
+}
+
+func TestPageSettingsUpdateRejectsInvalidAccessPolicyBeforeOwner(t *testing.T) {
+	for _, test := range []struct{ policy, message string }{
+		{`{"mode":"members"}`, "access_policy.mode must be public, authenticated, or conditions"},
+		{`{"mode":"public","allowed_roles":["admin"]}`, "access_policy conditions require mode conditions"},
+		{`{"mode":"authenticated","match":"all"}`, "access_policy conditions require mode conditions"},
+		{`{"mode":"conditions","match":"some","newsletter_subscriber":true}`, "access_policy.match must be any or all"},
+		{`{"mode":"conditions","allowed_roles":["user"]}`, "access_policy.allowed_roles accepts author and admin"},
+	} {
+		t.Run(test.policy, func(t *testing.T) {
+			pages := &recordingPageManagement{}
+			tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPageSettingsUpdate, toolArguments(t, `{"document_id":"`+managementPageID+`","access_policy":`+test.policy+`}`))
+			var executionErr *mcpserver.ToolExecutionError
+			if !errors.As(err, &executionErr) || executionErr.Message != test.message || pages.update != nil {
+				t.Fatalf("err = %v, update called = %v", err, pages.update != nil)
+			}
+		})
 	}
 }
 

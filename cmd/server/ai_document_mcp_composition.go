@@ -18,14 +18,14 @@ import (
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
-const mcpServerImplementationVersion = "18"
+const mcpServerImplementationVersion = "19"
 
 const mcpServerInstructions = "Use document_list with p=post, p=work, p=page, p=program_event, p=release, or p=artist to find UUIDs. Pass d unchanged; never substitute slugs or URLs. " +
 	"Use policy_list/get for policy UUIDs; read/edit with p=terms or p=privacy. policy_create creates an empty draft without email; edits send no email. policy_schedule and policy_activate_now start notice email delivery. policy_delete allows every lifecycle and retains delivery history. " +
 	"Use menu_list for Menu UUIDs/locales and menu_locations_get for placement. Pass d with p=menu to document tools using current revisions and stable handles. " +
 	"Read settings before focused management tools. Post/Page/Release unpublish returns to draft; administrator-managed archived Posts can also return to draft. Program Events archive. Track publication follows Release. Map Places/Themes have no publication state. " +
 	"Read release_relations_get or track_list before relation edits; preserve exact observed snapshots and supported order_intent. Resolve references through reference_search, label_list, event type/series lists, music genre/style/format lists, form_list, post_series_list, and map_theme_list/get. Theme snapshot updates require its read revision. " +
-	"Use program_event_media_list before media edits. Adding the same event/role/file upserts alt/caption; omitted values clear them. Use member_admin_list/get for audited administrator information and member_tag_list for tag names. " +
+	"Use program_event_media_list before media edits. Adding the same event/role/file upserts alt/caption; omitted values clear them. Use member_admin_list/get for audited administrator information and member_tag_list for tag names and Page access_policy user_tag_ids. " +
 	"Read site_settings_get/mail_adapter_list before site_settings_update/mail_adapter_sender_update; sender changes keep credentials and may send verification email. " +
 	"Use document_catalog for typed fields, block kinds, relations and File ownership. document_metadata_update edits titles, summaries, Post categories/tags and Page layout. Post settings/layout require configuration_revision. " +
 	"Use work_settings_get before updating Work metadata or clients; pass read values as observed_metadata or observed_client_ids. Use focused featured-image, participant, credit, version, slug, and File tools. " +
