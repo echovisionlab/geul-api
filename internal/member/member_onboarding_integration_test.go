@@ -313,3 +313,22 @@ func TestCompleteMyOnboardingAuditFailureRollsBackTransition(t *testing.T) {
 		Count(&auditCount).Error)
 	require.Zero(t, auditCount)
 }
+
+func TestCheckNicknameAvailabilityIgnoresDeletedMembers(t *testing.T) {
+	db := newServiceIntegrationDB(t)
+	fixture := createOnboardingMember(t, db, "member@example.test")
+	require.NoError(t, db.Exec(`
+		INSERT INTO member (id, nickname, onboarded, deleted_at, created_at, updated_at)
+		VALUES (?::uuid, 'Departed', TRUE, now(), now() - interval '1 day', now())
+	`, uuid.NewString()).Error)
+	active := createOnboardingMember(t, db, "active@example.test")
+	require.NoError(t, db.Exec(`UPDATE member SET nickname = 'Present' WHERE id = ?::uuid`, active.MemberID).Error)
+	service := onboardingService(db, fixture, &recordingOnboardingWelcomePublisher{})
+	ctx := withOnboardingRequestContext(t, fixture)
+
+	for nickname, available := range map[string]bool{"Departed": true, "Present": false} {
+		response, err := service.CheckNicknameAvailability(ctx, connect.NewRequest(&managev1.CheckNicknameAvailabilityRequest{Nickname: nickname}))
+		require.NoError(t, err)
+		require.Equal(t, available, response.Msg.Available, nickname)
+	}
+}

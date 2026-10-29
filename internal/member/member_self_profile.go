@@ -330,6 +330,7 @@ func (s *MemberService) CheckNicknameAvailability(
 			FROM member
 			WHERE nickname = ?
 			  AND id <> ?::uuid
+			  AND deleted_at IS NULL
 		)
 	`, nickname, principal.MemberID.String()).Scan(&claimed).Error; err != nil {
 		slog.ErrorContext(ctx, "Operation failed", "operation", "CheckNicknameAvailability", failurecause.Attr(err, nickname))
