@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.1](https://github.com/echovisionlab/geul-api/compare/v4.1.0...v4.1.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **member:** offer a deleted Member's nickname as available ([#196](https://github.com/echovisionlab/geul-api/issues/196)) ([b7c6d7d](https://github.com/echovisionlab/geul-api/commit/b7c6d7d78c2f6d0052b382030695040117344051))
+
 ## [4.1.0](https://github.com/echovisionlab/geul-api/compare/v4.0.6...v4.1.0) (2026-10-29)
 
 
