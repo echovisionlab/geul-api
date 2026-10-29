@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.2](https://github.com/echovisionlab/geul-api/compare/v4.1.1...v4.1.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* **auth:** forward resend on registration code follow-ups ([#198](https://github.com/echovisionlab/geul-api/issues/198)) ([d48085f](https://github.com/echovisionlab/geul-api/commit/d48085fb0c326f1a65a84c0769a663197796f877))
+
 ## [4.1.1](https://github.com/echovisionlab/geul-api/compare/v4.1.0...v4.1.1) (2026-10-29)
 
 
