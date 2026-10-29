@@ -449,6 +449,46 @@ func TestUnifiedAuthHandlerDoesNotLetRequestIdentifierReplaceAuthoritativeRegist
 	}
 }
 
+func TestUnifiedAuthHandlerForwardsRegistrationCodeResend(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantResend bool
+	}{
+		{name: "resend", body: `{"method":"code","resend":"code","csrf_token":"registration-csrf"}`, wantResend: true},
+		{name: "completion keeps the code", body: `{"method":"code","resend":"code","code":"123456","csrf_token":"registration-csrf"}`},
+		{name: "no resend requested", body: `{"method":"code","csrf_token":"registration-csrf"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var forwarded structured.Fields
+			handler, _ := newUnifiedAuthTestHandler(t, &unifiedAuthFinderStub{}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&forwarded))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"registration-flow-with-email","ui":{"nodes":[]}}`))
+			}))
+			handler.reuseHoldCheck = func(context.Context, string) (bool, error) { return false, nil }
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"https://auth.example/login?flow=registration-flow-with-email",
+				strings.NewReader(tt.body),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code)
+			if tt.wantResend {
+				require.Equal(t, "code", forwarded["resend"])
+				require.NotContains(t, forwarded, "code")
+			} else {
+				require.NotContains(t, forwarded, "resend")
+			}
+		})
+	}
+}
+
 func TestUnifiedAuthHandlerRejectsRegistrationCodeWithoutAnyEmailCandidate(t *testing.T) {
 	finder := &unifiedAuthFinderStub{}
 	proxyCalled := false
