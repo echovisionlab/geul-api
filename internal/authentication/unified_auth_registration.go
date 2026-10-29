@@ -52,7 +52,28 @@ func buildRegistrationCodePayload(
 	if !initialChallenge && strings.TrimSpace(code) != "" {
 		payload["code"] = strings.TrimSpace(code)
 	}
+	// Without resend, Kratos reads a code-less follow-up in the sent_email state as a submission with
+	// a missing code: no mail is sent, but the limiter has already counted the request.
+	if !initialChallenge && strings.TrimSpace(code) == "" && strings.EqualFold(requestResend(contentType, body), "code") {
+		payload["resend"] = "code"
+	}
 	return json.Marshal(payload)
+}
+
+func requestResend(contentType string, body []byte) string {
+	if kratosRequestMediaType(contentType) == "application/json" {
+		var payload unifiedAuthObject
+		if json.Unmarshal(body, &payload) != nil {
+			return ""
+		}
+		resend, _ := payload["resend"].(string)
+		return strings.TrimSpace(resend)
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(values.Get("resend"))
 }
 
 func registrationTraits(email string) unifiedAuthObject {
