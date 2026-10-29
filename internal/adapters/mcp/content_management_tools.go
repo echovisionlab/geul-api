@@ -13,6 +13,7 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -61,7 +62,7 @@ var contentManagementTools = []mcpserver.Tool{
 	contentTool(ToolWorkDelete, "Delete Work", "Permanently delete a Work allowed by its current lifecycle state.", contentIDInputJSONSchema, true),
 	contentTool(ToolPageCreate, "Create Page", "Create a new draft Page with an empty typed Page document in the requested source locale.", pageCreateInputJSONSchema, false),
 	oauthTool(ToolPageSettingsGet, "Get Page settings", "Read current source metadata, settings, layout, and publication state through the authorized Page service. Read the body with document_read.", contentIDInputJSONSchema, pageSettingsOutputJSONSchema, true, false),
-	contentTool(ToolPageSettingsUpdate, "Update Page settings", "Update Page slug or show-title setting. Use document_metadata_update for title or summary.", pageSettingsUpdateInputJSONSchema, true),
+	contentTool(ToolPageSettingsUpdate, "Update Page settings", "Update Page slug, show-title setting, or reader access_policy. access_policy replaces the whole audience. Use document_metadata_update for title or summary.", pageSettingsUpdateInputJSONSchema, true),
 	contentTool(ToolPagePublish, "Publish Page", "Publish a draft Page using the existing Page publication blockers.", contentIDInputJSONSchema, true),
 	contentTool(ToolPageUnpublish, "Unpublish Page", "Move a published Page back to draft.", contentIDInputJSONSchema, true),
 	contentTool(ToolPageDelete, "Delete Page", "Permanently delete a Page and its owned Page state using the existing Page deletion transaction.", contentIDInputJSONSchema, true),
@@ -583,9 +584,100 @@ func (tools *ContentManagementTools) createPage(ctx context.Context, arguments m
 }
 
 type pageSettingsArguments struct {
-	DocumentID string  `json:"document_id"`
-	Slug       *string `json:"slug,omitempty"`
-	ShowTitle  *bool   `json:"show_title,omitempty"`
+	DocumentID   string                     `json:"document_id"`
+	Slug         *string                    `json:"slug,omitempty"`
+	ShowTitle    *bool                      `json:"show_title,omitempty"`
+	AccessPolicy *pageAccessPolicyArguments `json:"access_policy,omitempty"`
+}
+
+// pageAccessPolicyArguments is the MCP shape of commonv1.PageAccessPolicy with lowercase enum names.
+type pageAccessPolicyArguments struct {
+	Mode                 string   `json:"mode"`
+	Match                string   `json:"match,omitempty"`
+	AllowedRoles         []string `json:"allowed_roles,omitempty"`
+	UserTagIDs           []string `json:"user_tag_ids,omitempty"`
+	NewsletterSubscriber bool     `json:"newsletter_subscriber,omitempty"`
+}
+
+var pageAccessModes = map[string]commonv1.PageAccessMode{
+	"public":        commonv1.PageAccessMode_PAGE_ACCESS_MODE_PUBLIC,
+	"authenticated": commonv1.PageAccessMode_PAGE_ACCESS_MODE_AUTHENTICATED,
+	"conditions":    commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS,
+}
+
+var pageAccessMatches = map[string]commonv1.PageAccessMatch{
+	"any": commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ANY,
+	"all": commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL,
+}
+
+var pageAccessRoles = map[string]policyv1.AuthorizationRole{
+	"author": policyv1.AuthorizationRole_AUTHOR,
+	"admin":  policyv1.AuthorizationRole_ADMIN,
+}
+
+// pageAccessPolicy converts MCP arguments; the Page service still normalizes and validates tag IDs.
+func (input *pageAccessPolicyArguments) pageAccessPolicy() (*commonv1.PageAccessPolicy, error) {
+	mode, ok := pageAccessModes[input.Mode]
+	if !ok {
+		return nil, errors.New("access_policy.mode must be public, authenticated, or conditions")
+	}
+	policy := &commonv1.PageAccessPolicy{Mode: mode, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ANY}
+	hasConditions := input.Match != "" || len(input.AllowedRoles) > 0 || len(input.UserTagIDs) > 0 || input.NewsletterSubscriber
+	if mode != commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS {
+		// The service would silently drop conditions outside conditions mode; reject them so the caller sees the mistake.
+		if hasConditions {
+			return nil, errors.New("access_policy conditions require mode conditions")
+		}
+		return policy, nil
+	}
+	if input.Match != "" {
+		if policy.Match, ok = pageAccessMatches[input.Match]; !ok {
+			return nil, errors.New("access_policy.match must be any or all")
+		}
+	}
+	for _, name := range input.AllowedRoles {
+		role, ok := pageAccessRoles[name]
+		if !ok {
+			return nil, errors.New("access_policy.allowed_roles accepts author and admin")
+		}
+		policy.AllowedRoles = append(policy.AllowedRoles, role)
+	}
+	policy.UserTagIds = input.UserTagIDs
+	policy.NewsletterSubscriber = input.NewsletterSubscriber
+	return policy, nil
+}
+
+func pageAccessPolicyOutput(policy *commonv1.PageAccessPolicy) map[string]any {
+	output := map[string]any{"mode": "public"}
+	if policy == nil {
+		return output
+	}
+	for name, mode := range pageAccessModes {
+		if policy.Mode == mode {
+			output["mode"] = name
+		}
+	}
+	if policy.Mode != commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS {
+		return output
+	}
+	output["match"] = "any"
+	if policy.Match == commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL {
+		output["match"] = "all"
+	}
+	roles := []any{}
+	for _, role := range policy.AllowedRoles {
+		for name, value := range pageAccessRoles {
+			if role == value {
+				roles = append(roles, name)
+			}
+		}
+	}
+	tags := []any{}
+	for _, id := range policy.UserTagIds {
+		tags = append(tags, id)
+	}
+	output["allowed_roles"], output["user_tag_ids"], output["newsletter_subscriber"] = roles, tags, policy.NewsletterSubscriber
+	return output
 }
 
 func (tools *ContentManagementTools) getPageSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -602,6 +694,7 @@ func (tools *ContentManagementTools) getPageSettings(ctx context.Context, argume
 		"document_type": "page", "document_id": page.Id, "title": page.Title, "summary": optionalStringValue(page.Summary),
 		"slug": optionalStringValue(page.Slug), "source_locale": page.SourceLocale, "status": contentStatus(page.Status.String(), "PAGE_STATUS_"),
 		"document_revision": page.Revision, "show_title": page.ShowTitle, "document_layout": documentLayoutOutput(page.DocumentLayout),
+		"access_policy": pageAccessPolicyOutput(page.AccessPolicy),
 	}
 	if page.FeaturedImageDelivery != nil {
 		output["featured_image_file_id"] = page.FeaturedImageDelivery.FileId
@@ -623,14 +716,26 @@ func (tools *ContentManagementTools) updatePage(ctx context.Context, arguments m
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	if input.Slug == nil && input.ShowTitle == nil {
+	if input.Slug == nil && input.ShowTitle == nil && input.AccessPolicy == nil {
 		return executionError(errors.New("at least one Page setting is required"))
 	}
-	updated, err := tools.pages.UpdatePage(ctx, connect.NewRequest(&managev1.UpdatePageRequest{Id: input.DocumentID, Slug: input.Slug, ShowTitle: input.ShowTitle}))
+	request := &managev1.UpdatePageRequest{Id: input.DocumentID, Slug: input.Slug, ShowTitle: input.ShowTitle}
+	if input.AccessPolicy != nil {
+		policy, err := input.AccessPolicy.pageAccessPolicy()
+		if err != nil {
+			return executionError(err)
+		}
+		request.AccessPolicy = policy
+	}
+	updated, err := tools.pages.UpdatePage(ctx, connect.NewRequest(request))
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "page", "document_id": updated.Msg.Id, "changed": updated.Msg.Changed, "slug": optionalStringValue(updated.Msg.Slug), "show_title": updated.Msg.ShowTitle, "updated_at": timestampString(updated.Msg.UpdatedAt)})
+	output := map[string]any{"document_type": "page", "document_id": updated.Msg.Id, "changed": updated.Msg.Changed, "slug": optionalStringValue(updated.Msg.Slug), "show_title": updated.Msg.ShowTitle, "updated_at": timestampString(updated.Msg.UpdatedAt)}
+	if updated.Msg.AccessPolicy != nil {
+		output["access_policy"] = pageAccessPolicyOutput(updated.Msg.AccessPolicy)
+	}
+	return contentResult(output)
 }
 
 func (tools *ContentManagementTools) mutatePage(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {

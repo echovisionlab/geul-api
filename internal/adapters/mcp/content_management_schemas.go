@@ -34,14 +34,27 @@ const postSettingsOutputJSONSchema = `{
   }
 }`
 
+const pageAccessPolicyJSONSchema = `{
+  "type":"object","additionalProperties":false,"required":["mode"],
+  "description":"Who can read the Page. public: every visitor; authenticated: signed-in members; conditions: members matching allowed_roles, user_tag_ids, or newsletter_subscriber, combined by match. Administrators who manage the Page can always read it.",
+  "properties":{
+    "mode":{"enum":["public","authenticated","conditions"]},
+    "match":{"enum":["any","all"],"description":"conditions only. any accepts one selected condition group; all requires every selected group. Default any."},
+    "allowed_roles":{"type":"array","uniqueItems":true,"items":{"enum":["author","admin"]},"description":"conditions only. Signed-in members without these roles use authenticated mode or user_tag_ids instead."},
+    "user_tag_ids":{"type":"array","maxItems":256,"uniqueItems":true,"items":` + uuidJSONSchema + `,"description":"conditions only. Member tag IDs from member_tag_list."},
+    "newsletter_subscriber":{"type":"boolean","description":"conditions only. Active newsletter subscribers."}
+  }
+}`
+
 const pageSettingsOutputJSONSchema = `{
   "type":"object","additionalProperties":false,
-  "required":["document_type","document_id","title","source_locale","status","document_revision","show_title","document_layout"],
+  "required":["document_type","document_id","title","source_locale","status","document_revision","show_title","document_layout","access_policy"],
   "properties":{
     "document_type":{"const":"page"},"document_id":` + uuidJSONSchema + `,
     "title":{"type":"string"},"summary":{"type":"string"},"slug":{"type":"string"},
     "source_locale":{"type":"string"},"status":{"enum":["draft","published"]},"document_revision":{"type":"string"},
     "show_title":{"type":"boolean"},"document_layout":` + managementDocumentLayoutJSONSchema + `,
+    "access_policy":` + pageAccessPolicyJSONSchema + `,
     "featured_image_file_id":` + uuidJSONSchema + `,
     "published_at":{"type":"string","format":"date-time"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}
   }
@@ -162,7 +175,8 @@ const pageSettingsUpdateInputJSONSchema = `{
   "properties":{
     "document_id":` + documentReferenceJSONSchema + `,
     "slug":{"type":"string","description":"New slug, or an empty string to remove the slug."},
-    "show_title":{"type":"boolean"}
+    "show_title":{"type":"boolean"},
+    "access_policy":` + pageAccessPolicyJSONSchema + `
   }
 }`
 
@@ -173,6 +187,7 @@ const contentMutationOutputJSONSchema = `{
     "document_type":{"enum":["post","work","page"]},
     "document_id":` + uuidJSONSchema + `,
     "changed":{"type":"boolean"},"deleted":{"type":"boolean"},"show_title":{"type":"boolean"},
+    "access_policy":` + pageAccessPolicyJSONSchema + `,
     "title":{"type":"string"},"slug":{"type":"string"},
     "source_locale":{"type":"string"},"status":{"type":"string"},
     "document_revision":{"type":"string"},"updated_at":{"type":"string","format":"date-time"},
