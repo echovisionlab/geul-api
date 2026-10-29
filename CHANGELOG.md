@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/echovisionlab/geul-api/compare/v4.0.6...v4.1.0) (2026-10-29)
+
+
+### Features
+
+* **mcp:** read and set Page access policies ([#194](https://github.com/echovisionlab/geul-api/issues/194)) ([13fa0e3](https://github.com/echovisionlab/geul-api/commit/13fa0e3ff72dad1d3da2b06c4599ccc50b2dfd00))
+
 ## [4.0.6](https://github.com/echovisionlab/geul-api/compare/v4.0.5...v4.0.6) (2026-10-28)
 
 
