@@ -22,6 +22,10 @@ const (
 	deliveryRetryableStatus        = "retryable"
 	deliveryProcessingTimeout      = 5 * time.Minute
 	deliveryClaimReleaseTimeout    = 2 * time.Second
+	// A provider-accepted result is written again for this long before the
+	// worker gives up; until it lands, a later resume could send it twice.
+	deliveryAcceptedPersistBudget = time.Minute
+	deliveryAcceptedPersistDelay  = time.Second
 )
 
 type DeliveryOutcome string
@@ -89,6 +93,9 @@ type DeliveryApplication struct {
 	metrics      DeliveryMetrics
 	now          func() time.Time
 	sendTimeout  time.Duration
+	// acceptedPersistDelay is the first backoff between writes of an accepted
+	// result; it doubles up to deliveryAcceptedPersistBudget in total.
+	acceptedPersistDelay time.Duration
 }
 
 func NewDeliveryApplication(
@@ -106,6 +113,7 @@ func NewDeliveryApplication(
 		campaign: campaign, recipients: recipients, renderer: renderer,
 		suppressions: suppressions, providers: providers, metrics: metrics,
 		now: time.Now, sendTimeout: 4 * time.Minute,
+		acceptedPersistDelay: deliveryAcceptedPersistDelay,
 	}
 }
 
@@ -243,7 +251,8 @@ func (a *DeliveryApplication) Deliver(
 	if providerMessageID != "" {
 		// Retain the claim if provider acceptance is known but the durable
 		// terminal write fails; releasing it could immediately send a duplicate.
-		if err := a.markResult(ctx, recipientID, claimID, RecipientStatusSent, providerMessageID, ""); err != nil {
+		if err := a.persistAcceptedResult(ctx, recipientID, claimID, providerMessageID); err != nil {
+			LogDeliveryFailure(ctx, "mail.delivery.accepted_unpersisted", job, err, "reason", "accepted_result_unpersisted", "provider_message_id", providerMessageID)
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "accepted")
@@ -312,6 +321,34 @@ func (a *DeliveryApplication) markResult(
 		return a.campaign.MarkResult(ctx, recipientID, status, providerMessageID, errorType)
 	}
 	return a.campaign.MarkClaimedResult(ctx, recipientID, claimID, status, providerMessageID, errorType)
+}
+
+// persistAcceptedResult retries a transient failure to record a result the
+// provider already accepted. It runs detached from the handler deadline: the
+// claim stays held meanwhile, so no other worker can send the message again.
+func (a *DeliveryApplication) persistAcceptedResult(
+	ctx context.Context,
+	recipientID string,
+	claimID string,
+	providerMessageID string,
+) error {
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryAcceptedPersistBudget)
+	defer cancel()
+	delay := a.acceptedPersistDelay
+	for {
+		err := a.markResult(persistCtx, recipientID, claimID, RecipientStatusSent, providerMessageID, "")
+		if err == nil || !dberrors.IsTransient(err) || delay <= 0 {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-persistCtx.Done():
+			timer.Stop()
+			return err
+		case <-timer.C:
+		}
+		delay *= 2
+	}
 }
 
 func (a *DeliveryApplication) markTerminalResult(
