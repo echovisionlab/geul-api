@@ -82,6 +82,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 				accountEmailChangeLifecycle,
 			),
 			15*time.Minute,
+			emaildelivery.WithVerificationUIURL("https://www.example.test/verify"),
 		),
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
@@ -676,6 +677,13 @@ func assertPinnedKratosEmailChangeFlow(
 	require.Equal(t, identityID, verification.GetAccountVerification().GetIdentityId())
 	verificationCode := strings.TrimSpace(verification.GetTemplateData()["verification_code"])
 	require.NotEmpty(t, verificationCode)
+	// The emailed link opens the site page, which submits flow and code; the
+	// gateway does not route Kratos' GET verification link.
+	verificationLink, err := url.Parse(verification.GetTemplateData()["verification_url"])
+	require.NoError(t, err)
+	require.Equal(t, "https://www.example.test/verify", verificationLink.Scheme+"://"+verificationLink.Host+verificationLink.Path)
+	require.Equal(t, settingsResult.ContinueWith[0].Flow.ID, verificationLink.Query().Get("flow"))
+	require.Equal(t, verificationCode, verificationLink.Query().Get("code"))
 	invalidVerificationCode := "000000"
 	if verificationCode == invalidVerificationCode {
 		invalidVerificationCode = "111111"

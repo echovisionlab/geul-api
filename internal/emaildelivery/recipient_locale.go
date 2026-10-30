@@ -52,3 +52,43 @@ func lookupEmailUserLocale(ctx context.Context, db *gorm.DB, recipient string) s
 	}
 	return resolveEmailRecipientLocale(*row.PreferredLocale)
 }
+
+// LookupEmailIdentityLocale resolves the preferred locale of the active Member
+// linked to identityID. A verification email for a pending address cannot be
+// matched by recipient, because no Member uses that address yet.
+func LookupEmailIdentityLocale(ctx context.Context, db *gorm.DB, identityID string) string {
+	identityID = strings.TrimSpace(identityID)
+	if identityID == "" || db == nil {
+		return ""
+	}
+	var row struct {
+		PreferredLocale *string `gorm:"column:preferred_locale"`
+	}
+	err := db.WithContext(ctx).
+		Table("member AS m").
+		Joins("JOIN kratos.identities AS ki ON ki.id = m.account_identity_id AND ki.external_id = CAST(m.id AS text)").
+		Select("NULLIF(m.preferred_locale, '') AS preferred_locale").
+		Where("ki.state = 'active' AND m.deleted_at IS NULL AND m.account_identity_id = ?", identityID).
+		Limit(1).
+		Scan(&row).Error
+	if err != nil {
+		LogDeliveryFailure(ctx, "mail.delivery.locale_lookup_failed", &managev1.SendEmailEvent{}, err)
+		return ""
+	}
+	if row.PreferredLocale == nil {
+		return ""
+	}
+	return resolveEmailRecipientLocale(*row.PreferredLocale)
+}
+
+// EmailRecipientContextIdentityID is the Account identity an authentication
+// email belongs to, or "" for other recipient contexts.
+func EmailRecipientContextIdentityID(job *managev1.SendEmailEvent) string {
+	if verification := job.GetAccountVerification(); verification != nil {
+		return verification.GetIdentityId()
+	}
+	if login := job.GetAuthLogin(); login != nil {
+		return login.GetIdentityId()
+	}
+	return ""
+}
