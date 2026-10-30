@@ -85,6 +85,9 @@ func createCampaignDeliveryRun(
 	if err := ValidateCampaignDeliverySnapshot(snapshot); err != nil {
 		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg(err.Error())
 	}
+	if err := validateCampaignRecipientScopeContent(target.RecipientScope, snapshot); err != nil {
+		return CampaignDeliveryRunRef{}, err
+	}
 	run, err := delivery.SealRun(
 		ctx,
 		tx,

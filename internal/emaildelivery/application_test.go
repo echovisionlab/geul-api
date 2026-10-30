@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -21,9 +22,12 @@ type deliveryCampaignStub struct {
 	claimID          string
 	terminal         bool
 	markClaimedError error
-	marks            [][4]string
-	claimedMarks     [][5]string
-	releases         [][2]string
+	// transientMarkFailures fails that many claimed writes with a database
+	// outage before writes succeed.
+	transientMarkFailures int
+	marks                 [][4]string
+	claimedMarks          [][5]string
+	releases              [][2]string
 }
 
 func (s *deliveryCampaignStub) NeedsDelivery(context.Context, string) (bool, error) {
@@ -58,6 +62,10 @@ func (s *deliveryCampaignStub) MarkClaimedResult(_ context.Context, id, claimID,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.claimedMarks = append(s.claimedMarks, [5]string{id, claimID, status, providerID, errorType})
+	if s.transientMarkFailures > 0 {
+		s.transientMarkFailures--
+		return &pgconn.PgError{Code: "57P03"}
+	}
 	if s.markClaimedError != nil {
 		return s.markClaimedError
 	}
@@ -390,4 +398,24 @@ func TestDeliveryApplicationTreatsAdapterAuthFailureAsAdapterScoped(t *testing.T
 	require.True(t, result.Retryable)
 	require.Empty(t, campaign.claimedMarks, "a credential failure must not block the recipient")
 	require.Equal(t, [][2]string{{"recipient-1", "claim-1"}}, campaign.releases)
+}
+
+func TestDeliveryApplicationRetriesAcceptedResultThroughDatabaseBlip(t *testing.T) {
+	campaign := &deliveryCampaignStub{claimAvailable: true, claimID: "claim-1", transientMarkFailures: 2}
+	application := NewDeliveryApplication(
+		campaign,
+		recipientAuthorizerStub{},
+		deliveryRendererStub{rendered: &email.RenderedEmail{Subject: "subject", HTML: "<p>body</p>"}},
+		deliverySuppressionStub{},
+		providerLoaderStub{adapters: []email.Adapter{deliveryAdapterStub{messageID: "provider-1"}}},
+		deliveryMetricsStub{},
+	)
+	application.acceptedPersistDelay = time.Millisecond
+	result, err := deliverCampaignTestJob(t, application)
+	require.NoError(t, err)
+	require.Equal(t, DeliveryAccepted, result.Outcome)
+	require.Len(t, campaign.claimedMarks, 3)
+	require.Equal(t, "provider-1", campaign.claimedMarks[2][3])
+	require.True(t, campaign.terminal, "the accepted result lands, so a resume cannot send it again")
+	require.Empty(t, campaign.releases)
 }

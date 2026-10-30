@@ -67,6 +67,12 @@ func (s *EmailTemplateService) SendTestEmail(
 	if s.publisher == nil {
 		return nil, errs.Internal(fmt.Errorf("email publisher is not configured"))
 	}
+	if err := email.CheckTestSendReadiness(ctx, s.db, req.Msg.Email); err != nil {
+		if message := email.TestSendReadinessMessage(err); message != "" {
+			return nil, errs.FailedPrecondition(message)
+		}
+		return nil, errs.Internal(err)
+	}
 
 	sendJob, err := buildEmailTemplateSendTestJob(s.runtime, template.ID, req.Msg.Email, req.Msg.Locale, emailTestActorID(ctx))
 	if err != nil {

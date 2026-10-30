@@ -1318,6 +1318,12 @@ func (s *CampaignService) SendTestCampaign(
 		if s.emailRendering == nil {
 			return errs.DependencyUnavailable("Email rendering")
 		}
+		if err := email.CheckTestSendReadiness(ctx, tx, req.Msg.Email); err != nil {
+			if message := email.TestSendReadinessMessage(err); message != "" {
+				return errs.FailedPrecondition(message)
+			}
+			return errs.Internal(err)
+		}
 		campaignID := req.Msg.Id
 		sendJob := &managev1.SendEmailEvent{
 			Recipient:    req.Msg.Email,
