@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.3](https://github.com/echovisionlab/geul-api/compare/v4.1.2...v4.1.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **mail:** complete the SNS signing certificate chain from AIA ([#200](https://github.com/echovisionlab/geul-api/issues/200)) ([aac595d](https://github.com/echovisionlab/geul-api/commit/aac595dadaf9678a86e04f21db1c1ba4746f6e17))
+
 ## [4.1.2](https://github.com/echovisionlab/geul-api/compare/v4.1.1...v4.1.2) (2026-10-29)
 
 
