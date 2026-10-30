@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.6](https://github.com/echovisionlab/geul-api/compare/v4.1.5...v4.1.6) (2026-10-30)
+
+
+### Bug Fixes
+
+* **mail:** working verification links and localized email-change mail ([#206](https://github.com/echovisionlab/geul-api/issues/206)) ([c3ee638](https://github.com/echovisionlab/geul-api/commit/c3ee638336f3cd69b0141b8122515b161298437b))
+
 ## [4.1.5](https://github.com/echovisionlab/geul-api/compare/v4.1.4...v4.1.5) (2026-10-30)
 
 
