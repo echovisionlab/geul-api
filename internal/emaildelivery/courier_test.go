@@ -832,3 +832,51 @@ func (m *courierIdentityManager) GetIdentityEmail(context.Context, string) (stri
 	}
 	return m.identity.CurrentEmail(), nil
 }
+
+func TestSiteVerificationURLKeepsOnlyFlowAndCode(t *testing.T) {
+	t.Parallel()
+	link, ok := siteVerificationURL(
+		"https://www.rawsector.com/verify",
+		"https://www.rawsector.com/api/auth/self-service/verification?code=553746&flow=c2c3e0ee-d6de-4945-9184-5f08698167a8&return_to=https://evil.test",
+	)
+	require.True(t, ok)
+	require.Equal(t, "https://www.rawsector.com/verify?code=553746&flow=c2c3e0ee-d6de-4945-9184-5f08698167a8", link)
+
+	for _, kratosURL := range []string{
+		"",
+		"https://www.rawsector.com/api/auth/self-service/verification?flow=only-flow",
+		"https://www.rawsector.com/api/auth/self-service/verification?code=123456",
+	} {
+		_, ok := siteVerificationURL("https://www.rawsector.com/verify", kratosURL)
+		require.False(t, ok, kratosURL)
+	}
+	_, ok = siteVerificationURL("", "https://www.rawsector.com/api/auth/self-service/verification?code=1&flow=f")
+	require.False(t, ok, "without a site page the Kratos link is kept")
+}
+
+func TestEmailCourierServiceRewritesVerificationURLToSitePage(t *testing.T) {
+	t.Parallel()
+	enqueuer := &stubEmailCourierPublisher{}
+	service := newTestEmailCourierService(enqueuer, nil)
+	WithVerificationUIURL("https://www.example.test/verify")(service)
+	templateData := structured.Fields{
+		"verification_code":  "123456",
+		"verification_url":   "https://www.example.test/api/auth/self-service/verification?code=123456&flow=flow-1",
+		"expires_in_minutes": 10.0,
+		"identity":           structured.Fields{"id": "identity-2"},
+	}
+	data := authCourierTemplateDataForTest(
+		t, "verification_code_valid", "reader@example.test", "rewrite", testEmailCourierNow.Add(-time.Minute), templateData,
+	)
+	_, err := service.SendEmail(t.Context(), connect.NewRequest(&intrav1.SendEmailRequest{
+		Recipient:    "reader@example.test",
+		TemplateType: "verification_code_valid",
+		TemplateData: data,
+	}))
+	require.NoError(t, err)
+	require.Len(t, enqueuer.requests, 1)
+	require.Equal(t,
+		"https://www.example.test/verify?code=123456&flow=flow-1",
+		enqueuer.requests[0].GetTemplateData()["verification_url"],
+	)
+}

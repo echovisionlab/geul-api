@@ -279,6 +279,9 @@ func (r *Renderer) Render(
 	if targetLocale == "" {
 		targetLocale = emaildelivery.LookupEmailRecipientLocale(ctx, r.db, job.GetRecipient())
 	}
+	if targetLocale == "" {
+		targetLocale = emaildelivery.LookupEmailIdentityLocale(ctx, r.db, emaildelivery.EmailRecipientContextIdentityID(job))
+	}
 	if err := emailauthoring.ValidateAutomaticEmailTemplateData(job.GetTemplateType(), job.GetTemplateData()); err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,19 @@ type EmailCourierService struct {
 	issuanceAuthority AuthIssuanceAuthority
 	codeLifespan      time.Duration
 	now               func() time.Time
+	// verificationUIURL is the site page that submits a verification code
+	// from its query; Kratos' own link is a GET the gateway does not route.
+	verificationUIURL string
+}
+
+type EmailCourierOption func(*EmailCourierService)
+
+// WithVerificationUIURL points verification links at the site's verification
+// page, which submits the flow and code from the query.
+func WithVerificationUIURL(value string) EmailCourierOption {
+	return func(s *EmailCourierService) {
+		s.verificationUIURL = strings.TrimSpace(value)
+	}
 }
 
 type AuthIssuance struct {
@@ -69,6 +83,7 @@ func NewEmailCourierService(
 	kratosClient auth.IdentityManager,
 	issuanceAuthority AuthIssuanceAuthority,
 	codeLifespan time.Duration,
+	options ...EmailCourierOption,
 ) *EmailCourierService {
 	if publisher == nil {
 		panic("email courier publisher is required")
@@ -79,13 +94,17 @@ func NewEmailCourierService(
 	if codeLifespan <= 0 {
 		panic("email courier code lifespan must be positive")
 	}
-	return &EmailCourierService{
+	service := &EmailCourierService{
 		publisher:         publisher,
 		kratosClient:      kratosClient,
 		issuanceAuthority: issuanceAuthority,
 		codeLifespan:      codeLifespan,
 		now:               time.Now,
 	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 // SendEmail receives email requests from Kratos HTTP courier and queues them.
@@ -140,6 +159,11 @@ func (s *EmailCourierService) SendEmail(
 	}
 	templateType := templateEvent.String()
 	templateData = canonicalAutomaticEmailTemplateData(templateEvent, templateData)
+	if templateEvent == email.EventVerificationCode {
+		if link, ok := siteVerificationURL(s.verificationUIURL, templateData["verification_url"]); ok {
+			templateData["verification_url"] = link
+		}
+	}
 	issuance, err := s.requireAuthIssuanceProvenance(
 		ctx,
 		templateEvent,
@@ -241,6 +265,33 @@ func canonicalAutomaticEmailTemplateData(
 		}
 	}
 	return canonical
+}
+
+// siteVerificationURL moves Kratos' verification link onto the site page,
+// keeping only its flow and code. It reports false when either is missing so
+// the original link is kept.
+func siteVerificationURL(pageURL string, kratosURL string) (string, bool) {
+	if pageURL == "" || strings.TrimSpace(kratosURL) == "" {
+		return "", false
+	}
+	source, err := url.Parse(strings.TrimSpace(kratosURL))
+	if err != nil {
+		return "", false
+	}
+	flow := strings.TrimSpace(source.Query().Get("flow"))
+	code := strings.TrimSpace(source.Query().Get("code"))
+	if flow == "" || code == "" {
+		return "", false
+	}
+	target, err := url.Parse(pageURL)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		return "", false
+	}
+	query := target.Query()
+	query.Set("flow", flow)
+	query.Set("code", code)
+	target.RawQuery = query.Encode()
+	return target.String(), true
 }
 
 func identityCourierTemplateVariableNames(eventKey email.EventKey) []string {

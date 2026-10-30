@@ -101,6 +101,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 			accountEmailChangeLifecycle,
 		),
 		time.Duration(cfg.AuthCodeLifespanSeconds)*time.Second,
+		emaildelivery.WithVerificationUIURL(cfg.SiteOrigin+"/verify"),
 	)
 	emailCourierPath, emailCourierHandler := intrav1connect.NewEmailCourierServiceHandler(emailCourierService, internalHandlerOpts...)
 	mux.Handle(emailCourierPath, internalRPCTrust.identity(emailCourierHandler))
