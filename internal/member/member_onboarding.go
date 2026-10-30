@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -41,6 +42,7 @@ func (s *MemberService) CompleteMyOnboarding(
 
 	var member model.Member
 	transitioned := false
+	welcomeOutcome := ""
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := identitystate.Lock(tx, principal.IdentityID.String()); err != nil {
 			var upstreamError *auth.KratosHTTPError
@@ -86,7 +88,7 @@ func (s *MemberService) CompleteMyOnboarding(
 			slog.ErrorContext(ctx, "Operation failed", "operation", "CompleteMyOnboarding", failurecause.Attr(err, privateBody, nickname))
 			return errs.Internal(err)
 		}
-		return domainaudit.AppendMember(
+		if err := domainaudit.AppendMember(
 			ctx,
 			tx,
 			s.auditWriter,
@@ -99,8 +101,25 @@ func (s *MemberService) CompleteMyOnboarding(
 					nickname,
 				)
 			},
+		); err != nil {
+			return err
+		}
+		welcomeOutcome, err = enqueueMemberOnboardingWelcomeEmail(
+			ctx,
+			tx,
+			s.identity,
+			s.welcomeEmailPublisher,
+			s.siteOrigin,
+			strings.TrimSpace(principal.IdentityID.String()),
+			strings.TrimSpace(principal.MemberID.String()),
+			member,
+			s.accountEmailProjection,
 		)
+		return err
 	})
+	if welcomeOutcome != "" {
+		s.onboardingMetrics.recordWelcomePublish(ctx, welcomeOutcome)
+	}
 	if err != nil {
 		level := slog.LevelError
 		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
@@ -114,8 +133,16 @@ func (s *MemberService) CompleteMyOnboarding(
 		slog.Log(ctx, level, "Operation failed", "operation", "CompleteMyOnboarding", failurecause.Attr(err, privateBody, nickname))
 		return nil, errs.Wrap(err)
 	}
-	if transitioned {
-		s.publishOnboardingWelcomeEmail(ctx, member)
+	if transitioned && welcomeOutcome == "accepted" {
+		slog.Info(
+			"Member onboarding welcome command confirmed",
+			"domain", "member",
+			"event", "member.onboarding_welcome_published",
+			"outcome", "accepted",
+			"identity_id", principal.IdentityID.String(),
+			"member_id", principal.MemberID.String(),
+			"command_id", "welcome:"+principal.IdentityID.String(),
+		)
 	}
 	return connect.NewResponse(&managev1.CompleteMyOnboardingResponse{
 		Member:    memberSummary(member, nil),
@@ -167,55 +194,27 @@ func memberWelcomeRecipientFields(member model.Member) (string, string) {
 	return nickname, locale
 }
 
-func (s *MemberService) publishOnboardingWelcomeEmail(
+// enqueueMemberOnboardingWelcomeEmail enqueues the welcome command in the
+// onboarding transaction. A failure rolls the onboarding back, so the client's
+// retry sends it instead of the command being lost after the commit.
+func enqueueMemberOnboardingWelcomeEmail(
 	ctx context.Context,
-	member model.Member,
-) {
-	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
-	if err != nil {
-		s.onboardingMetrics.recordWelcomePublish(ctx, "failed")
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Member onboarding welcome principal resolution failed", "domain", "member", "event", "member.onboarding_welcome_publish_failed", "outcome", "failed", "reason", "principal_resolution_failed", "member_id", member.ID, "failure_cause", failurecause.Message(err, privateBody))
-		return
-	}
-	publishMemberOnboardingWelcomeEmail(
-		ctx,
-		s.db,
-		s.identity,
-		s.welcomeEmailPublisher,
-		s.siteOrigin,
-		s.onboardingMetrics,
-		strings.TrimSpace(principal.IdentityID.String()),
-		strings.TrimSpace(principal.MemberID.String()),
-		member,
-		s.accountEmailProjection,
-	)
-}
-
-func publishMemberOnboardingWelcomeEmail(
-	ctx context.Context,
-	db *gorm.DB,
+	tx *gorm.DB,
 	identity auth.IdentityManager,
 	publisher EmailCommandPublisher,
 	siteOrigin string,
-	metrics memberOnboardingMetrics,
 	identityID string,
 	memberID string,
 	member model.Member,
 	projection AccountEmailProjection,
-) {
-	if projection == nil {
-		slog.ErrorContext(ctx, "Member onboarding welcome projection missing", "domain", "member", "event", "member.onboarding_welcome_publish_failed", "outcome", "failed", "reason", "projection_missing", "member_id", memberID, "identity_id", identityID, "error", "account email projection is required")
-		metrics.recordWelcomePublish(ctx, "failed")
-		return
+) (string, error) {
+	if projection == nil || publisher == nil {
+		err := errors.New("account email projection and welcome publisher are required")
+		slog.ErrorContext(ctx, "Member onboarding welcome dependencies missing", "domain", "member", "event", "member.onboarding_welcome_publish_failed", "outcome", "failed", "reason", "dependency_missing", "member_id", memberID, "identity_id", identityID, "failure_cause", failurecause.Message(err))
+		return "failed", errs.Internal(err)
 	}
-	recipient, linkedMemberID, reason, err := projection.ResolveDelivery(ctx, db, identity, identityID)
+	recipient, linkedMemberID, reason, err := projection.ResolveDelivery(ctx, tx, identity, identityID)
 	if err != nil {
-		metrics.recordWelcomePublish(ctx, "failed")
 		var upstreamError *auth.KratosHTTPError
 		privateBody := ""
 		if errors.As(err, &upstreamError) {
@@ -231,13 +230,12 @@ func publishMemberOnboardingWelcomeEmail(
 			"member_id", memberID,
 			"failure_cause", failurecause.Message(err, privateBody),
 		)
-		return
+		return "failed", errs.DependencyUnavailable("account email")
 	}
 	if recipient == "" {
 		if reason == "" {
 			reason = "member_link_mismatch"
 		}
-		metrics.recordWelcomePublish(ctx, "skipped")
 		slog.Info(
 			"Member onboarding welcome skipped",
 			"domain", "member",
@@ -247,10 +245,9 @@ func publishMemberOnboardingWelcomeEmail(
 			"member_id", memberID,
 			"reason", reason,
 		)
-		return
+		return "skipped", nil
 	}
 	if strings.TrimSpace(linkedMemberID) != member.ID || member.ID != memberID {
-		metrics.recordWelcomePublish(ctx, "skipped")
 		slog.WarnContext(ctx,
 			"Member onboarding welcome skipped for changed Identity link",
 			"domain", "member",
@@ -260,9 +257,16 @@ func publishMemberOnboardingWelcomeEmail(
 			"member_id", memberID,
 			"reason", "member_link_mismatch",
 		)
-		return
+		return "skipped", nil
+	}
+	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
+	if !ok {
+		err := errors.New("database transaction does not expose a PGMQ executor")
+		slog.ErrorContext(ctx, "Member onboarding welcome publish failed", "domain", "member", "event", "member.onboarding_welcome_publish_failed", "outcome", "failed", "reason", "executor_unavailable", "identity_id", identityID, "member_id", memberID, "failure_cause", failurecause.Message(err))
+		return "failed", errs.Internal(err)
 	}
 	nickname, locale := memberWelcomeRecipientFields(member)
+	commandID := "welcome:" + identityID
 	job := &managev1.SendEmailEvent{
 		Recipient:    recipient,
 		TemplateType: email.EventWelcome.String(),
@@ -271,19 +275,13 @@ func publishMemberOnboardingWelcomeEmail(
 			"login_url": strings.TrimRight(strings.TrimSpace(siteOrigin), "/") + "/login",
 		},
 		RecipientContext: email.AccountSelectedPrimaryEmailContext(identityID),
+		MessageId:        &commandID,
 	}
 	if locale != "" {
 		job.Locale = &locale
 	}
-	commandID := "welcome:" + identityID
-	if err := email.PublishCommand(ctx, publisher, job, commandID); err != nil {
-		metrics.recordWelcomePublish(ctx, "failed")
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		privateValues := []string{privateBody, job.Recipient}
+	if err := publisher.PublishSendEmailWithExecutor(ctx, executor, job); err != nil {
+		privateValues := []string{job.Recipient}
 		for _, value := range job.TemplateData {
 			privateValues = append(privateValues, value)
 		}
@@ -299,18 +297,9 @@ func publishMemberOnboardingWelcomeEmail(
 			"template_type", job.TemplateType,
 			"failure_cause", failurecause.Message(err, privateValues...),
 		)
-		return
+		return "failed", errs.Internal(err)
 	}
-	metrics.recordWelcomePublish(ctx, "accepted")
-	slog.Info(
-		"Member onboarding welcome command confirmed",
-		"domain", "member",
-		"event", "member.onboarding_welcome_published",
-		"outcome", "accepted",
-		"identity_id", identityID,
-		"member_id", memberID,
-		"command_id", commandID,
-	)
+	return "accepted", nil
 }
 
 func normalizeMemberPreferenceLocale(value string) (string, error) {

@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
@@ -235,5 +236,9 @@ func (audienceNoopFileDeleter) DeleteFileByID(context.Context, string) error { r
 type noopMemberEmailPublisher struct{}
 
 func (noopMemberEmailPublisher) PublishSendEmail(context.Context, *managev1.SendEmailEvent) error {
+	return nil
+}
+
+func (noopMemberEmailPublisher) PublishSendEmailWithExecutor(context.Context, eventpkg.DBTX, *managev1.SendEmailEvent) error {
 	return nil
 }

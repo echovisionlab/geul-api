@@ -28,8 +28,11 @@ var (
 const (
 	accountEmailChangeReconcileInterval = time.Minute
 	accountEmailChangeProofGrace        = 15 * time.Minute
-	accountEmailChangeBatchSize         = 50
-	accountEmailChangeLeaderLockKey     = int64(0x4745554c454d4149) // GUELEMAI
+	// An unverified pending address holds that address in Kratos for every
+	// account, so an exact pending request expires after this lifetime.
+	accountEmailChangePendingLifetime = 7 * 24 * time.Hour
+	accountEmailChangeBatchSize       = 50
+	accountEmailChangeLeaderLockKey   = int64(0x4745554c454d4149) // GUELEMAI
 )
 
 type AccountEmailChangePublisher interface {

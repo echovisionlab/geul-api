@@ -144,6 +144,9 @@ func TestSESAdapterSendUsesTypedProviderRetryPolicy(t *testing.T) {
 		{code: "ConfigurationSetDoesNotExist", wantKind: DeliveryErrorAuthentication, retryable: false},
 		{code: "ConfigurationSetSendingPausedException", wantKind: DeliveryErrorAuthentication, retryable: false},
 		{code: "MailFromDomainNotVerifiedException", wantKind: DeliveryErrorAuthentication, retryable: false},
+		{code: "InvalidClientTokenId", wantKind: DeliveryErrorAuthentication, retryable: false},
+		{code: "SignatureDoesNotMatch", wantKind: DeliveryErrorAuthentication, retryable: false},
+		{code: "AccessDeniedException", wantKind: DeliveryErrorAuthentication, retryable: false},
 		{code: "UndocumentedProviderError", wantKind: DeliveryErrorUnknown, retryable: false},
 	}
 	for _, tt := range tests {

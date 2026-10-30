@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/email"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -180,6 +181,12 @@ func (a *DeliveryApplication) Deliver(
 	}
 
 	rendered, err := a.renderer.Render(ctx, job)
+	if err != nil && dberrors.IsTransient(err) {
+		// The template is not at fault; the queue retries once the database
+		// answers again instead of blocking the recipient.
+		logDeliveryLifecycle(ctx, slog.LevelWarn, "mail.delivery.render_deferred", job, "retry", "render_dependency_unavailable", "")
+		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, fmt.Errorf("render email: %w", err))
+	}
 	if err != nil {
 		errorType := managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String()
 		LogDeliveryFailure(ctx, "mail.delivery.render_failed", job, err, "reason", "render_failed", "error_type", errorType)
@@ -205,13 +212,17 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	if len(adapters) == 0 {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", "no_active_adapter"); err != nil {
+		// A missing adapter is a site configuration gap, not a recipient fact.
+		// Keep the recipient pending so the retry or a later resume sends it.
+		if err := a.releaseClaim(ctx, recipientID, claimID); err != nil {
 			return DeliveryResult{}, err
 		}
-		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "blocked")
-		a.metrics.RecordRecipientStatus(ctx, job.GetTemplateType(), RecipientStatusBlocked)
-		logDeliveryLifecycle(ctx, slog.LevelWarn, "mail.delivery.blocked", job, "blocked", "no_active_adapter", "no_active_adapter")
-		return DeliveryResult{Outcome: DeliveryNoProvider}, nil
+		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
+		logDeliveryLifecycle(ctx, slog.LevelWarn, "mail.delivery.deferred", job, "retry", "no_active_adapter", "no_active_adapter")
+		return DeliveryResult{
+			Outcome: DeliveryNoProvider, Retryable: true,
+			ErrorType: "no_active_adapter", Err: errors.New("no active mail adapter"),
+		}, nil
 	}
 
 	message := &email.Email{
@@ -373,7 +384,9 @@ func (a *DeliveryApplication) sendThroughProviders(
 		if ctx.Err() != nil {
 			return "", failures, err, false, errors.Join(err, ctx.Err())
 		}
-		if !retryable {
+		// Credentials and sender setup belong to one adapter; the next one
+		// can still send.
+		if !retryable && errorType != managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String() {
 			break
 		}
 	}
@@ -480,7 +493,8 @@ func ClassifyProviderFailures(failures []ProviderFailure, fallback error) (strin
 	}
 	errorType, retryable := ProviderErrorDecision(fallback)
 	status := StatusForProviderError(errorType)
-	if !retryable && status == deliveryRetryableStatus {
+	if !retryable && status == deliveryRetryableStatus &&
+		errorType != managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String() {
 		status = RecipientStatusBlocked
 	}
 	return status, errorType, fallback
@@ -489,12 +503,13 @@ func ClassifyProviderFailures(failures []ProviderFailure, fallback error) (strin
 func StatusForProviderError(errorType string) string {
 	switch errorType {
 	case managev1.EmailErrorType_EMAIL_ERROR_TYPE_CONNECTION_TIMEOUT.String(),
-		managev1.EmailErrorType_EMAIL_ERROR_TYPE_RATE_LIMITED.String():
+		managev1.EmailErrorType_EMAIL_ERROR_TYPE_RATE_LIMITED.String(),
+		// An adapter credential failure says nothing about the recipient.
+		managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String():
 		return deliveryRetryableStatus
 	case managev1.EmailErrorType_EMAIL_ERROR_TYPE_INVALID_RECIPIENT.String():
 		return RecipientStatusPermanentFailed
-	case managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String(),
-		managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String():
+	case managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String():
 		return RecipientStatusBlocked
 	default:
 		return deliveryRetryableStatus

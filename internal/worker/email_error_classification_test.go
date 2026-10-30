@@ -73,7 +73,7 @@ func TestDeliveryStatusForEmailErrorMatrix(t *testing.T) {
 		},
 		{
 			errorType: managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String(),
-			status:    campaign.CampaignDeliveryRecipientStatusBlocked,
+			status:    emailDeliveryRetryable,
 		},
 		{
 			errorType: managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String(),
@@ -123,14 +123,14 @@ func TestClassifyEmailDeliveryFailurePrioritizesDurableFailureTypes(t *testing.T
 			expectedErr:   invalidRecipientErr,
 		},
 		{
-			name: "auth failure wins over template and transient failures",
+			name: "auth failure wins over template and transient failures and stays retryable",
 			failures: []emailAdapterFailure{
 				{err: timeoutErr, errorType: managev1.EmailErrorType_EMAIL_ERROR_TYPE_CONNECTION_TIMEOUT.String()},
 				{err: templateErr, errorType: managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String()},
 				{err: authErr, errorType: managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String()},
 			},
 			fallback:      timeoutErr,
-			expectedState: campaign.CampaignDeliveryRecipientStatusBlocked,
+			expectedState: emailDeliveryRetryable,
 			expectedType:  managev1.EmailErrorType_EMAIL_ERROR_TYPE_AUTH_FAILED.String(),
 			expectedErr:   authErr,
 		},

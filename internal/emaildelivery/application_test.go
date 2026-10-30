@@ -3,12 +3,14 @@ package emaildelivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -284,4 +286,108 @@ func TestDeliveryApplicationReleasesClaimAfterRetryableProviderFailure(t *testin
 	require.ErrorContains(t, result.Err, "temporary network failure")
 	require.Equal(t, [][2]string{{recipientID, "claim-1"}}, campaign.releases)
 	require.Empty(t, campaign.claimedMarks)
+}
+
+type failingDeliveryRendererStub struct{ err error }
+
+func (s failingDeliveryRendererStub) Render(context.Context, *managev1.SendEmailEvent) (*email.RenderedEmail, error) {
+	return nil, s.err
+}
+
+func deliverCampaignTestJob(t *testing.T, application *DeliveryApplication) (DeliveryResult, error) {
+	t.Helper()
+	messageID, recipientID := "command-1", "recipient-1"
+	return application.Deliver(t.Context(), &managev1.SendEmailEvent{
+		MessageId: &messageID, DeliveryRecipientId: &recipientID,
+		Recipient: "reader@example.test", TemplateType: "campaign:test",
+	})
+}
+
+func TestDeliveryApplicationRetriesRenderWhenDatabaseIsUnavailable(t *testing.T) {
+	campaign := &deliveryCampaignStub{claimAvailable: true, claimID: "claim-1"}
+	application := NewDeliveryApplication(
+		campaign,
+		recipientAuthorizerStub{},
+		failingDeliveryRendererStub{err: fmt.Errorf("failed to fetch template: %w", &pgconn.PgError{Code: "57P03"})},
+		deliverySuppressionStub{},
+		providerLoaderStub{adapters: []email.Adapter{deliveryAdapterStub{messageID: "provider-1"}}},
+		deliveryMetricsStub{},
+	)
+	_, err := deliverCampaignTestJob(t, application)
+	require.ErrorContains(t, err, "render email")
+	require.Empty(t, campaign.claimedMarks, "a database outage must not block the recipient")
+	require.Equal(t, [][2]string{{"recipient-1", "claim-1"}}, campaign.releases)
+}
+
+func TestDeliveryApplicationBlocksRecipientOnTemplateError(t *testing.T) {
+	campaign := &deliveryCampaignStub{claimAvailable: true, claimID: "claim-1"}
+	application := NewDeliveryApplication(
+		campaign,
+		recipientAuthorizerStub{},
+		failingDeliveryRendererStub{err: errors.New("render email subject: missing variable name")},
+		deliverySuppressionStub{},
+		providerLoaderStub{adapters: []email.Adapter{deliveryAdapterStub{messageID: "provider-1"}}},
+		deliveryMetricsStub{},
+	)
+	result, err := deliverCampaignTestJob(t, application)
+	require.NoError(t, err)
+	require.Equal(t, DeliveryRenderFailed, result.Outcome)
+	require.Equal(t, [][5]string{{
+		"recipient-1", "claim-1", RecipientStatusBlocked, "",
+		managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String(),
+	}}, campaign.claimedMarks)
+}
+
+func TestDeliveryApplicationKeepsRecipientPendingWithoutActiveAdapter(t *testing.T) {
+	campaign := &deliveryCampaignStub{claimAvailable: true, claimID: "claim-1"}
+	application := NewDeliveryApplication(
+		campaign,
+		recipientAuthorizerStub{},
+		deliveryRendererStub{rendered: &email.RenderedEmail{Subject: "subject", HTML: "<p>body</p>"}},
+		deliverySuppressionStub{},
+		providerLoaderStub{},
+		deliveryMetricsStub{},
+	)
+	result, err := deliverCampaignTestJob(t, application)
+	require.NoError(t, err)
+	require.Equal(t, DeliveryNoProvider, result.Outcome)
+	require.True(t, result.Retryable)
+	require.Error(t, result.Err)
+	require.Empty(t, campaign.claimedMarks)
+	require.Equal(t, [][2]string{{"recipient-1", "claim-1"}}, campaign.releases)
+}
+
+func TestDeliveryApplicationTreatsAdapterAuthFailureAsAdapterScoped(t *testing.T) {
+	authErr := email.NewDeliveryError(email.DeliveryErrorAuthentication, false, errors.New("invalid credentials"))
+
+	campaign := &deliveryCampaignStub{claimAvailable: true, claimID: "claim-1"}
+	application := NewDeliveryApplication(
+		campaign,
+		recipientAuthorizerStub{},
+		deliveryRendererStub{rendered: &email.RenderedEmail{Subject: "subject", HTML: "<p>body</p>"}},
+		deliverySuppressionStub{},
+		providerLoaderStub{adapters: []email.Adapter{
+			deliveryAdapterStub{sendErr: authErr},
+			deliveryAdapterStub{messageID: "provider-2"},
+		}},
+		deliveryMetricsStub{},
+	)
+	result, err := deliverCampaignTestJob(t, application)
+	require.NoError(t, err)
+	require.Equal(t, DeliveryAccepted, result.Outcome, "the next adapter sends after a credential failure")
+
+	campaign = &deliveryCampaignStub{claimAvailable: true, claimID: "claim-1"}
+	application = NewDeliveryApplication(
+		campaign,
+		recipientAuthorizerStub{},
+		deliveryRendererStub{rendered: &email.RenderedEmail{Subject: "subject", HTML: "<p>body</p>"}},
+		deliverySuppressionStub{},
+		providerLoaderStub{adapters: []email.Adapter{deliveryAdapterStub{sendErr: authErr}}},
+		deliveryMetricsStub{},
+	)
+	result, err = deliverCampaignTestJob(t, application)
+	require.NoError(t, err)
+	require.True(t, result.Retryable)
+	require.Empty(t, campaign.claimedMarks, "a credential failure must not block the recipient")
+	require.Equal(t, [][2]string{{"recipient-1", "claim-1"}}, campaign.releases)
 }
