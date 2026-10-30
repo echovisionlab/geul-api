@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.4](https://github.com/echovisionlab/geul-api/compare/v4.1.3...v4.1.4) (2026-10-30)
+
+
+### Bug Fixes
+
+* **mail:** keep mail retryable through outages and abandoned requests ([#202](https://github.com/echovisionlab/geul-api/issues/202)) ([6f7ed93](https://github.com/echovisionlab/geul-api/commit/6f7ed93fcfd7789802c543d2684a526349f60901))
+
 ## [4.1.3](https://github.com/echovisionlab/geul-api/compare/v4.1.2...v4.1.3) (2026-10-30)
 
 
