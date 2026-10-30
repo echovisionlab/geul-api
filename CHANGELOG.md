@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.5](https://github.com/echovisionlab/geul-api/compare/v4.1.4...v4.1.5) (2026-10-30)
+
+
+### Bug Fixes
+
+* **mail:** stop double sends, false opt-outs and silent test sends ([#204](https://github.com/echovisionlab/geul-api/issues/204)) ([c99b3b5](https://github.com/echovisionlab/geul-api/commit/c99b3b5a98e732ad482e858bcc5aa67b285559e1))
+
 ## [4.1.4](https://github.com/echovisionlab/geul-api/compare/v4.1.3...v4.1.4) (2026-10-30)
 
 
