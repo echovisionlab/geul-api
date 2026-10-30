@@ -11,11 +11,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -253,5 +255,92 @@ func TestSESFailureLogsPreserveSanitizedCause(t *testing.T) {
 				require.NotContains(t, output.String(), private)
 			}
 		})
+	}
+}
+
+func TestAWSSNSVerifierCompletesChainFromIssuerURL(t *testing.T) {
+	now := time.Now().UTC()
+	newKey := func() *rsa.PrivateKey {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		return key
+	}
+	rootKey, intermediateKey, leafKey := newKey(), newKey(), newKey()
+	root := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test root"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &rootKey.PublicKey, rootKey)
+	require.NoError(t, err)
+	root, err = x509.ParseCertificate(rootDER)
+	require.NoError(t, err)
+	intermediate := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "test intermediate"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	intermediateDER, err := x509.CreateCertificate(rand.Reader, intermediate, root, &intermediateKey.PublicKey, rootKey)
+	require.NoError(t, err)
+	intermediate, err = x509.ParseCertificate(intermediateDER)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	leaf := &x509.Certificate{
+		SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "sns.amazonaws.com"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IssuingCertificateURL: []string{server.URL + "/intermediate.cer"},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, intermediate, &leafKey.PublicKey, intermediateKey)
+	require.NoError(t, err)
+	mux.HandleFunc("/leaf.pem", func(w http.ResponseWriter, _ *http.Request) {
+		_ = pem.Encode(w, &pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	})
+	issuerFetches := 0
+	mux.HandleFunc("/intermediate.cer", func(w http.ResponseWriter, _ *http.Request) {
+		issuerFetches++
+		_, _ = w.Write(intermediateDER)
+	})
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+
+	rejecting := &awsSNSVerifier{client: server.Client(), roots: roots, cache: map[string]cachedSNSCertificate{}}
+	_, err = rejecting.loadCertificate(t.Context(), server.URL+"/leaf.pem")
+	require.ErrorContains(t, err, "unknown authority")
+	require.Zero(t, issuerFetches)
+
+	verifier := &awsSNSVerifier{
+		client: server.Client(), roots: roots, cache: map[string]cachedSNSCertificate{},
+		issuerAllowed: func(issuerURL *url.URL) bool { return issuerURL.Host == strings.TrimPrefix(server.URL, "http://") },
+	}
+	certificate, err := verifier.loadCertificate(t.Context(), server.URL+"/leaf.pem")
+	require.NoError(t, err)
+	require.Equal(t, "sns.amazonaws.com", certificate.Subject.CommonName)
+	require.Equal(t, 1, issuerFetches)
+
+	otherRoots := x509.NewCertPool()
+	untrusted := &awsSNSVerifier{
+		client: server.Client(), roots: otherRoots, cache: map[string]cachedSNSCertificate{},
+		issuerAllowed: verifier.issuerAllowed,
+	}
+	_, err = untrusted.loadCertificate(t.Context(), server.URL+"/leaf.pem")
+	require.ErrorContains(t, err, "unknown authority")
+}
+
+func TestAmazonTrustIssuerURLAllowsOnlyAmazonTrustHosts(t *testing.T) {
+	for rawURL, want := range map[string]bool{
+		"http://crt.r2m04.amazontrust.com/r2m04.cer":      true,
+		"https://crt.rootca1.amazontrust.com/rootca1.cer": true,
+		"http://amazontrust.com.example.com/r2m04.cer":    false,
+		"http://crt.r2m04.amazontrust.com:8080/r2m04.cer": false,
+		"ftp://crt.r2m04.amazontrust.com/r2m04.cer":       false,
+		"http://user@crt.r2m04.amazontrust.com/r2m04.cer": false,
+	} {
+		parsed, err := url.Parse(rawURL)
+		require.NoError(t, err)
+		require.Equal(t, want, amazonTrustIssuerURL(parsed), rawURL)
 	}
 }

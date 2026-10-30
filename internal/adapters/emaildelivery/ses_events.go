@@ -385,6 +385,10 @@ type awsSNSVerifier struct {
 	now      func() time.Time
 	mu       sync.Mutex
 	cache    map[string]cachedSNSCertificate
+	// issuerAllowed limits which AIA issuer URLs may complete the chain;
+	// nil means amazontrust.com only.
+	issuerAllowed func(*url.URL) bool
+	issuers       map[string]*x509.Certificate
 }
 
 func (v *awsSNSVerifier) Verify(ctx context.Context, envelope snsEnvelope) error {
@@ -467,15 +471,11 @@ func (v *awsSNSVerifier) loadCertificate(ctx context.Context, rawURL string) (*x
 	if err != nil {
 		return nil, fmt.Errorf("read SNS signing certificate: %w", err)
 	}
-	block, _ := pem.Decode(body)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("invalid SNS signing certificate PEM")
-	}
-	certificate, err := x509.ParseCertificate(block.Bytes)
+	certificate, intermediates, err := parseSNSCertificatePEM(body)
 	if err != nil {
-		return nil, fmt.Errorf("parse SNS signing certificate: %w", err)
+		return nil, err
 	}
-	if _, err := certificate.Verify(x509.VerifyOptions{Roots: v.roots}); err != nil {
+	if err := v.verifyCertificateChain(ctx, certificate, intermediates); err != nil {
 		return nil, fmt.Errorf("verify SNS signing certificate chain: %w", err)
 	}
 	expiresAt := certificate.NotAfter
@@ -486,6 +486,128 @@ func (v *awsSNSVerifier) loadCertificate(ctx context.Context, rawURL string) (*x
 	v.cache[rawURL] = cachedSNSCertificate{certificate: certificate, expiresAt: expiresAt}
 	v.mu.Unlock()
 	return certificate, nil
+}
+
+func parseSNSCertificatePEM(body []byte) (*x509.Certificate, *x509.CertPool, error) {
+	var certificate *x509.Certificate
+	intermediates := x509.NewCertPool()
+	for {
+		var block *pem.Block
+		block, body = pem.Decode(body)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		parsed, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse SNS signing certificate: %w", err)
+		}
+		if certificate == nil {
+			certificate = parsed
+		} else {
+			intermediates.AddCert(parsed)
+		}
+	}
+	if certificate == nil {
+		return nil, nil, fmt.Errorf("invalid SNS signing certificate PEM")
+	}
+	return certificate, intermediates, nil
+}
+
+// verifyCertificateChain completes the chain from the leaf's AIA issuer URL
+// when the PEM lacks the intermediate, as Amazon's SNS certificates do.
+// Every fetched issuer is still verified against the trusted roots.
+func (v *awsSNSVerifier) verifyCertificateChain(
+	ctx context.Context,
+	certificate *x509.Certificate,
+	intermediates *x509.CertPool,
+) error {
+	options := x509.VerifyOptions{Roots: v.roots, Intermediates: intermediates}
+	_, err := certificate.Verify(options)
+	var unknownAuthority x509.UnknownAuthorityError
+	if err == nil || !errors.As(err, &unknownAuthority) {
+		return err
+	}
+	added := false
+	for _, rawURL := range certificate.IssuingCertificateURL {
+		issuer, issuerErr := v.loadIssuer(ctx, rawURL)
+		if issuerErr != nil {
+			slog.WarnContext(ctx, "Failed to load SNS certificate issuer", "failure_cause", failurecause.Message(issuerErr), "domain", "mail", "event", "mail.provider.issuer_unavailable", "outcome", "failed")
+			continue
+		}
+		intermediates.AddCert(issuer)
+		added = true
+	}
+	if !added {
+		return err
+	}
+	_, err = certificate.Verify(options)
+	return err
+}
+
+func (v *awsSNSVerifier) loadIssuer(ctx context.Context, rawURL string) (*x509.Certificate, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, fmt.Errorf("parse SNS certificate issuer URL: %w", err)
+	}
+	allowed := v.issuerAllowed
+	if allowed == nil {
+		allowed = amazonTrustIssuerURL
+	}
+	if !allowed(parsed) {
+		return nil, fmt.Errorf("unexpected SNS certificate issuer URL host")
+	}
+	v.mu.Lock()
+	if issuer, ok := v.issuers[parsed.String()]; ok {
+		v.mu.Unlock()
+		return issuer, nil
+	}
+	v.mu.Unlock()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := v.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("fetch SNS certificate issuer: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch SNS certificate issuer: HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if err != nil {
+		return nil, fmt.Errorf("read SNS certificate issuer: %w", err)
+	}
+	if block, _ := pem.Decode(body); block != nil && block.Type == "CERTIFICATE" {
+		body = block.Bytes
+	}
+	issuer, err := x509.ParseCertificate(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse SNS certificate issuer: %w", err)
+	}
+	if !issuer.IsCA {
+		return nil, fmt.Errorf("SNS certificate issuer is not a CA")
+	}
+	v.mu.Lock()
+	if v.issuers == nil {
+		v.issuers = make(map[string]*x509.Certificate)
+	}
+	v.issuers[parsed.String()] = issuer
+	v.mu.Unlock()
+	return issuer, nil
+}
+
+func amazonTrustIssuerURL(issuerURL *url.URL) bool {
+	if issuerURL.Scheme != "http" && issuerURL.Scheme != "https" {
+		return false
+	}
+	if issuerURL.User != nil || issuerURL.Port() != "" {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(issuerURL.Hostname()), ".amazontrust.com")
 }
 
 func canonicalSNSMessage(envelope snsEnvelope) (string, error) {
