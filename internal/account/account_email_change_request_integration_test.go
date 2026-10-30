@@ -390,6 +390,37 @@ func TestAccountEmailChangeExactPendingRequestSurvivesCodeExpiryIntegration(t *t
 	require.NoError(t, db.First(&model.AccountEmailChangeRequest{}, "id = ?", request.ID).Error)
 }
 
+func TestAccountEmailChangeExactPendingRequestExpiresAndReleasesAddressIntegration(t *testing.T) {
+	db := newConcurrentServiceIntegrationDB(t)
+	ctx := t.Context()
+	identityID := integrationTestUUID()
+	cleanupAccountEmailChangeFixtures(t, db, identityID)
+	previousEmail := "old-" + identityID + "@example.test"
+	requestedEmail := "new-" + identityID + "@example.test"
+	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: previousEmail})
+	identity := newAccountEmailChangeIdentityFixture(t, db, identityID, previousEmail)
+	lifecycle := NewAccountEmailChangeLifecycle(db, identity, &accountEmailChangePublisherFixture{}, memberEmailProjectionIntegration{})
+
+	require.NoError(t, lifecycle.StageOrCancel(ctx, "settings-flow", identityID, previousEmail, "", requestedEmail, false))
+	setPendingAccountEmail(identity, requestedEmail, false)
+	var request model.AccountEmailChangeRequest
+	require.NoError(t, db.First(&request, "identity_id = ?::uuid", identityID).Error)
+
+	lifecycle.now = func() time.Time { return request.CreatedAt.Add(accountEmailChangePendingLifetime - time.Minute) }
+	require.NoError(t, lifecycle.ReconcileRequest(ctx, request.ID))
+	require.Equal(t, requestedEmail, identity.identity.PendingEmail(), "the owner keeps the request within its lifetime")
+
+	lifecycle.now = func() time.Time { return request.CreatedAt.Add(accountEmailChangePendingLifetime + time.Second) }
+	require.NoError(t, lifecycle.ReconcileRequest(ctx, request.ID))
+	require.Equal(t, previousEmail, identity.identity.CurrentEmail())
+	require.Empty(t, identity.identity.PendingEmail(), "an expired request releases the pending address")
+	require.False(t, identity.identity.HasVerifiedEmailAddress(requestedEmail))
+	for _, address := range identity.identity.VerifiableAddresses {
+		require.NotEqual(t, requestedEmail, address.Value, "the Kratos verifiable address no longer holds the address")
+	}
+	require.ErrorIs(t, db.First(&model.AccountEmailChangeRequest{}, "id = ?", request.ID).Error, gorm.ErrRecordNotFound)
+}
+
 func TestAccountEmailChangeOrphanRequestIsRemovedAfterGraceIntegration(t *testing.T) {
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()

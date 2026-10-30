@@ -10,7 +10,7 @@ type AccountEmailChangeRequest struct {
 	MemberID              string    `gorm:"column:member_id;type:uuid;not null;uniqueIndex"`
 	IdentityID            string    `gorm:"column:identity_id;type:uuid;not null;uniqueIndex"`
 	PreviousEmailAddress  string    `gorm:"column:previous_email_address;type:varchar(254);not null"`
-	RequestedEmailAddress string    `gorm:"column:requested_email_address;type:varchar(254);not null;uniqueIndex"`
+	RequestedEmailAddress string    `gorm:"column:requested_email_address;type:varchar(254);not null"`
 	CreatedAt             time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 }
 

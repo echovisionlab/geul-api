@@ -135,9 +135,16 @@ func (s *AccountEmailChangeLifecycle) reconcileAccountEmailChangeRequest(
 
 	// An exact pending address is still an active user-visible request even when
 	// its previous verification code expired. Kratos owns code expiry and the
-	// user may restart proof without losing the request.
+	// user may restart proof without losing the request, until the pending
+	// lifetime ends and the address is released for other accounts.
 	if accountEmailsEqual(pendingEmail, requestedEmail) {
-		return nil
+		if s.now().UTC().Sub(request.CreatedAt) < accountEmailChangePendingLifetime {
+			return nil
+		}
+		if err := s.clearRequestedAddress(ctx, request, identity); err != nil {
+			return err
+		}
+		return s.finishAccountEmailChangeRequest(db, request, "expired")
 	}
 	if s.now().UTC().Sub(request.CreatedAt) < accountEmailChangeProofGrace {
 		return nil

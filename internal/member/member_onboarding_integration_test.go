@@ -15,6 +15,7 @@ import (
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -42,6 +43,17 @@ func (p *recordingOnboardingWelcomePublisher) PublishSendEmail(
 	defer p.mu.Unlock()
 	p.jobs = append(p.jobs, job)
 	return p.err
+}
+
+func (p *recordingOnboardingWelcomePublisher) PublishSendEmailWithExecutor(
+	ctx context.Context,
+	executor eventpkg.DBTX,
+	job *managev1.SendEmailEvent,
+) error {
+	if executor == nil {
+		return errors.New("welcome command requires the onboarding transaction")
+	}
+	return p.PublishSendEmail(ctx, job)
 }
 
 func (p *recordingOnboardingWelcomePublisher) snapshot() []*managev1.SendEmailEvent {
@@ -260,27 +272,37 @@ func TestCompleteMyOnboardingSameNicknameRetryIsIdempotent(t *testing.T) {
 	require.Equal(t, int64(1), auditCount)
 }
 
-func TestCompleteMyOnboardingPublishFailureDoesNotRollbackTransition(t *testing.T) {
+func TestCompleteMyOnboardingWelcomeEnqueueFailureRollsBackThenRetrySends(t *testing.T) {
 	db := newServiceIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "publish-failure@example.test")
-	publisher := &recordingOnboardingWelcomePublisher{err: errors.New("broker unavailable")}
+	publisher := &recordingOnboardingWelcomePublisher{err: errors.New("queue unavailable")}
 	service := onboardingService(db, fixture, publisher)
 	ctx := withOnboardingRequestContext(t, fixture)
+	request := connect.NewRequest(&managev1.CompleteMyOnboardingRequest{Nickname: "CommittedMember"})
 
-	response, err := service.CompleteMyOnboarding(
-		ctx,
-		connect.NewRequest(&managev1.CompleteMyOnboardingRequest{Nickname: "CommittedMember"}),
-	)
+	_, err := service.CompleteMyOnboarding(ctx, request)
+	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	var member model.Member
+	require.NoError(t, db.Where("id = ?", fixture.MemberID).Take(&member).Error)
+	require.False(t, member.Onboarded, "a lost welcome command must not leave a committed onboarding")
+	var auditCount int64
+	require.NoError(t, db.Table("public.domain_audit").
+		Where("action = ? AND target_id = ?", sharedtelemetry.AuditMemberUpdated, fixture.MemberID).
+		Count(&auditCount).Error)
+	require.Zero(t, auditCount)
 
+	publisher.mu.Lock()
+	publisher.err = nil
+	publisher.mu.Unlock()
+	response, err := service.CompleteMyOnboarding(ctx, request)
 	require.NoError(t, err)
 	require.True(t, response.Msg.Onboarded)
 	require.Equal(t, "CommittedMember", response.Msg.Member.GetNickname())
-	require.Len(t, publisher.snapshot(), 1)
-	var member model.Member
+	jobs := publisher.snapshot()
+	require.Len(t, jobs, 2)
+	require.Equal(t, "welcome:"+fixture.IdentityID, jobs[1].GetMessageId())
 	require.NoError(t, db.Where("id = ?", fixture.MemberID).Take(&member).Error)
 	require.True(t, member.Onboarded)
-	require.Equal(t, "CommittedMember", member.Nickname)
-	var auditCount int64
 	require.NoError(t, db.Table("public.domain_audit").
 		Where("action = ? AND target_id = ?", sharedtelemetry.AuditMemberUpdated, fixture.MemberID).
 		Count(&auditCount).Error)

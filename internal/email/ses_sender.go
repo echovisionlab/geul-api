@@ -219,7 +219,18 @@ func classifySESDeliveryError(err error) error {
 	case "MailFromDomainNotVerifiedException",
 		"ConfigurationSetDoesNotExist",
 		"ConfigurationSetSendingPausedException",
-		"AccountSendingPausedException":
+		"AccountSendingPausedException",
+		// Rejected or expired adapter credentials and missing IAM permissions.
+		"InvalidClientTokenId",
+		"UnrecognizedClientException",
+		"SignatureDoesNotMatch",
+		"IncompleteSignature",
+		"InvalidSignatureException",
+		"MissingAuthenticationToken",
+		"ExpiredToken",
+		"ExpiredTokenException",
+		"AccessDenied",
+		"AccessDeniedException":
 		return NewDeliveryError(DeliveryErrorAuthentication, false, err)
 	default:
 		return NewDeliveryError(DeliveryErrorUnknown, false, err)

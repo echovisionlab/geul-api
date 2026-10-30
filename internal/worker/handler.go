@@ -28,8 +28,11 @@ import (
 )
 
 const (
-	emailSendMaxRetries     = 5
-	emailSendRetryDelay     = time.Second
+	// Transactional and campaign mail retries for about 85 minutes (5 s
+	// doubling, ten times) so a database or mail adapter outage does not
+	// exhaust the budget before it recovers.
+	emailSendMaxRetries     = 10
+	emailSendRetryDelay     = 5 * time.Second
 	emailSendRetryBackoff   = 2.0
 	authEmailMaxRetries     = 4
 	authEmailRetryDelay     = 30 * time.Second

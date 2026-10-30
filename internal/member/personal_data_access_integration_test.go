@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,14 @@ type personalDataEmailPublisher struct{}
 
 func (personalDataEmailPublisher) PublishSendEmail(
 	context.Context,
+	*managev1.SendEmailEvent,
+) error {
+	return nil
+}
+
+func (personalDataEmailPublisher) PublishSendEmailWithExecutor(
+	context.Context,
+	eventpkg.DBTX,
 	*managev1.SendEmailEvent,
 ) error {
 	return nil

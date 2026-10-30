@@ -397,6 +397,22 @@ func (p *Publisher) PublishSendEmail(ctx context.Context, job *managev1.SendEmai
 	return p.publishEmail(ctx, eventpkg.QueueEmailSend, job)
 }
 
+// PublishSendEmailWithExecutor enqueues in the caller's transaction so the
+// command commits together with the domain state that requested it.
+func (p *Publisher) PublishSendEmailWithExecutor(
+	ctx context.Context,
+	executor eventpkg.DBTX,
+	job *managev1.SendEmailEvent,
+) error {
+	if job == nil {
+		return fmt.Errorf("email job is required")
+	}
+	if strings.TrimSpace(job.GetMessageId()) == "" {
+		return fmt.Errorf("email message id is required")
+	}
+	return p.EnqueueProtobufWithExecutor(ctx, executor, eventpkg.QueueEmailSend, job.GetMessageId(), job)
+}
+
 func (p *Publisher) PublishAuthEmail(ctx context.Context, job *managev1.SendEmailEvent) error {
 	return p.publishEmail(ctx, eventpkg.QueueEmailAuth, job)
 }
