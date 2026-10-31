@@ -299,6 +299,9 @@ func TestWorkCreditMutationsRejectInvalidArgumentsBeforeOwner(t *testing.T) {
 		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","credit_id":"` + creditID + `","name":"Sound designer"}`, `unexpected argument "credit_id"`},
 		{ToolWorkCreditUpdate, `{"credit_id":"` + creditID + `","credit_role":"sound","artist_id":"` + artistID + `"}`, `unexpected argument "artist_id"`},
 		{ToolWorkCreditDelete, `{"credit_id":"` + creditID + `","name":"Sound designer"}`, `unexpected argument "name"`},
+		{ToolWorkCreditGroupCreate, `{"document_id":"` + managementWorkID + `","name":"Sound","group_id":"` + creditID + `"}`, `unexpected argument "group_id"`},
+		{ToolWorkCreditGroupUpdate, `{"group_id":"` + creditID + `","name":"Sound","document_id":"` + managementWorkID + `"}`, `unexpected argument "document_id"`},
+		{ToolWorkCreditGroupDelete, `{"group_id":"` + creditID + `","name":"Sound"}`, `unexpected argument "name"`},
 	} {
 		t.Run(test.tool+"/"+test.arguments, func(t *testing.T) {
 			works := &recordingWorkRelated{}

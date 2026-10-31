@@ -40,10 +40,6 @@ var acceptedUnadvertisedFields = map[string]string{
 	"document_heading_update parent_block_id": "shared heading struct; update rejects parent_block_id",
 	"map_place_create clear_image":            "shared settings struct; create rejects clear_image",
 	"map_place_create map_place_id":           "shared settings struct; create rejects map_place_id",
-	"work_credit_group_create group_id":       "drift: shared struct; create ignores group_id",
-	"work_credit_group_update document_id":    "drift: shared struct; update ignores document_id",
-	"work_credit_group_delete document_id":    "drift: shared struct; delete ignores document_id",
-	"work_credit_group_delete name":           "drift: shared struct; delete ignores name",
 }
 
 type schemaStep struct {

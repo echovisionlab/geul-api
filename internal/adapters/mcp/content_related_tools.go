@@ -288,7 +288,18 @@ type workCreditGroupArguments struct {
 	Name       string `json:"name,omitempty"`
 }
 
+// workCreditGroupAdvertisedArguments mirrors each work credit group tool
+// schema; the tools share workCreditGroupArguments.
+var workCreditGroupAdvertisedArguments = map[string][]string{
+	ToolWorkCreditGroupCreate: {"document_id", "name"},
+	ToolWorkCreditGroupUpdate: {"group_id", "name"},
+	ToolWorkCreditGroupDelete: {"group_id"},
+}
+
 func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, toolName string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if err := rejectUnadvertisedArguments(arguments, workCreditGroupAdvertisedArguments[toolName]...); err != nil {
+		return executionError(err)
+	}
 	var input workCreditGroupArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
