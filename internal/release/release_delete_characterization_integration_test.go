@@ -23,7 +23,6 @@ import (
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -144,10 +143,13 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 		require.NoError(t, db.Exec(`INSERT INTO track_credit (track_id, credited_name) VALUES (?::uuid, 'Track credit')`, trackID).Error)
 	}
 	shareLabel := "Release delete characterization share"
-	_, err = sharelinktest.NewHandler(t, db, spiceDB).CreateShareLink(ctx, connect.NewRequest(&managev1.CreateShareLinkRequest{
-		EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, EntityId: releaseID, Label: &shareLabel,
-	}))
-	require.NoError(t, err)
+	// The link is fixture state; its creation audit is not part of the
+	// characterized delete.
+	shareExpiresAt := time.Now().Add(time.Hour)
+	require.NoError(t, db.Create(&model.ShareLink{
+		Token: "release-delete-characterization-" + releaseID, EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(),
+		EntityID: releaseID, Label: &shareLabel, CreatedAt: time.Now(), ExpiresAt: &shareExpiresAt,
+	}).Error)
 	releasepkg.SeedReleaseTargetLocaleForTest(t, db, store, releaseID, "fr", "Titre", nil)
 
 	var documentID string
