@@ -341,7 +341,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 			{
 				name: "name requires text", locale: source, action: menudomain.AIDocumentMutationEdit,
 				operation: menudomain.AIDocumentOperation{
-					Kind: menudomain.AIDocumentSetName,
+					Kind:  menudomain.AIDocumentSetName,
 					Value: menudomain.AIDocumentValue{Kind: menudomain.AIDocumentBoolean, Boolean: true},
 				},
 				want: menudomain.AIDocumentIssue{
