@@ -5,7 +5,6 @@ package referencecatalog
 import (
 	"context"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -628,22 +627,13 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 			go func() {
 				result <- test.invoke(ctx, service, id, suffix)
 			}()
-			requireReferenceMutationStillWaiting(t, result)
+			testutil.RequireKratosLockWaiters(t, db, 1)
 			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
 			require.NoError(t, roleChangeTx.Commit().Error)
 
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
 			test.assert(t, db, id, suffix)
 		})
-	}
-}
-
-func requireReferenceMutationStillWaiting(t *testing.T, result <-chan error) {
-	t.Helper()
-	select {
-	case err := <-result:
-		require.FailNow(t, "reference mutation returned before identity state was released", "error: %v", err)
-	case <-time.After(150 * time.Millisecond):
 	}
 }
 
