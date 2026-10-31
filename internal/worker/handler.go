@@ -82,14 +82,6 @@ type CampaignEmailRenderer interface {
 	) (*email.RenderedEmail, error)
 }
 
-type HandlerOption func(*Handlers)
-
-func WithCampaignEmailRenderer(renderer CampaignEmailRenderer) HandlerOption {
-	return func(handlers *Handlers) {
-		handlers.campaignEmail = renderer
-	}
-}
-
 type httpDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -120,88 +112,89 @@ type workerPublisher interface {
 	PublishWaveformGenerate(ctx context.Context, event *managev1.WaveformGenerateEvent) error
 }
 
-func NewHandlers(
-	db *gorm.DB,
-	cfg *config.Config,
-	publisher *mq.Publisher,
-	adapterLoader mailAdapterLoader,
-	s3Client *s3.Client,
-	kratosClient auth.IdentityManager,
-	fileMediaRuntime *filemediaruntime.Runtime,
-	mediaCleanup *mediaasset.Cleanup,
-	publicAssets *mediaasset.PublicAssetCleanup,
-	ogCleanup *og.Cleanup,
-	faviconCleanup *favicon.Cleanup,
-	metadataAI MetadataAIJobProcessor,
-	translationJobs TranslationJobProcessor,
-	auditWriter *telemetry.DurableWriter,
-	spicedbClient *auth.SpiceDBClient,
-	ogPlanner *og.Planner,
-	memberDeletion account.MemberDeletionLifecycle,
-	options ...HandlerOption,
-) *Handlers {
-	if db == nil {
+// HandlerDeps are the worker's collaborators. MetadataAI, TranslationJobs
+// and CampaignEmail may be nil; NewHandlers panics on any other missing one.
+type HandlerDeps struct {
+	DB               *gorm.DB
+	Config           *config.Config
+	Publisher        *mq.Publisher
+	AdapterLoader    mailAdapterLoader
+	S3Client         *s3.Client
+	KratosClient     auth.IdentityManager
+	FileMediaRuntime *filemediaruntime.Runtime
+	MediaCleanup     *mediaasset.Cleanup
+	PublicAssets     *mediaasset.PublicAssetCleanup
+	OGCleanup        *og.Cleanup
+	FaviconCleanup   *favicon.Cleanup
+	MetadataAI       MetadataAIJobProcessor
+	TranslationJobs  TranslationJobProcessor
+	AuditWriter      *telemetry.DurableWriter
+	SpiceDB          *auth.SpiceDBClient
+	OGPlanner        *og.Planner
+	MemberDeletion   account.MemberDeletionLifecycle
+	CampaignEmail    CampaignEmailRenderer
+}
+
+func NewHandlers(deps HandlerDeps) *Handlers {
+	if deps.DB == nil {
 		panic("worker.NewHandlers: db is required")
 	}
-	if cfg == nil {
+	if deps.Config == nil {
 		panic("worker.NewHandlers: config is required")
 	}
-	if publisher == nil {
+	if deps.Publisher == nil {
 		panic("worker.NewHandlers: publisher is required")
 	}
-	if adapterLoader == nil {
+	if deps.AdapterLoader == nil {
 		panic("worker.NewHandlers: adapterLoader is required")
 	}
-	if s3Client == nil {
+	if deps.S3Client == nil {
 		panic("worker.NewHandlers: s3Client is required")
 	}
-	if kratosClient == nil {
+	if deps.KratosClient == nil {
 		panic("worker.NewHandlers: kratosClient is required")
 	}
-	if fileMediaRuntime == nil {
+	if deps.FileMediaRuntime == nil {
 		panic("worker.NewHandlers: FileMedia runtime is required")
 	}
-	if mediaCleanup == nil || publicAssets == nil || ogCleanup == nil || faviconCleanup == nil {
+	if deps.MediaCleanup == nil || deps.PublicAssets == nil || deps.OGCleanup == nil || deps.FaviconCleanup == nil {
 		panic("worker.NewHandlers: MediaAsset, OG, and Favicon cleanup applications are required")
 	}
-	if auditWriter == nil {
+	if deps.AuditWriter == nil {
 		panic("worker.NewHandlers: auditWriter is required")
 	}
-	if spicedbClient == nil {
+	if deps.SpiceDB == nil {
 		panic("worker.NewHandlers: SpiceDB client is required")
 	}
-	if ogPlanner == nil {
+	if deps.OGPlanner == nil {
 		panic("worker.NewHandlers: OG planner is required")
 	}
-	if memberDeletion == nil {
+	if deps.MemberDeletion == nil {
 		panic("worker.NewHandlers: Member deletion lifecycle is required")
 	}
-	handlers := &Handlers{
-		db:               db,
-		config:           cfg,
-		publisher:        publisher,
-		fileIngest:       publisher,
-		adapterLoader:    adapterLoader,
-		s3Client:         s3Client,
-		kratosClient:     kratosClient,
-		spicedbClient:    spicedbClient,
-		fileMediaRuntime: fileMediaRuntime,
-		mediaCleanup:     mediaCleanup,
-		publicAssets:     publicAssets,
-		ogCleanup:        ogCleanup,
-		faviconCleanup:   faviconCleanup,
-		metadataAI:       metadataAI,
-		translationJobs:  translationJobs,
+	return &Handlers{
+		db:               deps.DB,
+		config:           deps.Config,
+		publisher:        deps.Publisher,
+		fileIngest:       deps.Publisher,
+		adapterLoader:    deps.AdapterLoader,
+		s3Client:         deps.S3Client,
+		kratosClient:     deps.KratosClient,
+		spicedbClient:    deps.SpiceDB,
+		fileMediaRuntime: deps.FileMediaRuntime,
+		mediaCleanup:     deps.MediaCleanup,
+		publicAssets:     deps.PublicAssets,
+		ogCleanup:        deps.OGCleanup,
+		faviconCleanup:   deps.FaviconCleanup,
+		metadataAI:       deps.MetadataAI,
+		translationJobs:  deps.TranslationJobs,
 		mailMetrics:      newMailMetrics(),
 		httpClient:       http.DefaultClient,
-		auditWriter:      auditWriter,
-		ogPlanner:        ogPlanner,
-		memberDeletion:   memberDeletion,
+		auditWriter:      deps.AuditWriter,
+		ogPlanner:        deps.OGPlanner,
+		memberDeletion:   deps.MemberDeletion,
+		campaignEmail:    deps.CampaignEmail,
 	}
-	for _, option := range options {
-		option(handlers)
-	}
-	return handlers
 }
 
 // HandleScheduled processes one coalescible scheduler wake-up.
