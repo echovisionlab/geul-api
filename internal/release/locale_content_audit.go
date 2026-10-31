@@ -33,16 +33,17 @@ func appendReleaseMemberTargetLocaleAudit(
 	)
 }
 
-func appendReleaseRequestTargetLocaleAudit(
+// appendReleaseRequestLocaleUpdatedAudit records a Collaboration edit of one
+// existing locale, source or target, by the request actor.
+func appendReleaseRequestLocaleUpdatedAudit(
 	ctx context.Context,
 	tx *gorm.DB,
 	writer domainaudit.Appender,
 	releaseID string,
 	locale string,
-	operation sharedtelemetry.AuditItemOperation,
 ) error {
 	if writer == nil {
-		return errors.New("release target-locale audit writer is required")
+		return errors.New("release locale audit writer is required")
 	}
 	return domainaudit.AppendRequest(
 		ctx,
@@ -50,7 +51,9 @@ func appendReleaseRequestTargetLocaleAudit(
 		writer,
 		sharedtelemetry.AuditReleaseUpdated,
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewReleaseLocaleContentAuditRecord(metadata, releaseID, locale, operation)
+			return sharedtelemetry.NewReleaseLocaleContentAuditRecord(
+				metadata, releaseID, locale, sharedtelemetry.AuditItemOperationUpdated,
+			)
 		},
 	)
 }

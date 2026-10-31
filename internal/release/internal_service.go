@@ -17,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -260,8 +259,8 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 			if err != nil || !target.Content.Changed {
 				return err
 			}
-			return appendReleaseRequestTargetLocaleAudit(
-				ctx, tx, s.auditWriter, req.Msg.ReleaseId, locale, sharedtelemetry.AuditItemOperationUpdated,
+			return appendReleaseRequestLocaleUpdatedAudit(
+				ctx, tx, s.auditWriter, req.Msg.ReleaseId, locale,
 			)
 		}
 		if req.Msg.ExpectedTargetRevision != nil {
@@ -285,8 +284,8 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 				return err
 			}
 		}
-		return appendReleaseRequestTargetLocaleAudit(
-			ctx, tx, s.auditWriter, req.Msg.ReleaseId, source.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
+		return appendReleaseRequestLocaleUpdatedAudit(
+			ctx, tx, s.auditWriter, req.Msg.ReleaseId, source.SourceLocale,
 		)
 	})
 	if err != nil {
@@ -382,8 +381,8 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 			if err != nil || !targetResult.Content.Changed {
 				return err
 			}
-			return appendReleaseRequestTargetLocaleAudit(
-				ctx, tx, s.auditWriter, input.ReleaseId, locale, sharedtelemetry.AuditItemOperationUpdated,
+			return appendReleaseRequestLocaleUpdatedAudit(
+				ctx, tx, s.auditWriter, input.ReleaseId, locale,
 			)
 		}
 		if input.ExpectedTargetRevision != nil {
@@ -465,8 +464,8 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 				return err
 			}
 		}
-		return appendReleaseRequestTargetLocaleAudit(
-			ctx, tx, s.auditWriter, input.ReleaseId, source.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
+		return appendReleaseRequestLocaleUpdatedAudit(
+			ctx, tx, s.auditWriter, input.ReleaseId, source.SourceLocale,
 		)
 	})
 	if err != nil {
