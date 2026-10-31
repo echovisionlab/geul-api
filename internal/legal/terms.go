@@ -368,7 +368,7 @@ func (s *TermsService) ScheduleTerms(
 			return err
 		}
 		if terms.Status != managev1.TermsStatus_TERMS_STATUS_DRAFT.String() {
-			return errs.FailedPrecondition(errs.MsgOnlyScheduleDraft)
+			return errs.FailedPrecondition(fmt.Sprintf(errs.MsgOnlyScheduleDraft, "terms"))
 		}
 		if err := EnsureLegalNoticeScheduleSlotWithDB(
 			ctx,
@@ -463,7 +463,7 @@ func (s *TermsService) CancelTermsSchedule(
 			return err
 		}
 		if terms.Status != managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String() {
-			return errs.FailedPrecondition(errs.MsgOnlyCancelScheduled)
+			return errs.FailedPrecondition(fmt.Sprintf(errs.MsgOnlyCancelScheduled, "terms"))
 		}
 		if terms.ContentDocumentID == nil {
 			return errs.FailedPrecondition("terms content document has not been populated")
