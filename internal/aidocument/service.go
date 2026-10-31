@@ -89,19 +89,7 @@ func (m OpenMetadata) validate() error {
 	if m.LocaleRole != deriveLocaleRole(m.SourceLocale, m.Locale) {
 		return errors.New("locale role does not match source and requested locales")
 	}
-	if m.LocaleRole == LocaleRoleSource && !m.LocaleExists {
-		return errors.New("source locale must exist")
-	}
-	if m.LocaleRole == LocaleRoleSource && m.TargetRevision != nil {
-		return errors.New("source locale cannot carry a target revision")
-	}
-	if m.LocaleRole == LocaleRoleNonSource && m.LocaleExists && m.TargetRevision == nil {
-		return errors.New("existing target locale requires a target revision")
-	}
-	if m.LocaleRole == LocaleRoleNonSource && !m.LocaleExists && m.TargetRevision != nil {
-		return errors.New("absent target locale cannot carry a target revision")
-	}
-	return nil
+	return validateLocaleState(m.LocaleRole, m.LocaleExists, m.TargetRevision)
 }
 
 type ReadRequest struct {
@@ -434,49 +422,67 @@ func validateAcceptedApply(
 	if err := validateCanonicalOperations(result.Normalized); err != nil {
 		return ApplyResult{}, fmt.Errorf("domain port accepted invalid normalized operations: %w", err)
 	}
+	if err := validateAcceptedChanges(result); err != nil {
+		return ApplyResult{}, err
+	}
+	if err := validateRevisionAdvance(expectedDocumentRevision, expectedTargetRevision, result); err != nil {
+		return ApplyResult{}, err
+	}
+	return result, nil
+}
+
+// validateAcceptedChanges requires at most one change per normalized
+// operation, matching that operation's kind.
+func validateAcceptedChanges(result ApplyResult) error {
 	seenChanges := make(map[int]struct{}, len(result.Changes))
 	for _, change := range result.Changes {
 		if change.Operation < 0 || change.Operation >= len(result.Normalized) {
-			return ApplyResult{}, errors.New("domain port accepted change outside the normalized operation batch")
+			return errors.New("domain port accepted change outside the normalized operation batch")
 		}
 		if result.Normalized[change.Operation].Kind != change.Kind {
-			return ApplyResult{}, errors.New("domain port accepted change kind does not match its normalized operation")
+			return errors.New("domain port accepted change kind does not match its normalized operation")
 		}
 		if _, exists := seenChanges[change.Operation]; exists {
-			return ApplyResult{}, errors.New("domain port accepted duplicate changes for one normalized operation")
+			return errors.New("domain port accepted duplicate changes for one normalized operation")
 		}
 		seenChanges[change.Operation] = struct{}{}
 	}
-	if result.Changed {
-		if len(result.Changes) == 0 {
-			return ApplyResult{}, errors.New("domain port reported a changed mutation without accepted changes")
-		}
-		switch {
-		case result.TargetRevision != nil:
-			if result.DocumentRevision != expectedDocumentRevision {
-				return ApplyResult{}, errors.New("domain port advanced the document revision for a target-only mutation")
-			}
-			if expectedTargetRevision != nil && *result.TargetRevision == *expectedTargetRevision {
-				return ApplyResult{}, errors.New("domain port reported a changed target mutation without a new target revision")
-			}
-		case isDeleteTranslationOperations(result.Normalized):
-			if result.DocumentRevision != expectedDocumentRevision {
-				return ApplyResult{}, errors.New("domain port advanced the document revision for target deletion")
-			}
-		default:
-			if result.DocumentRevision == expectedDocumentRevision {
-				return ApplyResult{}, errors.New("domain port reported a changed source mutation without a new document revision")
-			}
-		}
-	} else {
+	return nil
+}
+
+// validateRevisionAdvance requires a changed mutation to advance exactly the
+// revision it wrote and a semantic no-op to advance neither.
+func validateRevisionAdvance(expectedDocumentRevision Revision, expectedTargetRevision *Revision, result ApplyResult) error {
+	if !result.Changed {
 		if result.DocumentRevision != expectedDocumentRevision || !equalRevision(result.TargetRevision, expectedTargetRevision) {
-			return ApplyResult{}, errors.New("domain port advanced a revision for a semantic no-op")
+			return errors.New("domain port advanced a revision for a semantic no-op")
 		}
 		if len(result.Changes) != 0 {
-			return ApplyResult{}, errors.New("domain port returned accepted changes for a semantic no-op")
+			return errors.New("domain port returned accepted changes for a semantic no-op")
+		}
+		return nil
+	}
+	if len(result.Changes) == 0 {
+		return errors.New("domain port reported a changed mutation without accepted changes")
+	}
+	switch {
+	case result.TargetRevision != nil:
+		if result.DocumentRevision != expectedDocumentRevision {
+			return errors.New("domain port advanced the document revision for a target-only mutation")
+		}
+		if expectedTargetRevision != nil && *result.TargetRevision == *expectedTargetRevision {
+			return errors.New("domain port reported a changed target mutation without a new target revision")
+		}
+	case isDeleteTranslationOperations(result.Normalized):
+		if result.DocumentRevision != expectedDocumentRevision {
+			return errors.New("domain port advanced the document revision for target deletion")
+		}
+	default:
+		if result.DocumentRevision == expectedDocumentRevision {
+			return errors.New("domain port reported a changed source mutation without a new document revision")
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func isDeleteTranslationOperations(operations []Operation) bool {
@@ -529,150 +535,24 @@ func validateReadRequest(request ReadRequest) error {
 }
 
 func selectNodes(document Document, request ReadRequest) ([]Node, error) {
-	nodes := document.Nodes
 	switch request.Mode {
 	case ReadOutline:
-		result := make([]Node, len(nodes))
-		for index, node := range nodes {
-			result[index] = Node{ID: node.ID, Kind: node.Kind, Parent: node.Parent, Order: node.Order}
-			for _, relation := range node.Relations {
-				projected := Relation{ID: relation.ID}
-				for _, item := range relation.Items {
-					projected.Items = append(projected.Items, RelationItem{ID: item.ID, Kind: item.Kind, Order: item.Order})
-				}
-				result[index].Relations = append(result[index].Relations, projected)
-			}
-		}
-		return result, nil
+		return projectOutline(document.Nodes), nil
 	case ReadBlocks:
-		selected := make(map[BlockID]struct{}, len(request.Blocks))
-		for _, block := range request.Blocks {
-			if err := validateStableID("block ID", string(block), 160); err != nil {
-				return nil, err
-			}
-			selected[block] = struct{}{}
-		}
-		result := make([]Node, 0, len(selected))
-		for _, node := range nodes {
-			if _, ok := selected[node.ID]; ok {
-				result = append(result, node)
-				delete(selected, node.ID)
-			}
-		}
-		if len(selected) != 0 {
-			return nil, errors.New("one or more selected blocks do not exist")
-		}
-		return result, nil
+		return selectBlocks(document.Nodes, request.Blocks)
 	case ReadFields:
-		nodeByID := make(map[BlockID]Node, len(nodes))
-		for _, node := range nodes {
-			nodeByID[node.ID] = node
-		}
-		rules := make(map[string]FieldRule, len(document.Catalog.Fields))
-		for _, rule := range document.Catalog.Fields {
-			rules[fieldRuleKey(rule.BlockKind, rule.Field)] = rule
-		}
-		relationRules := make(map[string]RelationFieldRule, len(document.Catalog.RelationFields))
-		for _, rule := range document.Catalog.RelationFields {
-			relationRules[relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)] = rule
-		}
-		type selectedFields struct {
-			blockFields    map[FieldID]struct{}
-			relationFields map[RelationID]map[RelationItemID]map[FieldID]struct{}
-		}
-		selected := make(map[BlockID]*selectedFields, len(request.Fields))
-		for _, field := range request.Fields {
-			if err := validateCanonicalFieldTarget(field.target()); err != nil {
-				return nil, err
-			}
-			node, exists := nodeByID[field.Block]
-			if !exists {
-				return nil, fmt.Errorf("selected block %q does not exist", field.Block)
-			}
-			entry := selected[field.Block]
-			if entry == nil {
-				entry = &selectedFields{blockFields: make(map[FieldID]struct{}), relationFields: make(map[RelationID]map[RelationItemID]map[FieldID]struct{})}
-				selected[field.Block] = entry
-			}
-			if field.Relation == "" {
-				if _, known := rules[fieldRuleKey(node.Kind, field.Field)]; !known {
-					return nil, fmt.Errorf("selected field %q is not defined for block %q", field.Field, field.Block)
-				}
-				entry.blockFields[field.Field] = struct{}{}
-				continue
-			}
-			relation, item, ok := findRelationItem(node, field.Relation, field.Item)
-			if !ok {
-				return nil, fmt.Errorf("selected relation item %q does not exist", field.Item)
-			}
-			if _, known := relationRules[relationFieldRuleKey(node.Kind, relation.ID, item.Kind, field.Field)]; !known {
-				return nil, fmt.Errorf("selected field %q is not defined for relation item %q", field.Field, field.Item)
-			}
-			if entry.relationFields[field.Relation] == nil {
-				entry.relationFields[field.Relation] = make(map[RelationItemID]map[FieldID]struct{})
-			}
-			if entry.relationFields[field.Relation][field.Item] == nil {
-				entry.relationFields[field.Relation][field.Item] = make(map[FieldID]struct{})
-			}
-			entry.relationFields[field.Relation][field.Item][field.Field] = struct{}{}
+		selected, err := buildFieldSelection(document, request.Fields)
+		if err != nil {
+			return nil, err
 		}
 		result := make([]Node, 0, len(selected))
-		for _, node := range nodes {
-			fields, requested := selected[node.ID]
-			if !requested {
-				continue
+		for _, node := range document.Nodes {
+			if fields, requested := selected[node.ID]; requested {
+				// A catalog-known field with no stored value is represented by its
+				// containing node with that field absent. This is distinct from an
+				// explicit empty value, which remains a present field with "".
+				result = append(result, projectNodeFields(node, fields))
 			}
-			copy := Node{ID: node.ID, Kind: node.Kind, Parent: node.Parent, Order: node.Order}
-			for _, field := range node.Shared {
-				if _, ok := fields.blockFields[field.ID]; ok {
-					copy.Shared = append(copy.Shared, field)
-				}
-			}
-			for _, field := range node.Localized {
-				if _, ok := fields.blockFields[field.ID]; ok {
-					copy.Localized = append(copy.Localized, field)
-				}
-			}
-			for _, file := range node.Files {
-				if _, ok := fields.blockFields[file.Field]; ok {
-					copy.Files = append(copy.Files, file)
-				}
-			}
-			for _, relation := range node.Relations {
-				items := fields.relationFields[relation.ID]
-				if len(items) == 0 {
-					continue
-				}
-				projectedRelation := Relation{ID: relation.ID}
-				for _, item := range relation.Items {
-					requestedFields, ok := items[item.ID]
-					if !ok {
-						continue
-					}
-					projectedItem := RelationItem{ID: item.ID, Kind: item.Kind, Order: item.Order}
-					for _, value := range item.Shared {
-						if _, ok := requestedFields[value.ID]; ok {
-							projectedItem.Shared = append(projectedItem.Shared, value)
-						}
-					}
-					for _, value := range item.Localized {
-						if _, ok := requestedFields[value.ID]; ok {
-							projectedItem.Localized = append(projectedItem.Localized, value)
-						}
-					}
-					for _, file := range item.Files {
-						if _, ok := requestedFields[file.Field]; ok {
-							projectedItem.Files = append(projectedItem.Files, file)
-						}
-					}
-					projectedRelation.Items = append(projectedRelation.Items, projectedItem)
-				}
-				copy.Relations = append(copy.Relations, projectedRelation)
-			}
-			// A catalog-known field with no stored value is represented by its
-			// containing node with that field absent. This is distinct from an
-			// explicit empty value, which remains a present field with "".
-			result = append(result, copy)
 		}
 		return result, nil
 	default:
@@ -680,22 +560,170 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 	}
 }
 
+func projectOutline(nodes []Node) []Node {
+	result := make([]Node, len(nodes))
+	for index, node := range nodes {
+		result[index] = Node{ID: node.ID, Kind: node.Kind, Parent: node.Parent, Order: node.Order}
+		for _, relation := range node.Relations {
+			projected := Relation{ID: relation.ID}
+			for _, item := range relation.Items {
+				projected.Items = append(projected.Items, RelationItem{ID: item.ID, Kind: item.Kind, Order: item.Order})
+			}
+			result[index].Relations = append(result[index].Relations, projected)
+		}
+	}
+	return result
+}
+
+// selectBlocks returns the requested blocks in document order.
+func selectBlocks(nodes []Node, blocks []BlockID) ([]Node, error) {
+	selected := make(map[BlockID]struct{}, len(blocks))
+	for _, block := range blocks {
+		if err := validateStableID("block ID", string(block), maxHandleLength); err != nil {
+			return nil, err
+		}
+		selected[block] = struct{}{}
+	}
+	result := make([]Node, 0, len(selected))
+	for _, node := range nodes {
+		if _, ok := selected[node.ID]; ok {
+			result = append(result, node)
+			delete(selected, node.ID)
+		}
+	}
+	if len(selected) != 0 {
+		return nil, errors.New("one or more selected blocks do not exist")
+	}
+	return result, nil
+}
+
+// selectedFields is the field read selection of one block.
+type selectedFields struct {
+	blockFields    map[FieldID]struct{}
+	relationFields map[RelationID]map[RelationItemID]map[FieldID]struct{}
+}
+
+func buildFieldSelection(document Document, fields []FieldSelection) (map[BlockID]*selectedFields, error) {
+	nodeByID := make(map[BlockID]Node, len(document.Nodes))
+	for _, node := range document.Nodes {
+		nodeByID[node.ID] = node
+	}
+	catalog := newCatalogIndex(document.Catalog)
+	selected := make(map[BlockID]*selectedFields, len(fields))
+	for _, field := range fields {
+		if err := validateCanonicalFieldTarget(field.target()); err != nil {
+			return nil, err
+		}
+		node, exists := nodeByID[field.Block]
+		if !exists {
+			return nil, fmt.Errorf("selected block %q does not exist", field.Block)
+		}
+		entry := selected[field.Block]
+		if entry == nil {
+			entry = &selectedFields{blockFields: make(map[FieldID]struct{}), relationFields: make(map[RelationID]map[RelationItemID]map[FieldID]struct{})}
+			selected[field.Block] = entry
+		}
+		if err := entry.add(catalog, node, field); err != nil {
+			return nil, err
+		}
+	}
+	return selected, nil
+}
+
+func (s *selectedFields) add(catalog catalogIndex, node Node, field FieldSelection) error {
+	if field.Relation == "" {
+		if _, known := catalog.field(node.Kind, field.Field); !known {
+			return fmt.Errorf("selected field %q is not defined for block %q", field.Field, field.Block)
+		}
+		s.blockFields[field.Field] = struct{}{}
+		return nil
+	}
+	relation, item, ok := findRelationItem(node, field.Relation, field.Item)
+	if !ok {
+		return fmt.Errorf("selected relation item %q does not exist", field.Item)
+	}
+	if _, known := catalog.relationField(node.Kind, relation.ID, item.Kind, field.Field); !known {
+		return fmt.Errorf("selected field %q is not defined for relation item %q", field.Field, field.Item)
+	}
+	items := s.relationFields[field.Relation]
+	if items == nil {
+		items = make(map[RelationItemID]map[FieldID]struct{})
+		s.relationFields[field.Relation] = items
+	}
+	if items[field.Item] == nil {
+		items[field.Item] = make(map[FieldID]struct{})
+	}
+	items[field.Item][field.Field] = struct{}{}
+	return nil
+}
+
+func projectNodeFields(node Node, fields *selectedFields) Node {
+	projected := Node{
+		ID: node.ID, Kind: node.Kind, Parent: node.Parent, Order: node.Order,
+		Shared:    filterByField(node.Shared, fields.blockFields),
+		Localized: filterByField(node.Localized, fields.blockFields),
+		Files:     filterByField(node.Files, fields.blockFields),
+	}
+	for _, relation := range node.Relations {
+		items := fields.relationFields[relation.ID]
+		if len(items) == 0 {
+			continue
+		}
+		projectedRelation := Relation{ID: relation.ID}
+		for _, item := range relation.Items {
+			if requested, ok := items[item.ID]; ok {
+				projectedRelation.Items = append(projectedRelation.Items, projectRelationItem(item, requested))
+			}
+		}
+		projected.Relations = append(projected.Relations, projectedRelation)
+	}
+	return projected
+}
+
+func projectRelationItem(item RelationItem, fields map[FieldID]struct{}) RelationItem {
+	return RelationItem{
+		ID: item.ID, Kind: item.Kind, Order: item.Order,
+		Shared:    filterByField(item.Shared, fields),
+		Localized: filterByField(item.Localized, fields),
+		Files:     filterByField(item.Files, fields),
+	}
+}
+
+// fieldScoped values belong to one catalog field: field values and file
+// bindings of a block or relation item.
+type fieldScoped interface{ fieldID() FieldID }
+
+func (f FieldValue) fieldID() FieldID  { return f.ID }
+func (f FileBinding) fieldID() FieldID { return f.Field }
+
+// filterByField keeps the values of the selected fields in their stored order
+// and returns nil when none match, so unselected fields stay absent.
+func filterByField[T fieldScoped](values []T, selected map[FieldID]struct{}) []T {
+	var result []T
+	for _, value := range values {
+		if _, ok := selected[value.fieldID()]; ok {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 func validateCanonicalFieldTarget(target FieldTarget) error {
-	if err := validateStableID("block ID", string(target.Block), 160); err != nil {
+	if err := validateStableID("block ID", string(target.Block), maxHandleLength); err != nil {
 		return err
 	}
 	if target.relationItem() {
 		if target.Relation == "" || target.Item == "" {
 			return errors.New("relation-item field target requires both relation and item IDs")
 		}
-		if err := validateStableID("relation ID", string(target.Relation), 120); err != nil {
+		if err := validateStableID("relation ID", string(target.Relation), maxCatalogIDLength); err != nil {
 			return err
 		}
-		if err := validateStableID("relation item ID", string(target.Item), 160); err != nil {
+		if err := validateStableID("relation item ID", string(target.Item), maxHandleLength); err != nil {
 			return err
 		}
 	}
-	if err := validateStableID("field ID", string(target.Field), 120); err != nil {
+	if err := validateStableID("field ID", string(target.Field), maxCatalogIDLength); err != nil {
 		return err
 	}
 	for _, segment := range target.Path {

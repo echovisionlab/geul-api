@@ -6,7 +6,7 @@ import (
 )
 
 // The tables in this file pin the exact issue and error text of
-// validateOperation, selectNodes, validateProjectedNodes and
+// operationValidator, selectNodes, validateProjectedNodes and
 // validateDocumentCatalogValues branch by branch, so decomposing those
 // functions shows up as a deliberate expectation diff.
 
@@ -308,7 +308,7 @@ func TestValidateOperationIssueTable(t *testing.T) {
 	}
 }
 
-// The request envelope already rejects malformed payloads, so validateOperation's
+// The request envelope already rejects malformed payloads, so the validator's
 // own shape check is only reachable by calling it directly.
 func TestValidateOperationRejectsMalformedShapeDirectly(t *testing.T) {
 	for _, tc := range []struct {
@@ -324,7 +324,7 @@ func TestValidateOperationRejectsMalformedShapeDirectly(t *testing.T) {
 			tableIssue(3, IssueInvalidOperation, "", `operation kind "zz" does not match its payload`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := validateOperation(3, tc.operation, LocaleRoleSource, true, 1, nil, nil, nil, nil, nil)
+			got := (&operationValidator{index: 3, role: LocaleRoleSource, localeExists: true, batchSize: 1}).validate(tc.operation)
 			if got == nil || *got != tc.want {
 				t.Fatalf("issue = %#v, want %#v", got, tc.want)
 			}
@@ -550,5 +550,18 @@ func TestValidateDocumentCatalogValuesTable(t *testing.T) {
 				t.Fatalf("err = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A missing grandparent used to surface as a parent cycle of the grandchild
+// when the grandchild was listed first.
+func TestValidateNodesReportsMissingAncestorParent(t *testing.T) {
+	nodes := []Node{
+		{ID: "child", Kind: "paragraph", Parent: "parent"},
+		{ID: "parent", Kind: "paragraph", Parent: "ghost"},
+	}
+	err := validateNodes(nodes)
+	if err == nil || err.Error() != `block "parent" has missing parent "ghost"` {
+		t.Fatalf("err = %v", err)
 	}
 }

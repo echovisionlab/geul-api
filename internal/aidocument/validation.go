@@ -3,6 +3,7 @@ package aidocument
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -104,46 +105,44 @@ func ValidateOperations(document Document, request ApplyRequest) ValidationResul
 		return result
 	}
 	if document.DocumentRevision != request.ExpectedDocumentRevision {
-		result.Conflict = &Conflict{
-			Code:                    ConflictDocumentRevision,
-			CurrentDocumentRevision: document.DocumentRevision,
-			CurrentTargetRevision:   cloneRevision(document.TargetRevision),
-			AffectedHandles:         affectedHandles(request),
-		}
+		result.Conflict = revisionConflict(ConflictDocumentRevision, document, request)
 		return result
 	}
 	if !equalRevision(document.TargetRevision, request.ExpectedTargetRevision) {
-		result.Conflict = &Conflict{
-			Code:                    ConflictTargetRevision,
-			CurrentDocumentRevision: document.DocumentRevision,
-			CurrentTargetRevision:   cloneRevision(document.TargetRevision),
-			AffectedHandles:         affectedHandles(request),
-		}
+		result.Conflict = revisionConflict(ConflictTargetRevision, document, request)
 		return result
 	}
 
-	kinds := make(map[BlockKind]struct{}, len(document.Catalog.BlockKinds))
-	for _, kind := range document.Catalog.BlockKinds {
-		kinds[kind] = struct{}{}
+	validator := operationValidator{
+		role:         document.Role(),
+		localeExists: document.LocaleExists,
+		batchSize:    len(request.Operations),
+		catalog:      newCatalogIndex(document.Catalog),
+		graph:        newOperationGraph(document.Nodes),
 	}
-	rules := make(map[string]FieldRule, len(document.Catalog.Fields))
-	for _, rule := range document.Catalog.Fields {
-		rules[fieldRuleKey(rule.BlockKind, rule.Field)] = rule
-	}
-	relationRules := make(map[string]map[RelationItemKind]struct{}, len(document.Catalog.Relations))
-	for _, rule := range document.Catalog.Relations {
-		allowed := make(map[RelationItemKind]struct{}, len(rule.ItemKinds))
-		for _, kind := range rule.ItemKinds {
-			allowed[kind] = struct{}{}
+	for index, operation := range request.Operations {
+		validator.index = index
+		if issue := validator.validate(operation); issue != nil {
+			result.Issues = append(result.Issues, *issue)
+			continue
 		}
-		relationRules[relationRuleKey(rule.BlockKind, rule.Relation)] = allowed
+		validator.accept(operation)
 	}
-	relationFieldRules := make(map[string]RelationFieldRule, len(document.Catalog.RelationFields))
-	for _, rule := range document.Catalog.RelationFields {
-		relationFieldRules[relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)] = rule
+	return result
+}
+
+func revisionConflict(code ConflictCode, document Document, request ApplyRequest) *Conflict {
+	return &Conflict{
+		Code:                    code,
+		CurrentDocumentRevision: document.DocumentRevision,
+		CurrentTargetRevision:   cloneRevision(document.TargetRevision),
+		AffectedHandles:         affectedHandles(request),
 	}
-	graph := make(map[BlockID]graphBlock, len(document.Nodes))
-	for _, node := range document.Nodes {
+}
+
+func newOperationGraph(nodes []Node) map[BlockID]graphBlock {
+	graph := make(map[BlockID]graphBlock, len(nodes))
+	for _, node := range nodes {
 		block := graphBlock{kind: node.Kind, parent: node.Parent, relations: make(map[RelationID]map[RelationItemID]RelationItemKind)}
 		for _, relation := range node.Relations {
 			items := make(map[RelationItemID]RelationItemKind, len(relation.Items))
@@ -154,356 +153,363 @@ func ValidateOperations(document Document, request ApplyRequest) ValidationResul
 		}
 		graph[node.ID] = block
 	}
-
-	role := document.Role()
-	for index, operation := range request.Operations {
-		issue := validateOperation(index, operation, role, document.LocaleExists, len(request.Operations), kinds, rules, relationRules, relationFieldRules, graph)
-		if issue != nil {
-			result.Issues = append(result.Issues, *issue)
-			continue
-		}
-		applyGraphEffect(operation, graph)
-		if operation.Kind == OperationCreateTranslation {
-			document.LocaleExists = true
-		}
-		if operation.Kind == OperationDeleteTranslation {
-			document.LocaleExists = false
-		}
-	}
-	return result
+	return graph
 }
 
-func validateOperation(
-	index int,
-	operation Operation,
-	role LocaleRole,
-	localeExists bool,
-	batchSize int,
-	kinds map[BlockKind]struct{},
-	rules map[string]FieldRule,
-	relationRules map[string]map[RelationItemKind]struct{},
-	relationFieldRules map[string]RelationFieldRule,
-	graph map[BlockID]graphBlock,
-) *OperationIssue {
-	issue := func(code IssueCode, handle, message string) *OperationIssue {
-		return &OperationIssue{Operation: index, Code: code, Handle: handle, Message: message}
-	}
-	if err := operation.validateShape(); err != nil {
-		return issue(IssueInvalidOperation, "", err.Error())
-	}
-	requireSource := func(handle string) *OperationIssue {
-		if role == LocaleRoleSource {
-			return nil
-		}
-		return issue(IssueSourceAuthorityRequired, handle, "only the current source locale may alter the shared block graph, shared fields, or file relations")
-	}
-	resolveField := func(target FieldTarget) (resolvedFieldRule, *OperationIssue) {
-		if err := validateCanonicalFieldTarget(target); err != nil {
-			return resolvedFieldRule{}, issue(IssueInvalidOperation, fieldHandle(target), err.Error())
-		}
-		block, ok := graph[target.Block]
-		if !ok {
-			return resolvedFieldRule{}, issue(IssueUnknownBlock, blockHandle(target.Block), "field target block does not exist")
-		}
-		if !target.relationItem() {
-			rule, ok := rules[fieldRuleKey(block.kind, target.Field)]
-			if !ok {
-				return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), "field is not defined for the target block kind")
-			}
-			resolved, err := resolveNestedFieldRule(rule.ValueKind, rule.Ownership, rule.Translatable, rule.File, rule.Schema, target.Path)
-			if err != nil {
-				return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), err.Error())
-			}
-			return resolved, nil
-		}
-		if target.Relation == "" || target.Item == "" {
-			return resolvedFieldRule{}, issue(IssueInvalidOperation, fieldHandle(target), "relation-item field target requires both relation and item IDs")
-		}
-		items, ok := block.relations[target.Relation]
-		if !ok {
-			return resolvedFieldRule{}, issue(IssueUnknownRelation, relationHandle(target.Block, target.Relation), "relation does not exist")
-		}
-		itemKind, ok := items[target.Item]
-		if !ok {
-			return resolvedFieldRule{}, issue(IssueUnknownRelationItem, relationItemHandle(target.Block, target.Relation, target.Item), "relation item does not exist")
-		}
-		rule, ok := relationFieldRules[relationFieldRuleKey(block.kind, target.Relation, itemKind, target.Field)]
-		if !ok {
-			return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), "field is not defined for the relation item kind")
-		}
-		resolved, err := resolveNestedFieldRule(rule.ValueKind, rule.Ownership, rule.Translatable, rule.File, rule.Schema, target.Path)
-		if err != nil {
-			return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), err.Error())
-		}
-		return resolved, nil
-	}
+// operationValidator checks the operation at index against the catalog and
+// against the block graph and locale state that the batch's earlier accepted
+// operations have left behind.
+type operationValidator struct {
+	index        int
+	role         LocaleRole
+	localeExists bool
+	batchSize    int
+	catalog      catalogIndex
+	graph        map[BlockID]graphBlock
+}
 
+func (v *operationValidator) accept(operation Operation) {
+	applyGraphEffect(operation, v.graph)
+	switch operation.Kind {
+	case OperationCreateTranslation:
+		v.localeExists = true
+	case OperationDeleteTranslation:
+		v.localeExists = false
+	}
+}
+
+func (v *operationValidator) issue(code IssueCode, handle, message string) *OperationIssue {
+	return &OperationIssue{Operation: v.index, Code: code, Handle: handle, Message: message}
+}
+
+func (v *operationValidator) validate(operation Operation) *OperationIssue {
+	if err := operation.validateShape(); err != nil {
+		return v.issue(IssueInvalidOperation, "", err.Error())
+	}
 	switch operation.Kind {
 	case OperationSetField:
-		rule, fieldIssue := resolveField(operation.SetField.Target)
-		if fieldIssue != nil {
-			return fieldIssue
-		}
-		if rule.file {
-			return issue(IssueUnknownField, fieldHandle(operation.SetField.Target), "file fields require a typed file operation")
-		}
-		if operation.SetField.Value.Kind != rule.valueKind {
-			return issue(IssueValueKindMismatch, fieldHandle(operation.SetField.Target), "field value kind does not match the domain catalog")
-		}
-		if err := operation.SetField.Value.validate(); err != nil {
-			return issue(IssueValueKindMismatch, fieldHandle(operation.SetField.Target), err.Error())
-		}
-		if rule.schema != nil {
-			if err := validateValueForSchema(operation.SetField.Value, *rule.schema, 0); err != nil {
-				return issue(IssueValueKindMismatch, fieldHandle(operation.SetField.Target), err.Error())
-			}
-		}
-		if role == LocaleRoleNonSource && (rule.ownership != FieldOwnershipLocale || !rule.translatable) {
-			return issue(IssueTargetFieldForbidden, fieldHandle(operation.SetField.Target), "non-source locales may modify only locale-owned translatable values")
-		}
-		return nil
+		return v.validateSetField(*operation.SetField)
 	case OperationUnsetField:
-		rule, fieldIssue := resolveField(operation.UnsetField.Target)
-		if fieldIssue != nil {
-			return fieldIssue
-		}
-		if role == LocaleRoleNonSource {
-			return issue(IssueTargetFieldForbidden, fieldHandle(operation.UnsetField.Target), "non-source locales cannot unset fields; set an explicit empty value or delete the translation")
-		}
-		if rule.file {
-			return issue(IssueTargetFieldForbidden, fieldHandle(operation.UnsetField.Target), "file fields require a typed file operation")
-		}
-		return nil
+		return v.validateUnsetField(operation.UnsetField.Target)
 	case OperationInsertBlock:
-		if sourceIssue := requireSource(blockHandle(operation.InsertBlock.Block)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if err := validateStableID("block ID", string(operation.InsertBlock.Block), 160); err != nil {
-			return issue(IssueInvalidOperation, blockHandle(operation.InsertBlock.Block), err.Error())
-		}
-		if _, exists := graph[operation.InsertBlock.Block]; exists {
-			return issue(IssueDuplicateBlock, blockHandle(operation.InsertBlock.Block), "block ID already exists")
-		}
-		if _, ok := kinds[operation.InsertBlock.Kind]; !ok {
-			return issue(IssueUnknownBlockKind, blockHandle(operation.InsertBlock.Block), "block kind is not in the domain catalog")
-		}
-		return validatePlacement(index, operation.InsertBlock.Block, operation.InsertBlock.Parent, operation.InsertBlock.After, graph)
+		return v.validateInsertBlock(*operation.InsertBlock)
 	case OperationDeleteBlock:
-		if sourceIssue := requireSource(blockHandle(operation.DeleteBlock.Block)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if _, ok := graph[operation.DeleteBlock.Block]; !ok {
-			return issue(IssueUnknownBlock, blockHandle(operation.DeleteBlock.Block), "block does not exist")
-		}
-		return nil
+		return v.validateDeleteBlock(operation.DeleteBlock.Block)
 	case OperationMoveBlock:
-		if sourceIssue := requireSource(blockHandle(operation.MoveBlock.Block)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if _, ok := graph[operation.MoveBlock.Block]; !ok {
-			return issue(IssueUnknownBlock, blockHandle(operation.MoveBlock.Block), "block does not exist")
-		}
-		if operation.MoveBlock.Parent == operation.MoveBlock.Block || isDescendant(operation.MoveBlock.Parent, operation.MoveBlock.Block, graph) {
-			return issue(IssueBlockCycle, blockHandle(operation.MoveBlock.Block), "move would create a block cycle")
-		}
-		return validatePlacement(index, operation.MoveBlock.Block, operation.MoveBlock.Parent, operation.MoveBlock.After, graph)
+		return v.validateMoveBlock(*operation.MoveBlock)
 	case OperationReplaceBlockKind:
-		if sourceIssue := requireSource(blockHandle(operation.ReplaceBlockKind.Block)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if _, ok := graph[operation.ReplaceBlockKind.Block]; !ok {
-			return issue(IssueUnknownBlock, blockHandle(operation.ReplaceBlockKind.Block), "block does not exist")
-		}
-		if _, ok := kinds[operation.ReplaceBlockKind.Kind]; !ok {
-			return issue(IssueUnknownBlockKind, blockHandle(operation.ReplaceBlockKind.Block), "block kind is not in the domain catalog")
-		}
-		return nil
+		return v.validateReplaceBlockKind(*operation.ReplaceBlockKind)
 	case OperationInsertRelationItem:
-		op := operation.InsertRelationItem
-		if sourceIssue := requireSource(relationItemHandle(op.Block, op.Relation, op.Item)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
-			return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
-		}
-		if err := validateStableID("relation item kind", string(op.Kind), 80); err != nil {
-			return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
-		}
-		if op.After != "" {
-			if err := validateStableID("after relation item ID", string(op.After), 160); err != nil {
-				return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
-			}
-		}
-		block, ok := graph[op.Block]
-		if !ok {
-			return issue(IssueUnknownBlock, blockHandle(op.Block), "relation owner block does not exist")
-		}
-		allowed, ok := relationRules[relationRuleKey(block.kind, op.Relation)]
-		if !ok {
-			return issue(IssueUnknownRelation, relationHandle(op.Block, op.Relation), "relation is not defined for the block kind")
-		}
-		if _, ok := allowed[op.Kind]; !ok {
-			return issue(IssueInvalidRelationItemMove, relationItemHandle(op.Block, op.Relation, op.Item), "relation item kind is not allowed")
-		}
-		for _, graphBlock := range graph {
-			for _, items := range graphBlock.relations {
-				if _, duplicate := items[op.Item]; duplicate {
-					return issue(IssueDuplicateRelationItem, relationItemHandle(op.Block, op.Relation, op.Item), "relation item ID already exists")
-				}
-			}
-		}
-		return validateRelationPlacement(index, op.Block, op.Relation, op.Item, op.After, graph)
+		return v.validateInsertRelationItem(*operation.InsertRelationItem)
 	case OperationDeleteRelationItem:
-		op := operation.DeleteRelationItem
-		if sourceIssue := requireSource(relationItemHandle(op.Block, op.Relation, op.Item)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
-			return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
-		}
-		return requireRelationItem(index, op.Block, op.Relation, op.Item, graph)
+		return v.validateDeleteRelationItem(*operation.DeleteRelationItem)
 	case OperationMoveRelationItem:
-		op := operation.MoveRelationItem
-		if sourceIssue := requireSource(relationItemHandle(op.Block, op.Relation, op.Item)); sourceIssue != nil {
-			return sourceIssue
-		}
-		if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
-			return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
-		}
-		if err := validateRelationOperationIDs(op.TargetBlock, op.Target, op.Item); err != nil {
-			return issue(IssueInvalidOperation, relationItemHandle(op.TargetBlock, op.Target, op.Item), err.Error())
-		}
-		if op.After != "" {
-			if err := validateStableID("after relation item ID", string(op.After), 160); err != nil {
-				return issue(IssueInvalidOperation, relationItemHandle(op.TargetBlock, op.Target, op.Item), err.Error())
-			}
-		}
-		if itemIssue := requireRelationItem(index, op.Block, op.Relation, op.Item, graph); itemIssue != nil {
-			return itemIssue
-		}
-		source := graph[op.Block]
-		kind := source.relations[op.Relation][op.Item]
-		target, ok := graph[op.TargetBlock]
-		if !ok {
-			return issue(IssueUnknownBlock, blockHandle(op.TargetBlock), "target relation owner block does not exist")
-		}
-		allowed, ok := relationRules[relationRuleKey(target.kind, op.Target)]
-		if !ok {
-			return issue(IssueUnknownRelation, relationHandle(op.TargetBlock, op.Target), "target relation is not defined for the block kind")
-		}
-		if _, ok := allowed[kind]; !ok {
-			return issue(IssueInvalidRelationItemMove, relationItemHandle(op.Block, op.Relation, op.Item), "target relation does not allow the item kind")
-		}
-		return validateRelationPlacement(index, op.TargetBlock, op.Target, op.Item, op.After, graph)
+		return v.validateMoveRelationItem(*operation.MoveRelationItem)
 	case OperationAttachFile:
-		if sourceIssue := requireSource(fieldHandle(operation.AttachFile.Target)); sourceIssue != nil {
-			return sourceIssue
-		}
-		rule, fieldIssue := resolveField(operation.AttachFile.Target)
-		if fieldIssue != nil {
-			return fieldIssue
-		}
-		if !rule.file {
-			return issue(IssueUnknownField, fieldHandle(operation.AttachFile.Target), "field is not a file slot")
-		}
-		if err := validateFileReference(operation.AttachFile.File); err != nil {
-			return issue(IssueInvalidFileReference, fieldHandle(operation.AttachFile.Target), err.Error())
-		}
-		return nil
+		return v.validateAttachFile(*operation.AttachFile)
 	case OperationDetachFile:
-		if sourceIssue := requireSource(fieldHandle(operation.DetachFile.Target)); sourceIssue != nil {
-			return sourceIssue
-		}
-		rule, fieldIssue := resolveField(operation.DetachFile.Target)
-		if fieldIssue != nil {
-			return fieldIssue
-		}
-		if !rule.file {
-			return issue(IssueUnknownField, fieldHandle(operation.DetachFile.Target), "field is not a file slot")
-		}
-		return nil
-	case OperationCreateTranslation:
-		if role == LocaleRoleSource {
-			return issue(IssueTranslationIsSource, "translation", "the current source locale cannot be created as a translation")
-		}
-		if batchSize != 1 {
-			return issue(IssueLocaleOperationNotExclusive, "translation", "translation create must be an exclusive aggregate operation")
-		}
-		if localeExists {
-			return issue(IssueTranslationAlreadyExists, "translation", "translation locale already exists")
-		}
-		return nil
-	case OperationDeleteTranslation:
-		if role == LocaleRoleSource {
-			return issue(IssueTranslationIsSource, "translation", "the current source locale cannot be deleted as a translation")
-		}
-		if batchSize != 1 {
-			return issue(IssueLocaleOperationNotExclusive, "translation", "translation delete must be an exclusive aggregate operation")
-		}
-		if !localeExists {
-			return issue(IssueTranslationMissing, "translation", "translation locale does not exist")
-		}
-		return nil
+		return v.validateDetachFile(operation.DetachFile.Target)
 	default:
-		return issue(IssueInvalidOperation, "", "unsupported operation kind")
+		// validateShape admits only known kinds, which leaves the translation lifecycle.
+		return v.validateTranslationLifecycle(operation.Kind)
 	}
 }
 
-func resolveNestedFieldRule(
-	kind ValueKind,
-	ownership FieldOwnership,
-	translatable bool,
-	file bool,
-	schema *FieldSchema,
-	path []FieldPathSegment,
-) (resolvedFieldRule, error) {
-	if schema == nil {
+func (v *operationValidator) requireSource(handle string) *OperationIssue {
+	if v.role == LocaleRoleSource {
+		return nil
+	}
+	return v.issue(IssueSourceAuthorityRequired, handle, "only the current source locale may alter the shared block graph, shared fields, or file relations")
+}
+
+func (v *operationValidator) resolveField(target FieldTarget) (resolvedFieldRule, *OperationIssue) {
+	if err := validateCanonicalFieldTarget(target); err != nil {
+		return resolvedFieldRule{}, v.issue(IssueInvalidOperation, fieldHandle(target), err.Error())
+	}
+	rule, ruleIssue := v.fieldRule(target)
+	if ruleIssue != nil {
+		return resolvedFieldRule{}, ruleIssue
+	}
+	resolved, err := resolveNestedFieldRule(rule, target.Path)
+	if err != nil {
+		return resolvedFieldRule{}, v.issue(IssueUnknownField, fieldHandle(target), err.Error())
+	}
+	return resolved, nil
+}
+
+// fieldRule finds the catalog rule of a block field or relation-item field
+// through the current graph, so fields of blocks and items inserted earlier in
+// the batch resolve too.
+func (v *operationValidator) fieldRule(target FieldTarget) (FieldRule, *OperationIssue) {
+	block, ok := v.graph[target.Block]
+	if !ok {
+		return FieldRule{}, v.issue(IssueUnknownBlock, blockHandle(target.Block), "field target block does not exist")
+	}
+	if !target.relationItem() {
+		rule, ok := v.catalog.field(block.kind, target.Field)
+		if !ok {
+			return FieldRule{}, v.issue(IssueUnknownField, fieldHandle(target), "field is not defined for the target block kind")
+		}
+		return rule, nil
+	}
+	items, ok := block.relations[target.Relation]
+	if !ok {
+		return FieldRule{}, v.issue(IssueUnknownRelation, relationHandle(target.Block, target.Relation), "relation does not exist")
+	}
+	itemKind, ok := items[target.Item]
+	if !ok {
+		return FieldRule{}, v.issue(IssueUnknownRelationItem, relationItemHandle(target.Block, target.Relation, target.Item), "relation item does not exist")
+	}
+	rule, ok := v.catalog.relationField(block.kind, target.Relation, itemKind, target.Field)
+	if !ok {
+		return FieldRule{}, v.issue(IssueUnknownField, fieldHandle(target), "field is not defined for the relation item kind")
+	}
+	return rule, nil
+}
+
+func (v *operationValidator) validateSetField(op SetField) *OperationIssue {
+	rule, fieldIssue := v.resolveField(op.Target)
+	if fieldIssue != nil {
+		return fieldIssue
+	}
+	handle := fieldHandle(op.Target)
+	if rule.file {
+		return v.issue(IssueUnknownField, handle, "file fields require a typed file operation")
+	}
+	if op.Value.Kind != rule.valueKind {
+		return v.issue(IssueValueKindMismatch, handle, "field value kind does not match the domain catalog")
+	}
+	if err := op.Value.validate(); err != nil {
+		return v.issue(IssueValueKindMismatch, handle, err.Error())
+	}
+	if rule.schema != nil {
+		if err := validateValueForSchema(op.Value, *rule.schema, 0); err != nil {
+			return v.issue(IssueValueKindMismatch, handle, err.Error())
+		}
+	}
+	if v.role == LocaleRoleNonSource && (rule.ownership != FieldOwnershipLocale || !rule.translatable) {
+		return v.issue(IssueTargetFieldForbidden, handle, "non-source locales may modify only locale-owned translatable values")
+	}
+	return nil
+}
+
+func (v *operationValidator) validateUnsetField(target FieldTarget) *OperationIssue {
+	rule, fieldIssue := v.resolveField(target)
+	if fieldIssue != nil {
+		return fieldIssue
+	}
+	if v.role == LocaleRoleNonSource {
+		return v.issue(IssueTargetFieldForbidden, fieldHandle(target), "non-source locales cannot unset fields; set an explicit empty value or delete the translation")
+	}
+	if rule.file {
+		return v.issue(IssueTargetFieldForbidden, fieldHandle(target), "file fields require a typed file operation")
+	}
+	return nil
+}
+
+func (v *operationValidator) validateInsertBlock(op InsertBlock) *OperationIssue {
+	handle := blockHandle(op.Block)
+	if sourceIssue := v.requireSource(handle); sourceIssue != nil {
+		return sourceIssue
+	}
+	if err := validateStableID("block ID", string(op.Block), maxHandleLength); err != nil {
+		return v.issue(IssueInvalidOperation, handle, err.Error())
+	}
+	if _, exists := v.graph[op.Block]; exists {
+		return v.issue(IssueDuplicateBlock, handle, "block ID already exists")
+	}
+	if !v.catalog.hasBlockKind(op.Kind) {
+		return v.issue(IssueUnknownBlockKind, handle, "block kind is not in the domain catalog")
+	}
+	return v.validatePlacement(op.Block, op.Parent, op.After)
+}
+
+func (v *operationValidator) validateDeleteBlock(block BlockID) *OperationIssue {
+	if sourceIssue := v.requireSource(blockHandle(block)); sourceIssue != nil {
+		return sourceIssue
+	}
+	if _, ok := v.graph[block]; !ok {
+		return v.issue(IssueUnknownBlock, blockHandle(block), "block does not exist")
+	}
+	return nil
+}
+
+func (v *operationValidator) validateMoveBlock(op MoveBlock) *OperationIssue {
+	handle := blockHandle(op.Block)
+	if sourceIssue := v.requireSource(handle); sourceIssue != nil {
+		return sourceIssue
+	}
+	if _, ok := v.graph[op.Block]; !ok {
+		return v.issue(IssueUnknownBlock, handle, "block does not exist")
+	}
+	if op.Parent == op.Block || v.isDescendant(op.Parent, op.Block) {
+		return v.issue(IssueBlockCycle, handle, "move would create a block cycle")
+	}
+	return v.validatePlacement(op.Block, op.Parent, op.After)
+}
+
+func (v *operationValidator) validateReplaceBlockKind(op ReplaceBlockKind) *OperationIssue {
+	handle := blockHandle(op.Block)
+	if sourceIssue := v.requireSource(handle); sourceIssue != nil {
+		return sourceIssue
+	}
+	if _, ok := v.graph[op.Block]; !ok {
+		return v.issue(IssueUnknownBlock, handle, "block does not exist")
+	}
+	if !v.catalog.hasBlockKind(op.Kind) {
+		return v.issue(IssueUnknownBlockKind, handle, "block kind is not in the domain catalog")
+	}
+	return nil
+}
+
+func (v *operationValidator) validateInsertRelationItem(op InsertRelationItem) *OperationIssue {
+	handle := relationItemHandle(op.Block, op.Relation, op.Item)
+	if sourceIssue := v.requireSource(handle); sourceIssue != nil {
+		return sourceIssue
+	}
+	if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
+		return v.issue(IssueInvalidOperation, handle, err.Error())
+	}
+	if err := validateStableID("relation item kind", string(op.Kind), maxKindLength); err != nil {
+		return v.issue(IssueInvalidOperation, handle, err.Error())
+	}
+	if err := validateAfterRelationItem(op.After); err != nil {
+		return v.issue(IssueInvalidOperation, handle, err.Error())
+	}
+	block, ok := v.graph[op.Block]
+	if !ok {
+		return v.issue(IssueUnknownBlock, blockHandle(op.Block), "relation owner block does not exist")
+	}
+	allowed, ok := v.catalog.relationItemKinds(block.kind, op.Relation)
+	if !ok {
+		return v.issue(IssueUnknownRelation, relationHandle(op.Block, op.Relation), "relation is not defined for the block kind")
+	}
+	if _, ok := allowed[op.Kind]; !ok {
+		return v.issue(IssueInvalidRelationItemMove, handle, "relation item kind is not allowed")
+	}
+	if v.relationItemExists(op.Item) {
+		return v.issue(IssueDuplicateRelationItem, handle, "relation item ID already exists")
+	}
+	return v.validateRelationPlacement(op.Block, op.Relation, op.Item, op.After)
+}
+
+func (v *operationValidator) validateDeleteRelationItem(op DeleteRelationItem) *OperationIssue {
+	handle := relationItemHandle(op.Block, op.Relation, op.Item)
+	if sourceIssue := v.requireSource(handle); sourceIssue != nil {
+		return sourceIssue
+	}
+	if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
+		return v.issue(IssueInvalidOperation, handle, err.Error())
+	}
+	return v.requireRelationItem(op.Block, op.Relation, op.Item)
+}
+
+func (v *operationValidator) validateMoveRelationItem(op MoveRelationItem) *OperationIssue {
+	handle := relationItemHandle(op.Block, op.Relation, op.Item)
+	targetHandle := relationItemHandle(op.TargetBlock, op.Target, op.Item)
+	if sourceIssue := v.requireSource(handle); sourceIssue != nil {
+		return sourceIssue
+	}
+	if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
+		return v.issue(IssueInvalidOperation, handle, err.Error())
+	}
+	if err := validateRelationOperationIDs(op.TargetBlock, op.Target, op.Item); err != nil {
+		return v.issue(IssueInvalidOperation, targetHandle, err.Error())
+	}
+	if err := validateAfterRelationItem(op.After); err != nil {
+		return v.issue(IssueInvalidOperation, targetHandle, err.Error())
+	}
+	if itemIssue := v.requireRelationItem(op.Block, op.Relation, op.Item); itemIssue != nil {
+		return itemIssue
+	}
+	kind := v.graph[op.Block].relations[op.Relation][op.Item]
+	target, ok := v.graph[op.TargetBlock]
+	if !ok {
+		return v.issue(IssueUnknownBlock, blockHandle(op.TargetBlock), "target relation owner block does not exist")
+	}
+	allowed, ok := v.catalog.relationItemKinds(target.kind, op.Target)
+	if !ok {
+		return v.issue(IssueUnknownRelation, relationHandle(op.TargetBlock, op.Target), "target relation is not defined for the block kind")
+	}
+	if _, ok := allowed[kind]; !ok {
+		return v.issue(IssueInvalidRelationItemMove, handle, "target relation does not allow the item kind")
+	}
+	return v.validateRelationPlacement(op.TargetBlock, op.Target, op.Item, op.After)
+}
+
+func (v *operationValidator) validateAttachFile(op AttachFile) *OperationIssue {
+	if slotIssue := v.requireFileSlot(op.Target); slotIssue != nil {
+		return slotIssue
+	}
+	if err := validateFileReference(op.File); err != nil {
+		return v.issue(IssueInvalidFileReference, fieldHandle(op.Target), err.Error())
+	}
+	return nil
+}
+
+func (v *operationValidator) validateDetachFile(target FieldTarget) *OperationIssue {
+	return v.requireFileSlot(target)
+}
+
+func (v *operationValidator) requireFileSlot(target FieldTarget) *OperationIssue {
+	if sourceIssue := v.requireSource(fieldHandle(target)); sourceIssue != nil {
+		return sourceIssue
+	}
+	rule, fieldIssue := v.resolveField(target)
+	if fieldIssue != nil {
+		return fieldIssue
+	}
+	if !rule.file {
+		return v.issue(IssueUnknownField, fieldHandle(target), "field is not a file slot")
+	}
+	return nil
+}
+
+func (v *operationValidator) validateTranslationLifecycle(kind OperationKind) *OperationIssue {
+	const handle = "translation"
+	create := kind == OperationCreateTranslation
+	if v.role == LocaleRoleSource {
+		if create {
+			return v.issue(IssueTranslationIsSource, handle, "the current source locale cannot be created as a translation")
+		}
+		return v.issue(IssueTranslationIsSource, handle, "the current source locale cannot be deleted as a translation")
+	}
+	if v.batchSize != 1 {
+		if create {
+			return v.issue(IssueLocaleOperationNotExclusive, handle, "translation create must be an exclusive aggregate operation")
+		}
+		return v.issue(IssueLocaleOperationNotExclusive, handle, "translation delete must be an exclusive aggregate operation")
+	}
+	if create && v.localeExists {
+		return v.issue(IssueTranslationAlreadyExists, handle, "translation locale already exists")
+	}
+	if !create && !v.localeExists {
+		return v.issue(IssueTranslationMissing, handle, "translation locale does not exist")
+	}
+	return nil
+}
+
+func resolveNestedFieldRule(rule FieldRule, path []FieldPathSegment) (resolvedFieldRule, error) {
+	if rule.Schema == nil {
 		if len(path) != 0 {
 			return resolvedFieldRule{}, errors.New("field does not define nested catalog shape")
 		}
-		return resolvedFieldRule{valueKind: kind, ownership: ownership, translatable: translatable, file: file}, nil
+		return resolvedFieldRule{valueKind: rule.ValueKind, ownership: rule.Ownership, translatable: rule.Translatable, file: rule.File}, nil
 	}
-	current := schema
+	current := rule.Schema
 	for _, segment := range path {
 		if err := segment.validate(); err != nil {
 			return resolvedFieldRule{}, err
 		}
+		var err error
 		if segment.Field != "" {
-			if current.File || current.Kind != ValueKindObject {
-				return resolvedFieldRule{}, fmt.Errorf("path field %q does not target an object", segment.Field)
-			}
-			var next *FieldSchema
-			for index := range current.Fields {
-				if current.Fields[index].Field == segment.Field {
-					next = &current.Fields[index].Schema
-					break
-				}
-			}
-			if next == nil {
-				return resolvedFieldRule{}, fmt.Errorf("path field %q is not in the catalog", segment.Field)
-			}
-			current = next
-			continue
+			current, err = objectFieldSchema(current, segment.Field)
+		} else {
+			current, err = listItemSchema(current, segment.Item)
 		}
-		if current.File || current.Kind != ValueKindList || current.Item == nil {
-			return resolvedFieldRule{}, fmt.Errorf("path item %q does not target a list", segment.Item)
+		if err != nil {
+			return resolvedFieldRule{}, err
 		}
-		if current.Identity.Kind == ListIdentityPositional {
-			return resolvedFieldRule{}, errors.New("positional lists can only be replaced as a whole typed value")
-		}
-		if current.Identity.Kind == ListIdentityFixed {
-			found := false
-			for _, handle := range current.Identity.Handles {
-				if handle == segment.Item {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return resolvedFieldRule{}, fmt.Errorf("fixed list item %q is not in the catalog", segment.Item)
-			}
-		}
-		current = current.Item
 	}
 	return resolvedFieldRule{
 		valueKind: current.Kind, ownership: current.Ownership,
@@ -511,79 +517,123 @@ func resolveNestedFieldRule(
 	}, nil
 }
 
-func validatePlacement(index int, moving, parent, after BlockID, graph map[BlockID]graphBlock) *OperationIssue {
-	issue := func(handle, message string) *OperationIssue {
-		return &OperationIssue{Operation: index, Code: IssueInvalidBlockRelation, Handle: handle, Message: message}
+func objectFieldSchema(schema *FieldSchema, field FieldID) (*FieldSchema, error) {
+	if schema.File || schema.Kind != ValueKindObject {
+		return nil, fmt.Errorf("path field %q does not target an object", field)
 	}
+	for index := range schema.Fields {
+		if schema.Fields[index].Field == field {
+			return &schema.Fields[index].Schema, nil
+		}
+	}
+	return nil, fmt.Errorf("path field %q is not in the catalog", field)
+}
+
+func listItemSchema(schema *FieldSchema, item RelationItemID) (*FieldSchema, error) {
+	if schema.File || schema.Kind != ValueKindList || schema.Item == nil {
+		return nil, fmt.Errorf("path item %q does not target a list", item)
+	}
+	switch schema.Identity.Kind {
+	case ListIdentityPositional:
+		return nil, errors.New("positional lists can only be replaced as a whole typed value")
+	case ListIdentityFixed:
+		if !slices.Contains(schema.Identity.Handles, item) {
+			return nil, fmt.Errorf("fixed list item %q is not in the catalog", item)
+		}
+	}
+	return schema.Item, nil
+}
+
+func (v *operationValidator) validatePlacement(moving, parent, after BlockID) *OperationIssue {
 	if parent != "" {
-		if _, ok := graph[parent]; !ok {
-			return issue(blockHandle(parent), "parent block does not exist")
+		if _, ok := v.graph[parent]; !ok {
+			return v.issue(IssueInvalidBlockRelation, blockHandle(parent), "parent block does not exist")
 		}
 	}
-	if after != "" {
-		sibling, ok := graph[after]
-		if !ok {
-			return issue(blockHandle(after), "after block does not exist")
-		}
-		if after == moving {
-			return issue(blockHandle(after), "block cannot be placed after itself")
-		}
-		if sibling.parent != parent {
-			return issue(blockHandle(after), "after block is not a child of the requested parent")
-		}
+	if after == "" {
+		return nil
+	}
+	sibling, ok := v.graph[after]
+	if !ok {
+		return v.issue(IssueInvalidBlockRelation, blockHandle(after), "after block does not exist")
+	}
+	if after == moving {
+		return v.issue(IssueInvalidBlockRelation, blockHandle(after), "block cannot be placed after itself")
+	}
+	if sibling.parent != parent {
+		return v.issue(IssueInvalidBlockRelation, blockHandle(after), "after block is not a child of the requested parent")
 	}
 	return nil
 }
 
-func requireRelationItem(index int, blockID BlockID, relation RelationID, item RelationItemID, graph map[BlockID]graphBlock) *OperationIssue {
-	block, ok := graph[blockID]
+func (v *operationValidator) requireRelationItem(blockID BlockID, relation RelationID, item RelationItemID) *OperationIssue {
+	block, ok := v.graph[blockID]
 	if !ok {
-		return &OperationIssue{Operation: index, Code: IssueUnknownBlock, Handle: blockHandle(blockID), Message: "relation owner block does not exist"}
+		return v.issue(IssueUnknownBlock, blockHandle(blockID), "relation owner block does not exist")
 	}
 	items, ok := block.relations[relation]
 	if !ok {
-		return &OperationIssue{Operation: index, Code: IssueUnknownRelation, Handle: relationHandle(blockID, relation), Message: "relation does not exist"}
+		return v.issue(IssueUnknownRelation, relationHandle(blockID, relation), "relation does not exist")
 	}
 	if _, ok := items[item]; !ok {
-		return &OperationIssue{Operation: index, Code: IssueUnknownRelationItem, Handle: relationItemHandle(blockID, relation, item), Message: "relation item does not exist"}
+		return v.issue(IssueUnknownRelationItem, relationItemHandle(blockID, relation, item), "relation item does not exist")
 	}
 	return nil
 }
 
-func validateRelationOperationIDs(block BlockID, relation RelationID, item RelationItemID) error {
-	if err := validateStableID("block ID", string(block), 160); err != nil {
-		return err
+// relationItemExists reports whether any relation of any block already holds
+// item, because relation item IDs are unique across the whole document.
+func (v *operationValidator) relationItemExists(item RelationItemID) bool {
+	for _, block := range v.graph {
+		for _, items := range block.relations {
+			if _, ok := items[item]; ok {
+				return true
+			}
+		}
 	}
-	if err := validateStableID("relation ID", string(relation), 120); err != nil {
-		return err
-	}
-	return validateStableID("relation item ID", string(item), 160)
+	return false
 }
 
-func validateRelationPlacement(index int, blockID BlockID, relation RelationID, moving, after RelationItemID, graph map[BlockID]graphBlock) *OperationIssue {
-	block, ok := graph[blockID]
-	if !ok {
-		return &OperationIssue{Operation: index, Code: IssueUnknownBlock, Handle: blockHandle(blockID), Message: "relation owner block does not exist"}
+func validateRelationOperationIDs(block BlockID, relation RelationID, item RelationItemID) error {
+	if err := validateStableID("block ID", string(block), maxHandleLength); err != nil {
+		return err
 	}
-	items := block.relations[relation]
+	if err := validateStableID("relation ID", string(relation), maxCatalogIDLength); err != nil {
+		return err
+	}
+	return validateStableID("relation item ID", string(item), maxHandleLength)
+}
+
+func validateAfterRelationItem(after RelationItemID) error {
+	if after == "" {
+		return nil
+	}
+	return validateStableID("after relation item ID", string(after), maxHandleLength)
+}
+
+func (v *operationValidator) validateRelationPlacement(blockID BlockID, relation RelationID, moving, after RelationItemID) *OperationIssue {
+	block, ok := v.graph[blockID]
+	if !ok {
+		return v.issue(IssueUnknownBlock, blockHandle(blockID), "relation owner block does not exist")
+	}
 	if after == "" {
 		return nil
 	}
 	if after == moving {
-		return &OperationIssue{Operation: index, Code: IssueInvalidRelationItemMove, Handle: relationItemHandle(blockID, relation, moving), Message: "relation item cannot be placed after itself"}
+		return v.issue(IssueInvalidRelationItemMove, relationItemHandle(blockID, relation, moving), "relation item cannot be placed after itself")
 	}
-	if _, ok := items[after]; !ok {
-		return &OperationIssue{Operation: index, Code: IssueInvalidRelationItemMove, Handle: relationItemHandle(blockID, relation, after), Message: "after relation item does not exist in the target relation"}
+	if _, ok := block.relations[relation][after]; !ok {
+		return v.issue(IssueInvalidRelationItemMove, relationItemHandle(blockID, relation, after), "after relation item does not exist in the target relation")
 	}
 	return nil
 }
 
-func isDescendant(candidate, ancestor BlockID, graph map[BlockID]graphBlock) bool {
+func (v *operationValidator) isDescendant(candidate, ancestor BlockID) bool {
 	for candidate != "" {
 		if candidate == ancestor {
 			return true
 		}
-		block, ok := graph[candidate]
+		block, ok := v.graph[candidate]
 		if !ok {
 			return false
 		}
@@ -647,18 +697,6 @@ func applyGraphEffect(operation Operation, graph map[BlockID]graphBlock) {
 		target.relations[op.Target][op.Item] = kind
 		graph[op.TargetBlock] = target
 	}
-}
-
-func fieldRuleKey(kind BlockKind, field FieldID) string {
-	return string(kind) + "\x00" + string(field)
-}
-
-func relationRuleKey(kind BlockKind, relation RelationID) string {
-	return string(kind) + "\x00" + string(relation)
-}
-
-func relationFieldRuleKey(kind BlockKind, relation RelationID, itemKind RelationItemKind, field FieldID) string {
-	return string(kind) + "\x00" + string(relation) + "\x00" + string(itemKind) + "\x00" + string(field)
 }
 
 func blockHandle(block BlockID) string { return "block:" + string(block) }
