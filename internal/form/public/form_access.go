@@ -125,7 +125,7 @@ func (s *FormService) evaluateFormAccess(
 ) (openv1.FormAccessReason, error) {
 	user := auth.GetUser(ctx)
 
-	isPublished := form.Status == model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())
+	isPublished := form.Status == model.FormStatusPublished
 	if !isPublished && !opts.hasValidPreviewToken {
 		return openv1.FormAccessReason_FORM_ACCESS_REASON_FORM_NOT_PUBLISHED, nil
 	}

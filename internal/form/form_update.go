@@ -344,16 +344,16 @@ func applyFormStatusUpdate(
 	if r.Status == nil {
 		return nil
 	}
-	if current.Status == model.FormStatus(r.Status.String()) {
+	status, known := formStatusFromProto(*r.Status)
+	if known && current.Status == status {
 		return nil
 	}
-	if *r.Status != managev1.FormStatus_FORM_STATUS_DRAFT && *r.Status != managev1.FormStatus_FORM_STATUS_PUBLISHED {
+	if !known {
 		return errs.InvalidArgument("status", "must be draft or published")
 	}
-	row.next.Status = model.FormStatus(r.Status.String())
+	row.next.Status = status
 	row.set(formColumnStatus)
-	published := model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())
-	if current.Status != published && row.next.Status == published {
+	if current.Status != model.FormStatusPublished && row.next.Status == model.FormStatusPublished {
 		plan.needsOg = true
 		plan.refreshAllOgLocales = true
 	}
@@ -471,7 +471,7 @@ func sameOptionalTime(a, b *time.Time) bool {
 }
 
 func formAuditState(status model.FormStatus) sharedtelemetry.AuditState {
-	if status == model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String()) {
+	if status == model.FormStatusPublished {
 		return sharedtelemetry.AuditStatePublished
 	}
 	return sharedtelemetry.AuditStateDraft
