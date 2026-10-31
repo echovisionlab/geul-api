@@ -44,7 +44,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 			}))
 			result <- err
 		}()
-		requireCampaignAudienceMutationWaiting(t, result)
+		requireCampaignAudienceMutationWaiting(t, db, identityLock, result)
 		testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 		require.NoError(t, identityLock.Commit().Error)
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
@@ -162,7 +162,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 			go func() {
 				result <- test.invoke(campaignAudienceAuthorityContext(actorID, actorMemberID), service, campaignID)
 			}()
-			requireCampaignAudienceMutationWaiting(t, result)
+			requireCampaignAudienceMutationWaiting(t, db, rootLock, result)
 			testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 			require.NoError(t, rootLock.Commit().Error)
 			mutationErr := <-result
@@ -253,11 +253,28 @@ func campaignAudienceAuthorityContext(identityID, memberID string) context.Conte
 	})
 }
 
-func requireCampaignAudienceMutationWaiting(t *testing.T, result <-chan error) {
+// requireCampaignAudienceMutationWaiting waits until a session of this test's
+// database is blocked by holder, so the revocation that follows lands after
+// the mutation's early check and before its authoritative one.
+func requireCampaignAudienceMutationWaiting(t *testing.T, db, holder *gorm.DB, result <-chan error) {
 	t.Helper()
-	select {
-	case err := <-result:
-		require.FailNow(t, "mutation returned before its root lock was released", "error: %v", err)
-	case <-time.After(150 * time.Millisecond):
-	}
+	var holderPID int
+	require.NoError(t, holder.Raw("SELECT pg_backend_pid()").Scan(&holderPID).Error)
+	var returned error
+	finished := false
+	require.Eventually(t, func() bool {
+		select {
+		case returned = <-result:
+			finished = true
+			return true
+		default:
+		}
+		var waiting bool
+		err := db.Raw(`SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid))
+		)`, holderPID).Scan(&waiting).Error
+		return err == nil && waiting
+	}, 10*time.Second, 20*time.Millisecond)
+	require.False(t, finished, "mutation returned before its root lock was released: %v", returned)
 }
