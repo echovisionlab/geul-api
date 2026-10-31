@@ -6,8 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"slices"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 

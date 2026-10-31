@@ -187,4 +187,3 @@ func TestAuditWriterNilGuardRatchet(t *testing.T) {
 	}
 	requireRatchet(t, "audit_writer_nil_guards", observed)
 }
-
