@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -42,15 +44,28 @@ func TestProcessDueScheduledPostsDoesNotPublishTranslationWakeups(t *testing.T) 
 		require.NoError(t, db.Exec("DELETE FROM content_document WHERE id IN ?", documentIDs).Error)
 	})
 
-	published, err := postdomain.ProcessDueScheduledPosts(t.Context(), db, 100)
+	published, err := processDueScheduledPosts(t, db)
 	require.NoError(t, err)
 	require.ElementsMatch(t, dueIDs, published)
 
-	published, err = postdomain.ProcessDueScheduledPosts(t.Context(), db, 100)
+	published, err = processDueScheduledPosts(t, db)
 	require.NoError(t, err)
 	require.Empty(t, published)
 
 	var futureStatus string
 	require.NoError(t, db.Table("post").Select("status").Where("id = ?", futureID).Scan(&futureStatus).Error)
 	require.Equal(t, managev1.PostStatus_POST_STATUS_SCHEDULED.String(), futureStatus)
+}
+
+// processDueScheduledPosts runs one scheduler tick in its own transaction,
+// as the worker does.
+func processDueScheduledPosts(t *testing.T, db *gorm.DB) ([]string, error) {
+	t.Helper()
+	var published []string
+	err := db.WithContext(t.Context()).Transaction(func(tx *gorm.DB) error {
+		var err error
+		published, err = postdomain.ProcessDueScheduledPosts(t.Context(), tx, 100)
+		return err
+	})
+	return published, err
 }
