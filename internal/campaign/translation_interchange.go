@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -150,7 +151,7 @@ func ApplyTranslationInterchange(
 		return TranslationInterchangeMutationResult{}, errs.InvalidArgument("contributor_member_id", "must be a canonical UUID")
 	}
 	if input.Now.IsZero() {
-		input.Now = time.Now().UTC()
+		input.Now = dbtime.Now()
 	} else {
 		input.Now = input.Now.UTC()
 	}

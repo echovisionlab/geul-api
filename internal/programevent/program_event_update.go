@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -73,7 +74,7 @@ func (s *ProgramEventService) prepareProgramEventUpdate(
 	event *model.ProgramEvent,
 	r *managev1.UpdateProgramEventRequest,
 ) (programEventUpdate, error) {
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	update := programEventUpdate{
 		fields: structured.Fields{},
 		now:    now,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"reflect"
@@ -205,7 +206,7 @@ func equalFormRevision(left, right *string) bool {
 }
 
 func (s *InternalFormService) persistAIDocumentMutation(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, root formAIDocumentRoot, source, current formAIDocumentLocaleRow, exists bool) (bool, error) {
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	sourceLocale := root.SourceLocale
 	if input.Noop {
 		return false, nil

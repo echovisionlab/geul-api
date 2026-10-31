@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"gorm.io/gorm"
@@ -40,7 +41,7 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retE
 		return nil
 	}
 
-	startedAt := time.Now().UTC().Truncate(time.Microsecond)
+	startedAt := dbtime.Now()
 	staleBefore := startedAt.Add(-metadataAIJobLeaseDuration)
 	if job.Status == metadataAIJobStatusRunning && job.StartedAt != nil && job.StartedAt.After(staleBefore) {
 		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)

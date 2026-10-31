@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -800,7 +801,7 @@ func (s *WorkService) PublishWork(
 		if work.Status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() {
 			return nil
 		}
-		now := time.Now()
+		now := dbtime.Now()
 		mutationNow = now
 		updates := structured.Fields{"status": managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(), "updated_at": now}
 		previous := sharedtelemetry.AuditStateDraft
@@ -886,7 +887,7 @@ func (s *WorkService) UnpublishWork(
 		if work.Status == managev1.WorkStatus_WORK_STATUS_DRAFT.String() {
 			return nil
 		}
-		mutationNow = time.Now().UTC()
+		mutationNow = dbtime.Now()
 		if err := tx.Model(&work).Updates(structured.Fields{"status": managev1.WorkStatus_WORK_STATUS_DRAFT.String(), "updated_at": mutationNow}).Error; err != nil {
 			return err
 		}

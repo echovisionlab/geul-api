@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -326,7 +327,7 @@ func (s *CampaignService) CreateCampaign(
 				return errs.FailedPrecondition("archived audience segment cannot be assigned to a campaign")
 			}
 		}
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		campaign.CreatedAt = now
 		campaign.UpdatedAt = now
 		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
@@ -456,7 +457,7 @@ func (s *CampaignService) UpdateCampaignName(
 			return nil
 		}
 		changed = true
-		now = time.Now().UTC()
+		now = dbtime.Now()
 		if err := tx.Model(&campaign).
 			Updates(structured.Fields{
 				"name":       name,
@@ -600,7 +601,7 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 			return nil
 		}
 		configurationChanged = true
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		updates := structured.Fields{"updated_at": now}
 		if campaign.TargetMode != targetMode {
 			updates["target_mode"] = targetMode
@@ -811,7 +812,7 @@ func (s *CampaignService) ScheduleCampaign(
 		if req.Msg.ScheduledAt == nil {
 			return errs.Required("scheduled_at")
 		}
-		scheduledAt = req.Msg.ScheduledAt.AsTime()
+		scheduledAt = req.Msg.ScheduledAt.AsTime().UTC().Truncate(dbtime.Precision)
 		if scheduledAt.Before(time.Now()) {
 			return errs.InvalidArgument("scheduled_at", "must be in the future")
 		}

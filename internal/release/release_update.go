@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -126,7 +127,7 @@ func (s *ReleaseService) updateReleaseWithDB(
 	if len(changed) == 0 {
 		return false, release, nil
 	}
-	mutationNow := time.Now()
+	mutationNow := dbtime.Now()
 	updates["updated_at"] = mutationNow
 	result := tx.Model(&model.Release{}).Where("id = ?", release.ID).Updates(updates)
 	if result.Error != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailpkg "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -259,7 +260,7 @@ func (s *AccountLifecycleService) ConfirmDeletion(
 		return nil, errs.Required("token")
 	}
 	tokenHash := crypto.HashToken(token)
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	identityID, err := s.deletionRequestIdentityIDForToken(ctx, tokenHash)
 	if err != nil {
 		return nil, accountLifecycleTokenError(ctx, err)

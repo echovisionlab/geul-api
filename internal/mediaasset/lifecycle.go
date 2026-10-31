@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -73,7 +74,7 @@ func NewLifecycle(db *gorm.DB, cdnDomain string) *Lifecycle {
 	if db == nil {
 		panic("media asset lifecycle service: db is required")
 	}
-	return &Lifecycle{db: db, cdnDomain: cdnDomain, now: time.Now}
+	return &Lifecycle{db: db, cdnDomain: cdnDomain, now: dbtime.Now}
 }
 
 func (s *Lifecycle) AllocatePublicAsset(

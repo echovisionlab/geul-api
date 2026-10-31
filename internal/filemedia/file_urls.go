@@ -419,22 +419,19 @@ func buildExpiringMediaFileRef(
 	default:
 		return nil, fmt.Errorf("unsupported file delivery purpose %q", purpose)
 	}
-	var url string
-	var err error
 	var downloadFilename string
 	if purpose == mediaauth.PurposeDownload {
 		downloadFilename = CanonicalDownloadFilename(fileName, fileID, extension)
-		url, err = BuildSignedMediaDownloadURL(
-			mediaDomain,
-			fileID,
-			extension,
-			mediaSecret,
-			ttl,
-			downloadFilename,
-		)
-	} else {
-		url, err = BuildSignedMediaFileURL(mediaDomain, fileID, extension, mediaSecret, ttl, purpose)
 	}
+	url, expiresAt, err := SignMediaFileURL(
+		mediaDomain,
+		fileID,
+		extension,
+		mediaSecret,
+		ttl,
+		purpose,
+		downloadFilename,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +439,7 @@ func buildExpiringMediaFileRef(
 		FileId:    fileID,
 		Url:       url,
 		Purpose:   deliveryPurpose,
-		ExpiresAt: timestamppb.New(time.Now().UTC().Add(ttl)),
+		ExpiresAt: timestamppb.New(expiresAt),
 		Extension: extension,
 		MimeType:  mimeType,
 		FileName:  normalizedOptionalString(fileName),

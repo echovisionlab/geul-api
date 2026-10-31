@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -76,7 +77,7 @@ func NewTranslationJobManager(
 		db:                db,
 		generatorResolver: newDBTranslationGeneratorResolver(db),
 		publisher:         publisher,
-		now:               time.Now,
+		now:               dbtime.Now,
 		metrics:           newTranslationMetrics(),
 		ogPlanner:         ogPlanner,
 		ogRefresher:       ogRefresher,

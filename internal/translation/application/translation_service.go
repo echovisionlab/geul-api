@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -124,7 +125,7 @@ func NewTranslationService(
 		publisher:   publisher,
 		spiceDB:     spiceDB,
 		cdnDomain:   cdnDomain,
-		now:         time.Now,
+		now:         dbtime.Now,
 		ogPlanner:   ogPlanner,
 		ogRefresher: ogRefresher,
 		metrics:     newTranslationMetrics(),

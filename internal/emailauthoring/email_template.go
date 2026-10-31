@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -404,7 +405,7 @@ func (s *EmailTemplateService) CreateEmailTemplate(
 		}
 		sourceLocale = *normalizedSourceLocale
 
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		template = &model.EmailTemplate{
 			Key:          req.Msg.Key,
 			Name:         strings.TrimSpace(req.Msg.Name),

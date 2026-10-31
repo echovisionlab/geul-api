@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -466,7 +467,7 @@ func (s *EmailLayoutService) CreateEmailLayout(
 		if err != nil {
 			return err
 		}
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile: emailLayoutContentProfile, SourceLocale: sourceLocale,
 		})
@@ -530,7 +531,7 @@ func (s *EmailLayoutService) UpdateEmailLayout(
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
 	}
-	updatedAt := time.Now().UTC()
+	updatedAt := dbtime.Now()
 	var layout model.EmailLayout
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		updated, err := s.updateEmailLayoutWithDB(ctx, tx, req.Msg, updatedAt, s.auditWriter, layoutCan)

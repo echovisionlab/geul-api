@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
@@ -181,7 +182,7 @@ func (s internalLegalDocumentService) applyDocumentMutation(
 	var result contentblock.Result
 	var targetResult legalTargetLocaleMutationResult
 	var sourceLocale string
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		root, stateErr := loadLegalContentDocumentRoot(ctx, tx, s.kind, entityID, true)
 		if stateErr != nil {
@@ -383,7 +384,7 @@ func (s internalLegalDocumentService) updateDocumentMetadata(
 	var targetResult legalTargetLocaleMutationResult
 	var sourceLocale string
 	var sourceLocaleDocument bool
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		root, stateErr := loadLegalContentDocumentRoot(ctx, tx, s.kind, input.EntityID, true)
 		if stateErr != nil {

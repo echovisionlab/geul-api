@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -113,7 +113,7 @@ func (m *MetadataJobManager) ResolveJobForRequester(
 		return nil, errs.InvalidArgument("job_id", "metadata AI job is not ready to apply or dismiss")
 	}
 
-	now := time.Now()
+	now := dbtime.Now()
 	nextStatus := metadataAIJobStatusDismissed
 	if resolution == managev1.MetadataGenerationJobResolution_METADATA_GENERATION_JOB_RESOLUTION_APPLIED {
 		nextStatus = metadataAIJobStatusApplied

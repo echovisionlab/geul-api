@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -341,7 +342,7 @@ func participantRelationshipMutations(entityID, identityID, previousRole, nextRo
 }
 
 func insertParticipantRelation(tx *gorm.DB, spec entityParticipantSpec, entityID, memberID, role string, createdAt *time.Time) error {
-	*createdAt = time.Now().UTC()
+	*createdAt = dbtime.Now()
 	table := spec.managerTable
 	if role == participantRoleOwner {
 		table = spec.ownerTable

@@ -16,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -253,7 +254,7 @@ func (s *MenuService) CreateMenu(
 		return nil, errs.InvalidArgumentMsg(fmt.Sprintf("failed to convert menu items: %s", err.Error()))
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	menu := &model.Menu{
 		Name: strings.TrimSpace(req.Msg.Name), Items: items,
 		SourceLocale: translation.DefaultLocale,

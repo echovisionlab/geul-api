@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -816,7 +817,7 @@ func (s *LabelService) PublishLabel(
 
 	var label model.Label
 	transitioned := false
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
@@ -872,7 +873,7 @@ func (s *LabelService) UnpublishLabel(
 
 	var label model.Label
 	transitioned := false
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err

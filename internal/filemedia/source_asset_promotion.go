@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -268,7 +269,7 @@ func prepareSourceAssetPromotion(
 		return &existing, nil, true, nil
 	case model.PublicAssetStatusAllocated:
 	case model.PublicAssetStatusFailed:
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		result := tx.Model(&model.PublicAsset{}).
 			Where("id = ? AND status = ?", existing.ID, model.PublicAssetStatusFailed).
 			Updates(structured.Fields{
@@ -288,7 +289,15 @@ func prepareSourceAssetPromotion(
 		if result.RowsAffected != 1 {
 			return nil, nil, false, errs.FailedPrecondition("failed public asset could not be resumed")
 		}
+		existing.FileSize = nil
+		existing.SHA256 = nil
 		existing.Status = model.PublicAssetStatusAllocated
+		existing.ReadyAt = nil
+		existing.DeleteRequestedAt = nil
+		existing.DeletedAt = nil
+		existing.FailedAt = nil
+		existing.FailureReason = nil
+		existing.UpdatedAt = now
 	default:
 		return nil, nil, false, errs.FailedPrecondition("source file public asset cannot be promoted from its current state")
 	}

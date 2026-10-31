@@ -19,6 +19,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -261,7 +262,7 @@ func (s *EmailLayoutAIDocumentService) applyAIDocumentMutationInTransaction(
 	current EmailLayoutAIDocumentState,
 	mutation EmailLayoutAIDocumentMutation,
 ) (EmailLayoutAIDocumentMutationResult, error) {
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	changed := false
 	switch {
 	case mutation.CreateTranslation:

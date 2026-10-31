@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -409,7 +410,7 @@ func (s *SeriesService) CreateSeries(
 		return nil, err
 	}
 
-	now := time.Now()
+	now := dbtime.Now()
 	sourceLocale := resolveInitialSourceLocale(ctx, s.db, s.kratosClient, req.Header().Get("Accept-Language"))
 	series := &model.Series{
 		Slug: slug, Status: managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(),

@@ -10,12 +10,12 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -260,7 +260,7 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	documentID uuid.UUID,
 	fence contentblock.DomainFence,
 ) (AIDocumentMutationResult, error) {
-	now := time.Now().UTC()
+	now := dbtime.Now()
 
 	var result contentblock.Result
 	var err error

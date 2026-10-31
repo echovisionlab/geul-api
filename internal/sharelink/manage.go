@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -101,7 +102,7 @@ func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[mana
 	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
 		return nil, err
 	}
-	link, err := build(req.Msg, time.Now())
+	link, err := build(req.Msg, dbtime.Now())
 	if err != nil {
 		return nil, err
 	}

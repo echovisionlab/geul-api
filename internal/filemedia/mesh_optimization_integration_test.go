@@ -75,6 +75,45 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntityIntegration(t *t
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 }
 
+func TestMeshOptimizationRequeueReturnsStoredCandidateIntegration(t *testing.T) {
+	t.Parallel()
+	db := newServiceIntegrationDB(t)
+	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
+	previousPageID := seedHardCutPageFixture(t, db)
+	pageID := seedHardCutPageFixture(t, db)
+	attachInternalResourcePolicy(t, spiceDB, pageID)
+	sourceID := seedMeshOptimizationSourceFile(t, db)
+	seedMeshOptimizationPageFileLink(t, db, pageID, sourceID)
+	failed := seedMeshOptimizationCandidate(t, db, meshOptimizationCandidateFixture{
+		SourceFileID: sourceID,
+		EntityType:   managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE,
+		EntityID:     previousPageID,
+		Status:       model.MeshOptimizationCandidateStatusFailed,
+	})
+	service := NewMeshOptimizationService(db, &hardCutRecordingMeshOptimizationPublisher{}, nil, spiceDB)
+
+	result, err := service.GenerateCandidate(ctx, MeshOptimizationGenerateInput{
+		SourceFileID:       sourceID,
+		EntityType:         managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE,
+		EntityID:           pageID,
+		TargetRatioPercent: 50,
+		Method:             model.MeshOptimizationMethodDraco,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Enqueued)
+	require.Equal(t, failed.ID, result.Candidate.ID)
+
+	var stored model.MeshOptimizationCandidate
+	require.NoError(t, db.Take(&stored, "id = ?", failed.ID).Error)
+	require.NotNil(t, stored.EntityID)
+	require.Equal(t, pageID, *stored.EntityID)
+	require.Equal(t, stored.EntityID, result.Candidate.EntityID)
+	require.Equal(t, stored.EntityType, result.Candidate.EntityType)
+	require.True(t, stored.UpdatedAt.Equal(result.Candidate.UpdatedAt))
+	require.NotNil(t, stored.EnqueuedAt)
+	require.True(t, stored.EnqueuedAt.Equal(*result.Candidate.EnqueuedAt))
+}
+
 func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAttachmentIntegration(t *testing.T) {
 	t.Parallel()
 	db := newServiceIntegrationDB(t)

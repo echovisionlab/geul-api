@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -719,7 +720,7 @@ func (s *ReleaseService) PublishRelease(
 		}
 		return nil, errs.Internal(err)
 	}
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	transitioned := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		locked, err := lockReleaseForUpdate(ctx, tx, release.ID)
@@ -782,7 +783,7 @@ func (s *ReleaseService) UnpublishRelease(
 		}
 		return nil, errs.Internal(err)
 	}
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	transitioned := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		locked, err := lockReleaseForUpdate(ctx, tx, release.ID)

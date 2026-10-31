@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -244,7 +245,7 @@ func (s *PrivacyService) CreatePrivacyVersion(
 		if req.Msg.Title != nil && *req.Msg.Title != "" {
 			title = *req.Msg.Title
 		}
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		sourceLocale := resolveInitialSourceLocale(ctx, tx, req.Header().Get("Accept-Language"))
 		created, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 			Profile: legalContentDocumentProfile, SourceLocale: sourceLocale,
@@ -327,7 +328,7 @@ func (s *PrivacyService) SchedulePrivacy(
 	if req.Msg.EffectiveFrom == nil {
 		return nil, errs.Required("effective_from")
 	}
-	effectiveFrom := req.Msg.EffectiveFrom.AsTime()
+	effectiveFrom := req.Msg.EffectiveFrom.AsTime().UTC().Truncate(dbtime.Precision)
 	now := time.Now().UTC()
 	if effectiveFrom.Before(now) {
 		return nil, errs.InvalidArgument("effective_from", "must be in the future")
@@ -379,7 +380,7 @@ func (s *PrivacyService) SchedulePrivacy(
 		); err != nil {
 			return err
 		}
-		mutationNow := time.Now()
+		mutationNow := dbtime.Now()
 		if err := tx.Model(&privacy).Updates(structured.Fields{
 			"status":         managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
 			"effective_from": effectiveFrom, "updated_at": mutationNow,
@@ -503,7 +504,7 @@ func (s *PrivacyService) CancelPrivacySchedule(
 			value := privacy.EffectiveFrom.UTC()
 			cancelledEffectiveAt = &value
 		}
-		mutationNow := time.Now()
+		mutationNow := dbtime.Now()
 		if err := tx.Model(&privacy).Updates(structured.Fields{
 			"status":         managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT.String(),
 			"effective_from": nil,

@@ -15,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -331,7 +332,7 @@ func (s *PostService) applyAIDocumentMutationInTransaction(
 		return AIDocumentMutationResult{}, errs.InvalidArgument("operations", "translation deletion must be exclusive")
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if mutation.Locale != mutation.ObservedSourceLocale {
 		if !mutation.ObservedLocaleExists && !mutation.Metadata.EnsureLocale &&
 			!mutation.DeleteTranslation && !hasPostAIDocumentBatchChanges(mutation.Batch) &&

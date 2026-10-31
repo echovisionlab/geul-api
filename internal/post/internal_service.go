@@ -18,6 +18,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -267,7 +268,7 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	var result contentblock.Result
 	var targetResult postTargetLocaleMutationResult
 	var sourceLocale string
@@ -428,7 +429,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	var result contentblock.AdvanceResult
 	var targetResult postTargetLocaleMutationResult
 	var sourceLocale string

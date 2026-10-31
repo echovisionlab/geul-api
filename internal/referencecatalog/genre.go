@@ -3,7 +3,6 @@ package referencecatalog
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -11,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -64,7 +64,7 @@ var genreCRUD = referenceCRUD[model.Genre]{
 	filters:  genreFilterConfig,
 	sorts:    &genreSortConfig,
 	newRecord: func(name, slug string, description *string) *model.Genre {
-		return &model.Genre{Name: name, Slug: slug, Description: description, CreatedAt: time.Now()}
+		return &model.Genre{Name: name, Slug: slug, Description: description, CreatedAt: dbtime.Now()}
 	},
 	values: func(genre *model.Genre) (string, string) {
 		return genre.Name, genre.Slug
