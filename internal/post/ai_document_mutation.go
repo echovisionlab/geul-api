@@ -180,14 +180,7 @@ func (s *Service) ExecuteAIDocumentMutation(
 				validated = result
 				return result, errRollbackPostAIDocumentValidation
 			}
-			if result.Result.Changed {
-				effects.audits = append(effects.audits, postLocaleContentAudit(
-					compiled.ContributorMemberID.String(), compiled.PostID, compiled.Locale, aiEffects.operation,
-				))
-			}
-			if event := postAIDocumentUpdatedEvent(compiled, result.Result, aiEffects); event != nil {
-				effects.signal(event)
-			}
+			recordPostAIDocumentEdit(effects, compiled, result, aiEffects)
 			return result, nil
 		})
 	if errors.Is(err, errRollbackPostAIDocumentValidation) {
@@ -197,6 +190,24 @@ func (s *Service) ExecuteAIDocumentMutation(
 		return AIDocumentMutationResult{}, postAIDocumentFailure(err, compiled)
 	}
 	return result, nil
+}
+
+// recordPostAIDocumentEdit names the locale content record of an applied
+// edit that changed the document, and its content.updated signal.
+func recordPostAIDocumentEdit(
+	effects *postEffects,
+	compiled AIDocumentMutation,
+	result AIDocumentMutationResult,
+	aiEffects *postAIDocumentMutationEffects,
+) {
+	if result.Result.Changed {
+		effects.audits = append(effects.audits, postLocaleContentAudit(
+			compiled.ContributorMemberID.String(), compiled.PostID, compiled.Locale, aiEffects.operation,
+		))
+	}
+	if event := postAIDocumentUpdatedEvent(compiled, result.Result, aiEffects); event != nil {
+		effects.signal(event)
+	}
 }
 
 // postAIDocumentFailure answers a failed AI document mutation: a compiler
