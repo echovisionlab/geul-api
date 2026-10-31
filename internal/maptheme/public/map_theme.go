@@ -45,7 +45,7 @@ func publicMapThemeVariantProto(themeID, scheme string, variant *model.MapThemeV
 	return proto
 }
 
-func publicMapThemeProto(theme *model.MapTheme) (*openv1.MapTheme, error) {
+func publicMapThemeProto(theme *model.MapTheme) *openv1.MapTheme {
 	proto := &openv1.MapTheme{
 		Id: theme.ID, Name: theme.Name, CreatedAt: timestamppb.New(theme.CreatedAt),
 		Settings: &openv1.MapThemeSettings{
@@ -57,7 +57,7 @@ func publicMapThemeProto(theme *model.MapTheme) (*openv1.MapTheme, error) {
 		LightVariant: publicMapThemeVariantProto(theme.ID, "light", &theme.LightVariant),
 		DarkVariant:  publicMapThemeVariantProto(theme.ID, "dark", &theme.DarkVariant),
 	}
-	return proto, nil
+	return proto
 }
 
 func publicDefaultMapThemeID(ctx context.Context, db *gorm.DB) (string, error) {
@@ -143,10 +143,7 @@ func (s *MapThemeService) ResolveByIds(
 		if resolved == nil {
 			resolved = defaultTheme
 		}
-		proto, err := publicMapThemeProto(resolved)
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
+		proto := publicMapThemeProto(resolved)
 		results = append(results, &openv1.ResolveMapThemeByIdResult{RequestedThemeId: requestedID, Theme: proto})
 	}
 	return connect.NewResponse(&openv1.ResolveMapThemesByIdsResponse{Results: results}), nil

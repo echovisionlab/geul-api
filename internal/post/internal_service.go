@@ -24,6 +24,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -368,7 +369,6 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 			req.Msg.Batch.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			locale,
-			true,
 			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
 			locale == sourceLocale,
 		))
@@ -567,7 +567,6 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 			req.Msg.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			locale,
-			true,
 			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
 			locale == sourceLocale,
 		))
@@ -655,7 +654,7 @@ func (s *InternalPostService) UpdatePostDocumentMetadata(
 				}
 				changed := false
 				if req.Msg.CategoryIds != nil {
-					next := normalizeStringIDs(req.Msg.CategoryIds.Ids)
+					next := sliceutil.UniqueTrimmed(req.Msg.CategoryIds.Ids)
 					slices.Sort(next)
 					if !slices.Equal(currentCategories, next) {
 						if replaceErr := replacePostTaxonomyLinks(
@@ -667,7 +666,7 @@ func (s *InternalPostService) UpdatePostDocumentMetadata(
 					}
 				}
 				if req.Msg.TagIds != nil {
-					next := normalizeStringIDs(req.Msg.TagIds.Ids)
+					next := sliceutil.UniqueTrimmed(req.Msg.TagIds.Ids)
 					slices.Sort(next)
 					if !slices.Equal(currentTags, next) {
 						if replaceErr := replacePostTaxonomyLinks(
@@ -771,7 +770,7 @@ func (s *InternalPostService) CreatePostVersionCheckpoint(
 
 		var last model.PostVersion
 		lastResult := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("post_id = ?", req.Msg.PostId).
 			Order("version DESC").
 			First(&last)
@@ -886,7 +885,7 @@ func replacePostTaxonomyLinks(
 	postID string,
 	rawIDs []string,
 ) error {
-	ids := normalizeStringIDs(rawIDs)
+	ids := sliceutil.UniqueTrimmed(rawIDs)
 	slices.Sort(ids)
 	if len(ids) > 0 {
 		var count int64
@@ -928,11 +927,11 @@ func updatePostLocaleMetadataRow(
 	if locale != sourceLocale {
 		return false, false, errs.FailedPrecondition("target Post locale metadata is read-only")
 	}
-	if err := ensurePostLocaleMetadataRow(ctx, tx, postID, locale, sourceLocale, now); err != nil {
+	if err := ensurePostLocaleMetadataRow(ctx, tx, postID, locale, sourceLocale); err != nil {
 		return false, false, err
 	}
 	current, err := loadPostLocaleMetadataRow(
-		ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"}), postID, locale,
+		ctx, tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}), postID, locale,
 	)
 	if err != nil {
 		return false, false, err
@@ -985,7 +984,6 @@ func ensurePostLocaleMetadataRow(
 	postID string,
 	locale string,
 	sourceLocale string,
-	now time.Time,
 ) error {
 	if locale != sourceLocale {
 		return errs.FailedPrecondition("target Post locale metadata is read-only")

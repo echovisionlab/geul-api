@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -54,7 +55,7 @@ func (s *PostService) authorizeSlugExclusion(ctx context.Context, postID string)
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var post model.Post
 		err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).Where("id = ?", postID).First(&post).Error
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("post not found")
 		}
 		if err != nil {

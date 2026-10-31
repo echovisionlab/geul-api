@@ -49,10 +49,7 @@ func (s *MapThemeService) ListMapThemes(
 	defaultIncluded := false
 	for i := range themes {
 		defaultIncluded = defaultIncluded || themes[i].ID == defaultID
-		item, err := s.toProto(&themes[i])
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
+		item := s.toProto(&themes[i])
 		result = append(result, item)
 	}
 	if !defaultIncluded {
@@ -136,10 +133,7 @@ func (s *MapThemeService) GetMapTheme(
 		}
 		return nil, errs.Internal(err)
 	}
-	result, err := s.toProto(theme)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	result := s.toProto(theme)
 	return connect.NewResponse(result), nil
 }
 
@@ -205,15 +199,9 @@ func (s *MapThemeService) CreateMapTheme(
 		return s.appendMapThemeCreatedAudit(ctx, tx, theme.ID)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
-	result, err := s.toProto(theme)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	result := s.toProto(theme)
 	return connect.NewResponse(result), nil
 }
 
@@ -281,9 +269,6 @@ func (s *MapThemeService) DeleteMapTheme(
 			return nil, errs.FailedPrecondition(
 				"the current default or last map theme cannot be deleted; select another default first",
 			)
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}
@@ -354,15 +339,9 @@ func (s *MapThemeService) CopyMapTheme(
 		return s.appendMapThemeCreatedAudit(ctx, tx, copied.ID)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
-	result, err := s.toProto(copied)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	result := s.toProto(copied)
 	return connect.NewResponse(result), nil
 }
 
@@ -386,7 +365,7 @@ func (s *MapThemeService) SetDefaultMapTheme(
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var settings model.SiteSettings
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&settings, "id = 1").Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&settings, "id = 1").Error; err != nil {
 			return err
 		}
 
@@ -409,9 +388,6 @@ func (s *MapThemeService) SetDefaultMapTheme(
 		return appendMapThemeSiteSettingsAudit(ctx, tx, s.auditWriter)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.SetDefaultMapThemeResponse{DefaultMapThemeId: themeID}), nil

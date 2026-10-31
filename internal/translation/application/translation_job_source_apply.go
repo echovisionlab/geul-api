@@ -117,7 +117,7 @@ func lockRunningTranslationJob(ctx context.Context, tx *gorm.DB, jobID string) e
 	result := tx.WithContext(ctx).
 		Model(&model.TranslationJob{}).
 		Select("status").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", jobID).
 		Take(&current)
 	if result.Error != nil {

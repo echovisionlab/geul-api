@@ -53,7 +53,7 @@ func TestCategoryTargetRewriteWaitsForMenuWriterIntegration(t *testing.T) {
 	blocker := db.Begin()
 	require.NoError(t, blocker.Error)
 	var locked model.Menu
-	require.NoError(t, blocker.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", menu.Msg.Id).Error)
+	require.NoError(t, blocker.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&locked, "id = ?", menu.Msg.Id).Error)
 	items, err := json.Marshal([]model.MenuItem{{
 		ID: "category", Label: "Category", LinkType: "category",
 		TargetID: &category.Msg.Id, TargetSlug: &categorySlug,

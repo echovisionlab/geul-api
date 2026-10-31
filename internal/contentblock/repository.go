@@ -223,7 +223,7 @@ func (repository) lockFiles(
 		end := min(start+persistenceChunkRows, len(fileIDs))
 		var rows []fileRow
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id IN ?", fileIDs[start:end]).
 			Order("id").
 			Find(&rows).Error; err != nil {
@@ -604,7 +604,7 @@ func replaceBlockAttachments(
 			Joins("JOIN content_block_attachment_download_audience_segment AS association ON association.audience_segment_id = segment.id").
 			Where("association.block_id IN ?", upsertOrder).
 			Order("segment.id").
-			Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "segment"}}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "segment"}}).
 			Find(&locked).Error; err != nil {
 			return fmt.Errorf("lock content Block attachment audience segments: %w", err)
 		}

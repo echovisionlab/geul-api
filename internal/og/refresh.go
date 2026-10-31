@@ -31,14 +31,10 @@ func (r *Refresher) RequestCurrentWithDB(
 	allLocales bool,
 	reason string,
 ) (*Plan, error) {
-	selection, err := refreshSelection(locale, allLocales)
-	if err != nil {
-		return nil, err
-	}
 	request := &managev1.RegenerateOgImageRequest{
 		EntityType: entityType,
 		EntityId:   &entityID,
-		Selection:  selection,
+		Selection:  refreshSelection(locale, allLocales),
 	}
 	requests, err := r.resolver.Resolve(ctx, tx, request)
 	if err != nil {
@@ -56,21 +52,21 @@ func (r *Refresher) RequestCurrentWithDB(
 	)
 }
 
-func refreshSelection(locale string, allLocales bool) (*managev1.OgTargetSelection, error) {
+func refreshSelection(locale string, allLocales bool) *managev1.OgTargetSelection {
 	locale = strings.TrimSpace(locale)
 	if locale != "" {
 		return &managev1.OgTargetSelection{
 			Target: &managev1.OgTargetSelection_Locale{Locale: locale},
-		}, nil
+		}
 	}
 	if allLocales {
 		return &managev1.OgTargetSelection{
 			Target: &managev1.OgTargetSelection_AllLocales{
 				AllLocales: &managev1.OgAllLocaleTargets{},
 			},
-		}, nil
+		}
 	}
 	return &managev1.OgTargetSelection{
 		Target: &managev1.OgTargetSelection_Primary{Primary: &managev1.OgPrimaryTarget{}},
-	}, nil
+	}
 }

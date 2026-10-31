@@ -49,7 +49,7 @@ func normalizePageDocumentLocale(locale string) (string, error) {
 	return *normalized, nil
 }
 
-func pageSourceRoomFence(pageID, locale string, base contentblock.DomainFence) contentblock.DomainFence {
+func pageSourceRoomFence(locale string, base contentblock.DomainFence) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		domain, err := base(ctx, tx, documentID)
 		if err != nil {
@@ -75,7 +75,7 @@ func loadOptionalPageLocaleMetadataRow(
 		Select("locale", "title", "summary", "incarnation_id", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", pageID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row pageLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {
@@ -124,9 +124,9 @@ func loadPageTargetLocaleState(
 	if err != nil {
 		return pageTargetLocaleState{}, err
 	}
-	lock := "SHARE"
+	lock := clause.LockingStrengthShare
 	if forUpdate {
-		lock = "UPDATE"
+		lock = clause.LockingStrengthUpdate
 	}
 	_, lockedDocumentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, lock)
 	if err != nil {

@@ -171,7 +171,7 @@ func (s *FileService) resolvePartUploadPermissionTarget(
 		return target, entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, session.EntityID)
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return target, "", fmt.Errorf("track not found")
 	}
 	if err != nil {
@@ -247,7 +247,7 @@ func (s *FileService) checkRoleAndSpiceDBUploadPermission(
 	if isAdmin {
 		return nil
 	}
-	if err := s.requireUploadRole(ctx, target, userID); err != nil {
+	if err := s.requireUploadRole(ctx, target); err != nil {
 		return err
 	}
 	if target.adminOnly {
@@ -265,7 +265,6 @@ func (s *FileService) checkRoleAndSpiceDBUploadPermission(
 func (s *FileService) requireUploadRole(
 	ctx context.Context,
 	target uploadPermissionTarget,
-	userID string,
 ) error {
 	if !target.authorOnly {
 		return nil
@@ -293,7 +292,7 @@ func (s *FileService) checkSpiceDBEntityUploadPermission(
 	if !target.requiresSpiceDBCheck || target.resourceType == "" || entityID == "" {
 		return nil
 	}
-	if _, err := uploadPermissionIdentityID(ctx, userID); err != nil {
+	if err := requireUploadIdentity(ctx); err != nil {
 		return err
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, entityID)
@@ -345,12 +344,12 @@ func uploadPermissionEditCan(resourceType, resourceID string) (policyv1.Can, err
 	}
 }
 
-func uploadPermissionIdentityID(ctx context.Context, _ string) (string, error) {
+func requireUploadIdentity(ctx context.Context) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.IdentityID.String()) == "" {
-		return "", errs.AuthenticationRequired()
+		return errs.AuthenticationRequired()
 	}
-	return user.IdentityID.String(), nil
+	return nil
 }
 
 func checkSpiceDBCan(

@@ -209,4 +209,4 @@ func releaseAuditMetadataField(field string) string {
 	}
 }
 
-// DeleteRelease deletes a release (admin or owner only)
+// DeleteRelease deletes a release (admin only)

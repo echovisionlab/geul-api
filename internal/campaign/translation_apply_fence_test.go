@@ -49,7 +49,6 @@ func TestCampaignTranslationJobApplyFenceUsesRootExistenceOnly(t *testing.T) {
 
 			if status != managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String() {
 				_, editErr := campaignEmailContentFence(
-					campaignContentEntity,
 					campaignID,
 				)(t.Context(), db, documentID)
 				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(editErr))

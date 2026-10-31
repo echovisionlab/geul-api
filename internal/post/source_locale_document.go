@@ -3,9 +3,11 @@ package post
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -41,7 +43,7 @@ func loadPostSourceLocaleDocumentStates(
 	db *gorm.DB,
 	postIDs []string,
 ) (map[string]*translationLocaleDocumentState, error) {
-	normalized := normalizeStringIDs(postIDs)
+	normalized := sliceutil.UniqueTrimmed(postIDs)
 	if len(normalized) == 0 {
 		return map[string]*translationLocaleDocumentState{}, nil
 	}
@@ -108,12 +110,12 @@ func lockPostRootForLocaleWrite(
 		ID string `gorm:"column:id"`
 	}
 	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("post").
 		Select("id").
 		Where("id = ?", postID).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("post", postID)
 		}
 		return errs.Internal(err)

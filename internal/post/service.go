@@ -415,7 +415,7 @@ func (s *PostService) UpdatePost(
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -428,15 +428,11 @@ func (s *PostService) UpdatePost(
 	changed := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
+		// Manage metadata fields do not alter the typed translation source, so
+		// an update publishes no content wake-up.
 		changed, err = s.updatePostWithDB(ctx, tx, &post, update)
-		if err != nil || !changed {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
+		return err
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	documentLayout, err := post.DocumentLayout.Proto()
@@ -607,7 +603,7 @@ func (s *PostService) DeletePost(
 	}
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -688,9 +684,6 @@ func (s *PostService) DeletePost(
 		return write(deleteRelationships, restoreRelationships)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -712,9 +705,9 @@ func (s *PostService) PublishPost(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -755,7 +748,7 @@ func (s *PostService) PublishPost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -778,9 +771,9 @@ func (s *PostService) UnpublishPost(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -810,7 +803,7 @@ func (s *PostService) UnpublishPost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -833,9 +826,9 @@ func (s *PostService) ArchivePost(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -860,7 +853,7 @@ func (s *PostService) ArchivePost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -870,7 +863,6 @@ func (s *PostService) ArchivePost(
 func (s *PostService) postLifecycleMutationResponse(
 	ctx context.Context,
 	post *model.Post,
-	changed bool,
 ) (*managev1.PostLifecycleMutationResponse, error) {
 	authorities, err := s.loadCurrentPostAuthorities(ctx, []string{post.ID})
 	if err != nil {
@@ -879,7 +871,7 @@ func (s *PostService) postLifecycleMutationResponse(
 	authority := authorities[post.ID]
 	response := &managev1.PostLifecycleMutationResponse{
 		Id:                post.ID,
-		Changed:           changed,
+		Changed:           true,
 		Status:            managev1.PostStatus(managev1.PostStatus_value[string(post.Status)]),
 		ScheduledTimeZone: post.ScheduledTimeZone,
 		UpdatedAt:         timestamppb.New(post.UpdatedAt),
@@ -910,7 +902,7 @@ func (s *PostService) SetPostFeaturedImage(
 	// Verify post exists and check permission.
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.PostId)
 		}
 		return nil, errs.Internal(err)
@@ -919,7 +911,7 @@ func (s *PostService) SetPostFeaturedImage(
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status", "featured_image_file_id").
 			First(&current, "id = ?", req.Msg.PostId).Error; err != nil {
 			return err
@@ -958,7 +950,7 @@ func (s *PostService) SetPostFeaturedImage(
 		return nil
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("file", req.Msg.FileId)
 		}
 		return nil, err
@@ -993,7 +985,7 @@ func (s *PostService) DeletePostFeaturedImage(
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.PostId)
 		}
 		return nil, errs.Internal(err)
@@ -1003,7 +995,7 @@ func (s *PostService) DeletePostFeaturedImage(
 
 	// Clear the reference and its binding atomically.
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status", "featured_image_file_id").
 			First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
 			return err
@@ -1040,9 +1032,6 @@ func (s *PostService) DeletePostFeaturedImage(
 		}
 		return nil
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

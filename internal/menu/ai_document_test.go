@@ -330,7 +330,7 @@ func TestMenuAIDocumentTargetMutationIsLocaleExactAndSourceInvalidatesEveryTarge
 	))
 	expectedRevision, err := uuid.Parse(koBefore.DocumentRevision)
 	require.NoError(t, err)
-	_, err = advanceMenuContentDocument(
+	err = advanceMenuContentDocument(
 		t.Context(), db, "menu-1", uuid.MustParse(documentID), expectedRevision, base.Add(2*time.Minute),
 	)
 	require.NoError(t, err)

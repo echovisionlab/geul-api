@@ -2,6 +2,7 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -104,14 +105,14 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 			"og_"+strings.TrimSpace(locale),
 		).
 		Take(&binding).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	ref, err := mediaasset.NewLifecycle(db, r.cdnDomain).ReadyAssetRef(ctx, binding.AssetID)
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return ref, err

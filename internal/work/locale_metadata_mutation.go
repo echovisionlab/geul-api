@@ -80,7 +80,7 @@ func applyWorkLocaleMetadataMutation(
 	}
 	if err := tx.WithContext(ctx).
 		Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("source_locale").
 		Where("id = ?", workID).
 		Take(&root).Error; err != nil {

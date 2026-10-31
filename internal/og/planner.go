@@ -395,7 +395,7 @@ func lockBulkOgTargets(
 			}
 		}
 		var batchRows []model.OgGenerationTarget
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where(strings.Join(where, " OR "), args...).
 			Order("entity_type, entity_id, COALESCE(locale, '')").Find(&batchRows).Error; err != nil {
 			return nil, err

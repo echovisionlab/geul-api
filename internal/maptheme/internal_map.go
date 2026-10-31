@@ -139,7 +139,7 @@ func internalVariantProto(input model.MapThemeVariant) *intrav1.MapThemeDocument
 	}
 }
 
-func internalSnapshotProto(theme *model.MapTheme) (*intrav1.MapThemeDocumentSnapshot, error) {
+func internalSnapshotProto(theme *model.MapTheme) *intrav1.MapThemeDocumentSnapshot {
 	return &intrav1.MapThemeDocumentSnapshot{
 		Name: theme.Name,
 		Settings: &intrav1.MapThemeDocumentSettings{
@@ -150,7 +150,7 @@ func internalSnapshotProto(theme *model.MapTheme) (*intrav1.MapThemeDocumentSnap
 		},
 		LightVariant: internalVariantProto(theme.LightVariant),
 		DarkVariant:  internalVariantProto(theme.DarkVariant),
-	}, nil
+	}
 }
 
 func mapThemeVariantUpdates(prefix string, input mapThemeVariantSnapshot) structured.Fields {
@@ -268,7 +268,7 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 		// document is open. Lock the aggregate again at the final save boundary;
 		// no snapshot may be accepted for a deleted theme.
 		var current model.MapTheme
-		if loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if loadErr := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", themeID).
 			Take(&current).Error; loadErr != nil {
 			return loadErr
@@ -315,8 +315,6 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 				"map theme changed; reload before saving", err,
 			)
-		case connect.CodeOf(err) != connect.CodeUnknown:
-			return nil, err
 		default:
 			return nil, errs.Internal(err)
 		}
@@ -348,9 +346,6 @@ func (s *InternalMapService) LoadMapThemeSnapshot(
 		}
 		return nil, errs.Internal(err)
 	}
-	snapshot, err := internalSnapshotProto(theme)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	snapshot := internalSnapshotProto(theme)
 	return connect.NewResponse(&intrav1.LoadMapThemeSnapshotResponse{Snapshot: snapshot, Revision: theme.EditVersion, Locale: "und"}), nil
 }

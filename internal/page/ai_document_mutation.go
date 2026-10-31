@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -91,7 +92,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	var targetRevision *string
 	var currentRevision string
 	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, "UPDATE")
+		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

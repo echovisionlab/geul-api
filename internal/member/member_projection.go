@@ -2,6 +2,7 @@ package member
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
@@ -34,7 +35,7 @@ func (s *MemberService) loadCurrentSessionMember(ctx context.Context, memberID s
 		Select("id", "account_identity_id", "nickname", "onboarded", "preferred_locale", "deleted_at").
 		Where("id = ?", memberID).
 		Take(&member).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("member", memberID)
 		}
 		slog.ErrorContext(ctx, "Operation failed", "operation", "loadCurrentSessionMember", failurecause.Attr(err))

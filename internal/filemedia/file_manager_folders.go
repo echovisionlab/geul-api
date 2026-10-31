@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -91,7 +92,7 @@ func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request
 	}
 	var folder model.FileFolder
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *folderID).First(&folder).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", *folderID).First(&folder).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("folder", *folderID)
 			}
@@ -147,7 +148,7 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 		if err := lockFileFolderHierarchy(tx); err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", *folderID).First(&folder).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("folder", *folderID)
@@ -156,7 +157,7 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 		}
 		if parentID != nil {
 			var parent model.FileFolder
-			if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Where("id = ?", *parentID).First(&parent).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound("folder", *parentID)
@@ -214,12 +215,11 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 }
 
 func fileManagerMutationError(ctx context.Context, err error, message string, privateName string) error {
-	value := strings.ToLower(err.Error())
-	if strings.Contains(value, "duplicate key") || strings.Contains(value, "unique constraint") {
+	if dberrors.IsUniqueViolation(err) {
 		slog.WarnContext(ctx, "File folder uniqueness conflict", failurecause.Attr(err, privateName))
 		return errs.AlreadyExistsMsg(message)
 	}
-	if strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
+	if value := strings.ToLower(err.Error()); strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
 		slog.WarnContext(ctx, "File folder hierarchy conflict", failurecause.Attr(err, privateName))
 		return errs.FailedPrecondition(message)
 	}

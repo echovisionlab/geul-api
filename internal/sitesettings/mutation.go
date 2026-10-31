@@ -2,6 +2,7 @@ package sitesettings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -96,8 +97,8 @@ func (s *SiteSettingService) SetSetting(
 		return s.appendSettingsAudit(ctx, tx, changedKeys)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
 		slog.ErrorContext(ctx, "failed to set setting", "key", req.Msg.Key, "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
@@ -130,8 +131,8 @@ func (s *SiteSettingService) SetManySettings(
 	}
 	runID, err := s.applySiteSettingBatch(ctx, req.Msg.Settings, can)
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
 		slog.ErrorContext(ctx, "failed to set multiple settings", "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
@@ -202,8 +203,8 @@ func (s *SiteSettingService) AddSiteLoaderAsset(
 		return s.appendSettingsAudit(ctx, tx, []string{"loader_file_ids"})
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
 		slog.ErrorContext(ctx, "failed to add site loader asset", "file_id", fileID, "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
@@ -257,8 +258,8 @@ func (s *SiteSettingService) RemoveSiteLoaderAsset(
 		return s.appendSettingsAudit(ctx, tx, []string{"loader_file_ids"})
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
 		slog.ErrorContext(ctx, "failed to remove site loader asset", "file_id", fileID, "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)

@@ -10,7 +10,7 @@ import (
 
 func TestProjectTrackMediaDeliveryIncludesOwningReleaseDownloadRef(t *testing.T) {
 	download := &commonv1.ExpiringMediaRef{FileId: "file-1", Url: "https://cdn.example/download"}
-	delivery, err := projectTrackMediaDelivery(
+	delivery := projectTrackMediaDelivery(
 		nil,
 		trackMediaDeliveryRefs{
 			source: scopedMediaFile{
@@ -25,6 +25,5 @@ func TestProjectTrackMediaDeliveryIncludesOwningReleaseDownloadRef(t *testing.T)
 			spectrogram: &commonv1.AssetRef{AssetId: "spectrogram-1"},
 		},
 	)
-	require.NoError(t, err)
 	require.Same(t, download, delivery.GetDownload())
 }

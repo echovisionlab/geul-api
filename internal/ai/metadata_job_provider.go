@@ -32,7 +32,7 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retE
 	}
 
 	if err := m.db.WithContext(ctx).First(&job, "id = ?", jobID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return fmt.Errorf("failed to load metadata AI job %s: %w", jobID, err)

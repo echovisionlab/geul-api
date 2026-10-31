@@ -406,7 +406,7 @@ func TestFormSourcePayloadIdentityMustMatchStableHandle(t *testing.T) {
 			if err := json.Unmarshal([]byte(test.payload), &inserted); err != nil {
 				t.Fatal(err)
 			}
-			inserted["id"] = formString(inserted, "id") + "-new"
+			inserted["id"] = formObjectID(inserted) + "-new"
 			if test.kind == formFieldKind {
 				inserted["key"] = "choice-new"
 			}

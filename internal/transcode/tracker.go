@@ -188,7 +188,7 @@ func (t *Tracker) registerTrackedJob(
 	}
 
 	var existing model.TranscodeJob
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("event_id = ?", eventID).
 		Take(&existing).Error; err != nil {
 		return fmt.Errorf("load transcode job %s: %w", eventID, err)
@@ -210,7 +210,7 @@ func (t *Tracker) HandleTranscodeProgress(ctx context.Context, event *managev1.T
 	now := time.Now()
 	return t.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var job model.TranscodeJob
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("event_id = ? AND status NOT IN ?", event.EventId, []string{
 				StatusCompleted,
 				StatusCancelled,

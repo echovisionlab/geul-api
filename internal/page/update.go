@@ -3,12 +3,11 @@ package page
 import (
 	"context"
 	"log/slog"
-	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -164,7 +163,7 @@ func validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *comm
 	}
 	var ids []string
 	if err := tx.WithContext(ctx).Model(&model.UserTag{}).
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Where("id IN ?", policy.UserTagIds).Pluck("id", &ids).Error; err != nil {
 		return errs.Internal(err)
 	}
@@ -216,12 +215,9 @@ func (s *PageService) updatePageMenuTargetAfterSlugChange(
 }
 
 func normalizePageUpdateError(err error) error {
-	if strings.Contains(err.Error(), "duplicate key") {
+	if dberrors.IsUniqueViolation(err) {
 		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 		return errs.SlugAlreadyExists("page", "slug")
-	}
-	if connect.CodeOf(err) != connect.CodeUnknown {
-		return err
 	}
 	return errs.Internal(err)
 }

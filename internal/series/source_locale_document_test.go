@@ -29,9 +29,3 @@ func TestOverlaySourceLocaleDocumentProjectsOnlyLocalizedFields(t *testing.T) {
 	assert.Equal(t, "asset-1", *series.OgAssetID)
 	assert.Equal(t, "stored-slug", series.Slug)
 }
-
-func TestNormalizeSourceLocaleDocumentIDs(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, []string{"one", "two"}, normalizeSourceLocaleDocumentIDs([]string{" one ", "", "two", "one"}))
-}

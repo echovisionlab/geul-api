@@ -215,7 +215,7 @@ func (s *InternalFormService) SaveDocument(
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		err = normalizeFormDocumentSaveError(err)
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("form", r.FormId)
 		}
 		return nil, errs.Wrap(err)

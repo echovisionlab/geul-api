@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -66,7 +67,7 @@ func (runtime *Runtime) ResolveReadyAssetRefs(
 	tx *gorm.DB,
 	assetIDs []string,
 ) (map[string]*commonv1.AssetRef, error) {
-	ids := normalizeIDs(assetIDs)
+	ids := sliceutil.UniqueTrimmed(assetIDs)
 	refs := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
@@ -86,7 +87,7 @@ func (runtime *Runtime) ResolveReadySourceFileRefs(
 	fileIDs []string,
 	kinds ...string,
 ) (map[string]*commonv1.AssetRef, error) {
-	ids := normalizeIDs(fileIDs)
+	ids := sliceutil.UniqueTrimmed(fileIDs)
 	refs := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
@@ -156,21 +157,4 @@ func (runtime *Runtime) CancelAndReleaseOGWithDB(
 		return err
 	}
 	return runtime.ReleasePublicAssetBindings(ctx, tx, "label", labelID, "og")
-}
-
-func normalizeIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }

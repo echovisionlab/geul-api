@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -37,7 +38,7 @@ func (s *WorkService) GetWorkCredits(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.WorkId).
 		First(&work).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.WorkId)
 		}
 		return nil, errs.Internal(err)
@@ -124,7 +125,7 @@ func (s *WorkService) MoveWorkCreditItem(
 				return errs.NotFound("credit_group", req.Msg.ItemId)
 			}
 			if err := validateWorkCreditMoveAnchors(
-				ctx, tx, req.Msg.WorkId, currentOrder, req.Msg.Kind, req.Msg.ItemId, nil, req.Msg.After, req.Msg.Before,
+				ctx, tx, currentOrder, req.Msg.Kind, req.Msg.ItemId, nil, req.Msg.After, req.Msg.Before,
 			); err != nil {
 				return err
 			}
@@ -147,7 +148,7 @@ func (s *WorkService) MoveWorkCreditItem(
 				targetGroupID = &requestedGroupID
 			}
 			if err := validateWorkCreditMoveAnchors(
-				ctx, tx, req.Msg.WorkId, currentOrder, req.Msg.Kind, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before,
+				ctx, tx, currentOrder, req.Msg.Kind, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before,
 			); err != nil {
 				return err
 			}
@@ -176,9 +177,6 @@ func (s *WorkService) MoveWorkCreditItem(
 		return nil
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(result), nil
@@ -225,7 +223,7 @@ func (s *WorkService) CreateWorkCreditGroup(
 	// Verify work exists
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.WorkId)
 		}
 		return nil, errs.Internal(err)
@@ -264,9 +262,6 @@ func (s *WorkService) CreateWorkCreditGroup(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationCreated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -288,7 +283,7 @@ func (s *WorkService) UpdateWorkCreditGroup(
 	// Get group to find work ID
 	var group model.WorkCreditGroup
 	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("credit_group", req.Msg.GroupId)
 		}
 		return nil, errs.Internal(err)
@@ -310,8 +305,8 @@ func (s *WorkService) UpdateWorkCreditGroup(
 		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit_group", group.ID)
 			}
 			return err
@@ -329,9 +324,6 @@ func (s *WorkService) UpdateWorkCreditGroup(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationUpdated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -356,7 +348,7 @@ func (s *WorkService) DeleteWorkCreditGroup(
 	// Get group to find work ID
 	var group model.WorkCreditGroup
 	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("credit_group", req.Msg.GroupId)
 		}
 		return nil, errs.Internal(err)
@@ -370,8 +362,8 @@ func (s *WorkService) DeleteWorkCreditGroup(
 		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit_group", group.ID)
 			}
 			return err
@@ -409,9 +401,6 @@ func (s *WorkService) DeleteWorkCreditGroup(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationDeleted)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -435,7 +424,7 @@ func (s *WorkService) AddWorkCredit(
 	// Verify work exists
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.WorkId)
 		}
 		return nil, errs.Internal(err)
@@ -496,9 +485,6 @@ func (s *WorkService) AddWorkCredit(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationCreated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -520,7 +506,7 @@ func (s *WorkService) UpdateWorkCredit(
 	// Get credit to find work ID
 	var credit model.WorkCredit
 	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("credit", req.Msg.CreditId)
 		}
 		return nil, errs.Internal(err)
@@ -534,8 +520,8 @@ func (s *WorkService) UpdateWorkCredit(
 		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit", credit.ID)
 			}
 			return err
@@ -580,9 +566,6 @@ func (s *WorkService) UpdateWorkCredit(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationUpdated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -609,7 +592,7 @@ func (s *WorkService) DeleteWorkCredit(
 	// Get credit to find work ID
 	var credit model.WorkCredit
 	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("credit", req.Msg.CreditId)
 		}
 		return nil, errs.Internal(err)
@@ -623,8 +606,8 @@ func (s *WorkService) DeleteWorkCredit(
 		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit", credit.ID)
 			}
 			return err
@@ -644,9 +627,6 @@ func (s *WorkService) DeleteWorkCredit(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationDeleted)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

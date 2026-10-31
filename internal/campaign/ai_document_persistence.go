@@ -116,7 +116,7 @@ func loadCampaignAIDocumentSubject(
 	query := db.WithContext(ctx).Table("campaign_translation").
 		Select("subject").Where("entity_id = ? AND locale = ?", campaignID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -176,11 +176,11 @@ func applyCampaignAIDocumentSubject(
 	}, nil
 }
 
-func canonicalCampaignAIDocumentID(field, value string) (string, error) {
+func canonicalCampaignAIDocumentID(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	id, err := uuid.Parse(value)
 	if err != nil || id == uuid.Nil || id.String() != value {
-		return "", errs.InvalidArgument(field, "must be a canonical UUID")
+		return "", errs.InvalidArgument("campaign_id", "must be a canonical UUID")
 	}
 	return value, nil
 }

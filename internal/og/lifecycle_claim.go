@@ -101,7 +101,7 @@ func (s *Lifecycle) resolveOgGenerationClaimDisposition(
 		claim.LeaseExpiresAt = generation.LeaseExpiresAt
 		return false, nil
 	}
-	return isClaimableOgGenerationDelivery(generation, now), nil
+	return isClaimableOgGenerationDelivery(generation), nil
 }
 
 func hasActiveOgGenerationLease(generation *model.OgGeneration, now time.Time) bool {
@@ -109,7 +109,7 @@ func hasActiveOgGenerationLease(generation *model.OgGeneration, now time.Time) b
 		generation.LeaseExpiresAt != nil && generation.LeaseExpiresAt.After(now)
 }
 
-func isClaimableOgGenerationDelivery(generation *model.OgGeneration, now time.Time) bool {
+func isClaimableOgGenerationDelivery(generation *model.OgGeneration) bool {
 	return generation.Status == model.OgGenerationStatusQueued ||
 		generation.Status == model.OgGenerationStatusProcessing
 }

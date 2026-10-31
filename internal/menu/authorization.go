@@ -2,6 +2,7 @@ package menu
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -151,7 +152,7 @@ func requireMenuPermissionAndLock(
 	action menuAction,
 ) error {
 	if _, err := lockMenuForUpdate(ctx, tx, menuID); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("menu", menuID)
 		}
 		return errs.Internal(err)

@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ProjectRichTextInterchangeTargets func(
@@ -96,7 +97,7 @@ func LoadTranslationInterchangeTarget(
 	emptyInline EmptyInterchangeTargetInline,
 ) (TranslationInterchangeTarget, error) {
 	state, err := loadPageInterchangeState(
-		ctx, tx, store, pageID, locale, plan, "SHARE", project, pathPresent, cloneResult, emptyInline,
+		ctx, tx, store, pageID, locale, plan, clause.LockingStrengthShare, project, pathPresent, cloneResult, emptyInline,
 	)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
@@ -116,7 +117,7 @@ func ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, err
 	}
 	state, err := loadPageInterchangeState(
-		ctx, tx, store, mutation.PageID, mutation.TargetLocale, mutation.Plan, "UPDATE",
+		ctx, tx, store, mutation.PageID, mutation.TargetLocale, mutation.Plan, clause.LockingStrengthUpdate,
 		mutation.ProjectTargets, mutation.PathPresent, mutation.CloneResult, mutation.EmptyInline,
 	)
 	if err != nil {

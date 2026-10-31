@@ -133,7 +133,7 @@ func (s *FileService) claimTrackUploadSessionsForCleanup(ctx context.Context, tr
 		if err := trackAttachment.LockExistsWithDB(ctx, tx, trackID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("upload_type = ? AND entity_id = ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackID).
 			Find(&sessions).Error; err != nil {
 			return err

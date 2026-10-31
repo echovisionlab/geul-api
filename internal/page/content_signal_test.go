@@ -51,7 +51,7 @@ func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 			Id: "page-1", Slug: proto.String("about"),
 		}),
 		"lifecycle": buildManageStateTransitionContentUpdatedEvent(
-			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1", []string{"state.status"},
+			"page-1", []string{"state.status"},
 		),
 		"featured image": buildManageMediaMutationContentUpdatedEvent(
 			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1", "media.featured_image",
@@ -88,7 +88,7 @@ func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 func TestPublishPageContentUpdatedRequiresOwningTransaction(t *testing.T) {
 	db, mock := mockPageSignalDB(t)
 	event := buildManageStateTransitionContentUpdatedEvent(
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1", []string{"state.status"},
+		"page-1", []string{"state.status"},
 	)
 
 	require.Error(t, publishContentUpdatedEvent(context.Background(), db, &mq.Publisher{}, event))
@@ -110,7 +110,7 @@ func TestPublishPageContentUpdatedFailureRollsBackMutation(t *testing.T) {
 	db, mock := mockPageSignalDB(t)
 	failure := errors.New("notify failed")
 	event := buildManageStateTransitionContentUpdatedEvent(
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1", []string{"state.status"},
+		"page-1", []string{"state.status"},
 	)
 
 	mock.ExpectBegin()

@@ -64,7 +64,7 @@ func requireArtistSourceRoomLocale(
 }
 
 func artistSourceRoomFence(artistID string, locale string) contentblock.DomainFence {
-	base := internalCreativeContentFence(artistContentEntity, artistID)
+	base := internalCreativeContentFence(artistID)
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		domain, err := base(ctx, tx, documentID)
 		if err != nil {
@@ -90,7 +90,7 @@ func loadOptionalArtistLocaleMetadataRow(
 		Select("locale", "title", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", artistID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row artistLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {
@@ -135,9 +135,9 @@ func loadArtistTargetLocaleState(
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
-	lock := "SHARE"
+	lock := clause.LockingStrengthShare
 	if forUpdate {
-		lock = "UPDATE"
+		lock = clause.LockingStrengthUpdate
 	}
 	lockedDocumentID, err := loadCreativeContentDocumentIDWithStrength(
 		ctx, tx, artistContentEntity, artistID, lock,

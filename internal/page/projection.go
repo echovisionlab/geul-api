@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -116,10 +117,10 @@ func (s *PageService) loadPageContentProjection(
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var err error
 			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "SHARE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 				Where(column+" = ?", value).
 				Take(&page).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound("page", value)
 				}
 				return errs.Internal(err)

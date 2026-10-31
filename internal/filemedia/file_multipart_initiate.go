@@ -280,11 +280,7 @@ func (s *FileService) createMultipartUploadSession(
 	if err := s.publishMultipartUploadStarted(ctx, session); err != nil {
 		return nil, err
 	}
-	response, err := multipartInitiateResponseFromSession(session, nil, false)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return response, nil
+	return multipartInitiateResponseFromSession(session, nil, false), nil
 }
 
 func multipartFileKeyError(err error) error {
@@ -355,9 +351,6 @@ func (s *FileService) abortMultipartUploadAfterInsertFailure(
 func multipartSessionInsertError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("track not found")
-	}
-	if connect.CodeOf(err) != connect.CodeUnknown {
-		return err
 	}
 	return errs.Internal(fmt.Errorf("failed to create upload session: %w", err))
 }

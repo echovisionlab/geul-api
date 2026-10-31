@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -73,7 +74,7 @@ func (s *ClientService) SetClientLogo(
 		}
 		if err := tx.Table("client").
 			Select(logoColumn+" AS selected_file_id").
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.ClientId).
 			Take(&current).Error; err != nil {
 			return err
@@ -126,11 +127,8 @@ func (s *ClientService) SetClientLogo(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("client", req.Msg.ClientId)
-		}
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}
@@ -188,7 +186,7 @@ func (s *ClientService) DeleteClientLogo(
 		}
 		if err := tx.Table("client").
 			Select(logoColumn+" AS selected_file_id").
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.ClientId).
 			Take(&current).Error; err != nil {
 			return err
@@ -234,11 +232,8 @@ func (s *ClientService) DeleteClientLogo(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("client", req.Msg.ClientId)
-		}
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}

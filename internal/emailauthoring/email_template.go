@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -170,14 +172,11 @@ func (s *EmailTemplateService) requireEmailTemplateCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
-) (policyv1.Can, error) {
+) error {
 	if canErr != nil {
-		return policyv1.Can{}, errs.InvalidArgument("id", canErr.Error())
+		return errs.InvalidArgument("id", canErr.Error())
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return policyv1.Can{}, err
-	}
-	return can, nil
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
 // ListEmailTemplatesAdmin returns all email templates with pagination (admin)
@@ -194,7 +193,7 @@ func (s *EmailTemplateService) ListEmailTemplatesAdmin(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.List()
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -258,13 +257,13 @@ func (s *EmailTemplateService) GetEmailTemplate(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
 	var template model.EmailTemplate
 	if err := s.db.WithContext(ctx).First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email template", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -282,7 +281,7 @@ func (s *EmailTemplateService) GetEmailTemplate(
 	if err != nil {
 		return nil, err
 	}
-	subject, err := loadCampaignEmailSourceSubject(ctx, s.db, emailTemplateContentEntity, template.ID, sourceContext.SourceLocale)
+	subject, err := loadCampaignEmailSourceSubject(ctx, s.db, template.ID, sourceContext.SourceLocale)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +451,7 @@ func (s *EmailTemplateService) CreateEmailTemplate(
 		)
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if dberrors.IsUniqueViolation(err) {
 			return nil, errs.AlreadyExists("template", "key", req.Msg.Key)
 		}
 		return nil, errs.Wrap(err)
@@ -523,9 +522,9 @@ func (s *EmailTemplateService) DeleteEmailTemplate(
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		var template model.EmailTemplate
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("email template", req.Msg.Id)
 			}
 			return err
@@ -579,9 +578,6 @@ func (s *EmailTemplateService) DeleteEmailTemplate(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil

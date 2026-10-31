@@ -563,7 +563,7 @@ func (c *SpiceDBClient) relationshipExistsAtExactSnapshot(ctx context.Context, k
 		return false, err
 	}
 	response, err := stream.Recv()
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		return false, nil
 	}
 	if err != nil {
@@ -653,7 +653,7 @@ func (c *SpiceDBClient) DeleteAllAccountIdentityRelationships(ctx context.Contex
 		return ZedToken{}, fmt.Errorf("verify deleted account identity relationships: %w", err)
 	}
 	item, err := stream.Recv()
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		return token, nil
 	}
 	if err != nil {

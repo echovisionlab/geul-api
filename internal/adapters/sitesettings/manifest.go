@@ -2,6 +2,7 @@ package sitesettings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -48,7 +49,7 @@ func (ManifestMenus) Localize(
 	}
 	if err := db.WithContext(ctx).Table("menu").Select("source_locale").Where("id = ?", menuID).Take(&source).Error; err == nil {
 		sourceLocale = localization.NormalizeWithDefault(source.SourceLocale, settings.DefaultLocale)
-	} else if err != gorm.ErrRecordNotFound {
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return sourceItems, err
 	}
 
@@ -274,7 +275,7 @@ func (ManifestMenus) TargetSlug(ctx context.Context, db *gorm.DB, item *model.Me
 		Slug *string `gorm:"column:slug"`
 	}
 	if err := db.WithContext(ctx).Table(table).Select("slug").Where("id = ?", strings.TrimSpace(*item.TargetID)).Take(&row).Error; err != nil || row.Slug == nil || strings.TrimSpace(*row.Slug) == "" {
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.ErrorContext(ctx, "Failed to load menu target slug", "failure_cause", failurecause.Message(err))
 		}
 		return item.TargetSlug

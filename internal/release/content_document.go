@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -219,13 +220,13 @@ func loadReleaseContentSnapshotInTransaction(
 		return contentblock.Snapshot{}, releaseSourceLocale{}, errs.Internal(errors.New("content Block store is not configured"))
 	}
 	documentID, err := loadReleaseContentDocumentIDWithStrength(
-		ctx, tx, releaseID, "SHARE",
+		ctx, tx, releaseID, clause.LockingStrengthShare,
 	)
 	if err != nil {
 		return contentblock.Snapshot{}, releaseSourceLocale{}, err
 	}
 	source, err := loadReleaseSourceLocaleWithStrength(
-		ctx, tx, releaseID, "SHARE",
+		ctx, tx, releaseID, clause.LockingStrengthShare,
 	)
 	if err != nil {
 		return contentblock.Snapshot{}, releaseSourceLocale{}, err
@@ -302,7 +303,7 @@ func loadReleaseContentBlockBootstrap(
 	var output releaseContentBootstrapSnapshot
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		documentID, err := loadReleaseContentDocumentIDWithStrength(
-			ctx, tx, releaseID, "SHARE",
+			ctx, tx, releaseID, clause.LockingStrengthShare,
 		)
 		if err != nil {
 			return err
@@ -332,7 +333,7 @@ func loadReleaseContentBlockBootstrap(
 			return err
 		}
 		source, err := loadReleaseSourceLocaleWithStrength(
-			ctx, tx, releaseID, "SHARE",
+			ctx, tx, releaseID, clause.LockingStrengthShare,
 		)
 		if err != nil {
 			return err
@@ -431,7 +432,7 @@ func lockReleaseTranslationSourceContext(
 		SourceLocale string `gorm:"column:source_locale"`
 	}
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("release").
 		Select("source_locale").
 		Where("id = ?", releaseID).
@@ -511,7 +512,7 @@ func loadReleaseContentDocumentIDWithLock(
 ) (uuid.UUID, error) {
 	strength := ""
 	if lock {
-		strength = "UPDATE"
+		strength = clause.LockingStrengthUpdate
 	}
 	return loadReleaseContentDocumentIDWithStrength(
 		ctx, db, releaseID, strength,

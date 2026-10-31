@@ -65,7 +65,7 @@ func operationContexts(err error) []OperationContext {
 	var found []OperationContext
 	var walk func(error)
 	walk = func(err error) {
-		switch typed := err.(type) {
+		switch typed := err.(type) { //nolint:errorlint // the walk descends one node at a time and must stop at the outermost OperationContext
 		case nil:
 		case OperationContext:
 			found = append(found, typed)

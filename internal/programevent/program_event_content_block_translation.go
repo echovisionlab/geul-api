@@ -28,7 +28,7 @@ func loadProgramEventSourceLocale(
 	query := db.WithContext(ctx).Table("program_event").
 		Select("source_locale").Where("id = ?", eventID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var state programEventSourceState
 	if err := query.Take(&state).Error; err != nil {

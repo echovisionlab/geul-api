@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -224,10 +225,10 @@ func claimLockedMultipartCompletion(
 ) (model.UploadSession, []model.UploadPart, bool, error) {
 	var locked model.UploadSession
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", session.UploadID, session.FileID).
 		Take(&locked).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.UploadSession{}, nil, false, nil
 		}
 		return model.UploadSession{}, nil, false, err
@@ -291,7 +292,7 @@ func multipartInitiateResponseFromSession(
 	session model.UploadSession,
 	uploadedParts []*managev1.UploadPartInfo,
 	resumed bool,
-) (*managev1.InitiateMultipartUploadResponse, error) {
+) *managev1.InitiateMultipartUploadResponse {
 	return &managev1.InitiateMultipartUploadResponse{
 		UploadId:              session.UploadID,
 		FileId:                session.FileID,
@@ -304,7 +305,7 @@ func multipartInitiateResponseFromSession(
 		SlotId:                session.SlotID,
 		IngestAttemptId:       session.AttemptID,
 		ExpectedCurrentFileId: session.ExpectedFileID,
-	}, nil
+	}
 }
 
 func (s *FileService) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*managev1.UploadPartInfo, error) {

@@ -9,6 +9,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
 )
 
@@ -52,7 +53,7 @@ func loadPageSourceLocaleMetadataByPageID(
 	db *gorm.DB,
 	pageIDs []string,
 ) (map[string]*PageSourceLocaleMetadata, error) {
-	normalized := normalizeStringIDs(pageIDs)
+	normalized := sliceutil.UniqueTrimmed(pageIDs)
 	if len(normalized) == 0 {
 		return map[string]*PageSourceLocaleMetadata{}, nil
 	}

@@ -397,9 +397,6 @@ func (s *TrackService) CreateTrack(
 	})
 
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(s.toProto(&track)), nil
@@ -423,7 +420,7 @@ func (s *TrackService) UpdateTrack(
 
 	var track model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -461,7 +458,7 @@ func (s *TrackService) UpdateTrack(
 			return err
 		}
 		var locked model.Track
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", track.ID).Error; err != nil {
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&locked, "id = ?", track.ID).Error; err != nil {
 			return err
 		}
 		if err := requireActiveTrackAction(ctx, tx, s.spiceDB, track.ID, trackActionEdit); err != nil {
@@ -526,9 +523,6 @@ func (s *TrackService) UpdateTrack(
 		}
 		return nil
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -554,7 +548,7 @@ func (s *TrackService) DeleteTrack(
 	// First fetch the track to get the release_id for permission check
 	var track model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -562,7 +556,7 @@ func (s *TrackService) DeleteTrack(
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var locked model.Track
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", track.ID).Error; err != nil {
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&locked, "id = ?", track.ID).Error; err != nil {
 			return err
 		}
 		return requireActiveTrackAction(ctx, tx, s.spiceDB, track.ID, trackActionDelete)
@@ -586,9 +580,6 @@ func (s *TrackService) DeleteTrack(
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFoundMsg("track not found")
-			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
 			}
 			return nil, errs.Internal(err)
 		}
@@ -635,7 +626,7 @@ func (s *TrackService) SetTrackCredits(
 	// Verify track exists
 	var track model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.TrackId).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -646,9 +637,6 @@ func (s *TrackService) SetTrackCredits(
 	}
 	err := s.replaceTrackCredits(ctx, req.Msg.TrackId, req.Msg.Credits, req.Msg.Observed)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -683,7 +671,7 @@ func (s *TrackService) ReorderTracks(
 	// Get release_id from first track
 	var firstTrack model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.TrackIds[0]).First(&firstTrack).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -758,9 +746,6 @@ func (s *TrackService) ReorderTracks(
 	})
 
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

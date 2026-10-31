@@ -96,7 +96,7 @@ func lockOgGenerationAndTargetWithOptions(
 		Take(&generationRef).Error; err != nil {
 		return nil, nil, false, err
 	}
-	locking := clause.Locking{Strength: "UPDATE", Options: lockingOptions}
+	locking := clause.Locking{Strength: clause.LockingStrengthUpdate, Options: lockingOptions}
 	var target model.OgGenerationTarget
 	if err := tx.Clauses(locking).First(&target, "id = ?", generationRef.TargetID).Error; err != nil {
 		if lockingOptions != "" && errors.Is(err, gorm.ErrRecordNotFound) {
@@ -243,7 +243,7 @@ func markOgRunStarted(tx *gorm.DB, runID string, now time.Time) error {
 
 func refreshOgRunStatus(tx *gorm.DB, runID string, now time.Time) error {
 	var run model.OgGenerationRun
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&run, "id = ?", runID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").First(&run, "id = ?", runID).Error; err != nil {
 		return err
 	}
 	type countRow struct {

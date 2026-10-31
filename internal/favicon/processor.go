@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
@@ -289,7 +290,7 @@ func validateFaviconSVGSource(source []byte) error {
 	validator := faviconSVGValidator{decoder: xml.NewDecoder(bytes.NewReader(source))}
 	for {
 		token, err := validator.decoder.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

@@ -135,7 +135,7 @@ func lockSESProviderOutcomeRecipients(
 ) ([]model.CampaignDeliveryRecipient, error) {
 	var recipients []model.CampaignDeliveryRecipient
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("run_id = ? AND provider_message_id = ?", runID, providerMessageID).
 		Order("id ASC").
 		Find(&recipients).Error

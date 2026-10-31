@@ -99,7 +99,7 @@ func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
 			lockTx := db.Begin()
 			require.NoError(t, lockTx.Error)
 			var post model.Post
-			require.NoError(t, lockTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			require.NoError(t, lockTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Where("id = ?", postID).
 				First(&post).Error)
 
@@ -139,7 +139,7 @@ func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
 	lockTx := db.Begin()
 	require.NoError(t, lockTx.Error)
 	var locked model.Comment
-	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", comment.ID).
 		First(&locked).Error)
 

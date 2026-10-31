@@ -86,7 +86,7 @@ func LoadTemplateTranslationInterchangeTarget(
 	if snapshot.Document.Profile != emailContentProfile {
 		return TemplateTranslationInterchangeTarget{}, errs.FailedPrecondition("Email Template translation interchange requires the Email content profile")
 	}
-	metadata, exists, err := loadTemplateInterchangeMetadata(ctx, tx, templateID, targetLocale, "SHARE")
+	metadata, exists, err := loadTemplateInterchangeMetadata(ctx, tx, templateID, targetLocale, clause.LockingStrengthShare)
 	if err != nil {
 		return TemplateTranslationInterchangeTarget{}, err
 	}

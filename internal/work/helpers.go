@@ -25,23 +25,6 @@ func nullableStringEqual(left, right *string) bool {
 	return *left == *right
 }
 
-func normalizeStringIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
 func normalizeInitialSourceLocale(ctx context.Context, db *gorm.DB, locale string) string {
 	if normalized := localization.NormalizeSupportedLocale(locale); normalized != nil {
 		return *normalized

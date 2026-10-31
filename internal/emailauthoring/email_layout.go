@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -72,7 +74,7 @@ func lockEmailLayoutsForRelationMutation(
 
 	var layouts []model.EmailLayout
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("id IN ?", normalized).
 		Order("id ASC").
@@ -243,14 +245,11 @@ func (s *EmailLayoutService) requireEmailLayoutCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
-) (policyv1.Can, error) {
+) error {
 	if canErr != nil {
-		return policyv1.Can{}, errs.InvalidArgument("id", canErr.Error())
+		return errs.InvalidArgument("id", canErr.Error())
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return policyv1.Can{}, err
-	}
-	return can, nil
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
 // GetEmailLayout retrieves an email layout by ID (admin only)
@@ -267,13 +266,13 @@ func (s *EmailLayoutService) GetEmailLayout(
 	}()
 
 	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
 	var layout model.EmailLayout
 	if err := s.db.WithContext(ctx).First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email layout", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -307,7 +306,7 @@ func (s *EmailLayoutService) ListEmailLayoutsAdmin(
 	}()
 
 	can, canErr := policyv1.EmailLayout.List()
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -483,7 +482,7 @@ func (s *EmailLayoutService) CreateEmailLayout(
 			UpdatedAt:         now,
 		}
 		if err := createEmailLayoutBaseRow(ctx, tx, layout); err != nil {
-			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			if dberrors.IsUniqueViolation(err) {
 				return errs.AlreadyExists("email layout", "key", req.Msg.Key)
 			}
 			return errs.Internal(err)
@@ -538,9 +537,6 @@ func (s *EmailLayoutService) UpdateEmailLayout(
 		layout = updated
 		return err
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(toProtoEmailLayout(&layout)), nil
@@ -548,7 +544,6 @@ func (s *EmailLayoutService) UpdateEmailLayout(
 
 func buildEmailLayoutUpdates(
 	request *managev1.UpdateEmailLayoutRequest,
-	updatedAt time.Time,
 ) (structured.Fields, error) {
 	updates := structured.Fields{}
 	if request.Name != nil {
@@ -581,7 +576,7 @@ func (s *EmailLayoutService) updateEmailLayoutWithDB(
 	if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, layoutCan); err != nil {
 		return model.EmailLayout{}, err
 	}
-	updates, err := buildEmailLayoutUpdates(request, updatedAt)
+	updates, err := buildEmailLayoutUpdates(request)
 	if err != nil {
 		return model.EmailLayout{}, err
 	}
@@ -624,9 +619,9 @@ func lockMutableEmailLayout(
 ) (model.EmailLayout, error) {
 	var layout model.EmailLayout
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&layout, "id = ?", layoutID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.EmailLayout{}, errs.NotFound("email layout", layoutID)
 		}
 		return model.EmailLayout{}, err
@@ -645,7 +640,7 @@ func applyEmailLayoutUpdates(
 	updates structured.Fields,
 ) error {
 	if err := tx.WithContext(ctx).Model(layout).Updates(updates).Error; err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if dberrors.IsUniqueViolation(err) {
 			key := layout.Key
 			if requestedKey != nil {
 				key = *requestedKey
@@ -696,9 +691,9 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		var layout model.EmailLayout
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("email layout", req.Msg.Id)
 			}
 			return err
@@ -760,9 +755,6 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -782,13 +774,13 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 	}()
 
 	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
 	var layout model.EmailLayout
 	if err := s.db.WithContext(ctx).First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email layout", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -809,9 +801,6 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 	if req.Msg.Locale != nil && strings.TrimSpace(*req.Msg.Locale) != "" {
 		localizedHTML, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, s.db, layout.ID, *req.Msg.Locale)
 		if err != nil {
-			if connectErr, ok := err.(*connect.Error); ok {
-				return nil, connectErr
-			}
 			return nil, errs.Internal(err)
 		}
 		layoutHTML = localizedHTML
@@ -842,7 +831,7 @@ func (s *EmailLayoutService) PreviewEmailLayoutContent(
 	}()
 
 	can, canErr := policyv1.EmailLayout.PreviewContent()
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 

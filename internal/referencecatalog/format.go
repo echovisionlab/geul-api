@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -188,7 +190,7 @@ func (s *FormatService) CreateFormat(
 			return err
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(format).Error; err != nil {
-			if strings.Contains(err.Error(), "duplicate key") {
+			if dberrors.IsUniqueViolation(err) {
 				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 				return errs.SlugAlreadyExists("format", slug)
 			}
@@ -247,8 +249,8 @@ func (s *FormatService) UpdateFormat(
 	}
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("format", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -295,7 +297,7 @@ func (s *FormatService) applyFormatUpdates(
 		return nil
 	}
 	if err := db.WithContext(ctx).Model(format).Updates(updates).Error; err != nil {
-		if isUniqueViolation(err) {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return errs.SlugAlreadyExists("format", optionalStringValue(slug))
 		}
@@ -334,8 +336,8 @@ func (s *FormatService) DeleteFormat(
 
 	var format model.Format
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("format", req.Msg.Id)
 			}
 			return errs.Internal(err)

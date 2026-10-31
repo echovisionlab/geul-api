@@ -43,7 +43,7 @@ func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T
 	require.NoError(t, lock.Error)
 	t.Cleanup(func() { _ = lock.Rollback().Error })
 	var locked model.Menu
-	require.NoError(t, lock.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", menu.Msg.Id).Error)
+	require.NoError(t, lock.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&locked, "id = ?", menu.Msg.Id).Error)
 
 	result := make(chan error, 1)
 	name := "must-not-persist"

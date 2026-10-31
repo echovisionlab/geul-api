@@ -2,6 +2,7 @@ package sitesettings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -49,7 +50,7 @@ func (Assets) ValidateAttachment(ctx context.Context, db *gorm.DB, key, fileID s
 	var file model.File
 	if err := db.WithContext(ctx).Select("id", "mime_type", "file_size").
 		Where("id = ?", strings.TrimSpace(fileID)).Take(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.FailedPrecondition("file no longer exists")
 		}
 		return errs.Internal(err)

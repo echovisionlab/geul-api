@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -435,7 +436,7 @@ func importLocationsGorm(tx *gorm.DB, f *zip.File) error {
 	for {
 		row++
 		record, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -520,7 +521,7 @@ func importNetworksGorm(tx *gorm.DB, f *zip.File) error {
 	for {
 		row++
 		record, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

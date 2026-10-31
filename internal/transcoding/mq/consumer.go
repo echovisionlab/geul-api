@@ -133,7 +133,7 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 		return
 	}
 	if parent.Err() != nil {
-		retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		retryCtx, retryCancel := detachedSettlementContext(parent)
 		defer retryCancel()
 		retryErr := c.client.Retry(retryCtx, c.conn.DB(), c.config.Name, message.TransportID, 0)
 		if retryErr != nil {
@@ -159,7 +159,7 @@ func (c *Consumer) completeTerminalOrSuccessful(parent context.Context, message 
 		// The handler confirms that its terminal result was durably published.
 		// Settle the input independently of a concurrent worker shutdown so the
 		// already-published outcome is not turned back into runnable work.
-		settleCtx, cancel := terminalResultSettlementContext(parent)
+		settleCtx, cancel := detachedSettlementContext(parent)
 		defer cancel()
 		c.complete(settleCtx, message, startedAt, "PGMQ terminal completion failed")
 		return true
@@ -171,10 +171,13 @@ func (c *Consumer) completeTerminalOrSuccessful(parent context.Context, message 
 	return false
 }
 
-const terminalInputSettlementTimeout = 5 * time.Second
+const detachedSettlementTimeout = 5 * time.Second
 
-func terminalResultSettlementContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(parent), terminalInputSettlementTimeout)
+// detachedSettlementContext settles a delivery after the worker shutdown has
+// cancelled parent, keeping its correlation and trace for the settlement
+// telemetry.
+func detachedSettlementContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), detachedSettlementTimeout)
 }
 
 func (c *Consumer) complete(parent context.Context, message eventpkg.Message, startedAt time.Time, failureMessage string) {

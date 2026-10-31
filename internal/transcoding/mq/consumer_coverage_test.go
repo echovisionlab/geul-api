@@ -120,14 +120,14 @@ func TestTerminalResultSettlementContextIsDetachedAndBounded(t *testing.T) {
 	parent, shutdown := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "delivery"))
 	shutdown()
 
-	settleCtx, cancel := terminalResultSettlementContext(parent)
+	settleCtx, cancel := detachedSettlementContext(parent)
 	defer cancel()
 	require.NoError(t, settleCtx.Err())
 	require.Equal(t, "delivery", settleCtx.Value(contextKey{}))
 	deadline, ok := settleCtx.Deadline()
 	require.True(t, ok)
 	require.Greater(t, time.Until(deadline), time.Duration(0))
-	require.LessOrEqual(t, time.Until(deadline), terminalInputSettlementTimeout)
+	require.LessOrEqual(t, time.Until(deadline), detachedSettlementTimeout)
 }
 
 func TestConsumerProcessShutdownRedeliversFailedHandler(t *testing.T) {

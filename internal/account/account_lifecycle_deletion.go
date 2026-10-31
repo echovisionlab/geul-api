@@ -131,12 +131,12 @@ func (s *AccountLifecycleService) RequestDeletion(
 			return err
 		}
 		var current model.UserDeletionRequest
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("member_id = ?::uuid AND identity_id = ?::uuid", memberID, identityID).First(&current).Error
+		err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("member_id = ?::uuid AND identity_id = ?::uuid", memberID, identityID).First(&current).Error
 		if err == nil && (current.LifecycleState == accountLifecycleStateScheduled || current.LifecycleState == accountLifecycleStateRecoveryConfirmationPending) {
 			alreadyScheduled = true
 			return nil
 		}
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		if err == nil {
@@ -271,7 +271,7 @@ func (s *AccountLifecycleService) ConfirmDeletion(
 		if err := identitystate.Lock(tx, identityID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("token = ? AND token_expires_at > ? AND lifecycle_state IN ?", tokenHash, now, []string{accountLifecycleStateConfirmationPending, accountLifecycleStateScheduled}).
 			First(&request).Error; err != nil {
 			return err
@@ -380,7 +380,7 @@ func (s *AccountLifecycleService) CancelDeletion(ctx context.Context, token stri
 		if err := identitystate.Lock(tx, identityID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("token = ? AND token_expires_at > ? AND lifecycle_state IN ?", tokenHash, now, []string{accountLifecycleStateScheduled, accountLifecycleStateCancelled}).
 			First(&request).Error; err != nil {
 			return err

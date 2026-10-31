@@ -60,7 +60,7 @@ func (s *AccountLifecycleService) RequestRecovery(ctx context.Context, email str
 		if err := identitystate.Lock(tx, candidate.IdentityID); err != nil {
 			return err
 		}
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("lifecycle_state IN ? AND scheduled_at > ?", []string{
 				accountLifecycleStateScheduled,
 				accountLifecycleStateRecoveryConfirmationPending,
@@ -137,7 +137,7 @@ func (s *AccountLifecycleService) ConfirmRecovery(ctx context.Context, token str
 		if err := identitystate.Lock(tx, identityID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("token = ? AND token_expires_at > ? AND lifecycle_state IN ?", tokenHash, now, []string{accountLifecycleStateRecoveryConfirmationPending, accountLifecycleStateRecovered}).
 			First(&request).Error; err != nil {
 			return err

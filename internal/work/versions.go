@@ -315,7 +315,6 @@ func (s *WorkService) RestoreWorkVersion(
 			restoreContributors,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 			finalSnapshot.SourceLocale,
-			true,
 			nil,
 			true,
 		)
@@ -341,9 +340,6 @@ func (s *WorkService) RestoreWorkVersion(
 		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, event)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, normalizeWorkContentBlockError(err)
 	}
 

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
@@ -58,9 +57,6 @@ func (s *FileService) reconcileMultipartResumeResponse(
 	}
 	reconciliation, err := s.reconcileWritableMultipartResumeParts(ctx, session)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return model.UploadSession{}, err
-		}
 		return model.UploadSession{}, errs.Internal(fmt.Errorf("failed to reconcile multipart resume parts: %w", err))
 	}
 	response.Status = uploadSessionStatusToProto(reconciliation.session.Status)
@@ -155,7 +151,7 @@ func (s *FileService) loadMultipartResumeSessionState(
 	var current model.UploadSession
 	var cachedParts []model.UploadPart
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("upload_id = ? AND file_id = ?", expected.UploadID, expected.FileID).
 			Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -263,7 +259,7 @@ func (s *FileService) reconcileMultipartResumePartCache(
 ) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.UploadSession
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where(
 				"upload_id = ? AND file_id = ? AND status IN ?",
 				expected.UploadID,

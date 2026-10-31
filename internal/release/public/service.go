@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -112,7 +113,7 @@ func (s *ReleaseService) Get(
 	}
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("release not found")
 		}
 		return nil, errs.Internal(err)
@@ -306,7 +307,7 @@ func (s *ReleaseService) buildReleaseResponseInTransaction(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", releaseID).
 		Take(&current).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("release not found")
 		}
 		return nil, errs.Internal(err)
@@ -743,11 +744,7 @@ func (s *ReleaseService) getReleaseCredits(
 	}
 	protoCredits := make([]*openv1.ReleaseCredit, 0, len(credits))
 	for _, credit := range credits {
-		protoCredit, err := s.projectReleaseCredit(credit, projection)
-		if err != nil {
-			return nil, err
-		}
-		if protoCredit != nil {
+		if protoCredit := s.projectReleaseCredit(credit, projection); protoCredit != nil {
 			protoCredits = append(protoCredits, protoCredit)
 		}
 	}
@@ -861,10 +858,10 @@ func (s *ReleaseService) loadReleaseCreditProjection(
 func (s *ReleaseService) projectReleaseCredit(
 	credit publicReleaseCreditRow,
 	projection releaseCreditProjection,
-) (*openv1.ReleaseCredit, error) {
+) *openv1.ReleaseCredit {
 	name := releaseCreditDisplayName(credit, projection.members)
 	if name == "" {
-		return nil, nil
+		return nil
 	}
 	protoCredit := &openv1.ReleaseCredit{
 		Id:         credit.ID,
@@ -881,7 +878,7 @@ func (s *ReleaseService) projectReleaseCredit(
 		protoCredit.Note = &note
 	}
 	protoCredit.ImageAsset = projectReleaseCreditImage(credit, protoCredit.Member, projection.imageAssets)
-	return protoCredit, nil
+	return protoCredit
 }
 
 func projectReleaseCreditImage(
@@ -979,21 +976,14 @@ func (s *ReleaseService) getReleaseTracks(
 		downloadByTrackID: downloadByTrackID,
 	}
 	for _, track := range tracks {
-		mediaRefs, downloadAccess, err := s.resolveReleaseTrackMedia(track, mediaSources)
-		if err != nil {
-			return nil, err
-		}
+		mediaRefs, downloadAccess := s.resolveReleaseTrackMedia(track, mediaSources)
 
-		protoTrack, projectionErr := projectPublicReleaseTrack(
+		protoTracks = append(protoTracks, projectPublicReleaseTrack(
 			track,
 			mediaRefs,
 			creditsByTrack[track.ID],
 			downloadAccess,
-		)
-		if projectionErr != nil {
-			return nil, projectionErr
-		}
-		protoTracks = append(protoTracks, protoTrack)
+		))
 	}
 
 	return protoTracks, nil
@@ -1010,11 +1000,11 @@ type releaseTrackMediaSources struct {
 func (s *ReleaseService) resolveReleaseTrackMedia(
 	track model.Track,
 	sources releaseTrackMediaSources,
-) (trackMediaDeliveryRefs, *openv1.FileDownloadAccess, error) {
+) (trackMediaDeliveryRefs, *openv1.FileDownloadAccess) {
 	mediaRefs := trackMediaDeliveryRefs{}
 	downloadAccess := unavailableFileDownloadAccess()
 	if track.AudioOriginalFileID == nil || *track.AudioOriginalFileID == "" {
-		return mediaRefs, downloadAccess, nil
+		return mediaRefs, downloadAccess
 	}
 	fileID := *track.AudioOriginalFileID
 	mediaRefs.source = sources.originalFiles[fileID]
@@ -1026,9 +1016,9 @@ func (s *ReleaseService) resolveReleaseTrackMedia(
 		mediaRefs.download = resolved.Download
 	}
 	if downloadAccess.GetAction() != openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
-		return mediaRefs, downloadAccess, nil
+		return mediaRefs, downloadAccess
 	}
-	return mediaRefs, downloadAccess, nil
+	return mediaRefs, downloadAccess
 }
 
 func projectPublicReleaseTrack(
@@ -1036,7 +1026,7 @@ func projectPublicReleaseTrack(
 	mediaRefs trackMediaDeliveryRefs,
 	credits []*openv1.TrackCredit,
 	downloadAccess *openv1.FileDownloadAccess,
-) (*openv1.ReleaseTrack, error) {
+) *openv1.ReleaseTrack {
 	pt := &openv1.ReleaseTrack{
 		Id:          track.ID,
 		Title:       track.Title,
@@ -1054,16 +1044,9 @@ func projectPublicReleaseTrack(
 		pt.DurationMs = &durationMs
 	}
 
-	delivery, err := projectTrackMediaDelivery(
-		track.DurationSeconds,
-		mediaRefs,
-	)
-	if err != nil {
-		return pt, err
-	}
-	pt.Delivery = delivery
+	pt.Delivery = projectTrackMediaDelivery(track.DurationSeconds, mediaRefs)
 
-	return pt, nil
+	return pt
 }
 
 // loadTrackCredits gets credits for every Track in one relation query.
@@ -1140,11 +1123,7 @@ func (s *ReleaseService) loadTrackCredits(ctx context.Context, trackIDs []string
 	}
 	result := make(map[string][]*openv1.TrackCredit, len(trackIDs))
 	for _, credit := range credits {
-		pc, err := s.projectTrackCredit(credit, imageAssets)
-		if err != nil {
-			return nil, err
-		}
-		result[credit.TrackID] = append(result[credit.TrackID], pc)
+		result[credit.TrackID] = append(result[credit.TrackID], s.projectTrackCredit(credit, imageAssets))
 	}
 
 	return result, nil
@@ -1153,12 +1132,12 @@ func (s *ReleaseService) loadTrackCredits(ctx context.Context, trackIDs []string
 func (s *ReleaseService) projectTrackCredit(
 	credit publicTrackCreditRow,
 	imageAssets map[string]*commonv1.AssetRef,
-) (*openv1.TrackCredit, error) {
+) *openv1.TrackCredit {
 	projected := &openv1.TrackCredit{
 		Id: credit.ID, Name: credit.CreditedName, CreditRole: credit.RoleName,
 	}
 	if credit.ArtistID == nil {
-		return projected, nil
+		return projected
 	}
 	artist := &openv1.ReleaseArtist{Id: *credit.ArtistID, Role: "credit", Slug: credit.ArtistSlug}
 	if credit.ArtistName != nil {
@@ -1166,7 +1145,7 @@ func (s *ReleaseService) projectTrackCredit(
 	}
 	artist.ImageAsset = projectTrackCreditArtistImage(credit.ImageFileID, imageAssets)
 	projected.Artist = artist
-	return projected, nil
+	return projected
 }
 
 func projectTrackCreditArtistImage(

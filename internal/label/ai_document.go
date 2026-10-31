@@ -188,7 +188,7 @@ func (s *LabelService) loadAIDocumentStateAfterAuthorization(
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
-	source, err := loadLabelSourceAuthority(ctx, tx, root.ID, "SHARE")
+	source, err := loadLabelSourceAuthority(ctx, tx, root.ID, clause.LockingStrengthShare)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -262,7 +262,7 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 	var output AIDocumentMutationResult
 	var input AIDocumentMutation
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadLabelAIDocumentRoot(ctx, tx, canonicalID.String(), "UPDATE")
+		root, err := loadLabelAIDocumentRoot(ctx, tx, canonicalID.String(), clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

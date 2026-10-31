@@ -5,6 +5,7 @@ package favicon
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -51,7 +52,7 @@ func LoadSet(
 
 	var source model.File
 	if err := db.WithContext(ctx).Select("id", "mime_type").Where("id = ?", sourceFileID).Take(&source).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -229,7 +230,7 @@ func readySourceAssetRef(
 		).
 		Order("created_at DESC").
 		Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("favicon_asset_for_source_file", sourceFileID)
 		}
 		return nil, errs.Internal(err)
@@ -295,7 +296,7 @@ func RequestDeletion(ctx context.Context, tx *gorm.DB, sourceFileID string) erro
 	derivativeAssetIDs := tx.Table("file_derivative").Select("asset_id").
 		Where("file_id = ? AND type LIKE ? AND asset_id IS NOT NULL", sourceFileID, "FILE_DERIVATIVE_TYPE_FAVICON_%")
 	var assets []model.PublicAsset
-	assetQuery := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN (?)", derivativeAssetIDs)
+	assetQuery := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id IN (?)", derivativeAssetIDs)
 	if hasSourceAssetColumn {
 		assetQuery = assetQuery.Or("source_file_id = ? AND kind = ?", sourceFileID, "favicon")
 	}

@@ -164,7 +164,7 @@ func deriveFormTargetRevision(documentRevision string, row formAIDocumentLocaleR
 func loadFormAIDocumentLocale(ctx context.Context, tx *gorm.DB, formID, locale string, update bool) (formAIDocumentLocaleRow, bool, error) {
 	query := tx.WithContext(ctx).Table("form_translation").Select("xmin::text AS revision", "title", "content_json", "content_text", "updated_at").Where("entity_id = ?::uuid AND locale = ?", formID, locale)
 	if update {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row formAIDocumentLocaleRow
 	result := query.Take(&row)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -18,7 +19,7 @@ func LoadPublicMemberSummaries(
 	cdnDomain string,
 	memberIDs []string,
 ) (map[string]*commonv1.MemberSummary, error) {
-	ids := uniqueNonEmptyIDs(memberIDs)
+	ids := sliceutil.UniqueNonZero(memberIDs)
 	result := make(map[string]*commonv1.MemberSummary, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -37,10 +38,7 @@ func LoadPublicMemberSummaries(
 	}
 
 	for _, member := range members {
-		summary, err := projectPublicMemberSummary(member, avatars[member.ID])
-		if err != nil {
-			return nil, err
-		}
+		summary := projectPublicMemberSummary(member, avatars[member.ID])
 		result[member.ID] = summary
 	}
 
@@ -53,7 +51,7 @@ func loadPublicMemberAvatars(
 	cdnDomain string,
 	memberIDs []string,
 ) (map[string]*commonv1.AssetRef, error) {
-	ids := uniqueNonEmptyIDs(memberIDs)
+	ids := sliceutil.UniqueNonZero(memberIDs)
 	result := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -84,7 +82,7 @@ func loadPublicMemberAvatars(
 	return result, nil
 }
 
-func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) (*commonv1.MemberSummary, error) {
+func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) *commonv1.MemberSummary {
 	deleted := member.DeletedAt != nil || member.AccountIdentityID == nil
 	if deleted {
 		avatar = nil
@@ -94,5 +92,5 @@ func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) 
 		Nickname:    member.Nickname,
 		AvatarAsset: avatar,
 		Deleted:     deleted,
-	}, nil
+	}
 }

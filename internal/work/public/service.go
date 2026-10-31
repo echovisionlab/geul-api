@@ -336,7 +336,7 @@ func (s *WorkService) buildWorkResponse(
 	var relations workPublicRelationsSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Preload("MapPlace")
 		var loadErr error
 		if workdomain.IsValidUUID(req.Msg.Slug) {

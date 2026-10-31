@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"strings"
@@ -130,9 +131,6 @@ func (s *SeriesService) ListSeriesPosts(
 			Order("series_order ASC NULLS LAST, created_at ASC").
 			Find(&posts).Error
 	}); err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -471,9 +469,6 @@ func (s *SeriesService) CreateSeries(
 			slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "CreateSeries", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("series", slug)
 		}
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -556,7 +551,7 @@ func (s *SeriesService) DeleteSeries(
 			return err
 		}
 		if err := tx.First(&series, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("series", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -647,13 +642,13 @@ func (s *SeriesService) SetSeriesFeaturedImage(
 			return err
 		}
 		if err := tx.First(&series, "id = ?", req.Msg.SeriesId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("series", req.Msg.SeriesId)
 			}
 			return errs.Internal(err)
 		}
 		if err := s.media.RequireAttachableFile(ctx, tx, req.Msg.FileId); err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("file", req.Msg.FileId)
 			}
 			return err
@@ -706,7 +701,7 @@ func (s *SeriesService) DeleteSeriesFeaturedImage(
 			return err
 		}
 		if err := tx.First(&series, "id = ?", req.Msg.SeriesId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("series", req.Msg.SeriesId)
 			}
 			return errs.Internal(err)

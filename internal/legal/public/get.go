@@ -83,7 +83,7 @@ func loadPublicLegalHistory[Document structured.Value, Proto structured.Value](
 		Where("id = ?", request.requestedID).
 		Where("status IN ?", []string{spec.activeStatus, spec.archivedStatus}).
 		First(&document).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return publicLegalResult[Proto]{}, nil
 	}
 	if err != nil {
@@ -118,7 +118,7 @@ func loadSharedPublicLegalDocument[Document structured.Value, Proto structured.V
 	err = db.WithContext(ctx).
 		Where("id = ? AND status = ?", request.requestedID, access.status).
 		First(&document).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return publicLegalResult[Proto]{}, nil
 	}
 	if err != nil {
@@ -150,7 +150,7 @@ func loadCurrentPublicLegalDocuments[Document structured.Value, Proto structured
 		Where("effective_until IS NULL OR effective_until > ?", request.now).
 		Order("version DESC").
 		First(&active).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return result, errs.Internal(err)
 	}
 	if err == nil {
@@ -277,7 +277,7 @@ func loadPublicLegalContentProjection(
 			SourceLocale      string     `gorm:"column:source_locale"`
 		}
 		if err := tx.Table(entityType+"_history").
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("content_document_id", "source_locale").
 			Where("id = ?", entityID).
 			Take(&root).Error; err != nil {

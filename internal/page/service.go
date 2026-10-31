@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -117,12 +119,12 @@ func lockPageMenuTargetStateForUpdate(
 ) (*lockedPageMenuTargetState, error) {
 	var state lockedPageMenuTargetState
 	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("page").
 		Select("slug", "show_title", "content_document_id", "updated_at", "access_policy").
 		Where("id = ?", pageID).
 		Take(&state).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("page", pageID)
 		}
 		return nil, errs.Internal(err)
@@ -364,7 +366,7 @@ func (s *PageService) CreatePage(
 			}
 		}
 		now := time.Now().UTC()
-		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, nil, req.Msg.SourceLocale, req.Header().Get("Accept-Language"))
+		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, req.Msg.SourceLocale, req.Header().Get("Accept-Language"))
 		if err != nil {
 			return err
 		}
@@ -433,7 +435,7 @@ func (s *PageService) CreatePage(
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
-		if strings.Contains(err.Error(), "duplicate key") {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("page", "slug")
 		}
@@ -499,7 +501,7 @@ func (s *PageService) DeletePage(
 	// First get the page so its domain relations can be removed atomically.
 	var page model.Page
 	if err := s.db.WithContext(ctx).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("page", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -595,9 +597,6 @@ func (s *PageService) DeletePage(
 		return nil
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -622,9 +621,9 @@ func (s *PageService) PublishPage(
 	var page model.Page
 	lifecycleChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&page, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -681,15 +680,11 @@ func (s *PageService) PublishPage(
 			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
 				page.ID,
 				[]string{"state.status", "state.published_at"},
 			),
 		)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -721,8 +716,8 @@ func (s *PageService) UnpublishPage(
 	var page model.Page
 	lifecycleChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -753,15 +748,11 @@ func (s *PageService) UnpublishPage(
 			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
 				page.ID,
 				[]string{"state.status"},
 			),
 		)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

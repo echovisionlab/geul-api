@@ -66,7 +66,7 @@ func emailLayoutContentFence(
 	layoutID string,
 ) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, "UPDATE")
+		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}

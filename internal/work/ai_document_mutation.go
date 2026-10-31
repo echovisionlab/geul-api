@@ -3,15 +3,17 @@ package work
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
+
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"log/slog"
-	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -99,7 +101,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	var result AIDocumentMutationResult
 	var currentDocumentRevision string
 	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, "UPDATE")
+		root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

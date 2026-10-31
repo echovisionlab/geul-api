@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -58,7 +59,7 @@ func (s *ClientService) Get(
 
 	var client model.Client
 	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("client", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

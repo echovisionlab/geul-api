@@ -2,12 +2,15 @@ package public
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -202,7 +205,7 @@ func (s *ProgramEventService) Get(
 		var event model.ProgramEvent
 		query := tx.
 			Model(&model.ProgramEvent{}).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Where("status IN ?", publicProgramEventStatuses())
 		if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
 			query = query.Where("id = ?", slugOrID)
@@ -210,7 +213,7 @@ func (s *ProgramEventService) Get(
 			query = query.Where("slug = ?", slugOrID)
 		}
 		if err := query.First(&event).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("program event not found")
 			}
 			return errs.Internal(err)
@@ -432,7 +435,7 @@ func (s *ProgramEventSeriesService) Get(
 		query = query.Where("slug = ?", slugOrID)
 	}
 	if err := query.First(&series).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("program event series not found")
 		}
 		return nil, errs.Internal(err)
@@ -738,7 +741,7 @@ func (s *ProgramEventService) loadPublishedProgramEventSeries(
 			*seriesID,
 			managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
 		).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1075,7 +1078,7 @@ func loadPublicProgramEventType(ctx context.Context, db *gorm.DB, typeID string,
 }
 
 func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string]model.ProgramEventType, error) {
-	ids := uniqueProgramEventIDs(typeIDs)
+	ids := sliceutil.UniqueTrimmed(typeIDs)
 	result := make(map[string]model.ProgramEventType, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -1091,7 +1094,7 @@ func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []str
 }
 
 func loadPublicProgramEventTypeLocales(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string][]publicProgramEventTypeLocaleRow, error) {
-	ids := uniqueProgramEventIDs(typeIDs)
+	ids := sliceutil.UniqueTrimmed(typeIDs)
 	result := make(map[string][]publicProgramEventTypeLocaleRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -1153,23 +1156,6 @@ func selectPublicProgramEventTypeLocaleRows(rows []publicProgramEventTypeLocaleR
 	return rows[0], nil
 }
 
-func uniqueProgramEventIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
 func collectPublicProgramEventTypeIDs(events []model.ProgramEvent) []string {
 	typeIDs := make([]string, 0, len(events))
 	for i := range events {
@@ -1177,12 +1163,12 @@ func collectPublicProgramEventTypeIDs(events []model.ProgramEvent) []string {
 			typeIDs = append(typeIDs, events[i].TypeID)
 		}
 	}
-	return uniqueProgramEventIDs(typeIDs)
+	return sliceutil.UniqueTrimmed(typeIDs)
 }
 
 // loadProgramEventPosterFileIDs applies the public poster selection rule to an entire result page.
 func loadProgramEventPosterFileIDs(ctx context.Context, db *gorm.DB, eventIDs []string) (map[string]string, error) {
-	ids := uniqueProgramEventIDs(eventIDs)
+	ids := sliceutil.UniqueTrimmed(eventIDs)
 	fileByEvent := make(map[string]string, len(ids))
 	if len(ids) == 0 {
 		return fileByEvent, nil

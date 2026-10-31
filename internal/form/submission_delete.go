@@ -1,15 +1,17 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
+	"errors"
+	"log/slog"
+
+	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"log/slog"
 )
 
 func (s *FormService) DeleteFormSubmission(
@@ -26,7 +28,7 @@ func (s *FormService) DeleteFormSubmission(
 
 	var submission model.FormSubmission
 	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("submission not found")
 		}
 		return nil, errs.Internal(err)
@@ -34,7 +36,7 @@ func (s *FormService) DeleteFormSubmission(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var form model.Form
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id").
 			First(&form, "id = ?", submission.FormID).Error; err != nil {
 			return err

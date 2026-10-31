@@ -2,6 +2,7 @@ package audience
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -60,7 +61,7 @@ func (s *AudienceService) GetSegment(
 	}
 	var segment model.AudienceSegment
 	if err := s.db.WithContext(ctx).First(&segment, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("segment not found")
 		}
 		return nil, errs.Internal(err)
@@ -209,7 +210,7 @@ func (s *AudienceService) estimateCount(ctx context.Context, segment *model.Audi
 func loadSegmentForResponse(ctx context.Context, db *gorm.DB, segmentID string, result *model.AudienceSegment) error {
 	*result = model.AudienceSegment{}
 	if err := db.WithContext(ctx).First(result, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")
 		}
 		return errs.Internal(err)

@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -38,7 +39,7 @@ func (*PolicyAuthority) RequireLockedView(
 	checker *auth.SpiceDBClient,
 	releaseID string,
 ) error {
-	_, err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionView)
+	err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionView)
 	return err
 }
 
@@ -48,7 +49,7 @@ func (*PolicyAuthority) RequireLockedEdit(
 	checker *auth.SpiceDBClient,
 	releaseID string,
 ) error {
-	_, err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionEdit)
+	err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionEdit)
 	return err
 }
 
@@ -82,7 +83,7 @@ func (a *TrackAuthority) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trac
 		return err
 	}
 	if err := lockTrackForUploadMutation(tx.WithContext(ctx), trackID); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("track", trackID)
 		}
 		return err
@@ -100,7 +101,7 @@ func lockTrackDownloadAudienceSegments(ctx context.Context, tx *gorm.DB, trackID
 		Joins("JOIN track_download_audience_segment AS association ON association.audience_segment_id = segment.id").
 		Where("association.track_id = ?", trackID).
 		Order("segment.id").
-		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "segment"}}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "segment"}}).
 		Find(&rows).Error
 }
 
@@ -133,7 +134,7 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 
 	var track model.Track
 	if err := tx.WithContext(ctx).Where("id = ?", input.TrackID).Take(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return TrackOriginalAudioAttachment{}, errs.NotFound("track", input.TrackID)
 		}
 		return TrackOriginalAudioAttachment{}, err
@@ -174,5 +175,5 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 
 func lockTrackForUploadMutation(tx *gorm.DB, trackID string) error {
 	var track model.Track
-	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", trackID).Take(&track).Error
+	return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?", trackID).Take(&track).Error
 }

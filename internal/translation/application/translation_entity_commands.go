@@ -116,7 +116,6 @@ func (s *TranslationService) SetEntitySourceLocale(
 		return nil, err
 	}
 	expectedDocumentRevision, err := parseExpectedTranslationDocumentRevision(
-		entityType,
 		req.Msg.GetExpectedDocumentRevision(),
 	)
 	if err != nil {

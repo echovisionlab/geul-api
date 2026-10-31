@@ -17,6 +17,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ApplyEmailLayoutProviderTranslationCandidate applies the request-time unit
@@ -47,13 +48,13 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	if now.IsZero() {
 		return errs.InternalMsg("Email Layout provider translation time is required")
 	}
-	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, job.EntityID, "UPDATE"); err != nil {
+	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, job.EntityID, clause.LockingStrengthUpdate); err != nil {
 		return err
 	}
 	if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, references, job.EntityID); err != nil {
 		return err
 	}
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, job.EntityID, "UPDATE")
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, job.EntityID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return err
 	}
@@ -71,7 +72,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	for _, descriptor := range descriptors {
 		allowed[descriptor.Handle] = struct{}{}
 	}
-	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, job.EntityID, job.TargetLocale, "UPDATE")
+	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, job.EntityID, job.TargetLocale, clause.LockingStrengthUpdate)
 	if err != nil {
 		return err
 	}

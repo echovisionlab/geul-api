@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // LoadTypedTranslationSourceDocument loads the canonical Release Rich Text
@@ -181,7 +182,7 @@ func applyTypedTranslationCandidateWithDB(
 	if err != nil {
 		return err
 	}
-	currentSource, err := loadReleaseSourceLocaleWithStrength(ctx, tx, job.EntityID, "SHARE")
+	currentSource, err := loadReleaseSourceLocaleWithStrength(ctx, tx, job.EntityID, clause.LockingStrengthShare)
 	if err != nil {
 		return err
 	}

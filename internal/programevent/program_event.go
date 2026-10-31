@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -425,7 +426,7 @@ func (s *ProgramEventService) createProgramEventWithDB(
 	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", event.Slug); err != nil {
 		return err
 	}
-	if err := validateProgramEventSeriesRelation(ctx, tx, event.ID, event.SeriesID, event.SeriesOrder); err != nil {
+	if err := validateProgramEventSeriesRelation(tx, event.ID, event.SeriesID, event.SeriesOrder); err != nil {
 		return err
 	}
 	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
@@ -658,10 +659,10 @@ func (s *ProgramEventService) setProgramEventStatus(
 	var current model.ProgramEvent
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status", "published_at", "updated_at").
 			First(&current, "id = ?", id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", id)
 			}
 			return errs.Internal(err)

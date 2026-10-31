@@ -91,7 +91,7 @@ type Series struct {
 	Title               string     `gorm:"-"`
 	Slug                string     `gorm:"column:slug"` // NOT NULL in schema
 	Description         *string    `gorm:"-"`
-	Status              string     `gorm:"column:status"` // draft, published
+	Status              string     `gorm:"column:status"` // SERIES_STATUS_DRAFT or SERIES_STATUS_PUBLISHED
 	SourceLocale        string     `gorm:"column:source_locale"`
 	FeaturedImageFileID *string    `gorm:"column:featured_image_file_id;type:uuid"`
 	OgAssetID           *string    `gorm:"-"`

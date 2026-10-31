@@ -138,7 +138,7 @@ func loadLegalTargetLocaleState(
 		Select("locale", "title", "updated_at").
 		Where("entity_id = ? AND locale = ?", entityID, locale)
 	if lockTarget {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var target legalTargetLocaleMetadataRow
 	if err := query.Take(&target).Error; err != nil {

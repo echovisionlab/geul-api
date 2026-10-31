@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -24,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
@@ -116,9 +115,6 @@ func (s *Lifecycle) AllocatePublicAsset(
 		return tx.WithContext(ctx).Create(&asset).Error
 	}
 	if err := s.db.WithContext(ctx).Transaction(createAsset); err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, nil, err
-		}
 		return nil, nil, errs.Internal(err)
 	}
 	target := &commonv1.AssetWriteTarget{
@@ -216,7 +212,7 @@ func (s *Lifecycle) CompletePublicAsset(
 	now := s.now().UTC()
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", assetID).
 			Take(&asset).Error; err != nil {
 			return err
@@ -245,7 +241,7 @@ func (s *Lifecycle) CompletePublicAsset(
 			}).Error
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("public_asset", assetID)
 		}
 		return nil, errs.FailedPrecondition(err.Error())
@@ -428,7 +424,7 @@ func (s *Lifecycle) ReadyAssetRefForSourceFile(
 		).
 		Order("created_at DESC").
 		Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("public_asset_for_source_file", sourceFileID)
 		}
 		return nil, errs.Internal(err)
@@ -459,7 +455,7 @@ func LoadReadyPublicAssetRefsForSourceFiles(
 	if _, ok := publicAssetKinds[expectedKind]; !ok {
 		return nil, errs.InvalidArgument("kind", "unsupported public asset kind")
 	}
-	sourceFileIDs = normalizedUniqueStrings(sourceFileIDs)
+	sourceFileIDs = sliceutil.SortedUniqueTrimmed(sourceFileIDs)
 	refs := make(map[string]*commonv1.AssetRef, len(sourceFileIDs))
 	if len(sourceFileIDs) == 0 {
 		return refs, nil
@@ -512,11 +508,11 @@ func (s *Lifecycle) RequestPublicAssetDeletion(ctx context.Context, assetID stri
 	assetID = strings.TrimSpace(assetID)
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status").
 			Where("id = ?", assetID).
 			Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("public_asset", assetID)
 			}
 			return errs.Internal(err)
@@ -606,7 +602,7 @@ func (s *Lifecycle) ReleaseExactPublicAssetBindings(
 ) error {
 	ownerType = strings.TrimSpace(ownerType)
 	ownerID = strings.TrimSpace(ownerID)
-	bindingKeys = normalizedUniqueStrings(bindingKeys)
+	bindingKeys = sliceutil.SortedUniqueTrimmed(bindingKeys)
 	if ownerType == "" || ownerID == "" {
 		return errs.InvalidArgument("binding", "owner type and owner ID are required")
 	}
@@ -647,7 +643,7 @@ func releaseExactPublicAssetBindings(
 
 	var current []model.PublicAssetBinding
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", ownerType, ownerID, bindingKeys).
 		Order("binding_key ASC").
 		Find(&current).Error; err != nil {
@@ -688,7 +684,7 @@ func loadPublicAssetBinding(
 	query := tx.WithContext(ctx).
 		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", ownerType, ownerID, bindingKey)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Limit(1).Find(&binding)
 	if result.Error != nil {
@@ -719,13 +715,13 @@ func lockPublicAssetsForUpdate(
 	tx *gorm.DB,
 	assetIDs []string,
 ) (map[string]model.PublicAsset, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.SortedUniqueTrimmed(assetIDs)
 	if len(assetIDs) == 0 {
 		return map[string]model.PublicAsset{}, nil
 	}
 	var assets []model.PublicAsset
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").
 		Where("id IN ?", assetIDs).
 		Order("id ASC").
@@ -744,13 +740,13 @@ func lockPublicAssetBindingsForAssets(
 	tx *gorm.DB,
 	assetIDs []string,
 ) ([]model.PublicAssetBinding, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.SortedUniqueTrimmed(assetIDs)
 	if len(assetIDs) == 0 {
 		return nil, nil
 	}
 	var bindings []model.PublicAssetBinding
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("asset_id").
 		Where("asset_id IN ?", assetIDs).
 		Order("asset_id ASC").
@@ -764,7 +760,7 @@ func transitionUnboundPublicAssetsToDeletePending(
 	assetIDs []string,
 	now time.Time,
 ) error {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.SortedUniqueTrimmed(assetIDs)
 	if len(assetIDs) == 0 {
 		return nil
 	}
@@ -794,22 +790,6 @@ func samePublicAssetBindings(left []model.PublicAssetBinding, right []model.Publ
 	return true
 }
 
-func normalizedUniqueStrings(values []string) []string {
-	unique := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			unique[value] = struct{}{}
-		}
-	}
-	result := make([]string, 0, len(unique))
-	for value := range unique {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
-
 func (s *Lifecycle) CompleteMediaGeneration(
 	ctx context.Context,
 	result *commonv1.MediaGenerationWriteResult,
@@ -830,7 +810,7 @@ func (s *Lifecycle) CompleteMediaGeneration(
 	now := s.now().UTC()
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var generation model.MediaGeneration
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", generationID).
 			Take(&generation).Error; err != nil {
 			return err
@@ -869,7 +849,7 @@ func (s *Lifecycle) CompleteMediaGeneration(
 			}).Error
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("media_generation", generationID)
 		}
 		return nil, errs.FailedPrecondition(err.Error())
@@ -884,7 +864,7 @@ func (s *Lifecycle) CompleteMediaGeneration(
 func (s *Lifecycle) loadPublicAsset(ctx context.Context, assetID string) (*model.PublicAsset, error) {
 	var asset model.PublicAsset
 	if err := s.db.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("public_asset", assetID)
 		}
 		return nil, errs.Internal(err)

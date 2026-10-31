@@ -16,7 +16,6 @@ import (
 func resolveInitialSourceLocale(
 	ctx context.Context,
 	db *gorm.DB,
-	_ auth.IdentityManager,
 	acceptLanguage string,
 ) string {
 	user := auth.GetUser(ctx)
@@ -43,14 +42,14 @@ func resolveInitialSourceLocale(
 	return translation.DefaultLocale
 }
 
-func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, identity auth.IdentityManager, requestedLocale, acceptLanguage string) (string, error) {
+func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, requestedLocale, acceptLanguage string) (string, error) {
 	if requestedLocale != "" {
 		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
 			return *locale, nil
 		}
 		return "", errs.InvalidArgument("source_locale", "must be a supported canonical locale")
 	}
-	return resolveInitialSourceLocale(ctx, db, identity, acceptLanguage), nil
+	return resolveInitialSourceLocale(ctx, db, acceptLanguage), nil
 }
 
 func nullableStringEqual(left *string, right *string) bool {

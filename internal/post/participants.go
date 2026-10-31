@@ -49,7 +49,7 @@ func (s *PostService) ListPostParticipants(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.PostId)
 			}
 			return errs.Internal(err)
@@ -596,7 +596,7 @@ func lockPostParticipantRoot(ctx context.Context, tx *gorm.DB, postID string) (m
 	}
 	if err := tx.WithContext(ctx).
 		Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").
 		Where("id = ?::uuid", postID).
 		Take(&row).Error; err != nil {

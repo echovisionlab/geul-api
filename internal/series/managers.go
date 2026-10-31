@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -37,7 +38,7 @@ func (s *SeriesService) GetSeriesWithManagers(
 	// Get series (admin/manager can see any status)
 	var series model.Series
 	if err := s.db.WithContext(ctx).First(&series, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("series", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -83,7 +84,7 @@ func (s *SeriesService) ListSeriesManagers(
 	// Verify series exists
 	var series model.Series
 	if err := s.db.WithContext(ctx).First(&series, "id = ?", req.Msg.SeriesId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("series", req.Msg.SeriesId)
 		}
 		return nil, errs.Internal(err)
@@ -138,9 +139,6 @@ func (s *SeriesService) AddSeriesManager(
 		return write(apply, compensate)
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -203,9 +201,6 @@ func (s *SeriesService) RemoveSeriesManager(
 		return write(apply, compensate)
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil

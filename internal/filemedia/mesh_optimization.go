@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -608,9 +609,9 @@ func lockMeshOptimizationCompletionFiles(
 	sourceFileID string,
 	outputFileID string,
 ) (bool, error) {
-	fileIDs := normalizedSortedFileIDs([]string{sourceFileID, outputFileID})
+	fileIDs := sliceutil.SortedUniqueTrimmed([]string{sourceFileID, outputFileID})
 	var files []model.File
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
 		return false, err
 	}
@@ -628,7 +629,7 @@ func lockMeshOptimizationCandidate(
 	candidateID string,
 ) (model.MeshOptimizationCandidate, error) {
 	var candidate model.MeshOptimizationCandidate
-	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", candidateID).Take(&candidate).Error
 	return candidate, err
 }

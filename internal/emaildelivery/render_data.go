@@ -2,6 +2,7 @@ package emaildelivery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"strings"
@@ -52,7 +53,6 @@ func BuildEmailRenderData(
 ) map[string]string {
 	settings, logos := loadEmailRenderDefaults(ctx, db, cdnDomain)
 	return buildEmailRenderDataWithDefaults(
-		cdnDomain,
 		siteOrigin,
 		requestedLocale,
 		input,
@@ -76,7 +76,7 @@ func loadEmailRenderDefaults(
 		Where("id = 1").
 		Take(&settings).Error
 	if err != nil {
-		if err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.Warn("Failed to load site settings for email defaults", "error", err)
 		}
 		return nil, emailLogoURLs{}
@@ -88,7 +88,6 @@ func loadEmailRenderDefaults(
 }
 
 func buildEmailRenderDataWithDefaults(
-	cdnDomain string,
 	siteOrigin string,
 	requestedLocale string,
 	input map[string]string,

@@ -97,7 +97,7 @@ func ApplyProviderTranslationCandidateWithDB(
 		if err != nil {
 			return err
 		}
-		if _, err := advanceMenuContentDocument(ctx, tx, current.ID, current.contentDocumentID, expected, now); err != nil {
+		if err := advanceMenuContentDocument(ctx, tx, current.ID, current.contentDocumentID, expected, now); err != nil {
 			return err
 		}
 	} else {
@@ -269,7 +269,7 @@ func SyncCurrentSourceLabelValues(
 		UpdatedAt time.Time `gorm:"column:updated_at"`
 	}
 	var row sourceRow
-	if err := db.WithContext(ctx).Table("menu_translation").Clauses(clause.Locking{Strength: "UPDATE"}).Select("items_json, updated_at").
+	if err := db.WithContext(ctx).Table("menu_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("items_json, updated_at").
 		Where("entity_id = ? AND locale = ?", menuID, root.SourceLocale).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.FailedPrecondition("Menu source locale values are not initialized")

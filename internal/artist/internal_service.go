@@ -143,7 +143,6 @@ func (s *InternalArtistService) LoadArtistBlockDocument(
 	var metadata *intrav1.ArtistDocumentMetadata
 	bootstrap, err := loadCreativeContentBlockBootstrap(
 		ctx, s.db, s.contentBlocks, s.spiceDB, artistContentEntity, req.Msg.ArtistId,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_ARTIST,
 		req.Msg.Principal,
 		func(ctx context.Context, tx *gorm.DB) error {
 			var loadErr error
@@ -242,7 +241,7 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 	var targetRevision string
 	var sourceLocale string
 	mutate := func(tx *gorm.DB) error {
-		domain, fenceErr := internalCreativeContentFence(artistContentEntity, req.Msg.ArtistId)(ctx, tx, documentID)
+		domain, fenceErr := internalCreativeContentFence(req.Msg.ArtistId)(ctx, tx, documentID)
 		if fenceErr != nil {
 			return fenceErr
 		}
@@ -262,7 +261,7 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 			result, targetRevision, err = applyArtistTargetLocaleBatch(
 				ctx, tx, s.contentBlocks, req.Msg.ArtistId, documentID, locale, batch,
 				req.Msg.ExpectedTargetRevision, false, now,
-				internalCreativeContentFence(artistContentEntity, req.Msg.ArtistId),
+				internalCreativeContentFence(req.Msg.ArtistId),
 			)
 			if err != nil {
 				return err
@@ -391,7 +390,7 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 			result, targetRevision, err = updateArtistTargetLocaleTitle(
 				ctx, tx, s.contentBlocks, req.Msg.ArtistId, documentID, locale,
 				expectedRevision, req.Msg.ExpectedTargetRevision, req.Msg.Title, time.Now().UTC(),
-				internalCreativeContentFence(artistContentEntity, req.Msg.ArtistId),
+				internalCreativeContentFence(req.Msg.ArtistId),
 			)
 			if err != nil || !result.Changed {
 				return err

@@ -189,7 +189,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 	decision := decideQueueDelivery(parent.Err() != nil, err, retryCount, c.config.MaxRetries)
 	switch decision {
 	case queueDeliveryShutdownRetry:
-		requeueCtx, requeueCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		requeueCtx, requeueCancel := shutdownRequeueContext(ctx)
 		defer requeueCancel()
 		if retryErr := c.pgmq.Retry(requeueCtx, c.db, c.config.Name, delivery.TransportID, 0); retryErr != nil {
 			emitQueueHandoff(requeueCtx, sharedtelemetry.EventQueueRetryFailed, c.config.Name, message, retryCount, sharedtelemetry.QueueFailureVisibilityUpdateFailed)
@@ -245,4 +245,13 @@ func retryDelay(config QueueConfig, retryCount int) time.Duration {
 func (c *QueueConsumer) Close() error {
 	c.closeOnce.Do(func() { close(c.closeCh) })
 	return nil
+}
+
+const shutdownRequeueTimeout = 5 * time.Second
+
+// shutdownRequeueContext resets a delivery's visibility after the consumer
+// shutdown has cancelled ctx, keeping its span and correlation for the
+// handoff telemetry.
+func shutdownRequeueContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), shutdownRequeueTimeout)
 }

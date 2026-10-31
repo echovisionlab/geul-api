@@ -50,7 +50,7 @@ func TestAuditFailuresKeepCauseAndAction(t *testing.T) {
 					}
 					return sharedtelemetry.NewPostVersionCreatedAuditRecord(metadata, "post-1", "version-1", []string{"1b6bcad2-c90d-49e9-bec7-f9a4ba6b2894"})
 				})
-			if err != failure {
+			if err != failure { //nolint:errorlint // asserts the error is returned unchanged
 				t.Fatalf("error = %v, want original failure", err)
 			}
 			lines := strings.Split(strings.TrimSpace(output.String()), "\n")

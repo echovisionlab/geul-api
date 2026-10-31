@@ -382,7 +382,7 @@ func lockPostAuthorizationRoot(ctx context.Context, tx *gorm.DB, postID string) 
 	}
 	if err := tx.WithContext(ctx).
 		Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("status").
 		Where("id = ?::uuid", postID).
 		Take(&row).Error; err != nil {

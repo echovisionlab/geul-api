@@ -84,9 +84,7 @@ var guardedPackageRoots = []string{
 
 var forbiddenDependencyRoots = []string{
 	"internal/adapters",
-	"internal/handler",
 	"internal/scheduler",
-	"internal/service",
 	"internal/worker",
 	"cmd",
 }

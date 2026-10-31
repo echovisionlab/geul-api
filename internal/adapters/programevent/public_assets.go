@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -45,7 +46,7 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 	fileIDs []string,
 	kinds ...string,
 ) (map[string]*commonv1.AssetRef, error) {
-	ids := uniqueNonEmptyIDs(fileIDs)
+	ids := sliceutil.UniqueTrimmed(fileIDs)
 	result := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -80,21 +81,4 @@ func (a *PublicAssets) ResolveReadyAssetsForSourceFiles(
 		result[*asset.SourceFileID] = ref
 	}
 	return result, nil
-}
-
-func uniqueNonEmptyIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }

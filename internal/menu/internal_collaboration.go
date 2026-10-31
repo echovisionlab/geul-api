@@ -68,7 +68,7 @@ func (s *InternalMenuService) LoadDocument(
 	if err != nil {
 		return nil, err
 	}
-	if _, err := canonicalMenuCollaborationUUID(req.Msg.MenuId, "menu_id"); err != nil {
+	if err := requireCanonicalMenuCollaborationUUID(req.Msg.MenuId, "menu_id"); err != nil {
 		return nil, err
 	}
 
@@ -117,10 +117,10 @@ func (s *InternalMenuService) SaveDocument(
 	if err != nil {
 		return nil, err
 	}
-	if _, err := canonicalMenuCollaborationUUID(r.MenuId, "menu_id"); err != nil {
+	if err := requireCanonicalMenuCollaborationUUID(r.MenuId, "menu_id"); err != nil {
 		return nil, err
 	}
-	if _, err := canonicalMenuCollaborationUUID(r.ExpectedDocumentRevision, "expected_document_revision"); err != nil {
+	if err := requireCanonicalMenuCollaborationUUID(r.ExpectedDocumentRevision, "expected_document_revision"); err != nil {
 		return nil, err
 	}
 	contributor, err := canonicalMenuCollaborationContributor(r.ContributorMemberIds)
@@ -228,7 +228,7 @@ func (s *InternalMenuService) SaveDocument(
 			if err != nil {
 				return err
 			}
-			if _, err := advanceMenuContentDocument(
+			if err := advanceMenuContentDocument(
 				ctx, tx, previous.ID, previous.contentDocumentID, expected, now,
 			); err != nil {
 				return err
@@ -272,23 +272,23 @@ func canonicalMenuRoomLocale(value string) (string, error) {
 	return trimmed, nil
 }
 
-func canonicalMenuCollaborationUUID(value, field string) (uuid.UUID, error) {
+func requireCanonicalMenuCollaborationUUID(value, field string) error {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(trimmed)
 	if err != nil || parsed == uuid.Nil || parsed.String() != trimmed || value != trimmed {
 		if err != nil {
 			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.canonicalMenuCollaborationUUID", "outcome", "failed", failurecause.Attr(err))
 		}
-		return uuid.Nil, errs.InvalidArgument(field, "must be a canonical UUID")
+		return errs.InvalidArgument(field, "must be a canonical UUID")
 	}
-	return parsed, nil
+	return nil
 }
 
 func canonicalMenuCollaborationContributor(values []string) (string, error) {
 	if len(values) != 1 {
 		return "", errs.InvalidArgument("contributor_member_ids", "requires exactly one origin Member")
 	}
-	if _, err := canonicalMenuCollaborationUUID(values[0], "contributor_member_ids"); err != nil {
+	if err := requireCanonicalMenuCollaborationUUID(values[0], "contributor_member_ids"); err != nil {
 		return "", err
 	}
 	return values[0], nil

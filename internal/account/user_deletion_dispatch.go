@@ -54,7 +54,7 @@ func DispatchScheduledUserDeletion(
 			return err
 		}
 		var request model.UserDeletionRequest
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ? AND member_id = ?::uuid AND identity_id = ?::uuid AND lifecycle_state IN ? AND scheduled_at IS NOT NULL AND scheduled_at <= ?", requestID, candidate.MemberID, candidate.IdentityID, accountLifecycleDeletionPendingStates, now).
 			Take(&request).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -33,7 +34,7 @@ func (s *FormService) validateShareToken(
 
 	var shareLink model.ShareLink
 	if err := s.db.WithContext(ctx).First(&shareLink, "token = ?", *shareToken).Error; err != nil {
-		if err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_share_link", "outcome", "failed", failurecause.Attr(err, *shareToken))
 		}
 		return formShareTokenState{}
@@ -86,7 +87,7 @@ func (s *FormService) findFormBySlugOrID(ctx context.Context, slugOrID string) (
 	}
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("form not found")
 		}
 		return nil, errs.Internal(err)

@@ -477,7 +477,7 @@ func (campaignEmailAuthoringConcurrencyFixture) LockLayoutsForCampaign(
 	var layouts []CampaignLayoutReference
 	if err := tx.WithContext(ctx).
 		Table("email_layout").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id, updated_at").
 		Where("id IN ?", ordered).
 		Order("id ASC").

@@ -30,7 +30,7 @@ func TestArtistTranslationApplyFenceAllowsUnpublishedRootAndRejectsDeletedRoot(t
 
 	applyFence := func() error {
 		return db.Transaction(func(tx *gorm.DB) error {
-			context, fenceErr := internalCreativeContentFence(artistContentEntity, artistID)(t.Context(), tx, documentID)
+			context, fenceErr := internalCreativeContentFence(artistID)(t.Context(), tx, documentID)
 			if fenceErr == nil {
 				require.Equal(t, "en", context.SourceLocale)
 			}

@@ -2,8 +2,8 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +11,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -123,7 +124,7 @@ func deriveCampaignDeliveryTarget(
 	}
 	segment, err := audienceTargets.LockTarget(ctx, tx, segmentID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return CampaignDeliveryTarget{}, errs.FailedPrecondition(errs.MsgCampaignSegmentNotFound)
 		}
 		return CampaignDeliveryTarget{}, err
@@ -159,7 +160,7 @@ func ValidateCampaignDeliveryTarget(target CampaignDeliveryTarget) error {
 	if target.CreatedAfter != nil && target.CreatedBefore != nil && target.CreatedAfter.After(*target.CreatedBefore) {
 		return fmt.Errorf("email delivery target created_after exceeds created_before")
 	}
-	if len(sortedUniqueNonEmptyCampaignStrings(target.ExcludedMemberIDs)) != len(target.ExcludedMemberIDs) {
+	if len(sliceutil.SortedUniqueTrimmed(target.ExcludedMemberIDs)) != len(target.ExcludedMemberIDs) {
 		return fmt.Errorf("email delivery target excluded member IDs must be unique and non-empty")
 	}
 	if err := validateCampaignRecipientScope(target.RecipientScope); err != nil {
@@ -270,22 +271,4 @@ func campaignDeliveryTargetRecipientSelection(
 		return nil, fmt.Errorf("unsupported email delivery target mode: %s", target.Mode)
 	}
 	return selection, nil
-}
-
-func sortedUniqueNonEmptyCampaignStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
 }

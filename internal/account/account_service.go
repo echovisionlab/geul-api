@@ -119,15 +119,14 @@ func NewAuditedAccountService(
 	return service
 }
 
-func (s *AccountService) appendRequestAudit(
+func (s *AccountService) appendAccountUpdatedAudit(
 	ctx context.Context,
-	action sharedtelemetry.AuditAction,
 	build domainaudit.Builder,
 ) error {
 	if s.auditWriter == nil {
 		return nil
 	}
-	return domainaudit.AppendRequestTransaction(ctx, s.db, s.auditWriter, action, build)
+	return domainaudit.AppendRequestTransaction(ctx, s.db, s.auditWriter, sharedtelemetry.AuditAccountUpdated, build)
 }
 
 type accountSummaryRow struct {

@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -206,7 +207,7 @@ func (s *PostService) loadPublicPostSnapshot(
 	var snapshot publicPostSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Preload("Categories").
 			Preload("Tags").
 			Preload("Series").
@@ -312,7 +313,7 @@ func (s *PostService) List(
 		Preload("Tags").
 		Preload("FeaturedImage"))
 
-	query, err := s.applyPublicPostFilters(ctx, query, req.Msg.Filters)
+	query, err := s.applyPublicPostFilters(query, req.Msg.Filters)
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +374,6 @@ func (s *PostService) List(
 }
 
 func (s *PostService) applyPublicPostFilters(
-	ctx context.Context,
 	query *gorm.DB,
 	filters []*commonv1.FilterSpec,
 ) (*gorm.DB, error) {
@@ -466,7 +466,7 @@ func (s *PostService) ListMapFeatures(
 		query = query.Where("(map_place.lng >= ? OR map_place.lng <= ?)", viewport.West, viewport.East)
 	}
 
-	query, err = s.applyPublicPostFilters(ctx, query, req.Msg.Filters)
+	query, err = s.applyPublicPostFilters(query, req.Msg.Filters)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,7 +1009,7 @@ func (s *PostService) overlayPostSourceLocaleDocuments(
 // loadPostAuthorMembers resolves durable post authors and Member
 // summaries in a fixed number of queries for any page size.
 func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
-	ids := uniqueNonEmptyIDs(postIDs)
+	ids := sliceutil.UniqueTrimmed(postIDs)
 	result := make(map[string][]*commonv1.MemberSummary, len(ids))
 	if len(ids) == 0 {
 		return result, nil

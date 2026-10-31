@@ -1,8 +1,11 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
+	"errors"
+	"log/slog"
+
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -12,7 +15,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
-	"log/slog"
 )
 
 // GetForm retrieves a form by ID or slug.
@@ -36,7 +38,7 @@ func (s *FormService) GetForm(
 		query = query.Where("slug = ?", req.Msg.Id)
 	}
 	if err := query.First(&form).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("form", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

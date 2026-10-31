@@ -88,9 +88,9 @@ func (s *AudienceService) RestoreSegment(
 	var segment model.AudienceSegment
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&segment, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("segment not found")
 			}
 			return errs.Internal(err)
@@ -149,7 +149,7 @@ func archiveSegmentOnce(
 ) error {
 	var observed model.AudienceSegment
 	if err := tx.WithContext(ctx).Select("id", "archived_at").First(&observed, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")
 		}
 		return errs.Internal(err)
@@ -157,7 +157,7 @@ func archiveSegmentOnce(
 	if observed.ArchivedAt != nil {
 		var locked model.AudienceSegment
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "archived_at").
 			First(&locked, "id = ?", segmentID).Error; err != nil {
 			return errs.Internal(err)
@@ -194,9 +194,9 @@ func archiveSegmentOnce(
 	}
 	var segment model.AudienceSegment
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&segment, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")
 		}
 		return errs.Internal(err)
@@ -591,7 +591,7 @@ func lockActiveDeliveryRuns(
 	}
 	if err := tx.WithContext(ctx).
 		Table("email_delivery_run").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("audience_segment_id = ? AND status IN ?", segmentID, []string{deliveryRunScheduled, deliveryRunSending}).
 		Order("id ASC").
@@ -615,7 +615,7 @@ func lockAudienceCampaigns(
 	}
 	if err := tx.WithContext(ctx).
 		Table("campaign").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("segment_id = ?", segmentID).
 		Order("id ASC").

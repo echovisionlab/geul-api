@@ -33,7 +33,7 @@ func (s *EmailTemplateService) GetEventMappings(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.List()
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -93,9 +93,6 @@ func (s *EmailTemplateService) UpdateEventMapping(
 	})
 
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -162,7 +159,7 @@ func lockEmailEventMappingTemplates(
 ) ([]model.EmailTemplate, error) {
 	var templates []model.EmailTemplate
 	query := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("event_key = ?", eventKey)
 	if targetTemplateID != "" {
 		query = query.Or("id = ?", targetTemplateID)

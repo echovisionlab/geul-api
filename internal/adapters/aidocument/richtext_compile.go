@@ -225,11 +225,11 @@ func (c *RichTextCodec) newBlock(kind core.BlockKind, id string) (*contentv1.Ric
 		return nil, nil, fmt.Errorf("unsupported Rich Text block kind %q", kind)
 	}
 	base := &contentv1.RichTextBlock{Id: id}
-	if err := initializeOneofMessage(base.ProtoReflect(), "value", protoCase); err != nil {
+	if err := initializeOneofMessage(base.ProtoReflect(), protoCase); err != nil {
 		return nil, nil, err
 	}
 	locale := &contentv1.RichTextBlockLocale{BlockId: id}
-	if err := initializeOneofMessage(locale.ProtoReflect(), "value", protoCase); err != nil {
+	if err := initializeOneofMessage(locale.ProtoReflect(), protoCase); err != nil {
 		return nil, nil, err
 	}
 	return &contentv1.RichTextBlockNode{Block: base}, locale, nil

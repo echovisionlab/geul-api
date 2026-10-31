@@ -33,22 +33,7 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 		)
 	}
 	if err := reconcile(); err != nil {
-
-		var privateBodies []string
-		pending := []error{err}
-		for len(pending) > 0 {
-			current := pending[len(pending)-1]
-			pending = pending[:len(pending)-1]
-			if upstream, ok := current.(*auth.KratosHTTPError); ok {
-				privateBodies = append(privateBodies, upstream.Body)
-			}
-			if joined, ok := current.(interface{ Unwrap() []error }); ok {
-				pending = append(pending, joined.Unwrap()...)
-			} else if next := errors.Unwrap(current); next != nil {
-				pending = append(pending, next)
-			}
-		}
-		slog.ErrorContext(ctx, "Initial account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, privateBodies...))
+		slog.ErrorContext(ctx, "Initial account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, kratosErrorBodies(err)...))
 	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -58,25 +43,31 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := reconcile(); err != nil {
-
-				var privateBodies []string
-				pending := []error{err}
-				for len(pending) > 0 {
-					current := pending[len(pending)-1]
-					pending = pending[:len(pending)-1]
-					if upstream, ok := current.(*auth.KratosHTTPError); ok {
-						privateBodies = append(privateBodies, upstream.Body)
-					}
-					if joined, ok := current.(interface{ Unwrap() []error }); ok {
-						pending = append(pending, joined.Unwrap()...)
-					} else if next := errors.Unwrap(current); next != nil {
-						pending = append(pending, next)
-					}
-				}
-				slog.ErrorContext(ctx, "Account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, privateBodies...))
+				slog.ErrorContext(ctx, "Account lifecycle identity reconciliation failed", "failure_cause", failurecause.Message(err, kratosErrorBodies(err)...))
 			}
 		}
 	}
+}
+
+// kratosErrorBodies collects the private upstream body of every Kratos error
+// in err, including each branch of a joined reconciliation failure, which
+// errors.As would stop at after the first match.
+func kratosErrorBodies(err error) []string {
+	var bodies []string
+	pending := []error{err}
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if upstream, ok := current.(*auth.KratosHTTPError); ok { //nolint:errorlint // the loop visits every node itself
+			bodies = append(bodies, upstream.Body)
+		}
+		if joined, ok := current.(interface{ Unwrap() []error }); ok {
+			pending = append(pending, joined.Unwrap()...)
+		} else if next := errors.Unwrap(current); next != nil {
+			pending = append(pending, next)
+		}
+	}
+	return bodies
 }
 
 // ReconcileScheduledIdentityStates repairs the external deactivation and

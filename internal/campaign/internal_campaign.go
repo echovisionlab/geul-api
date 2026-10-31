@@ -150,7 +150,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 					Batch: batch, ExpectedDocumentRevision: expectedDocumentRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
 					AllowCreate:            false, Now: now,
-					Fence: campaignEmailContentFence(campaignContentEntity, campaignID),
+					Fence: campaignEmailContentFence(campaignID),
 				},
 			)
 			if applyErr != nil {
@@ -189,7 +189,6 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			tx,
 			batch,
 			campaignEmailContentFence(
-				campaignContentEntity,
 				campaignID,
 			),
 		)
@@ -218,7 +217,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			projectionLocales = []string{domain.SourceLocale}
 		}
 		return projectCampaignEmailMaterializedContent(
-			ctx, tx, campaignContentEntity, campaignID, snapshot, projectionLocales, now,
+			ctx, tx, campaignID, snapshot, projectionLocales, now,
 		)
 	}); err != nil {
 		return nil, asCampaignEmailConnectError(err)
@@ -300,7 +299,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
 					AllowCreate:            false, SetSubject: true, Subject: req.Msg.Subject, Now: now,
-					Fence: campaignEmailContentFence(campaignContentEntity, campaignID),
+					Fence: campaignEmailContentFence(campaignID),
 				},
 			)
 			if applyErr != nil {
@@ -339,7 +338,6 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 			tx,
 			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
 			campaignEmailContentFence(
-				campaignContentEntity,
 				campaignID,
 			),
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
@@ -368,7 +366,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 			return normalizeCampaignEmailContentBlockError(campaignContentEntity, advanceErr)
 		}
 		return projectCampaignEmailMaterializedContent(
-			ctx, tx, campaignContentEntity, campaignID, snapshot, []string{domain.SourceLocale}, now,
+			ctx, tx, campaignID, snapshot, []string{domain.SourceLocale}, now,
 		)
 	}); err != nil {
 		return nil, asCampaignEmailConnectError(err)

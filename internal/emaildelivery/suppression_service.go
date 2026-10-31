@@ -2,6 +2,7 @@ package emaildelivery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -116,11 +117,11 @@ func (s *EmailSuppressionService) releaseEmailSuppression(
 		findErr := gorm.ErrRecordNotFound
 		if normalized != "" {
 			findErr = tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Where("LOWER(email) = ? AND released_at IS NULL", normalized).
 				First(&suppression).Error
 		}
-		if findErr != nil && findErr != gorm.ErrRecordNotFound {
+		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return findErr
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
@@ -129,7 +130,7 @@ func (s *EmailSuppressionService) releaseEmailSuppression(
 		if normalized == "" {
 			return errs.Required("email")
 		}
-		if findErr == gorm.ErrRecordNotFound {
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		now := time.Now().UTC()

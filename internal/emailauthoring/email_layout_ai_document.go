@@ -1,17 +1,18 @@
 package emailauthoring
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"log/slog"
 	"maps"
 	"strings"
 	"time"
+
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -139,7 +140,7 @@ func (s *EmailLayoutAIDocumentService) Load(
 
 	var state EmailLayoutAIDocumentState
 	err = s.layouts.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, "SHARE"); err != nil {
+		if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, clause.LockingStrengthShare); err != nil {
 			return err
 		}
 		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.layouts.references, layoutID); err != nil {
@@ -149,7 +150,7 @@ func (s *EmailLayoutAIDocumentService) Load(
 		if err != nil {
 			return err
 		}
-		state, err = s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, "SHARE")
+		state, err = s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, clause.LockingStrengthShare)
 		return err
 	})
 	if err != nil {
@@ -194,7 +195,7 @@ func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 
 	var output EmailLayoutAIDocumentMutationResult
 	err = s.layouts.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, "UPDATE"); err != nil {
+		if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, clause.LockingStrengthUpdate); err != nil {
 			return err
 		}
 		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.layouts.references, layoutID); err != nil {
@@ -207,7 +208,7 @@ func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 		if err := lockEmailAIDocumentContributor(ctx, tx, memberID); err != nil {
 			return err
 		}
-		current, err := s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, "UPDATE")
+		current, err := s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
@@ -352,7 +353,7 @@ func (s *EmailLayoutAIDocumentService) applyAIDocumentMutationInTransaction(
 		}
 	}
 	next, err := s.loadStateAfterAuthorization(
-		ctx, tx, mutation.LayoutID, mutation.Locale, mutation.ContributorMemberID, "UPDATE",
+		ctx, tx, mutation.LayoutID, mutation.Locale, mutation.ContributorMemberID, clause.LockingStrengthUpdate,
 	)
 	if err != nil {
 		return EmailLayoutAIDocumentMutationResult{}, err

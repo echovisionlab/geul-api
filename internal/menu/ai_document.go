@@ -505,7 +505,7 @@ func loadMenuAIDocumentSnapshot(
 	}
 	query := db.WithContext(ctx)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var root model.Menu
 	if err := query.First(&root, "id = ?", menuID).Error; err != nil {
@@ -597,7 +597,7 @@ func loadMenuAIDocumentLocaleRow(
 	query := db.WithContext(ctx).Table("menu_translation").
 		Select("items_json, updated_at").Where("entity_id = ? AND locale = ?", menuID, locale)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var stored struct {
 		ItemsJSON []byte    `gorm:"column:items_json"`

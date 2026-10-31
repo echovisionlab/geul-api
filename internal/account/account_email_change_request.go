@@ -85,7 +85,7 @@ func (s *AccountEmailChangeLifecycle) AuthorizeSettingsGeneratedVerification(
 		Where("identity_id = ?::uuid AND requested_email_address = ?", identityID, recipient).
 		First(&request)
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return false, nil
 		}
 		return false, result.Error

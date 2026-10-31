@@ -9,7 +9,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -200,15 +199,11 @@ func requireLockedReleaseAction(
 	checker CollaborationPermissionChecker,
 	releaseID string,
 	action releaseObjectAction,
-) (*model.Release, error) {
-	root, err := lockReleaseForUpdate(ctx, tx, releaseID)
-	if err != nil {
-		return nil, err
+) error {
+	if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
+		return err
 	}
-	if err := requireActiveReleaseAction(ctx, tx, checker, releaseID, action); err != nil {
-		return nil, err
-	}
-	return root, nil
+	return requireActiveReleaseAction(ctx, tx, checker, releaseID, action)
 }
 
 func requireActiveReleaseAction(

@@ -3,6 +3,7 @@ package filemedia
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -376,10 +377,10 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 			Where("block.id = ? AND block.kind = 'file'", *selector.BlockID).
 			Where("attachment.reference_path = ? AND attachment.selector_kind = 'active'", *selector.ReferencePath)
 		if lock {
-			query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "attachment"}})
+			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "attachment"}})
 		}
 		if err := query.Take(&row).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fileDownloadPolicyRelation{}, errs.NotFound("File Block attachment", *selector.BlockID)
 			}
 			return fileDownloadPolicyRelation{}, errs.Internal(err)
@@ -394,10 +395,10 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 		Joins("JOIN file ON file.id = track.audio_original_file_id AND file.delete_requested_at IS NULL").
 		Where("track.id = ?", selector.EntityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "track"}})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "track"}})
 	}
 	if err := query.Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fileDownloadPolicyRelation{}, errs.NotFound("Track original audio", selector.EntityID)
 		}
 		return fileDownloadPolicyRelation{}, errs.Internal(err)
@@ -651,33 +652,33 @@ func appendRelationFileDownloadPolicyAudit(
 	return domainaudit.AppendOptionalRequest(ctx, tx, writer, action, build)
 }
 
-func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) (*auth.UserInfo, error) {
+func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return nil, errs.AuthenticationRequired()
+		return errs.AuthenticationRequired()
 	}
 	if user.Banned {
-		return nil, errs.AccountBanned()
+		return errs.AccountBanned()
 	}
 	can, err := policyv1.File.List()
 	if err != nil {
 		slog.WarnContext(ctx, "requireFileDownloadAuthor: AuthorRequired", failurecause.Attr(err))
-		return nil, errs.AuthorRequired()
+		return errs.AuthorRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
 		slog.WarnContext(ctx, "requireFileDownloadAuthor: AuthenticationRequired", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
 		slog.ErrorContext(ctx, "requireFileDownloadAuthor: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
-		return nil, errs.AuthorRequired()
+		return errs.AuthorRequired()
 	}
-	return user, nil
+	return nil
 }
 
 func uniqueUUIDs(values []string, field string) ([]string, error) {

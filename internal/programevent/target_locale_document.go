@@ -52,7 +52,7 @@ func loadOptionalProgramEventLocaleMetadataRow(
 		Select("locale", "summary", "updated_at").
 		Where("entity_id = ? AND locale = ?", eventID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row programEventLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {

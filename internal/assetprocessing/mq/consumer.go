@@ -121,7 +121,7 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 		return
 	}
 	if parent.Err() != nil {
-		retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		retryCtx, retryCancel := shutdownRequeueContext(parent)
 		defer retryCancel()
 		retryErr := c.client.Retry(retryCtx, c.conn.DB(), c.config.Name, message.TransportID, 0)
 		if retryErr != nil {
@@ -191,4 +191,13 @@ func (c *Consumer) Close() error {
 	c.closeOnce.Do(func() { close(c.done) })
 	c.wg.Wait()
 	return nil
+}
+
+const shutdownRequeueTimeout = 5 * time.Second
+
+// shutdownRequeueContext requeues a delivery after the worker shutdown has
+// cancelled parent, keeping its correlation and trace for the requeue
+// telemetry.
+func shutdownRequeueContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), shutdownRequeueTimeout)
 }

@@ -2,11 +2,13 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -456,7 +458,7 @@ func lockEmailDeliveryRunForMutation(
 		return lockedEmailDeliveryRun{}, false, err
 	}
 
-	lock := clause.Locking{Strength: "UPDATE", Options: lockOptions}
+	lock := clause.Locking{Strength: clause.LockingStrengthUpdate, Options: lockOptions}
 	locked := lockedEmailDeliveryRun{}
 	campaignID := strings.TrimSpace(ptrStringValue(identity.CampaignID))
 	campaign, skipped, err := lockEmailDeliveryCampaign(
@@ -475,7 +477,7 @@ func lockEmailDeliveryRunForMutation(
 	if err := tx.WithContext(ctx).
 		Clauses(lock).
 		First(&locked.Run, "id = ?", runID).Error; err != nil {
-		if lockOptions != "" && err == gorm.ErrRecordNotFound {
+		if lockOptions != "" && errors.Is(err, gorm.ErrRecordNotFound) {
 			return lockedEmailDeliveryRun{}, true, nil
 		}
 		return lockedEmailDeliveryRun{}, false, err
@@ -509,7 +511,7 @@ func lockEmailDeliveryCampaign(
 	if err == nil {
 		return &campaign, false, nil
 	}
-	if lockOptions != "" && err == gorm.ErrRecordNotFound {
+	if lockOptions != "" && errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, true, nil
 	}
 	return nil, false, err

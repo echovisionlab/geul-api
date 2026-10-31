@@ -19,6 +19,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -137,7 +138,7 @@ func (s *PostService) ExecuteAIDocumentMutation(
 	effects := &postAIDocumentMutationEffects{}
 	var mutation AIDocumentMutation
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadPostAIDocumentRoot(ctx, tx, postID, "UPDATE")
+		root, err := loadPostAIDocumentRoot(ctx, tx, postID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
@@ -286,7 +287,6 @@ func postAIDocumentUpdatedEvent(
 		[]string{mutation.ContributorMemberID.String()},
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
 		mutation.Locale,
-		true,
 		nil,
 		true,
 	)
@@ -483,7 +483,7 @@ func loadPostAIDocumentMetadataForUpdate(
 	var row aiDocumentMetadataRow
 	err := tx.WithContext(ctx).
 		Table("post_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("title", "summary").
 		Where("entity_id = ?::uuid AND locale = ?", postID, locale).
 		Take(&row).Error
@@ -575,7 +575,7 @@ func applyPostAIDocumentMetadata(
 		return contentblock.MetadataEffect{}, err
 	}
 	if patch.SetCategories {
-		next := normalizeStringIDs(patch.CategoryIDs)
+		next := sliceutil.UniqueTrimmed(patch.CategoryIDs)
 		slices.Sort(next)
 		if !slices.Equal(currentCategories, next) {
 			if err := replacePostTaxonomyLinks(ctx, tx, "category", "post_category", "category_id", mutation.PostID, next); err != nil {
@@ -586,7 +586,7 @@ func applyPostAIDocumentMetadata(
 		}
 	}
 	if patch.SetTags {
-		next := normalizeStringIDs(patch.TagIDs)
+		next := sliceutil.UniqueTrimmed(patch.TagIDs)
 		slices.Sort(next)
 		if !slices.Equal(currentTags, next) {
 			if err := replacePostTaxonomyLinks(ctx, tx, "tag", "post_tag", "tag_id", mutation.PostID, next); err != nil {

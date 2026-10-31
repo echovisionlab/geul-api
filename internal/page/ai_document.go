@@ -80,7 +80,7 @@ func (s *AIDocumentService) Load(ctx context.Context, pageID, locale string) (AI
 	}
 	var state AIDocumentState
 	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, "SHARE")
+		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}
@@ -302,7 +302,7 @@ func loadPageAIDocumentLocale(ctx context.Context, tx *gorm.DB, pageID, locale s
 	query := tx.WithContext(ctx).Table("page_translation").Select("title", "summary").
 		Where("entity_id = ? AND locale = ?", pageID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -370,7 +370,7 @@ func applyPageAIDocumentMetadata(
 
 func lockPageAIDocumentSource(ctx context.Context, tx *gorm.DB, pageID string) (model.Page, error) {
 	var page model.Page
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", pageID).Take(&page).Error; err != nil {
 		return model.Page{}, err
 	}

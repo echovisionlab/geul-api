@@ -9,6 +9,7 @@ linters:
     - bodyclose
     - durationcheck
     - errcheck
+    - errorlint
     - govet
     - ineffassign
     - makezero
@@ -17,9 +18,14 @@ linters:
     - rowserrcheck
     - sqlclosecheck
     - staticcheck
+    - unparam
     - unused
     - wastedassign
   settings:
+    errorlint:
+      errorf: false
+      asserts: true
+      comparison: true
     errcheck:
       exclude-functions:
         # Read-side closes: response bodies report nothing useful on Close, and
@@ -39,12 +45,14 @@ linters:
   exclusions:
     rules:
       # Tests build throwaway requests and fixtures; context plumbing and
-      # cleanup error checks there add noise without catching defects.
+      # cleanup error checks there add noise without catching defects, and
+      # fixture helpers take constant arguments on purpose.
       - path: _test\.go
         linters:
           - bodyclose
           - errcheck
           - noctx
+          - unparam
 
 issues:
   max-issues-per-linter: 0

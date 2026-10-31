@@ -173,7 +173,7 @@ func (s *AccountService) setAccountRoleWithIdentityMutation(
 	})
 	// Execute returns the sentinel unchanged only after a successful rollback.
 	// A joined rollback failure must still reach the caller.
-	if err == errAccountRoleUnchanged {
+	if err == errAccountRoleUnchanged { //nolint:errorlint // identity: a joined rollback failure must not match
 		return nil
 	}
 	if err != nil {

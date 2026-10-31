@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -117,7 +118,7 @@ func (s *ProgramEventService) UpdateProgramEventCredit(
 		}
 		if err := tx.WithContext(ctx).
 			First(&credit, "event_id = ? AND id = ?", req.Msg.EventId, req.Msg.CreditId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event credit", req.Msg.CreditId)
 			}
 			return errs.Internal(err)
@@ -181,7 +182,7 @@ func (s *ProgramEventService) DeleteProgramEventCredit(
 		}
 		var credit model.ProgramEventCredit
 		if err := tx.WithContext(ctx).First(&credit, "event_id = ? AND id = ?", req.Msg.EventId, req.Msg.CreditId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event credit", req.Msg.CreditId)
 			}
 			return errs.Internal(err)
@@ -406,7 +407,7 @@ func replaceProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string
 		return result, err
 	}
 	var existing []model.ProgramEventCredit
-	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("event_id = ?", eventID).Order("sort_order ASC, created_at ASC").Find(&existing).Error; err != nil {
+	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("event_id = ?", eventID).Order("sort_order ASC, created_at ASC").Find(&existing).Error; err != nil {
 		return result, errs.Internal(err)
 	}
 	previousIDs := make([]string, len(existing))

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -228,7 +229,7 @@ func (c *SpiceDBClient) verifyResourceRelationshipsDeletedAtLeastAsFresh(ctx con
 			return fmt.Errorf("verify deleted resource relationships: %w", readErr)
 		}
 		response, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			continue
 		}
 		if recvErr != nil {
@@ -253,7 +254,7 @@ func (c *SpiceDBClient) collectSnapshotRelationships(ctx context.Context, filter
 	}
 	for {
 		response, recvErr := stream.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			return nil
 		}
 		if recvErr != nil {

@@ -36,12 +36,12 @@ func (s *Lifecycle) CancelEntityWithDB(
 	}
 	now := s.now().UTC()
 	var targets []model.OgGenerationTarget
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("entity_type = ? AND entity_id = ?", policy.Name, entityID).
 		Order("COALESCE(locale, ''), id").Find(&targets).Error; err != nil {
 		return err
 	}
-	return cancelOgGenerationTargetsWithDB(ctx, tx, targets, now)
+	return cancelOgGenerationTargetsWithDB(tx, targets, now)
 }
 
 func (s *Lifecycle) CancelEntity(ctx context.Context, entityType managev1.OgEntityType, entityID string) error {
@@ -76,16 +76,15 @@ func (s *Lifecycle) CancelTargetWithDB(
 		return errs.InvalidArgument("entity_id", "legal OG targets must use the canonical route identity")
 	}
 	var targets []model.OgGenerationTarget
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("entity_type = ? AND entity_id = ? AND locale = ?", policy.Name, entityID, locale).
 		Order("id").Find(&targets).Error; err != nil {
 		return err
 	}
-	return cancelOgGenerationTargetsWithDB(ctx, tx, targets, s.now().UTC())
+	return cancelOgGenerationTargetsWithDB(tx, targets, s.now().UTC())
 }
 
 func cancelOgGenerationTargetsWithDB(
-	ctx context.Context,
 	tx *gorm.DB,
 	targets []model.OgGenerationTarget,
 	now time.Time,
@@ -93,7 +92,7 @@ func cancelOgGenerationTargetsWithDB(
 	runIDs := make(map[string]struct{})
 	for i := range targets {
 		var generations []model.OgGeneration
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("target_id = ? AND status IN ?", targets[i].ID, []string{
 				model.OgGenerationStatusQueued,
 				model.OgGenerationStatusProcessing,

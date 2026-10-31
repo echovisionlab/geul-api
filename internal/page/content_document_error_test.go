@@ -15,7 +15,7 @@ func TestNormalizePageContentBlockErrorMapsTargetRevisionConflict(t *testing.T) 
 	if got := connect.CodeOf(err); got != connect.CodeFailedPrecondition {
 		t.Fatalf("code = %v, want %v", got, connect.CodeFailedPrecondition)
 	}
-	connectErr, ok := err.(*connect.Error)
+	connectErr, ok := err.(*connect.Error) //nolint:errorlint // asserts the classified error is returned directly
 	if !ok {
 		t.Fatalf("error type = %T, want *connect.Error", err)
 	}

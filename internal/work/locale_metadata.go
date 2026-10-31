@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
 
 type workSourceLocaleMetadataRow struct {
@@ -29,7 +30,7 @@ func loadWorkSourceLocaleMetadataByWorkID(
 	db *gorm.DB,
 	workIDs []string,
 ) (map[string]*workSourceLocaleMetadata, error) {
-	normalized := normalizeStringIDs(workIDs)
+	normalized := sliceutil.UniqueTrimmed(workIDs)
 	if len(normalized) == 0 {
 		return map[string]*workSourceLocaleMetadata{}, nil
 	}

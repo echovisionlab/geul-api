@@ -48,7 +48,7 @@ func LoadUnavailableVersionAttachmentKinds(
 		DeleteRequestedAt *time.Time `gorm:"column:delete_requested_at"`
 	}
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Table("file").
 		Select("id, mime_type, delete_requested_at").
 		Where("id IN ?", ids).

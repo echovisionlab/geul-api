@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -260,12 +261,12 @@ func lockProgramEventForMutation(ctx context.Context, db *gorm.DB, eventID strin
 		ID string `gorm:"column:id"`
 	}
 	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("program_event").
 		Select("id").
 		Where("id = ?", eventID).
 		Take(&event).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)
@@ -284,9 +285,9 @@ func requireProgramEventMutationPermissionWithDB(
 		Status string `gorm:"column:status"`
 	}
 	if err := db.WithContext(ctx).Table("program_event").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("status").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)
@@ -346,9 +347,9 @@ func RequireLockedView(
 		Status string `gorm:"column:status"`
 	}
 	if err := tx.WithContext(ctx).Table("program_event").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("status").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)

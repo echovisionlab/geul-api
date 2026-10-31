@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -80,7 +81,7 @@ func (runtime *PublicRuntime) LoadDocument(ctx context.Context, tx *gorm.DB, lab
 	var root struct {
 		DocumentID *uuid.UUID `gorm:"column:content_document_id"`
 	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "SHARE"}).Select("content_document_id").Where("id = ?", labelID).Take(&root).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Select("content_document_id").Where("id = ?", labelID).Take(&root).Error; err != nil {
 		return labelpublic.ContentDocument{}, err
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
@@ -89,7 +90,7 @@ func (runtime *PublicRuntime) LoadDocument(ctx context.Context, tx *gorm.DB, lab
 	var source struct {
 		Locale string `gorm:"column:source_locale"`
 	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "SHARE"}).
+	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("source_locale").Where("id = ?", labelID).Take(&source).Error; err != nil {
 		return labelpublic.ContentDocument{}, err
 	}
@@ -154,7 +155,7 @@ func (runtime *PublicRuntime) Require(ctx context.Context, labelID, token, passw
 }
 
 func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.DB, fileIDs []string, kinds ...string) (map[string]*commonv1.AssetRef, error) {
-	ids := normalizedIDs(fileIDs)
+	ids := sliceutil.UniqueTrimmed(fileIDs)
 	refs := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
@@ -182,7 +183,7 @@ func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.
 }
 
 func (runtime *PublicRuntime) ReadyForAssetIDs(ctx context.Context, tx *gorm.DB, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
-	ids := normalizedIDs(assetIDs)
+	ids := sliceutil.UniqueTrimmed(assetIDs)
 	refs := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return refs, nil
@@ -214,23 +215,6 @@ func (runtime *PublicRuntime) ResolveOg(ctx context.Context, tx *gorm.DB, assetI
 		return nil, err
 	}
 	return refs[strings.TrimSpace(*assetID)], nil
-}
-
-func normalizedIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }
 
 var (

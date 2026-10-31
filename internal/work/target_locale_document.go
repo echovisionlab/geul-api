@@ -96,7 +96,7 @@ func loadOptionalWorkLocaleMetadataRow(ctx context.Context, tx *gorm.DB, workID,
 	query := tx.WithContext(ctx).Table("work_translation").Select("locale", "title", "summary", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", workID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row workLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {
@@ -148,9 +148,9 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
-	lock := "SHARE"
+	lock := clause.LockingStrengthShare
 	if forUpdate {
-		lock = "UPDATE"
+		lock = clause.LockingStrengthUpdate
 	}
 	_, lockedDocumentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, lock)
 	if err != nil {

@@ -1,8 +1,12 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
+	"errors"
+	"log/slog"
+	"time"
+
+	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -12,8 +16,6 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"log/slog"
-	"time"
 )
 
 func (s *FormService) SetFormFeaturedImage(
@@ -36,7 +38,7 @@ func (s *FormService) SetFormFeaturedImage(
 	)
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "featured_image_file_id").
 			First(&current, "id = ?", req.Msg.FormId).Error; err != nil {
 			return err
@@ -88,7 +90,7 @@ func (s *FormService) SetFormFeaturedImage(
 		return nil
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			var count int64
 			lookupErr := s.db.WithContext(ctx).
 				Model(&model.Form{}).
@@ -126,7 +128,7 @@ func (s *FormService) DeleteFormFeaturedImage(
 	var current model.Form
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "featured_image_file_id").
 			First(&current, "id = ?", req.Msg.FormId).Error; err != nil {
 			return err
@@ -165,7 +167,7 @@ func (s *FormService) DeleteFormFeaturedImage(
 		return err
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("form", req.Msg.FormId)
 		}
 		return nil, errs.Wrap(err)

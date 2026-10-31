@@ -776,7 +776,7 @@ func (s *FileService) checkEntityPermission(ctx context.Context, uploadType mana
 	if handled, err := checkUploadPrincipalPolicy(ctx, target, entityID, userID, user, s.spiceDB); handled {
 		return err
 	}
-	return s.checkSpiceDBUploadPermission(ctx, target, entityID, userID)
+	return s.checkSpiceDBUploadPermission(ctx, target, entityID)
 }
 
 func (s *FileService) resolveUploadPermissionEntityID(
@@ -788,7 +788,7 @@ func (s *FileService) resolveUploadPermissionEntityID(
 		return entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, entityID)
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", errs.NotFoundMsg("track not found")
 	}
 	if err != nil {
@@ -861,12 +861,11 @@ func (s *FileService) checkSpiceDBUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
-	userID string,
 ) error {
 	if !target.requiresSpiceDBCheck || target.resourceType == "" || entityID == "" {
 		return nil
 	}
-	if _, err := uploadPermissionIdentityID(ctx, userID); err != nil {
+	if err := requireUploadIdentity(ctx); err != nil {
 		return err
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, entityID)
@@ -956,7 +955,7 @@ func (s *FileService) AbortMultipartUpload(
 	if err := s.db.WithContext(ctx).
 		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
 		First(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("upload session not found")
 		}
 		return nil, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
@@ -1059,9 +1058,6 @@ func (s *FileService) FindMultipartUploadCandidate(
 	}
 	session, found, err := s.findMultipartUploadCandidate(ctx, search)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(fmt.Errorf("failed to find upload session candidate: %w", err))
 	}
 	if !found {
@@ -1069,9 +1065,6 @@ func (s *FileService) FindMultipartUploadCandidate(
 	}
 	response, err := s.prepareMultipartCandidateResponse(ctx, session)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(fmt.Errorf("failed to reconcile upload session candidate: %w", err))
 	}
 	return connect.NewResponse(response), nil

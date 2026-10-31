@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -290,7 +291,7 @@ func loadLayoutSourceLocaleFlag(
 		Where("id = ?", layoutID).
 		Take(&row).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", false, nil
 		}
 		return "", false, errs.Internal(err)

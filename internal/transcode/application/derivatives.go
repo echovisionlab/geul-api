@@ -201,7 +201,7 @@ func (h *Handlers) removeFileDerivative(
 			Where("file_id = ? AND type = ?", fileID, derivativeType.String()).
 			First(&existing)
 		if result.Error != nil {
-			if result.Error == gorm.ErrRecordNotFound {
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 				return nil
 			}
 			return result.Error

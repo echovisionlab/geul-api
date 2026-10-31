@@ -51,22 +51,22 @@ func TestWorkContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 			Id: "work-1", Featured: proto.Bool(true),
 		}),
 		"lifecycle": buildManageStateTransitionContentUpdatedEvent(
-			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, "work-1", []string{"state.status"},
+			"work-1", []string{"state.status"},
 		),
 		"featured image": buildManageMediaMutationContentUpdatedEvent(
 			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, "work-1", "media.featured_image",
 		),
 		"collab source": buildWorkSourceContentUpdatedEvent(
 			"work-1", false, false, true, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "en", true, nil, true,
+			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "en", nil, true,
 		),
 		"collab target": buildWorkSourceContentUpdatedEvent(
 			"work-1", true, false, false, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "ko", true, &targetRevision, false,
+			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "ko", &targetRevision, false,
 		),
 		"version restore": buildWorkSourceContentUpdatedEvent(
 			"work-1", true, true, true, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, "en", true, nil, true,
+			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, "en", nil, true,
 		),
 	}
 	for name, event := range events {
@@ -82,7 +82,7 @@ func TestWorkContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 func TestPublishWorkContentUpdatedRequiresOwningTransaction(t *testing.T) {
 	db, mock := mockWorkSignalDB(t)
 	event := buildManageStateTransitionContentUpdatedEvent(
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, "work-1", []string{"state.status"},
+		"work-1", []string{"state.status"},
 	)
 
 	require.Error(t, publishWorkContentUpdated(context.Background(), db, &mq.Publisher{}, event))
@@ -104,7 +104,7 @@ func TestPublishWorkContentUpdatedFailureRollsBackMutation(t *testing.T) {
 	db, mock := mockWorkSignalDB(t)
 	failure := errors.New("notify failed")
 	event := buildManageStateTransitionContentUpdatedEvent(
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, "work-1", []string{"state.status"},
+		"work-1", []string{"state.status"},
 	)
 
 	mock.ExpectBegin()

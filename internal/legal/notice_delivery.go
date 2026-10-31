@@ -413,7 +413,7 @@ func cancelActiveLegalNoticeDeliveryRuns(
 
 	var activeRuns []model.CampaignDeliveryRun
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where(
 			referenceColumn+" = ? AND status IN ?",
 			referenceID,

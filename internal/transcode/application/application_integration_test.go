@@ -303,7 +303,7 @@ func TestHandleTranscodeCompleteRechecksJobAfterWaitingForFileLock(t *testing.T)
 	lockTx := db.Begin()
 	require.NoError(t, lockTx.Error)
 	var lockedFile model.File
-	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").Where("id = ?", fileID).Take(&lockedFile).Error)
 
 	body, err := proto.Marshal(&managev1.TranscodeCompleteEvent{
@@ -414,7 +414,7 @@ func TestHandleTrackTranscodeCompleteDoesNotMutateOwnerAfterJobCancellation(t *t
 	lockTx := db.Begin()
 	require.NoError(t, lockTx.Error)
 	var lockedFile model.File
-	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").Where("id = ?", fileID).Take(&lockedFile).Error)
 	duration := int32(99)
 	body, err := proto.Marshal(&managev1.TranscodeCompleteEvent{
@@ -509,7 +509,7 @@ func TestHandleTrackTranscodeFailureDoesNotOverrideConcurrentCancellation(t *tes
 	lockTx := db.Begin()
 	require.NoError(t, lockTx.Error)
 	var lockedFile model.File
-	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, lockTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").Where("id = ?", fileID).Take(&lockedFile).Error)
 	failure := "provider failed"
 	body, err := proto.Marshal(&managev1.TranscodeCompleteEvent{

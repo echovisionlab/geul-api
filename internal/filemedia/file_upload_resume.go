@@ -78,9 +78,5 @@ func (s *FileService) buildMultipartResumeResponse(
 		return nil, errs.Internal(fmt.Errorf("failed to load uploaded parts: %w", err))
 	}
 	s.refreshUploadSessionActivity(ctx, session.UploadID)
-	response, err := multipartInitiateResponseFromSession(session, uploadedParts, true)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return response, nil
+	return multipartInitiateResponseFromSession(session, uploadedParts, true), nil
 }

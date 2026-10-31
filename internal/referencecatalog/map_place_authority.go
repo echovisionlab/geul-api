@@ -62,7 +62,7 @@ func requireLockedMapPlaceAuthority(
 func lockMapPlaceForUpdate(ctx context.Context, tx *gorm.DB, placeID string) (model.MapPlace, error) {
 	var place model.MapPlace
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&place, "id = ?", placeID).Error
 	return place, err
 }

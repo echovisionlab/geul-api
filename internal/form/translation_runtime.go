@@ -55,7 +55,7 @@ func LockTranslationRoot(ctx context.Context, db *gorm.DB, formID string) error 
 	var row struct {
 		ID string `gorm:"column:id"`
 	}
-	result := db.WithContext(ctx).Table("form").Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", formID).Take(&row)
+	result := db.WithContext(ctx).Table("form").Select("id").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", formID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return errs.NotFound("form", formID)
 	}

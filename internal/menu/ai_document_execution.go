@@ -277,7 +277,7 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 				if err != nil {
 					return err
 				}
-				if _, err := advanceMenuContentDocument(
+				if err := advanceMenuContentDocument(
 					ctx,
 					tx,
 					locked.ID,

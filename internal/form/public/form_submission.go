@@ -194,7 +194,7 @@ func (s *FormService) createFormSubmissionWithDB(
 
 func lockFormForSubmission(tx *gorm.DB, formID string) (model.Form, error) {
 	var form model.Form
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&form, "id = ?", formID).Error
+	err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&form, "id = ?", formID).Error
 	return form, err
 }
 
@@ -270,8 +270,8 @@ func enforceDuplicateFormSubmissionPolicy(tx *gorm.DB, form *model.Form, memberI
 }
 
 func normalizeFormSubmissionError(err error) error {
-	if connectErr, ok := err.(*connect.Error); ok {
-		return connectErr
+	if _, ok := errors.AsType[*connect.Error](err); ok {
+		return errs.Internal(err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("form not found")

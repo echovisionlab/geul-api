@@ -99,7 +99,7 @@ func lockArtistParticipantRoot(ctx context.Context, tx *gorm.DB, artistID string
 	var row struct {
 		ID string `gorm:"column:id"`
 	}
-	if err := tx.WithContext(ctx).Table("artist").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?::uuid", artistID).Take(&row).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("artist").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?::uuid", artistID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("artist", artistID)
 		}

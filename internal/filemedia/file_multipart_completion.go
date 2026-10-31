@@ -150,7 +150,7 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 	if err := s.db.WithContext(ctx).
 		Where("upload_id = ? AND file_id = ?", request.GetUploadId(), request.GetFileId()).
 		First(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
@@ -278,7 +278,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 
 	var file model.File
 	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("upload session not found")
 		}
 		return nil, errs.Internal(fmt.Errorf("load completed file: %w", err))
@@ -292,7 +292,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 
 	var binding model.FileIngestBinding
 	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("upload session not found")
 		}
 		return nil, errs.Internal(fmt.Errorf("load completed file binding: %w", err))

@@ -170,7 +170,7 @@ func applyCampaignEmailTypedTranslationCandidateWithDB(
 			return normalizeCampaignEmailContentBlockError(campaignContentEntity, loadErr)
 		}
 		if err := projectCampaignEmailMaterializedContent(
-			ctx, tx, campaignContentEntity, job.EntityID, resultSnapshot, []string{domain.SourceLocale}, input.Now,
+			ctx, tx, job.EntityID, resultSnapshot, []string{domain.SourceLocale}, input.Now,
 		); err != nil {
 			return err
 		}

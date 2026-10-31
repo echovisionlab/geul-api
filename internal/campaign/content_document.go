@@ -74,7 +74,7 @@ func loadCampaignEmailContentDocumentRoot(
 		Select("id", "content_document_id").
 		Where("id = ?", entityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var root campaignEmailContentRoot
 	if err := query.Take(&root).Error; err != nil {
@@ -93,12 +93,9 @@ func loadCampaignEmailContentDocumentRoot(
 	return documentID, nil
 }
 
-func campaignEmailContentFence(entityType, entityID string) contentblock.DomainFence {
+func campaignEmailContentFence(entityID string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := requireCampaignContentEntity(entityType); err != nil {
-			return contentblock.DomainContext{}, errs.Internal(err)
-		}
-		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, entityType, entityID, true)
+		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, campaignContentEntity, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
@@ -114,7 +111,7 @@ func campaignEmailContentFence(entityType, entityID string) contentblock.DomainF
 		if !campaignStatusAllowsEdit(row.Status) {
 			return contentblock.DomainContext{}, errs.FailedPrecondition(errs.MsgCampaignCannotUpdateSent)
 		}
-		return lockCampaignEmailTranslationSource(ctx, tx, entityType, entityID)
+		return lockCampaignEmailTranslationSource(ctx, tx, campaignContentEntity, entityID)
 	}
 }
 
@@ -273,7 +270,7 @@ func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string
 		Select("source_locale").
 		Where("id = ?", entityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	if err := query.Take(&state).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -383,7 +380,7 @@ func updateCampaignEmailLocaleSubject(
 	}
 	result := tx.WithContext(ctx).
 		Table("campaign_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("subject").
 		Where("entity_id = ? AND locale = ?", entityID, locale).
 		Take(&current)
@@ -456,29 +453,21 @@ func asCampaignEmailConnectError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var connectErr *connect.Error
-	if errors.As(err, &connectErr) {
-		return connectErr
-	}
 	return errs.Internal(err)
 }
 
 func projectCampaignEmailMaterializedContent(
 	ctx context.Context,
 	tx *gorm.DB,
-	entityType string,
 	entityID string,
 	snapshot contentblock.Snapshot,
 	changedLocales []string,
 	now time.Time,
 ) error {
-	if err := requireCampaignContentEntity(entityType); err != nil {
-		return errs.Internal(err)
-	}
 	if snapshot.Document.Profile != emailContentProfile {
 		return errs.FailedPrecondition("Campaign content document profile changed")
 	}
-	domain, err := loadCampaignEmailSourceContext(ctx, tx, entityType, entityID)
+	domain, err := loadCampaignEmailSourceContext(ctx, tx, campaignContentEntity, entityID)
 	if err != nil {
 		return err
 	}
@@ -502,11 +491,11 @@ func projectCampaignEmailMaterializedContent(
 	for _, locale := range locales {
 		document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, locale)
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(entityType, err)
+			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 		}
 		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(entityType, err)
+			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 		}
 		updates := map[string]any{
 			"content_html": projection.HTML,

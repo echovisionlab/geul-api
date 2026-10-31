@@ -157,7 +157,6 @@ func (r *applicationRuntime) Start(
 	server *http.Server,
 	mcpPrivateServer *http.Server,
 	authInterceptor interface{ Start(context.Context) },
-	deps *applicationDependencies,
 	registered registeredServices,
 	runtimeFailures chan<- error,
 ) {

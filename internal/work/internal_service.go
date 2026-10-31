@@ -337,7 +337,6 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 			req.Msg.Batch.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			locale,
-			true,
 			output.TargetRevision,
 			locale == sourceLocale,
 		))
@@ -522,7 +521,6 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 			req.Msg.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			plan.Locale,
-			true,
 			output.TargetRevision,
 			plan.Locale == sourceLocale,
 		))
@@ -620,7 +618,7 @@ func (s *InternalWorkService) CreateWorkVersionCheckpoint(
 
 		var previous model.WorkVersion
 		previousResult := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("work_id = ?", req.Msg.WorkId).
 			Order("version DESC").
 			First(&previous)

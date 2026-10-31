@@ -3,12 +3,14 @@ package page
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -117,7 +119,7 @@ func (s *PageService) RestorePageVersion(
 
 	var version model.PageVersion
 	if err := s.db.WithContext(ctx).First(&version, "id = ?", req.Msg.VersionId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("page_version", req.Msg.VersionId)
 		}
 		return nil, errs.Internal(err)
@@ -145,7 +147,7 @@ func (s *PageService) RestorePageVersion(
 	var sourceLocaleSwitched bool
 	restoredChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, version.PageID, "UPDATE")
+		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, version.PageID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
@@ -322,9 +324,6 @@ func (s *PageService) RestorePageVersion(
 		)
 		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, event)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	var page model.Page

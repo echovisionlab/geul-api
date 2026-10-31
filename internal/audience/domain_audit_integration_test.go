@@ -544,7 +544,7 @@ func TestAudienceArchiveLocksSegmentBeforeExactPolicyRelationIntegration(t *test
 		BlockID string `gorm:"column:block_id"`
 	}
 	require.NoError(t, blocker.Table("content_block_attachment").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("block_id").
 		Where("block_id = ? AND reference_path = 'file'", blockID).
 		Take(&lockedAttachment).Error)
@@ -561,7 +561,7 @@ func TestAudienceArchiveLocksSegmentBeforeExactPolicyRelationIntegration(t *test
 	segmentProbe := stack.DB.Begin()
 	require.NoError(t, segmentProbe.Error)
 	var archiveLockedSegment model.AudienceSegment
-	require.Error(t, segmentProbe.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).First(&archiveLockedSegment, "id = ?", segmentID).Error)
+	require.Error(t, segmentProbe.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Options: clause.LockingOptionsNoWait}).First(&archiveLockedSegment, "id = ?", segmentID).Error)
 	require.NoError(t, segmentProbe.Rollback().Error)
 	require.NoError(t, blocker.Commit().Error)
 	blockerFinished = true

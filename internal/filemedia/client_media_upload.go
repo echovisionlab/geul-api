@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -119,7 +120,7 @@ func (s *FileService) authorizedClientMediaSession(ctx context.Context, uploadID
 		return session, errs.InvalidArgument("upload_id", "invalid upload identity")
 	}
 	if err := s.db.WithContext(ctx).Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return session, errs.NotFoundMsg("upload session not found")
 		}
 		return session, errs.Internal(err)
@@ -175,10 +176,10 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 
 func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
 	var session model.UploadSession
-	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
 		level := slog.LevelError
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			level = slog.LevelWarn
 		}
 		slog.Log(ctx, level, "Failed to load media artifact upload session", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
@@ -293,7 +294,7 @@ func (s *FileService) clientMediaArtifactWritable(ctx context.Context, session m
 	}
 	var file model.File
 	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return true, nil
 	}
 	if err != nil {

@@ -122,8 +122,8 @@ func (s *PrivacyService) GetPrivacyVersion(
 	var response *connect.Response[managev1.Privacy]
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var privacy model.Privacy
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -344,9 +344,9 @@ func (s *PrivacyService) SchedulePrivacy(
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return err
@@ -417,9 +417,6 @@ func (s *PrivacyService) SchedulePrivacy(
 			&effectiveFrom, nil,
 		)
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	dispatchCreatedLegalNoticeRun(ctx, s.notice, run)
@@ -445,8 +442,8 @@ func (s *PrivacyService) CancelPrivacySchedule(
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return err
@@ -546,9 +543,6 @@ func (s *PrivacyService) CancelPrivacySchedule(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -633,9 +627,6 @@ func (s *PrivacyService) ActivatePrivacyNow(
 
 	if err != nil {
 		// Check if error is already a Connect error (for NotFound or FailedPrecondition)
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -669,9 +660,9 @@ func (s *PrivacyService) DeletePrivacy(
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return err
@@ -737,9 +728,6 @@ func (s *PrivacyService) DeletePrivacy(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "privacy", privacy.ID); err != nil {
@@ -768,9 +756,6 @@ func (s *PrivacyService) RegeneratePrivacyDerivedContent(
 		"privacy", req.Msg.Id, req.Msg.ExpectedSnapshotDigest,
 	)
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.RegeneratePrivacyDerivedContentResponse{
@@ -825,7 +810,7 @@ func (s *PrivacyService) toProtoPrivacyWithDocument(
 	var sourceLocale string
 	var snapshot contentblock.Snapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			First(&persisted, "id = ?", p.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy", p.ID)

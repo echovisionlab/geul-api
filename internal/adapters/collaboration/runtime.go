@@ -149,7 +149,7 @@ func lifecycleReader(table, archivedStatus string) RootReader {
 		}
 		err := tx.WithContext(ctx).
 			Table(table).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("status").
 			Where("id = ?", resourceID).
 			Take(&row).Error
@@ -170,7 +170,7 @@ func rootExistenceReader(table string) RootReader {
 		}
 		err := tx.WithContext(ctx).
 			Table(table).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("id").
 			Where("id = ?", resourceID).
 			Take(&row).Error
@@ -338,7 +338,7 @@ func (contributorResolver) ResolveActiveSubjects(
 			AND identity.external_id = CAST(member.id AS text)
 			AND identity.state = ?
 			AND LOWER(COALESCE(identity.metadata_admin ->> 'banned', 'false')) NOT IN ('true', '1')`, "active").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("CAST(member.id AS text) AS member_id, CAST(member.account_identity_id AS text) AS account_identity_id").
 		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = ? AND member.account_identity_id IS NOT NULL", memberIDs, true).
 		Find(&rows).Error; err != nil {

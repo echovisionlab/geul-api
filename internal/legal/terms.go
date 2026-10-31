@@ -122,8 +122,8 @@ func (s *TermsService) GetTermsVersion(
 	var response *connect.Response[managev1.Terms]
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var terms model.Terms
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -343,9 +343,9 @@ func (s *TermsService) ScheduleTerms(
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return err
@@ -416,9 +416,6 @@ func (s *TermsService) ScheduleTerms(
 			&effectiveFrom, nil,
 		)
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	dispatchCreatedLegalNoticeRun(ctx, s.notice, run)
@@ -444,8 +441,8 @@ func (s *TermsService) CancelTermsSchedule(
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return err
@@ -545,9 +542,6 @@ func (s *TermsService) CancelTermsSchedule(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -632,9 +626,6 @@ func (s *TermsService) ActivateTermsNow(
 
 	if err != nil {
 		// Check if error is already a Connect error (for NotFound or FailedPrecondition)
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -668,9 +659,9 @@ func (s *TermsService) DeleteTerms(
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return err
@@ -736,9 +727,6 @@ func (s *TermsService) DeleteTerms(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "terms", terms.ID); err != nil {
@@ -767,9 +755,6 @@ func (s *TermsService) RegenerateTermsDerivedContent(
 		"terms", req.Msg.Id, req.Msg.ExpectedSnapshotDigest,
 	)
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.RegenerateTermsDerivedContentResponse{
@@ -824,7 +809,7 @@ func (s *TermsService) toProtoTermsWithDocument(
 	var sourceLocale string
 	var snapshot contentblock.Snapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			First(&persisted, "id = ?", t.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", t.ID)

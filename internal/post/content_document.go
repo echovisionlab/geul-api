@@ -65,7 +65,7 @@ func lockPostContentDocumentRoot(
 	var root postContentDocumentRoot
 	if err := tx.WithContext(ctx).
 		Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status", "content_document_id", "source_locale").
 		Where("id = ?::uuid", postID).
 		Take(&root).Error; err != nil {

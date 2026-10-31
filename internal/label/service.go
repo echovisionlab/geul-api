@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -207,7 +208,7 @@ func (s *LabelService) GetLabelEditorData(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
 		First(&label).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -496,7 +497,7 @@ func (s *LabelService) CreateLabel(
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
-		if strings.Contains(err.Error(), "duplicate key") {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.AlreadyExistsMsg("label with this slug already exists")
 		}
@@ -704,7 +705,7 @@ func (s *LabelService) DeleteLabel(
 	if err := s.db.WithContext(ctx).
 		Select("id").
 		First(&label, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -725,7 +726,7 @@ func (s *LabelService) DeleteLabel(
 		`).Error; err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id").
 			First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
@@ -819,7 +820,7 @@ func (s *LabelService) PublishLabel(
 	transitioned := false
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {
@@ -875,7 +876,7 @@ func (s *LabelService) UnpublishLabel(
 	transitioned := false
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {

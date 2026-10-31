@@ -24,7 +24,7 @@ func ProcessDueScheduledPosts(ctx context.Context, db *gorm.DB, limit int) ([]st
 	publishedIDs := make([]string, 0, limit)
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var due []model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Options: clause.LockingOptionsSkipLocked}).
 			Select("id", "status", "scheduled_at", "published_at").
 			Where("status = ? AND scheduled_at <= CURRENT_TIMESTAMP", managev1.PostStatus_POST_STATUS_SCHEDULED.String()).
 			Order("scheduled_at ASC, id ASC").

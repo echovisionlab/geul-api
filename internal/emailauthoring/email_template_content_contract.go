@@ -53,7 +53,7 @@ func loadCampaignEmailContentDocumentRoot(
 		Select("id", "content_document_id", "source_locale").
 		Where("id = ?", entityID)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Take(&root)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -79,7 +79,7 @@ func lockCampaignEmailTranslationSource(ctx context.Context, tx *gorm.DB, entity
 	var state struct {
 		SourceLocale string `gorm:"column:source_locale"`
 	}
-	result := tx.WithContext(ctx).Table("email_template").Clauses(clause.Locking{Strength: "UPDATE"}).Select("source_locale").Where("id = ?", entityID).Take(&state)
+	result := tx.WithContext(ctx).Table("email_template").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("source_locale").Where("id = ?", entityID).Take(&state)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return contentblock.DomainContext{}, errs.NotFound("email template", entityID)
 	}
@@ -112,10 +112,7 @@ func loadCampaignEmailSourceContext(ctx context.Context, db *gorm.DB, entityType
 	return contentblock.DomainContext{SourceLocale: state.SourceLocale}, nil
 }
 
-func loadCampaignEmailSourceSubject(ctx context.Context, db *gorm.DB, entityType, entityID, sourceLocale string) (string, error) {
-	if entityType != emailTemplateContentEntity {
-		return "", errs.Internal(fmt.Errorf("unsupported Email Template content entity %q", entityType))
-	}
+func loadCampaignEmailSourceSubject(ctx context.Context, db *gorm.DB, entityID, sourceLocale string) (string, error) {
 	var row struct{ Subject sql.NullString }
 	result := db.WithContext(ctx).Table("email_template_translation").Select("subject").Where("entity_id = ? AND locale = ?", entityID, sourceLocale).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -253,10 +250,6 @@ func normalizeCampaignEmailContentBlockError(entityType string, err error) error
 func asCampaignEmailConnectError(err error) error {
 	if err == nil {
 		return nil
-	}
-	var connectErr *connect.Error
-	if errors.As(err, &connectErr) {
-		return connectErr
 	}
 	return errs.Internal(err)
 }

@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -80,7 +82,7 @@ func (s *WorkService) UpdateWork(
 func loadWorkForUpdate(ctx context.Context, db *gorm.DB, workID string) (model.Work, error) {
 	var work model.Work
 	err := db.WithContext(ctx).First(&work, "id = ?", workID).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.Work{}, errs.NotFound("work", workID)
 	}
 	if err != nil {
@@ -458,10 +460,8 @@ func mapWorkUpdateError(err error) error {
 	if connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
-	if strings.Contains(err.Error(), "duplicate key") {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "mapWorkUpdateError", failurecause.Attr(err))
-		}
+	if dberrors.IsUniqueViolation(err) {
+		slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "mapWorkUpdateError", failurecause.Attr(err))
 		return errs.SlugAlreadyExists("work", "slug")
 	}
 	return errs.Internal(err)

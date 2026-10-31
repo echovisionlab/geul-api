@@ -39,7 +39,7 @@ func lockLabelContentDocumentRoot(ctx context.Context, tx *gorm.DB, labelID stri
 	var row struct {
 		DocumentID *uuid.UUID `gorm:"column:content_document_id"`
 	}
-	result := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "UPDATE"}).Select("content_document_id").Where("id = ?", labelID).Take(&row)
+	result := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("content_document_id").Where("id = ?", labelID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return errs.NotFound("label", labelID)
 	}
@@ -56,7 +56,7 @@ func lockLabelTranslationSourceContext(ctx context.Context, tx *gorm.DB, labelID
 	var row struct {
 		SourceLocale string `gorm:"column:source_locale"`
 	}
-	result := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "UPDATE"}).Select("source_locale").Where("id = ?", labelID).Take(&row)
+	result := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("source_locale").Where("id = ?", labelID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return contentblock.DomainContext{}, errs.NotFound("label", labelID)
 	}

@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -45,7 +46,7 @@ func loadTrackStaticAssetRefs(
 	fileIDs []string,
 	derivativeType managev1.FileDerivativeType,
 ) (map[string]*commonv1.AssetRef, error) {
-	ids := uniqueNonEmptyIDs(fileIDs)
+	ids := sliceutil.UniqueNonZero(fileIDs)
 	if len(ids) == 0 {
 		return map[string]*commonv1.AssetRef{}, nil
 	}
@@ -69,7 +70,7 @@ func loadTrackHLSRefs(
 	mediaDomain string,
 	fileIDs []string,
 ) (map[string]*commonv1.HlsMediaRef, error) {
-	ids := uniqueNonEmptyIDs(fileIDs)
+	ids := sliceutil.UniqueNonZero(fileIDs)
 	if len(ids) == 0 {
 		return map[string]*commonv1.HlsMediaRef{}, nil
 	}
@@ -96,22 +97,6 @@ type trackHLSDerivativeRow struct {
 	FileID       string `gorm:"column:file_id"`
 	GenerationID string `gorm:"column:generation_id"`
 	ManifestName string `gorm:"column:manifest_name"`
-}
-
-func uniqueNonEmptyIDs(fileIDs []string) []string {
-	ids := make([]string, 0, len(fileIDs))
-	seen := make(map[string]struct{}, len(fileIDs))
-	for _, fileID := range fileIDs {
-		if fileID == "" {
-			continue
-		}
-		if _, ok := seen[fileID]; ok {
-			continue
-		}
-		seen[fileID] = struct{}{}
-		ids = append(ids, fileID)
-	}
-	return ids
 }
 
 func projectTrackStaticDerivativeRefs(mediaDomain string, rows []trackStaticDerivativeRow) (map[string]*commonv1.AssetRef, error) {

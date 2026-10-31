@@ -2,6 +2,7 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (r *NoticeRuntime) CreateRun(
 	switch strings.TrimSpace(referenceType) {
 	case legaldomain.EmailDeliveryReferenceTypeTerms:
 		var policy model.Terms
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "version").First(&policy, "id = ?", referenceID).Error; err != nil {
 			return nil, err
 		}
@@ -73,7 +74,7 @@ func (r *NoticeRuntime) CreateRun(
 		termsVersion = &version
 	case legaldomain.EmailDeliveryReferenceTypePrivacy:
 		var policy model.Privacy
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "version").First(&policy, "id = ?", referenceID).Error; err != nil {
 			return nil, err
 		}
@@ -85,9 +86,9 @@ func (r *NoticeRuntime) CreateRun(
 	}
 
 	var template model.EmailTemplate
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("event_key = ? AND is_active = ?", eventKey, true).First(&template).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.FailedPrecondition("active legal notice email template is unavailable")
 		}
 		return nil, err
@@ -102,9 +103,9 @@ func (r *NoticeRuntime) CreateRun(
 	if template.LayoutID != nil && strings.TrimSpace(*template.LayoutID) != "" {
 		trimmedID := strings.TrimSpace(*template.LayoutID)
 		var layout model.EmailLayout
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "updated_at").First(&layout, "id = ?", trimmedID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.FailedPrecondition("legal notice email layout no longer exists")
 			}
 			return nil, err

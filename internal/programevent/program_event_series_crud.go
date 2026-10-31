@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -137,7 +138,7 @@ func (s *ProgramEventSeriesService) GetProgramEventSeries(
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return nil, err
 	}
-	proto, err := s.toProtoProgramEventSeries(ctx, series)
+	proto, err := s.toProtoProgramEventSeries(series)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +187,7 @@ func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
 	}
 	result := make([]*managev1.ProgramEventSeries, 0, len(rows))
 	for i := range rows {
-		item, err := s.toProtoProgramEventSeries(ctx, &rows[i])
+		item, err := s.toProtoProgramEventSeries(&rows[i])
 		if err != nil {
 			return nil, err
 		}
@@ -217,7 +218,7 @@ func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
 	if err != nil {
 		return nil, err
 	}
-	update, err := s.prepareProgramEventSeriesUpdate(ctx, req.Msg, time.Now().UTC())
+	update, err := s.prepareProgramEventSeriesUpdate(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +256,7 @@ func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 			return err
 		}
 		var affectedEvents []model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("series_id = ?", req.Msg.Id).
 			Find(&affectedEvents).Error; err != nil {
 			return errs.Internal(err)
@@ -301,7 +302,7 @@ func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 		)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("program event series", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

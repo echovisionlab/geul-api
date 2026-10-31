@@ -2,12 +2,14 @@ package application
 
 import (
 	"context"
-	"sort"
+	"errors"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -41,7 +43,6 @@ type translationDocumentAuthority struct {
 }
 
 func parseExpectedTranslationDocumentRevision(
-	entityType string,
 	value string,
 ) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
@@ -60,7 +61,7 @@ func validateRequestedSourceLocale(ctx context.Context, db *gorm.DB, locale stri
 		return errs.InvalidArgument("source_locale", "source locale is required")
 	}
 	if _, err := localization.NewCatalog(db).Find(ctx, locale); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.InvalidArgument("source_locale", "unsupported locale")
 		}
 		return errs.Internal(err)
@@ -286,25 +287,9 @@ func listSourceSwitchLocales(
 	).Scan(&blockLocales).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
-	locales = append(locales, blockLocales...)
-	return uniqueSortedStrings(locales), nil
-}
-
-func uniqueSortedStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
+	locales = sliceutil.UniqueNonZero(append(locales, blockLocales...))
+	slices.Sort(locales)
+	return locales, nil
 }
 
 func (s *TranslationService) requestSourceLocaleSwitchOg(

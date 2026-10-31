@@ -93,7 +93,7 @@ func (s *FileService) DeleteFile(
 		ID string `gorm:"column:id"`
 	}
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ?", fileID).First(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("file", fileID)
 		}
 		return nil, errs.Internal(err)
@@ -177,7 +177,7 @@ func requestUnboundFileDerivativeAssetsDeletion(
 
 	var assets []model.PublicAsset
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id IN ?", assetIDs).
 		Order("id ASC").
 		Find(&assets).Error; err != nil {
@@ -234,7 +234,7 @@ func requestUnboundSourceFileAssetsDeletion(
 ) error {
 	var assets []model.PublicAsset
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("source_file_id = ?", fileID).
 		Order("id ASC").
 		Find(&assets).Error; err != nil {
@@ -370,11 +370,11 @@ func markFileDeletionRequestedWithDB(
 	}
 	var file model.File
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "delete_requested_at").
 		Where("id = ?", fileID).
 		First(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -478,7 +478,7 @@ func prepareMeshCandidatesForSourceFileDeletion(
 ) ([]string, error) {
 	var candidates []model.MeshOptimizationCandidate
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("source_file_id = ? AND selected_at IS NULL", sourceFileID).
 		Find(&candidates).Error; err != nil {
 		return nil, err

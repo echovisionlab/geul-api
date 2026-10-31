@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -116,9 +117,6 @@ func (s *MapPlaceService) CreateMapPlace(
 		return nil
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	users, err := s.resolveMembersForPlaces(ctx, []model.MapPlace{place})
@@ -167,10 +165,10 @@ func (s *MapPlaceService) UpdateMapPlace(
 		place = updated
 		return err
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("map place", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -412,10 +410,10 @@ func (s *MapPlaceService) DeleteMapPlace(
 		return nil
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("map place", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

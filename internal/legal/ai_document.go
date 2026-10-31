@@ -176,7 +176,6 @@ func (s *AIDocumentService) LoadAIDocument(
 		result, _, err = s.loadAIDocumentAfterAuthorization(
 			ctx,
 			tx,
-			root,
 			entityType,
 			entityID,
 			locale,
@@ -193,7 +192,6 @@ func (s *AIDocumentService) LoadAIDocument(
 func (s *AIDocumentService) loadAIDocumentAfterAuthorization(
 	ctx context.Context,
 	tx *gorm.DB,
-	root legalContentDocumentRoot,
 	entityType string,
 	entityID string,
 	locale string,

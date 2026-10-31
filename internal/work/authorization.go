@@ -148,7 +148,7 @@ func requireWorkPermission(
 func lockWorkAuthorizationRoot(ctx context.Context, tx *gorm.DB, workID string) (model.Work, error) {
 	var work model.Work
 	if err := tx.WithContext(ctx).Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").Where("id = ?", workID).Take(&work).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.Work{}, errs.NotFound("work", workID)

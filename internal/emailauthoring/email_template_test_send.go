@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/mail"
@@ -46,7 +47,7 @@ func (s *EmailTemplateService) SendTestEmail(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.Manage(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -58,7 +59,7 @@ func (s *EmailTemplateService) SendTestEmail(
 	// Verify template exists
 	var template model.EmailTemplate
 	if err := s.db.WithContext(ctx).First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email template", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

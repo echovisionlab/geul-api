@@ -15,9 +15,9 @@ type trackMediaDeliveryRefs struct {
 func projectTrackMediaDelivery(
 	durationSeconds *int,
 	refs trackMediaDeliveryRefs,
-) (*commonv1.MediaDelivery, error) {
+) *commonv1.MediaDelivery {
 	if refs.source.ID == "" || refs.playback == nil || refs.waveform == nil || refs.spectrogram == nil {
-		return nil, nil
+		return nil
 	}
 
 	delivery := &commonv1.MediaDelivery{
@@ -36,5 +36,5 @@ func projectTrackMediaDelivery(
 		duration := int32(*durationSeconds)
 		delivery.DurationSeconds = &duration
 	}
-	return delivery, nil
+	return delivery
 }

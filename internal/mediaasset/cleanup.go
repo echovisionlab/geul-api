@@ -156,10 +156,10 @@ func (s *Cleanup) finalizeRetiredGenerationCleanup(ctx context.Context, target r
 
 func lockDueUnreferencedRetiredGeneration(tx *gorm.DB, generationID string, now time.Time) (model.MediaGeneration, bool, error) {
 	var generation model.MediaGeneration
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "file_id", "status", "object_prefix", "delete_after").
 		Where("id = ?", generationID).Take(&generation).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if stderrors.Is(err, gorm.ErrRecordNotFound) {
 			return model.MediaGeneration{}, false, nil
 		}
 		return model.MediaGeneration{}, false, err

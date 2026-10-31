@@ -275,7 +275,7 @@ func (s *FileService) finalizeStagedFaviconBundle(
 ) (*commonv1.FaviconAssetSet, bool, error) {
 	var lockedSource model.File
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "mime_type", "file_size", "extension").
 		Where("id = ?", source.ID).
 		Take(&lockedSource).Error; err != nil {

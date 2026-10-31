@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -62,7 +64,7 @@ func (s *ClientService) CreateClient(
 			return err
 		}
 		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}}}).Create(&client).Error; err != nil {
-			if isUniqueViolation(err) {
+			if dberrors.IsUniqueViolation(err) {
 				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 				return errs.AlreadyExistsMsg("client with this name already exists")
 			}
@@ -84,7 +86,7 @@ func (s *ClientService) CreateClient(
 		return write([]policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete})
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.AlreadyExistsMsg("client with this name already exists")
 		}
@@ -117,8 +119,8 @@ func (s *ClientService) UpdateClient(
 
 	var client model.Client
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("client", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -168,7 +170,7 @@ func (s *ClientService) applyClientUpdates(ctx context.Context, db *gorm.DB, cli
 		return nil
 	}
 	if err := db.WithContext(ctx).Model(client).Updates(updates).Error; err != nil {
-		if isUniqueViolation(err) {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return errs.AlreadyExistsMsg("client with this name already exists")
 		}
@@ -200,8 +202,8 @@ func (s *ClientService) DeleteClient(
 
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		var client model.Client
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("client", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -243,9 +245,6 @@ func (s *ClientService) DeleteClient(
 		return write([]policyv1.RelationshipMutation{policyDelete}, []policyv1.RelationshipMutation{policyTouch})
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{

@@ -3,9 +3,10 @@ package programevent
 import (
 	"context"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -50,8 +51,8 @@ func (s *ProgramEventService) loadProgramEvent(ctx context.Context, id string) (
 	var output *managev1.ProgramEvent
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var event model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&event, "id = ?", id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", id)
 			}
 			return errs.Internal(err)
@@ -73,8 +74,8 @@ func (s *ProgramEventService) loadAuthorizedProgramEvent(ctx context.Context, id
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var event model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&event, "id = ?", id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", id)
 			}
 			return errs.Internal(err)
@@ -205,7 +206,7 @@ func (s *ProgramEventSeriesService) loadProgramEventSeriesRow(ctx context.Contex
 		err = db.First(series, "slug = ?", idOrSlug).Error
 	}
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("program event series", idOrSlug)
 		}
 		return nil, errs.Internal(err)
@@ -218,10 +219,10 @@ func (s *ProgramEventSeriesService) loadProgramEventSeries(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	return s.toProtoProgramEventSeries(ctx, series)
+	return s.toProtoProgramEventSeries(series)
 }
 
-func (s *ProgramEventSeriesService) toProtoProgramEventSeries(ctx context.Context, series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
+func (s *ProgramEventSeriesService) toProtoProgramEventSeries(series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
 	return &managev1.ProgramEventSeries{
 		Id:           series.ID,
 		Status:       manageProgramEventSeriesStatus(series.Status),
@@ -238,7 +239,7 @@ func (s *ProgramEventSeriesService) toProtoProgramEventSeries(ctx context.Contex
 func (s *ProgramEventTypeService) loadProgramEventType(ctx context.Context, id string) (*managev1.ProgramEventType, error) {
 	var eventType model.ProgramEventType
 	if err := s.db.WithContext(ctx).First(&eventType, "id = ?", id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("program event type", id)
 		}
 		return nil, errs.Internal(err)

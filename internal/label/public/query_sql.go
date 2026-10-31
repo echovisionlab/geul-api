@@ -16,7 +16,7 @@ func sourceColumnSQL(alias, entity, table, translationAlias, column string) stri
 	return fmt.Sprintf("(SELECT %s.%s FROM %s AS %s JOIN %s AS source ON source.id = %s.entity_id AND source.source_locale = %s.locale WHERE %s.entity_id = %s.id LIMIT 1)", translationAlias, column, table, translationAlias, entity, translationAlias, translationAlias, translationAlias, alias)
 }
 
-func labelSourceTitleSQL(alias string) string {
+func labelSourceTitleSQL(alias string) string { //nolint:unparam // same shape as the artist and release source-title helpers
 	return "COALESCE(NULLIF(" + sourceColumnSQL(alias, "label", "label_translation", "lt", "title") + ", ''), '')"
 }
 

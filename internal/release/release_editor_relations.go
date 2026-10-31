@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -37,7 +38,7 @@ func (s *ReleaseService) GetReleaseRelations(
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var release model.Release
 		if err := tx.Select("id").Where("id = ?", req.Msg.ReleaseId).Take(&release).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("release", req.Msg.ReleaseId)
 			}
 			return errs.Internal(err)

@@ -95,9 +95,6 @@ func (s *AdminService) RegenerateOgImage(
 		return err
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.RegenerateOgImageResponse{

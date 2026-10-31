@@ -143,7 +143,7 @@ func lockFileAcceptingProcessingResults(ctx context.Context, tx *gorm.DB, fileID
 	}
 	var file model.File
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("id = ? AND delete_requested_at IS NULL", strings.TrimSpace(fileID)).
 		Take(&file).Error; err != nil {
@@ -264,7 +264,7 @@ func (h *Handlers) trackedTranscodeJobByIdentityDB(
 	var job model.TranscodeJob
 	query := db.WithContext(ctx)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	if err := query.
 		Select("event_id", "status", "payload").
@@ -339,7 +339,7 @@ func retireStaleMediaGeneration(
 	}
 	generationID := strings.TrimSpace(result.GetGenerationId())
 	var generation model.MediaGeneration
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", generationID).Take(&generation).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
@@ -388,7 +388,7 @@ func markStalePublicAssetDeletePending(
 	now time.Time,
 ) error {
 	var asset model.PublicAsset
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", assetID).Take(&asset).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil

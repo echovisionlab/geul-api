@@ -134,7 +134,7 @@ func LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserI
 	}
 	result := tx.WithContext(ctx).
 		Table("member").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id, onboarded, deleted_at IS NULL AS active").
 		Where("id = ? AND account_identity_id = ?", principal.MemberID.String(), principal.IdentityID.String()).
 		Take(&member)
@@ -151,7 +151,7 @@ func LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserI
 	}
 	result = tx.WithContext(ctx).
 		Table("kratos.identities").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id, state, LOWER(COALESCE(metadata_admin ->> 'banned', 'false')) IN ('true', '1') AS banned").
 		Where("id = ? AND external_id = ?", principal.IdentityID.String(), principal.MemberID.String()).
 		Take(&identity)

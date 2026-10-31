@@ -79,7 +79,7 @@ func evaluateSavedPageAccess(t *testing.T, ctx context.Context, db *gorm.DB, che
 	var reason commonv1.PageAccessReason
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var page model.Page
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&page, "id = ?", pageID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&page, "id = ?", pageID).Error; err != nil {
 			return err
 		}
 		var err error

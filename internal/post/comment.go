@@ -208,7 +208,7 @@ func (s *CommentService) applyCommentCursor(
 		Select("created_at").
 		Where("id = ? AND post_id = ? AND parent_id IS NULL", *cursor, postID).
 		First(&cursorComment).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return query, nil
 	}
 	if err != nil {
@@ -249,7 +249,7 @@ func (s *CommentService) LoadMoreReplies(
 	// Find the parent comment and verify it exists
 	var parentComment model.Comment
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.CommentId).First(&parentComment).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("comment not found")
 		}
 		return nil, errs.Internal(err)
@@ -456,9 +456,9 @@ func (s *CommentService) createCommentWithDB(
 
 func lockCommentablePost(ctx context.Context, tx *gorm.DB, postID string) error {
 	var post model.Post
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id, status, comments_enabled").Where("id = ?", postID).First(&post).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("post not found")
 		}
 		return errs.Internal(err)
@@ -493,9 +493,9 @@ func (s *CommentService) resolveCommentParentWithDB(
 		return nil, nil
 	}
 	var parent model.Comment
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ? AND post_id = ?", *requestedParentID, postID).First(&parent).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("parent comment not found")
 		}
 		return nil, errs.Internal(err)
@@ -561,10 +561,10 @@ func (s *CommentService) UpdateComment(
 		}
 		var comment model.Comment
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.Id).
 			First(&comment).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("comment not found")
 			}
 			return errs.Internal(err)
@@ -629,7 +629,7 @@ func (s *CommentService) DeleteComment(
 		PostID string `gorm:"column:post_id"`
 	}
 	if err := s.db.WithContext(ctx).Table("comment").Select("post_id").Where("id = ?", req.Msg.Id).Take(&target).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("comment not found")
 		}
 		return nil, errs.Internal(err)
@@ -649,10 +649,10 @@ func (s *CommentService) DeleteComment(
 		}
 		var comment model.Comment
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.Id).
 			First(&comment).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("comment not found")
 			}
 			return errs.Internal(err)
@@ -682,7 +682,7 @@ func (s *CommentService) DeleteComment(
 func (s *CommentService) withReadablePost(ctx context.Context, postID string, read func(*CommentService) error) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var post model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("post not found")
 			}

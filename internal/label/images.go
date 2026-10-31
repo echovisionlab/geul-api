@@ -2,6 +2,7 @@ package label
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -108,7 +109,7 @@ func (s *LabelService) SetLabelImage(
 	// Use transaction to ensure atomicity
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the label to update.
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
 			return err
 		}
@@ -163,11 +164,8 @@ func (s *LabelService) SetLabelImage(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.LabelId)
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}
@@ -208,7 +206,7 @@ func (s *LabelService) DeleteLabelImage(
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the label to update.
 		var label model.Label
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
 			return err
 		}
@@ -255,11 +253,8 @@ func (s *LabelService) DeleteLabelImage(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.LabelId)
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}

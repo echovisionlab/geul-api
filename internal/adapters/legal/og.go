@@ -3,6 +3,7 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -122,14 +123,14 @@ func CurrentForRoute(ctx context.Context, db *gorm.DB, kind string) (*Current, e
 	if result.Error == nil {
 		return &row, nil
 	}
-	if result.Error != gorm.ErrRecordNotFound {
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, result.Error
 	}
 
 	result = db.WithContext(ctx).Table(table).
 		Select("id, title").Where("status = ?", scheduled).
 		Order("effective_from ASC, version DESC").Take(&row)
-	if result.Error == gorm.ErrRecordNotFound {
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if result.Error != nil {
@@ -152,7 +153,7 @@ func Title(
 		Select("title").
 		Where("entity_id = ? AND locale = ?", documentID, locale).
 		Take(&translated)
-	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return "", result.Error
 	}
 	if translated.Title != nil {

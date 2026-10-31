@@ -1,18 +1,20 @@
 package campaign
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"log/slog"
 	"strings"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -104,7 +106,7 @@ func NewAIDocumentService(internal *InternalCampaignService) (*AIDocumentService
 }
 
 func (s *AIDocumentService) Load(ctx context.Context, campaignID, locale string) (AIDocumentState, error) {
-	campaignID, err := canonicalCampaignAIDocumentID("campaign_id", campaignID)
+	campaignID, err := canonicalCampaignAIDocumentID(campaignID)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -115,7 +117,7 @@ func (s *AIDocumentService) Load(ctx context.Context, campaignID, locale string)
 
 	var state AIDocumentState
 	err = s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, "SHARE")
+		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}
@@ -164,7 +166,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
 		return AIDocumentMutationResult{}, errs.InvalidArgument("mode", "is not supported")
 	}
-	campaignID, err := canonicalCampaignAIDocumentID("campaign_id", campaignID)
+	campaignID, err := canonicalCampaignAIDocumentID(campaignID)
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
@@ -176,7 +178,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	var output AIDocumentMutationResult
 	var currentDocumentRevision string
 	err = s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, "UPDATE")
+		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
@@ -348,7 +350,7 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 				return AIDocumentMutationResult{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 			}
 			if err := projectCampaignEmailMaterializedContent(
-				ctx, tx, campaignContentEntity, mutation.CampaignID,
+				ctx, tx, mutation.CampaignID,
 				snapshot, []string{mutation.Locale}, now,
 			); err != nil {
 				return AIDocumentMutationResult{}, err
@@ -459,7 +461,7 @@ func validateCompiledCampaignAIDocumentMutation(
 func validateCampaignAIDocumentMutation(
 	input AIDocumentMutation,
 ) (AIDocumentMutation, uuid.UUID, error) {
-	id, err := canonicalCampaignAIDocumentID("campaign_id", input.CampaignID)
+	id, err := canonicalCampaignAIDocumentID(input.CampaignID)
 	if err != nil {
 		return AIDocumentMutation{}, uuid.Nil, err
 	}

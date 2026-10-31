@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -172,7 +173,7 @@ func (s *ReleaseService) GetRelease(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
 		First(&release).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -481,12 +482,9 @@ func (s *ReleaseService) CreateRelease(
 		return nil
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("release", "slug")
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}
@@ -504,7 +502,7 @@ func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, 
 			if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
 				return err
 			}
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Model(&model.Track{}).
 				Where("release_id = ?", releaseID).
 				Pluck("id", &trackIDs).Error; err != nil {
@@ -555,7 +553,7 @@ func (s *ReleaseService) DeleteRelease(
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, err := requireLockedReleaseAction(ctx, tx, s.spiceDB, req.Msg.Id, releaseActionDelete)
+		err := requireLockedReleaseAction(ctx, tx, s.spiceDB, req.Msg.Id, releaseActionDelete)
 		return err
 	}); err != nil {
 		return nil, err
@@ -572,9 +570,6 @@ func (s *ReleaseService) DeleteRelease(
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFound("release", req.Msg.Id)
 			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
-			}
 			return nil, errs.Internal(fmt.Errorf("cleanup release track audio uploads: %w", err))
 		}
 
@@ -587,7 +582,7 @@ func (s *ReleaseService) DeleteRelease(
 				return err
 			}
 			trackIDs = nil
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Model(&model.Track{}).
 				Where("release_id = ?", req.Msg.Id).
 				Pluck("id", &trackIDs).Error; err != nil {
@@ -674,9 +669,6 @@ func (s *ReleaseService) DeleteRelease(
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFound("release", req.Msg.Id)
 			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
-			}
 			return nil, errs.Internal(err)
 		}
 		deleted = true
@@ -701,7 +693,7 @@ func (s *ReleaseService) DeleteRelease(
 // Publish/Unpublish (admin only)
 // =============================================================================
 
-// PublishRelease publishes a release (admin or owner only)
+// PublishRelease publishes a release (admin only)
 func (s *ReleaseService) PublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishReleaseRequest],
@@ -715,7 +707,7 @@ func (s *ReleaseService) PublishRelease(
 
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -746,9 +738,6 @@ func (s *ReleaseService) PublishRelease(
 			[]string{"state.status", "state.published_at"},
 		))
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -764,7 +753,7 @@ func (s *ReleaseService) PublishRelease(
 	}), nil
 }
 
-// UnpublishRelease unpublishes a release (admin or owner only)
+// UnpublishRelease unpublishes a release (admin only)
 func (s *ReleaseService) UnpublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishReleaseRequest],
@@ -778,7 +767,7 @@ func (s *ReleaseService) UnpublishRelease(
 
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -809,9 +798,6 @@ func (s *ReleaseService) UnpublishRelease(
 			[]string{"state.status"},
 		))
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -239,7 +240,7 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 			ID        string `gorm:"column:id"`
 			ReleaseID string `gorm:"column:release_id"`
 		}
-		if err := s.db.WithContext(ctx).Table("track").Select("id, release_id").Where("id IN ?", normalizedSortedFileIDs(trackIDs)).Find(&tracks).Error; err != nil {
+		if err := s.db.WithContext(ctx).Table("track").Select("id, release_id").Where("id IN ?", sliceutil.SortedUniqueTrimmed(trackIDs)).Find(&tracks).Error; err != nil {
 			return nil, err
 		}
 		for _, track := range tracks {
@@ -353,7 +354,7 @@ func (s *FileService) ListFileUsages(
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileUsages", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
-	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
+	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
 	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)

@@ -3,6 +3,7 @@ package translation
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -143,7 +144,7 @@ func validateXLIFFInterchangeXMLProfile(body []byte) error {
 	for {
 		token, err := decoder.Token()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return fmt.Errorf("failed to decode XLIFF document: %w", err)
@@ -200,7 +201,7 @@ func decodeXLIFFUnit(encoded xliffXMLUnit) (XLIFFUnit, error) {
 	if err != nil {
 		return XLIFFUnit{}, fmt.Errorf("invalid source inline content: %w", err)
 	}
-	unit.Source, _, err = projectAndValidateXLIFFInline(unit.SourceInline, data, "")
+	unit.Source, _, err = projectAndValidateXLIFFInline(unit.SourceInline, data)
 	if err != nil {
 		return XLIFFUnit{}, fmt.Errorf("invalid source inline content: %w", err)
 	}
@@ -209,7 +210,7 @@ func decodeXLIFFUnit(encoded xliffXMLUnit) (XLIFFUnit, error) {
 		if err != nil {
 			return XLIFFUnit{}, fmt.Errorf("invalid target inline content: %w", err)
 		}
-		target, _, projectErr := projectAndValidateXLIFFInline(unit.TargetInline, data, "")
+		target, _, projectErr := projectAndValidateXLIFFInline(unit.TargetInline, data)
 		if projectErr != nil {
 			return XLIFFUnit{}, fmt.Errorf("invalid target inline content: %w", projectErr)
 		}
@@ -226,7 +227,7 @@ func decodeXLIFFInlineContent(innerXML string) ([]XLIFFInline, error) {
 	for {
 		token, err := decoder.Token()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, err

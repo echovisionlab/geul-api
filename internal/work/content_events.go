@@ -84,7 +84,6 @@ func buildWorkSourceContentUpdatedEvent(
 	contributors []string,
 	source managev1.ContentUpdateSource,
 	locale string,
-	localeExists bool,
 	targetRevision *string,
 	documentStateChanged bool,
 ) *managev1.ContentUpdatedEvent {
@@ -102,13 +101,10 @@ func buildWorkSourceContentUpdatedEvent(
 	if locale == "" || strings.TrimSpace(revision) == "" {
 		return nil
 	}
-	if !localeExists && (targetRevision != nil || documentStateChanged) {
-		return nil
-	}
 	if targetRevision != nil && (strings.TrimSpace(*targetRevision) == "" || documentStateChanged) {
 		return nil
 	}
-	if localeExists && targetRevision == nil && !documentStateChanged {
+	if targetRevision == nil && !documentStateChanged {
 		return nil
 	}
 	event := buildContentUpdatedEvent(
@@ -118,16 +114,16 @@ func buildWorkSourceContentUpdatedEvent(
 	if event == nil {
 		return nil
 	}
+	localeExists := true
 	event.Locale = &locale
 	event.LocaleExists = &localeExists
-	if localeExists && targetRevision != nil {
+	if targetRevision != nil {
 		event.TargetRevision = targetRevision
 	}
 	return event
 }
 
 func buildManageStateTransitionContentUpdatedEvent(
-	entityType managev1.ContentEntityType,
 	entityID string,
 	paths []string,
 ) *managev1.ContentUpdatedEvent {
@@ -136,7 +132,7 @@ func buildManageStateTransitionContentUpdatedEvent(
 		"state.published_at": {path: "state.published_at", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE},
 	}
 	return buildContentUpdatedEvent(
-		entityType, entityID, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
+		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, entityID, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 		buildContentUpdatedFields(paths, specs), false, "", nil,
 	)
 }

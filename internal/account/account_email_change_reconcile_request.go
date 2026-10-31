@@ -77,7 +77,7 @@ func (s *AccountEmailChangeLifecycle) ReconcileRequest(
 
 	var request model.AccountEmailChangeRequest
 	if err := s.db.WithContext(ctx).First(&request, "id = ?", requestID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return err
@@ -88,7 +88,7 @@ func (s *AccountEmailChangeLifecycle) ReconcileRequest(
 	) error {
 		var current model.AccountEmailChangeRequest
 		if err := connection.First(&current, "id = ?", requestID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
 			return err
@@ -356,7 +356,7 @@ func (s *AccountEmailChangeLifecycle) finishAccountEmailChangeRequest(
 	reason string,
 ) error {
 	if err := deleteAccountEmailChangeRequest(db, request.ID); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return err
@@ -386,7 +386,7 @@ func loadAccountEmailChangeRequest(
 		normalizeAccountEmail(previousEmail),
 		normalizeAccountEmail(requestedEmail),
 	).First(&request).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {

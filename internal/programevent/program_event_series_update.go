@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func (s *ProgramEventSeriesService) loadProgramEventSeriesForUpdate(
 ) (model.ProgramEventSeries, error) {
 	var series model.ProgramEventSeries
 	if err := s.db.WithContext(ctx).First(&series, "id = ?", seriesID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return series, errs.NotFound("program event series", seriesID)
 		}
 		return series, errs.Internal(err)
@@ -65,7 +66,6 @@ func (s *ProgramEventSeriesService) loadProgramEventSeriesForUpdate(
 func (s *ProgramEventSeriesService) prepareProgramEventSeriesUpdate(
 	ctx context.Context,
 	request *managev1.UpdateProgramEventSeriesRequest,
-	now time.Time,
 ) (programEventSeriesUpdate, error) {
 	update := programEventSeriesUpdate{fields: structured.Fields{}}
 	if request.Title != nil {
@@ -184,8 +184,8 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 
 func lockProgramEventSeriesForUpdate(tx *gorm.DB, seriesID string) (model.ProgramEventSeries, error) {
 	var series model.ProgramEventSeries
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&series, "id = ?", seriesID).Error
-	if err == gorm.ErrRecordNotFound {
+	err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&series, "id = ?", seriesID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return series, errs.NotFound("program event series", seriesID)
 	}
 	if err != nil {

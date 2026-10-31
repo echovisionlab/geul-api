@@ -134,7 +134,7 @@ func boundaryError(ctx context.Context, procedure string, err error, private []s
 		}
 		return connect.NewError(code, stderrors.New(MsgInternal))
 	}
-	if _, kept := classified.Unwrap().(*classifiedCause); kept {
+	if _, kept := classified.Unwrap().(*classifiedCause); kept { //nolint:errorlint // only a cause Wrap attached directly carries operation context
 		cause := failurecause.Message(classified, private...)
 		if recorder != nil {
 			recorder.Record(cause, "")

@@ -364,21 +364,21 @@ func legalSnapshotLocales(snapshot contentblock.Snapshot) []string {
 func (s internalLegalDocumentService) updateDocumentMetadata(
 	ctx context.Context,
 	input legalDocumentMetadataInput,
-) (*legalDocumentMutationResult, bool, error) {
+) (*legalDocumentMutationResult, error) {
 	if err := s.requireBlockStore(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	documentID, err := loadLegalContentDocumentID(ctx, s.db, s.kind, input.EntityID)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	expectedRevision, err := parseLegalContentUUID("expected_revision", input.ExpectedRevision)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	input.Locale, err = canonicalLegalLocale(input.Locale)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	var advance contentblock.AdvanceResult
 	var targetResult legalTargetLocaleMutationResult
@@ -467,7 +467,7 @@ func (s internalLegalDocumentService) updateDocumentMetadata(
 		return nil
 	})
 	if err != nil {
-		return nil, false, normalizeLegalCollaborationContentBlockError(s.kind, err)
+		return nil, normalizeLegalCollaborationContentBlockError(s.kind, err)
 	}
 	if input.Locale != sourceLocale {
 		targetRevision := targetResult.TargetRevision
@@ -475,14 +475,14 @@ func (s internalLegalDocumentService) updateDocumentMetadata(
 			DocumentRevision: targetResult.DocumentRevision, Changed: targetResult.Changed,
 			ChangedLocales: []string{input.Locale},
 			Locale:         input.Locale, TargetRevision: &targetRevision,
-		}, false, nil
+		}, nil
 	}
 	return &legalDocumentMutationResult{
 		DocumentRevision: advance.DocumentRevision.String(), Changed: advance.Changed,
 		SourceChanged:  advance.TranslationSourceChanged,
 		ChangedLocales: []string{input.Locale},
 		Locale:         input.Locale,
-	}, sourceLocaleDocument, nil
+	}, nil
 }
 
 func (s internalLegalDocumentService) requestSavedOG(
@@ -529,4 +529,15 @@ func (s internalLegalDocumentService) updateLocaleTitle(
 		return true, nil
 	}
 	return false, errs.FailedPrecondition("target legal locale metadata is read-only")
+}
+
+func snapshotHasSiteVariables(snapshot contentblock.Snapshot) bool {
+	for _, overlay := range snapshot.LocaleOverlays {
+		for _, block := range overlay.Blocks {
+			if strings.Contains(string(block.LocalizedData), `"siteVariable"`) || strings.Contains(string(block.LocalizedData), "{{site.") || strings.Contains(string(block.LocalizedData), "{{contact.") {
+				return true
+			}
+		}
+	}
+	return false
 }

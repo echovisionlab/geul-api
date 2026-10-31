@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -60,9 +61,9 @@ func (s *PostService) SchedulePost(
 		if !scheduledAt.After(databaseNow.UTC()) {
 			return errs.InvalidArgument("scheduled_at", "must be in the future")
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -91,7 +92,7 @@ func (s *PostService) SchedulePost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -112,9 +113,9 @@ func (s *PostService) CancelPostSchedule(
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -148,7 +149,7 @@ func (s *PostService) CancelPostSchedule(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -169,9 +170,9 @@ func (s *PostService) RepublishPost(
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -207,7 +208,7 @@ func (s *PostService) RepublishPost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}

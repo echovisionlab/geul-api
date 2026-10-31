@@ -119,7 +119,7 @@ func (s *MapThemeService) requireLockedMapThemeCan(
 func lockMapThemeRoot(ctx context.Context, tx *gorm.DB, themeID string) (*model.MapTheme, error) {
 	var theme model.MapTheme
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", themeID).
 		Take(&theme).Error; err != nil {
 		if stderrors.Is(err, gorm.ErrRecordNotFound) {
@@ -193,7 +193,7 @@ func (s *MapThemeService) variantToProto(themeID, scheme string, v *model.MapThe
 	return proto
 }
 
-func (s *MapThemeService) toProto(theme *model.MapTheme) (*managev1.MapTheme, error) {
+func (s *MapThemeService) toProto(theme *model.MapTheme) *managev1.MapTheme {
 	proto := &managev1.MapTheme{
 		Id: theme.ID, Name: theme.Name, Revision: theme.EditVersion,
 		CreatedAt: timestamppb.New(theme.CreatedAt), UpdatedAt: timestamppb.New(theme.UpdatedAt),
@@ -206,7 +206,7 @@ func (s *MapThemeService) toProto(theme *model.MapTheme) (*managev1.MapTheme, er
 		LightVariant: s.variantToProto(theme.ID, "light", &theme.LightVariant),
 		DarkVariant:  s.variantToProto(theme.ID, "dark", &theme.DarkVariant),
 	}
-	return proto, nil
+	return proto
 }
 
 func loadDefaultMapThemeID(ctx context.Context, db *gorm.DB) (string, error) {

@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -144,7 +145,7 @@ func seriesUpdateAction(request *managev1.UpdateSeriesRequest) seriesAction {
 
 func loadSeriesForUpdate(tx *gorm.DB, seriesID string, series *model.Series) error {
 	err := tx.First(series, "id = ?", seriesID).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFound("series", seriesID)
 	}
 	if err != nil {

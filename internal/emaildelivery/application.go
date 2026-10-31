@@ -161,7 +161,7 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{}, a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	if suppression != nil {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSuppressed, "", "email_suppressed"); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSuppressed, "email_suppressed"); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "suppressed")
@@ -179,7 +179,7 @@ func (a *DeliveryApplication) Deliver(
 		if reason == "" {
 			reason = "recipient_context_blocked"
 		}
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", reason); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, reason); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "blocked")
@@ -198,7 +198,7 @@ func (a *DeliveryApplication) Deliver(
 	if err != nil {
 		errorType := managev1.EmailErrorType_EMAIL_ERROR_TYPE_TEMPLATE_ERROR.String()
 		LogDeliveryFailure(ctx, "mail.delivery.render_failed", job, err, "reason", "render_failed", "error_type", errorType)
-		if markErr := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, "", errorType); markErr != nil {
+		if markErr := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusBlocked, errorType); markErr != nil {
 			return DeliveryResult{}, fmt.Errorf("persist terminal render failure: %w", markErr)
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
@@ -206,7 +206,7 @@ func (a *DeliveryApplication) Deliver(
 		return DeliveryResult{Outcome: DeliveryRenderFailed}, nil
 	}
 	if rendered == nil {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSkipped, "", "template_not_configured"); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, RecipientStatusSkipped, "template_not_configured"); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "skipped")
@@ -264,7 +264,7 @@ func (a *DeliveryApplication) Deliver(
 	status, errorType, failureErr := ClassifyProviderFailures(failures, lastErr)
 	retryable := status == deliveryRetryableStatus
 	if !retryable && failureErr != nil {
-		if err := a.markTerminalResult(ctx, recipientID, claimID, status, "", errorType); err != nil {
+		if err := a.markTerminalResult(ctx, recipientID, claimID, status, errorType); err != nil {
 			return DeliveryResult{}, err
 		}
 		a.metrics.RecordSendResult(ctx, job.GetTemplateType(), "failed")
@@ -356,10 +356,9 @@ func (a *DeliveryApplication) markTerminalResult(
 	recipientID string,
 	claimID string,
 	status string,
-	providerMessageID string,
 	errorType string,
 ) error {
-	if err := a.markResult(ctx, recipientID, claimID, status, providerMessageID, errorType); err != nil {
+	if err := a.markResult(ctx, recipientID, claimID, status, "", errorType); err != nil {
 		return a.releaseClaimAfterError(ctx, recipientID, claimID, err)
 	}
 	return nil

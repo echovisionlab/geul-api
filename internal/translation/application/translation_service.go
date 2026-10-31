@@ -322,7 +322,7 @@ func (s *TranslationService) updateTranslationRuntimeSettings(
 	var updated translationRuntimeSettings
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row model.TranslationSettings
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = 1").Error; err != nil {
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&row, "id = 1").Error; err != nil {
 			return err
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, settingsCan); err != nil {

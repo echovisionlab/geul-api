@@ -2,6 +2,7 @@ package form
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -112,7 +113,7 @@ func (s *FormService) GetFormSubmissionWithSchema(
 
 	var submission model.FormSubmission
 	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("submission not found")
 		}
 		return nil, errs.Internal(err)
@@ -121,7 +122,7 @@ func (s *FormService) GetFormSubmissionWithSchema(
 	// Get the form to include schema
 	var form model.Form
 	if err := s.db.WithContext(ctx).First(&form, "id = ?", submission.FormID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("form not found")
 		}
 		return nil, errs.Internal(err)

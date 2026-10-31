@@ -82,19 +82,3 @@ func unavailableFileDownloadAccess() *openv1.FileDownloadAccess {
 		Action:       openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE,
 	}
 }
-
-func uniqueNonEmptyIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}

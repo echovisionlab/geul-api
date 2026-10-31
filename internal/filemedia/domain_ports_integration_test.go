@@ -71,11 +71,11 @@ func (a *integrationPostAccess) RequireEdit(ctx context.Context, postID string) 
 }
 
 func (a *integrationPostAccess) RequireLockedView(ctx context.Context, tx *gorm.DB, postID string) error {
-	return a.requireLocked(ctx, tx, postID, policyv1.Post.View, policyv1.Post.ViewArchived, "SHARE")
+	return a.requireLocked(ctx, tx, postID, policyv1.Post.View, policyv1.Post.ViewArchived, clause.LockingStrengthShare)
 }
 
 func (a *integrationPostAccess) RequireLockedEdit(ctx context.Context, tx *gorm.DB, postID string) error {
-	return a.requireLocked(ctx, tx, postID, policyv1.Post.Edit, policyv1.Post.EditArchived, "UPDATE")
+	return a.requireLocked(ctx, tx, postID, policyv1.Post.Edit, policyv1.Post.EditArchived, clause.LockingStrengthUpdate)
 }
 
 func (a *integrationPostAccess) requireLocked(
@@ -158,7 +158,7 @@ func (a *integrationProgramEventAccess) RequireLockedView(
 		eventID,
 		policyv1.ProgramEvent.View,
 		policyv1.ProgramEvent.ViewArchived,
-		"SHARE",
+		clause.LockingStrengthShare,
 	)
 }
 
@@ -177,7 +177,7 @@ func (a *integrationProgramEventAccess) RequireLockedEdit(
 		eventID,
 		policyv1.ProgramEvent.Edit,
 		policyv1.ProgramEvent.EditArchived,
-		"UPDATE",
+		clause.LockingStrengthUpdate,
 	)
 }
 

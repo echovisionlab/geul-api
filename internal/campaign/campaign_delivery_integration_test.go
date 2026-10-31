@@ -242,7 +242,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	require.NoError(t, blocker.Exec(`SET LOCAL lock_timeout = '5s'`).Error)
 	var lockedCampaign model.Campaign
 	require.NoError(t, blocker.Clauses(clause.Locking{
-		Strength: "UPDATE",
+		Strength: clause.LockingStrengthUpdate,
 	}).First(&lockedCampaign, "id = ?", campaign.ID).Error)
 
 	archiveApplication := "geul_archive_cancel_" +
@@ -519,7 +519,7 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 			}()
 			var lockedCampaign model.Campaign
 			require.NoError(t, blocker.Clauses(
-				clause.Locking{Strength: "UPDATE"},
+				clause.Locking{Strength: clause.LockingStrengthUpdate},
 			).First(&lockedCampaign, "id = ?", campaign.ID).Error)
 
 			applicationName := "geul_entry_lock_" +
@@ -550,8 +550,8 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 			require.NoError(t, probe.Error)
 			var unlockedRun model.CampaignDeliveryRun
 			require.NoError(t, probe.Clauses(clause.Locking{
-				Strength: "UPDATE",
-				Options:  "NOWAIT",
+				Strength: clause.LockingStrengthUpdate,
+				Options:  clause.LockingOptionsNoWait,
 			}).First(&unlockedRun, "id = ?", run.ID).Error)
 			require.NoError(t, probe.Rollback().Error)
 

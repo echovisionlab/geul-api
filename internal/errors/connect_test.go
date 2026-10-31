@@ -119,7 +119,7 @@ func TestInternalWrapsOriginalError(t *testing.T) {
 	if got := connect.CodeOf(err); got != connect.CodeInternal {
 		t.Fatalf("code = %v, want %v", got, connect.CodeInternal)
 	}
-	if got := err.Unwrap(); got != inner {
+	if got := err.Unwrap(); got != inner { //nolint:errorlint // asserts the direct cause
 		t.Fatalf("unwrapped error = %v, want %v", got, inner)
 	}
 }
@@ -135,7 +135,7 @@ func TestWrapPreservesConnectErrorAndWrapsPlainErrors(t *testing.T) {
 	if got := connect.CodeOf(wrapped); got != connect.CodeInternal {
 		t.Fatalf("code = %v, want %v", got, connect.CodeInternal)
 	}
-	if got := wrapped.Unwrap(); got != plainErr {
+	if got := wrapped.Unwrap(); got != plainErr { //nolint:errorlint // asserts the direct cause
 		t.Fatalf("unwrapped error = %v, want %v", got, plainErr)
 	}
 }

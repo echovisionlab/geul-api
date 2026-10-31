@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
-		updates, err := prepareProgramEventTypeUpdates(request, now)
+		updates, err := prepareProgramEventTypeUpdates(request)
 		if err != nil {
 			return err
 		}
@@ -64,8 +65,8 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 
 func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventType, error) {
 	var eventType model.ProgramEventType
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&eventType, "id = ?", id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&eventType, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return eventType, errs.NotFound("program event type", id)
 		}
 		return eventType, errs.Internal(err)
@@ -73,7 +74,7 @@ func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventTy
 	return eventType, nil
 }
 
-func prepareProgramEventTypeUpdates(request *managev1.UpdateProgramEventTypeRequest, now time.Time) (structured.Fields, error) {
+func prepareProgramEventTypeUpdates(request *managev1.UpdateProgramEventTypeRequest) (structured.Fields, error) {
 	updates := structured.Fields{}
 	if request.Slug != nil {
 		slug, err := validateProgramEventSlug(request.GetSlug())
@@ -144,10 +145,10 @@ func updateProgramEventTypeLocale(tx *gorm.DB, request *managev1.UpdateProgramEv
 	}
 	var localeRow model.ProgramEventTypeLocale
 	err = tx.First(&localeRow, "type_id = ? AND locale = ?", request.Id, locale).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, errs.Internal(err)
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return true, createProgramEventTypeLocale(tx, request, locale, now)
 	}
 	changed, err := applyProgramEventTypeLocaleUpdate(tx, &localeRow, request, now)

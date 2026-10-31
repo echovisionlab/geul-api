@@ -109,7 +109,7 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-	storedTemplateSubject, err := loadCampaignEmailSourceSubject(ctx, db, emailTemplateContentEntity, template.Msg.Id, "en")
+	storedTemplateSubject, err := loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, "Initial subject", storedTemplateSubject)
 
@@ -125,7 +125,7 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, emailTemplateContentEntity, template.Msg.Id, "en")
+	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, "Initial subject", storedTemplateSubject)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
@@ -137,7 +137,7 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
 	require.NoError(t, err)
-	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, emailTemplateContentEntity, template.Msg.Id, "en")
+	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, acceptedSubject, storedTemplateSubject)
 	rejectedSubject := "must roll back with Audit"
@@ -156,7 +156,7 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
 	require.Error(t, err)
-	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, emailTemplateContentEntity, template.Msg.Id, "en")
+	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, acceptedSubject, storedTemplateSubject)
 

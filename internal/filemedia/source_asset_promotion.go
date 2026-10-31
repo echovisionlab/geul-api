@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -136,7 +137,7 @@ func (s *FileService) prepareSourceAssetPromotion(
 				Select("id", "mime_type", "file_size", "extension").
 				Where("id = ?", sourceFileID).
 				Take(&file).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound("file", sourceFileID)
 				}
 				return errs.Internal(err)
@@ -242,11 +243,11 @@ func prepareSourceAssetPromotion(
 ) (*model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
 	var existing model.PublicAsset
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("source_file_id = ? AND status <> ?", file.ID, model.PublicAssetStatusDeleted).
 		Order("created_at DESC").
 		Take(&existing).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		asset, target, allocateErr := lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
 			SourceFileID: &file.ID,
 			Kind:         kind,
@@ -433,7 +434,7 @@ func (s *FileService) completeSourceAssetPromotion(
 				return err
 			}
 			var asset model.PublicAsset
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
 				return err
 			}
 			if asset.SourceFileID == nil || *asset.SourceFileID != sourceFileID {

@@ -2,11 +2,13 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -33,13 +35,13 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
 	var emailTemplate model.EmailTemplate
 	if err := s.db.WithContext(ctx).First(&emailTemplate, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email template", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

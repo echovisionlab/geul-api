@@ -99,7 +99,7 @@ func (s *AIDocumentService) Load(ctx context.Context, workID, locale string) (_ 
 	}
 	var state AIDocumentState
 	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, "SHARE")
+		root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}
@@ -334,7 +334,7 @@ func applyWorkAIDocumentMetadata(
 	}
 	if err := tx.WithContext(ctx).
 		Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("source_locale").
 		Where("id = ?", workID).
 		Take(&source).Error; err != nil {
@@ -389,7 +389,7 @@ func loadWorkAIDocumentLocaleForUpdate(ctx context.Context, tx *gorm.DB, workID,
 	}
 	result := tx.WithContext(ctx).
 		Table("work_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("title", "summary").
 		Where("entity_id = ? AND locale = ?", workID, locale).
 		Take(&row)

@@ -71,7 +71,7 @@ func validateAndLockTargetKind(
 		ID   string  `gorm:"column:id"`
 		Slug *string `gorm:"column:slug"`
 	}
-	query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
+	query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Table(table).Select("CAST(id AS TEXT) AS id", "slug")
 	if len(ids) > 0 && len(slugs) > 0 {
 		query = query.Where("CAST(id AS TEXT) IN ? OR slug IN ?", ids, slugs)

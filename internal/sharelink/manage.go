@@ -2,6 +2,7 @@ package sharelink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -107,9 +108,6 @@ func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[mana
 		return nil, err
 	}
 	if err := s.authority.Create(ctx, req.Msg.EntityType, req.Msg.EntityId, link, createRecord); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.CreateShareLinkResponse{ShareLink: toProto(link)}), nil
@@ -130,7 +128,7 @@ func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[mana
 	}()
 
 	if err := s.db.WithContext(ctx).First(&link, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("share link", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -140,9 +138,6 @@ func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[mana
 		return nil, errs.InvalidEntityType(link.EntityType)
 	}
 	if err := s.authority.Delete(ctx, managev1.ShareLinkEntityType(value), link, deleteRecord); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteShareLinkResponse{Success: true}), nil

@@ -96,7 +96,6 @@ func buildManagePageContentUpdatedEvent(request *managev1.UpdatePageRequest) *ma
 }
 
 func buildManageStateTransitionContentUpdatedEvent(
-	entityType managev1.ContentEntityType,
 	entityID string,
 	paths []string,
 ) *managev1.ContentUpdatedEvent {
@@ -104,7 +103,7 @@ func buildManageStateTransitionContentUpdatedEvent(
 		"state.status":       {path: "state.status", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE},
 		"state.published_at": {path: "state.published_at", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE},
 	}
-	return buildContentUpdatedEvent(entityType, entityID,
+	return buildContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, entityID,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 		buildContentUpdatedFields(paths, specs), false, "", nil, nil)
 }

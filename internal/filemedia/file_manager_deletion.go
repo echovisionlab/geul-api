@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -143,7 +144,7 @@ func (s *FileService) DeleteFiles(ctx context.Context, req *connect.Request[mana
 
 func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []string) (map[string]model.File, error) {
 	var files []model.File
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
 		return nil, err
 	}
@@ -254,8 +255,8 @@ func lockFileFolderSubtree(ctx context.Context, tx *gorm.DB, folderID string) ([
 		return nil, err
 	}
 	var folder model.FileFolder
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", folderID).First(&folder).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", folderID).First(&folder).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("folder", folderID)
 		}
 		return nil, err
@@ -264,7 +265,7 @@ func lockFileFolderSubtree(ctx context.Context, tx *gorm.DB, folderID string) ([
 	if err := tx.WithContext(ctx).Raw(`WITH RECURSIVE subtree AS (SELECT id FROM file_folder WHERE id = ? UNION ALL SELECT child.id FROM file_folder child JOIN subtree parent ON child.parent_id = parent.id) SELECT id::text FROM subtree ORDER BY id`, folderID).Scan(&subtreeIDs).Error; err != nil {
 		return nil, err
 	}
-	if err := tx.WithContext(ctx).Table("file_folder").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", subtreeIDs).Order("id").Pluck("id", &subtreeIDs).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("file_folder").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id IN ?", subtreeIDs).Order("id").Pluck("id", &subtreeIDs).Error; err != nil {
 		return nil, err
 	}
 	return subtreeIDs, nil
