@@ -330,7 +330,7 @@ func (s *EmailLayoutAIDocumentService) replaceValues(ctx context.Context, tx *go
 	}
 	expectedRevision, err := uuid.Parse(current.DocumentRevision)
 	if err != nil || expectedRevision == uuid.Nil {
-		return fmt.Errorf("Email Layout Content Document revision is invalid: %w", err)
+		return fmt.Errorf("Email Layout Content Document revision %q is invalid", current.DocumentRevision)
 	}
 	authority := emailLayoutDocumentAuthority{LayoutID: m.LayoutID, SourceLocale: current.SourceLocale, DocumentID: current.documentID}
 	_, err = saveEmailLayoutSource(
