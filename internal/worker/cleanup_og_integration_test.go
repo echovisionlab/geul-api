@@ -193,6 +193,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			t.Fatalf("completion did not wait for cleanup lock: %v", completeErr)
 		case <-time.After(100 * time.Millisecond):
 		}
+		requireLockWaiters(t, pg.DB, 1)
 		close(release)
 		require.NoError(t, <-cleanupDone)
 		require.Error(t, <-completeDone)
@@ -220,6 +221,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			t.Fatalf("cleanup did not wait for completion transaction: %v", cleanupErr)
 		case <-time.After(100 * time.Millisecond):
 		}
+		requireLockWaiters(t, pg.DB, 1)
 		require.NoError(t, tx.Commit().Error)
 		require.NoError(t, <-cleanupDone)
 		assertCleanupAssetStatus(t, pg.DB, asset.ID, model.PublicAssetStatusReady)
@@ -413,4 +415,19 @@ func assertCleanupAssetStatus(t *testing.T, db *gorm.DB, assetID, status string)
 	var asset model.PublicAsset
 	require.NoError(t, db.First(&asset, "id = ?", assetID).Error)
 	require.Equal(t, status, asset.Status)
+}
+
+// requireLockWaiters waits until want sessions of the test's own database are
+// blocked on a lock, so concurrent operations queue in a known order.
+func requireLockWaiters(t *testing.T, db *gorm.DB, want int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		var waiting int
+		err := db.Raw(`
+			SELECT count(*)
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock'`).Scan(&waiting).Error
+		return err == nil && waiting >= want
+	}, 10*time.Second, 10*time.Millisecond)
 }

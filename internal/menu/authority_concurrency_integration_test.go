@@ -91,7 +91,8 @@ func requirePendingAdvisoryOrRowLock(t *testing.T, db *gorm.DB) {
 			SELECT EXISTS (
 				SELECT 1
 				FROM pg_stat_activity
-				WHERE wait_event_type = 'Lock'
+				WHERE datname = current_database()
+				  AND wait_event_type = 'Lock'
 				  AND cardinality(pg_blocking_pids(pid)) > 0
 			)`).Scan(&waiting).Error
 		return err == nil && waiting
