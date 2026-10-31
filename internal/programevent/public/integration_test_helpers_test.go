@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -71,6 +73,12 @@ func manageProgramEvents(t *testing.T, db *gorm.DB, deps eventdomain.Deps) *even
 	}
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = testcollaboration.NewCheckpoints(db, spiceDB)
+	}
+	if deps.CreditArtists == nil {
+		deps.CreditArtists = artistadapter.CreditArtists{}
+	}
+	if deps.Members == nil {
+		deps.Members = memberadapter.ContentMembers{}
 	}
 	service, err := eventdomain.NewService(deps)
 	require.NoError(t, err)

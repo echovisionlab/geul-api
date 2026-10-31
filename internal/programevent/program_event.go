@@ -307,7 +307,7 @@ func (s *Service) newProgramEvent(ctx context.Context, command CreateProgramEven
 
 func (s *Service) initialSourceLocale(ctx context.Context, command CreateProgramEventCommand) (string, error) {
 	if strings.TrimSpace(command.SourceLocale) == "" {
-		return resolveInitialSourceLocale(ctx, s.db, command.AcceptLanguage), nil
+		return s.resolveInitialSourceLocale(ctx, command.AcceptLanguage), nil
 	}
 	return normalizeRequiredProgramEventLocale("source_locale", command.SourceLocale)
 }

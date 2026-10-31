@@ -14,6 +14,8 @@ import (
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
@@ -87,6 +89,12 @@ func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClien
 	}
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = programEventIntegrationCheckpoints(db, spiceDB)
+	}
+	if deps.CreditArtists == nil {
+		deps.CreditArtists = artistadapter.CreditArtists{}
+	}
+	if deps.Members == nil {
+		deps.Members = memberadapter.ContentMembers{}
 	}
 	service, err := NewService(deps)
 	require.NoError(t, err)

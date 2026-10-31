@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	audienceadapter "github.com/echovisionlab/geul-api/internal/adapters/audience"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
@@ -503,7 +504,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
 		MediaHydrator: programeventadapter.NewFiles(fileService),
 		CreditMembers: programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
-		Checkpoints:   collaborationRuntime.Checkpoints,
+		CreditArtists: artistadapter.CreditArtists{}, Members: memberadapter.ContentMembers{},
+		Checkpoints: collaborationRuntime.Checkpoints,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize program event service: %w", err)

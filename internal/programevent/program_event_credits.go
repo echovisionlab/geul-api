@@ -630,7 +630,7 @@ func (s *Service) loadProgramEventCredits(ctx context.Context, db *gorm.DB, even
 	}
 	result := make([]*managev1.ProgramEventCredit, 0, len(rows))
 	for i := range rows {
-		result = append(result, toProtoProgramEventCredit(ctx, db, s.media, &rows[i], summaries))
+		result = append(result, s.creditProto(ctx, db, &rows[i], summaries))
 	}
 	return result, nil
 }
@@ -644,10 +644,10 @@ func (s *Service) toProtoProgramEventCredit(ctx context.Context, row *model.Prog
 	if err != nil {
 		slog.ErrorContext(ctx, "Program Event credit member lookup failed; serving credit without member summary", "domain", "programevent", "operation", "load_credit_member_summaries", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
 	}
-	return toProtoProgramEventCredit(ctx, s.db, s.media, row, summaries)
+	return s.creditProto(ctx, s.db, row, summaries)
 }
 
-func toProtoProgramEventCredit(ctx context.Context, db *gorm.DB, mediaAssets MediaAssets, row *model.ProgramEventCredit, summaries map[string]*commonv1.MemberSummary) *managev1.ProgramEventCredit {
+func (s *Service) creditProto(ctx context.Context, db *gorm.DB, row *model.ProgramEventCredit, summaries map[string]*commonv1.MemberSummary) *managev1.ProgramEventCredit {
 	credit := &managev1.ProgramEventCredit{
 		Id:          row.ID,
 		ArtistId:    row.ArtistID,
@@ -657,65 +657,44 @@ func toProtoProgramEventCredit(ctx context.Context, db *gorm.DB, mediaAssets Med
 		Description: row.Description,
 		SortOrder:   row.SortOrder,
 	}
-
 	if row.ArtistID != nil {
-		var artist struct {
-			ID   string  `gorm:"column:id"`
-			Name string  `gorm:"column:name"`
-			Slug *string `gorm:"column:slug"`
-		}
-		if err := db.WithContext(ctx).
-			Table("artist").
-			Select("artist.id, "+artistSourceTitleSQL("artist")+" AS name, artist.slug").
-			Where("artist.id = ?", *row.ArtistID).
-			Scan(&artist).Error; err == nil && artist.ID != "" {
-			credit.Artist = &managev1.ProgramEventCreditArtist{
-				Id:   artist.ID,
-				Name: artist.Name,
-				Slug: artist.Slug,
-			}
-			if imageAsset := loadProgramEventArtistImageAsset(ctx, db, mediaAssets, artist.ID); imageAsset != nil {
-				credit.Artist.ImageAsset = imageAsset
-			}
-		} else if err != nil {
-			slog.ErrorContext(ctx, "Program Event credit artist lookup failed; serving credit without artist", "domain", "programevent", "operation", "load_credit_artist", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
-		}
+		credit.Artist = s.creditArtist(ctx, db, row)
 	}
-
 	if row.MemberID != nil {
 		credit.Member = summaries[*row.MemberID]
 	}
-
 	return credit
 }
 
-func artistSourceTitleSQL(tableAlias string) string {
-	alias := strings.TrimSpace(tableAlias)
-	if alias == "" {
-		alias = "artist"
+// creditArtist is the credited artist of row with its first image, or nil
+// when the artist cannot be read.
+func (s *Service) creditArtist(ctx context.Context, db *gorm.DB, row *model.ProgramEventCredit) *managev1.ProgramEventCreditArtist {
+	id, name, slug, err := s.creditArtists.CreditArtist(ctx, db, *row.ArtistID)
+	if err != nil {
+		slog.ErrorContext(ctx, "Program Event credit artist lookup failed; serving credit without artist", "domain", "programevent", "operation", "load_credit_artist", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
+		return nil
 	}
-	return "COALESCE((SELECT translation.title FROM artist_translation AS translation WHERE translation.entity_id = " + alias + ".id AND translation.locale = " + alias + ".source_locale LIMIT 1), '')"
+	if id == "" {
+		return nil
+	}
+	artist := &managev1.ProgramEventCreditArtist{Id: id, Name: name, Slug: slug}
+	if imageAsset := s.creditArtistImage(ctx, db, id); imageAsset != nil {
+		artist.ImageAsset = imageAsset
+	}
+	return artist
 }
 
-func loadProgramEventArtistImageAsset(ctx context.Context, db *gorm.DB, mediaAssets MediaAssets, artistID string) *commonv1.AssetRef {
-	var result struct {
-		FileID string `gorm:"column:file_id"`
-	}
-	if err := db.WithContext(ctx).
-		Table("artist_file").
-		Select("file_id").
-		Where("artist_file.artist_id = ?", artistID).
-		Order("artist_file.sort_order ASC").
-		Limit(1).
-		Scan(&result).Error; err != nil || result.FileID == "" {
+func (s *Service) creditArtistImage(ctx context.Context, db *gorm.DB, artistID string) *commonv1.AssetRef {
+	fileID, err := s.creditArtists.FirstImageFileID(ctx, db, artistID)
+	if err != nil || fileID == "" {
 		if err != nil {
 			slog.ErrorContext(ctx, "Program Event artist image lookup failed; serving artist without image", "domain", "programevent", "operation", "load_artist_image", failurecause.Attr(err), "artist_id", artistID)
 		}
 		return nil
 	}
-	asset, err := mediaAssets.ReadyPublicAssetRefForSourceFile(ctx, db, result.FileID, "image")
+	asset, err := s.media.ReadyPublicAssetRefForSourceFile(ctx, db, fileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx, "Program Event artist image asset resolution failed; serving artist without image", "domain", "programevent", "operation", "resolve_artist_image_asset", failurecause.Attr(err), "artist_id", artistID, "file_id", result.FileID)
+		slog.ErrorContext(ctx, "Program Event artist image asset resolution failed; serving artist without image", "domain", "programevent", "operation", "resolve_artist_image_asset", failurecause.Attr(err), "artist_id", artistID, "file_id", fileID)
 		return nil
 	}
 	return asset

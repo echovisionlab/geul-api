@@ -46,7 +46,7 @@ func (s *Service) CreateProgramEventType(ctx context.Context, command CreateProg
 	}
 	var locale string
 	if strings.TrimSpace(command.Locale) == "" {
-		locale = resolveInitialSourceLocale(ctx, s.db, command.AcceptLanguage)
+		locale = s.resolveInitialSourceLocale(ctx, command.AcceptLanguage)
 	} else if locale, err = normalizeRequiredProgramEventLocale("locale", command.Locale); err != nil {
 		return nil, err
 	}

@@ -438,7 +438,7 @@ func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
 	lockedState AIDocumentState,
 	command AIDocumentCommand,
 ) (aiDocumentChange, error) {
-	sourceState, err := checkAIDocumentCommand(ctx, tx, root, lockedState, command)
+	sourceState, err := s.checkAIDocumentCommand(ctx, tx, root, lockedState, command)
 	if err != nil {
 		return aiDocumentChange{}, err
 	}
@@ -492,7 +492,7 @@ func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
 // checkAIDocumentCommand repeats the source observation, revision and locale
 // presence checks of command against the locked state and locks its
 // contributor. It returns the locked source locale.
-func checkAIDocumentCommand(
+func (s *Service) checkAIDocumentCommand(
 	ctx context.Context,
 	tx *gorm.DB,
 	root model.ProgramEvent,
@@ -535,7 +535,7 @@ func checkAIDocumentCommand(
 	case command.DeleteTranslation && !localeExists:
 		return programEventSourceState{}, domainerr.InvalidField("locale", "Program Event translation does not exist")
 	}
-	if err := requireDocumentContributors(ctx, tx, []string{command.ContributorMemberID.String()}); err != nil {
+	if err := s.requireDocumentContributors(ctx, tx, []string{command.ContributorMemberID.String()}); err != nil {
 		return programEventSourceState{}, err
 	}
 	return sourceState, nil

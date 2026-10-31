@@ -56,6 +56,25 @@ type MediaAssets interface {
 	ResolveSingleReadyInlineAssetForSourceFile(context.Context, *gorm.DB, string, string) (*commonv1.AssetRef, error)
 }
 
+// Members is the Member-owned surface Program Event reads.
+type Members interface {
+	// PreferredLocale returns the stored preferred locale of the live Member,
+	// or nil.
+	PreferredLocale(ctx context.Context, db *gorm.DB, memberID string) (*string, error)
+	// LockMembers takes a key-share lock on the Members memberIDs name and
+	// returns how many exist.
+	LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) (int, error)
+}
+
+// CreditArtists reads the Artist-owned projection of a credited artist.
+type CreditArtists interface {
+	// CreditArtist returns the artist's ID, source-locale name and slug; an
+	// empty ID means the artist does not exist.
+	CreditArtist(ctx context.Context, db *gorm.DB, artistID string) (id, name string, slug *string, err error)
+	// FirstImageFileID returns the File of the artist's first image, or empty.
+	FirstImageFileID(ctx context.Context, db *gorm.DB, artistID string) (string, error)
+}
+
 // CollaborationPermissionChecker is the minimal ReBAC boundary used by Program Event collaboration.
 type CollaborationPermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
@@ -74,6 +93,8 @@ type Deps struct {
 	Media         MediaAssets
 	MediaHydrator ContentBlockMediaHydrator
 	CreditMembers CreditMemberSummaries
+	CreditArtists CreditArtists
+	Members       Members
 	// Checkpoints re-resolves the contributors a collaboration write is
 	// attributed to.
 	Checkpoints persistencecheckpoint.ContributorFence
@@ -85,7 +106,7 @@ func (d Deps) validate() error {
 		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil,
 		"ContentBlocks": d.ContentBlocks == nil, "Signals": d.Signals == nil, "Media": d.Media == nil,
 		"MediaHydrator": d.MediaHydrator == nil, "CreditMembers": d.CreditMembers == nil,
-		"Checkpoints": d.Checkpoints == nil,
+		"Checkpoints": d.Checkpoints == nil, "CreditArtists": d.CreditArtists == nil, "Members": d.Members == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -111,6 +132,8 @@ type Service struct {
 	media         MediaAssets
 	mediaHydrator ContentBlockMediaHydrator
 	creditMembers CreditMemberSummaries
+	creditArtists CreditArtists
+	members       Members
 	checkpoints   persistencecheckpoint.ContributorFence
 }
 
@@ -126,7 +149,8 @@ func NewService(deps Deps) (*Service, error) {
 	return &Service{
 		db: deps.DB, spiceDB: deps.SpiceDB, audit: deps.Audit, mutations: mutations,
 		contentBlocks: deps.ContentBlocks, signals: deps.Signals, media: deps.Media,
-		mediaHydrator: deps.MediaHydrator, creditMembers: deps.CreditMembers, checkpoints: deps.Checkpoints,
+		mediaHydrator: deps.MediaHydrator, creditMembers: deps.CreditMembers, creditArtists: deps.CreditArtists,
+		members: deps.Members, checkpoints: deps.Checkpoints,
 	}, nil
 }
 
@@ -142,13 +166,12 @@ func RequireExists(ctx context.Context, db *gorm.DB, eventID string) error {
 	return nil
 }
 
-func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage string) string {
-	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
-		var preferredLocale *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).
-			Select("preferred_locale").
-			Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
-			Scan(&preferredLocale).Error; err == nil && preferredLocale != nil {
+// resolveInitialSourceLocale is the source locale of a new document: the
+// Member's preferred locale, then acceptLanguage, then the site default.
+func (s *Service) resolveInitialSourceLocale(ctx context.Context, acceptLanguage string) string {
+	db := s.db
+	if user := auth.GetUser(ctx); user != nil && user.Authenticated {
+		if preferredLocale, err := s.members.PreferredLocale(ctx, db, user.MemberID.String()); err == nil && preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
@@ -189,7 +212,7 @@ func lockTranslationEntityRootWithDB(ctx context.Context, db *gorm.DB, entityTyp
 	return result.Error
 }
 
-func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors []string) error {
+func (s *Service) requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors []string) error {
 	if len(contributors) == 0 {
 		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
@@ -201,18 +224,11 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
 		}
 	}
-	var members []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Select("id::text").
-		Where("id IN ?", contributors).
-		Find(&members).Error; err != nil {
+	locked, err := s.members.LockMembers(ctx, tx, contributors)
+	if err != nil {
 		return fmt.Errorf("lock Program Event contributor Members: %w", err)
 	}
-	if len(members) != len(contributors) {
+	if locked != len(contributors) {
 		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil

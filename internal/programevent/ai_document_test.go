@@ -21,7 +21,7 @@ import (
 func TestNewServiceRequiresEveryCollaborator(t *testing.T) {
 	t.Parallel()
 	_, err := NewService(Deps{})
-	require.ErrorContains(t, err, "program event dependencies are required: Audit, Checkpoints, ContentBlocks, CreditMembers, DB, Media, MediaHydrator, Signals, SpiceDB")
+	require.ErrorContains(t, err, "program event dependencies are required: Audit, Checkpoints, ContentBlocks, CreditArtists, CreditMembers, DB, Media, MediaHydrator, Members, Signals, SpiceDB")
 }
 
 func TestProgramEventAIDocumentConflictCarriesCurrentRevision(t *testing.T) {
