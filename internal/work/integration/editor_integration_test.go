@@ -10,7 +10,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -38,10 +37,7 @@ func TestWorkServiceAdminOnlyAccessIntegration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stack.SpiceDBClient.SyncAccountIdentityGlobalRole(t.Context(), authorSubject, policyv1.Role.Author())
 	require.NoError(t, err)
-	workSvc := newWorkEditorIntegrationService(db, stack.SpiceDBClient, map[string]*auth.Identity{
-		adminID:  workEditorIdentity(adminID, "Work Admin"),
-		authorID: workEditorIdentity(authorID, "Work Author"),
-	}, t)
+	workSvc := workdomain.NewConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: stack.SpiceDBClient}))
 
 	adminCtx := workIntegrationAdminCtx(adminID)
 	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
@@ -106,22 +102,4 @@ func TestWorkServiceAdminOnlyAccessIntegration(t *testing.T) {
 	got, err := workSvc.GetWork(adminCtx, connect.NewRequest(&managev1.GetWorkRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
 	require.Equal(t, created.Msg.Id, got.Msg.Id)
-}
-
-func newWorkEditorIntegrationService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	identities map[string]*auth.Identity,
-	t *testing.T,
-) *workdomain.ConnectHandler {
-	return workdomain.NewConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB}))
-}
-
-func workEditorIdentity(id string, name string) *auth.Identity {
-	return &auth.Identity{
-		ID:         id,
-		ExternalID: testutil.PostIntegrationMemberID(id),
-		Traits:     map[string]interface{}{"name": name},
-		State:      auth.KratosStateActive,
-	}
 }
