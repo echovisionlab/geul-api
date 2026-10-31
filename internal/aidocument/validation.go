@@ -3,6 +3,7 @@ package aidocument
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -188,7 +189,7 @@ func validateOperation(
 			if !ok {
 				return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), "field is not defined for the target block kind")
 			}
-			resolved, err := resolveNestedFieldRule(rule.ValueKind, rule.Ownership, rule.Translatable, rule.File, rule.Schema, target.Path)
+			resolved, err := resolveNestedFieldRule(rule, target.Path)
 			if err != nil {
 				return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), err.Error())
 			}
@@ -209,7 +210,7 @@ func validateOperation(
 		if !ok {
 			return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), "field is not defined for the relation item kind")
 		}
-		resolved, err := resolveNestedFieldRule(rule.ValueKind, rule.Ownership, rule.Translatable, rule.File, rule.Schema, target.Path)
+		resolved, err := resolveNestedFieldRule(rule, target.Path)
 		if err != nil {
 			return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), err.Error())
 		}
@@ -427,66 +428,59 @@ func validateOperation(
 	}
 }
 
-func resolveNestedFieldRule(
-	kind ValueKind,
-	ownership FieldOwnership,
-	translatable bool,
-	file bool,
-	schema *FieldSchema,
-	path []FieldPathSegment,
-) (resolvedFieldRule, error) {
-	if schema == nil {
+func resolveNestedFieldRule(rule FieldRule, path []FieldPathSegment) (resolvedFieldRule, error) {
+	if rule.Schema == nil {
 		if len(path) != 0 {
 			return resolvedFieldRule{}, errors.New("field does not define nested catalog shape")
 		}
-		return resolvedFieldRule{valueKind: kind, ownership: ownership, translatable: translatable, file: file}, nil
+		return resolvedFieldRule{valueKind: rule.ValueKind, ownership: rule.Ownership, translatable: rule.Translatable, file: rule.File}, nil
 	}
-	current := schema
+	current := rule.Schema
 	for _, segment := range path {
 		if err := segment.validate(); err != nil {
 			return resolvedFieldRule{}, err
 		}
+		var err error
 		if segment.Field != "" {
-			if current.File || current.Kind != ValueKindObject {
-				return resolvedFieldRule{}, fmt.Errorf("path field %q does not target an object", segment.Field)
-			}
-			var next *FieldSchema
-			for index := range current.Fields {
-				if current.Fields[index].Field == segment.Field {
-					next = &current.Fields[index].Schema
-					break
-				}
-			}
-			if next == nil {
-				return resolvedFieldRule{}, fmt.Errorf("path field %q is not in the catalog", segment.Field)
-			}
-			current = next
-			continue
+			current, err = objectFieldSchema(current, segment.Field)
+		} else {
+			current, err = listItemSchema(current, segment.Item)
 		}
-		if current.File || current.Kind != ValueKindList || current.Item == nil {
-			return resolvedFieldRule{}, fmt.Errorf("path item %q does not target a list", segment.Item)
+		if err != nil {
+			return resolvedFieldRule{}, err
 		}
-		if current.Identity.Kind == ListIdentityPositional {
-			return resolvedFieldRule{}, errors.New("positional lists can only be replaced as a whole typed value")
-		}
-		if current.Identity.Kind == ListIdentityFixed {
-			found := false
-			for _, handle := range current.Identity.Handles {
-				if handle == segment.Item {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return resolvedFieldRule{}, fmt.Errorf("fixed list item %q is not in the catalog", segment.Item)
-			}
-		}
-		current = current.Item
 	}
 	return resolvedFieldRule{
 		valueKind: current.Kind, ownership: current.Ownership,
 		translatable: current.Translatable, file: current.File, schema: current,
 	}, nil
+}
+
+func objectFieldSchema(schema *FieldSchema, field FieldID) (*FieldSchema, error) {
+	if schema.File || schema.Kind != ValueKindObject {
+		return nil, fmt.Errorf("path field %q does not target an object", field)
+	}
+	for index := range schema.Fields {
+		if schema.Fields[index].Field == field {
+			return &schema.Fields[index].Schema, nil
+		}
+	}
+	return nil, fmt.Errorf("path field %q is not in the catalog", field)
+}
+
+func listItemSchema(schema *FieldSchema, item RelationItemID) (*FieldSchema, error) {
+	if schema.File || schema.Kind != ValueKindList || schema.Item == nil {
+		return nil, fmt.Errorf("path item %q does not target a list", item)
+	}
+	switch schema.Identity.Kind {
+	case ListIdentityPositional:
+		return nil, errors.New("positional lists can only be replaced as a whole typed value")
+	case ListIdentityFixed:
+		if !slices.Contains(schema.Identity.Handles, item) {
+			return nil, fmt.Errorf("fixed list item %q is not in the catalog", item)
+		}
+	}
+	return schema.Item, nil
 }
 
 func validatePlacement(index int, moving, parent, after BlockID, graph map[BlockID]graphBlock) *OperationIssue {

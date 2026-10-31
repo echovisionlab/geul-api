@@ -249,7 +249,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 			if !ok {
 				return fmt.Errorf("block %q file field %q does not match the catalog", node.ID, file.Field)
 			}
-			resolved, err := resolveNestedFieldRule(rule.ValueKind, rule.Ownership, rule.Translatable, rule.File, rule.Schema, file.Path)
+			resolved, err := resolveNestedFieldRule(rule, file.Path)
 			if err != nil || !resolved.file {
 				return fmt.Errorf("block %q file target %q does not match the catalog", node.ID, nestedFieldKey(file.Field, file.Path))
 			}
@@ -290,7 +290,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 					if !ok {
 						return fmt.Errorf("relation item %q file field %q does not match the catalog", item.ID, file.Field)
 					}
-					resolved, err := resolveNestedFieldRule(rule.ValueKind, rule.Ownership, rule.Translatable, rule.File, rule.Schema, file.Path)
+					resolved, err := resolveNestedFieldRule(rule, file.Path)
 					if err != nil || !resolved.file {
 						return fmt.Errorf("relation item %q file target %q does not match the catalog", item.ID, nestedFieldKey(file.Field, file.Path))
 					}
