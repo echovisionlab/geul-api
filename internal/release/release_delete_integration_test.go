@@ -100,6 +100,20 @@ func TestDeleteReleaseRejectsOversizedAtomicAuthorizationBatchBeforeMutationInte
 	requireSynchronousAuthorizedResource(t, spiceDB, policyv1.Release.LookupManage(), release.Msg.Id, adminID, true)
 }
 
+func TestDeleteReleaseReportsUnknownReleaseAsNotFoundIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release delete unknown admin")
+	service := newReleaseIntegrationService(t, db, adminID, &recordingReleaseDeleteFileDeleter{})
+	unknown := testutil.IntegrationUUID()
+
+	response, err := service.DeleteRelease(releaseIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.DeleteReleaseRequest{Id: unknown}))
+	require.Nil(t, response)
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.EqualError(t, err, "not_found: release not found: "+unknown)
+}
+
 type noopReleaseDeleteAsyncPublisher struct{}
 
 func (noopReleaseDeleteAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {

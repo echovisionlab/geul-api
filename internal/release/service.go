@@ -558,6 +558,9 @@ func (s *ReleaseService) DeleteRelease(
 		_, err := requireLockedReleaseAction(ctx, tx, s.spiceDB, req.Msg.Id, releaseActionDelete)
 		return err
 	}); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("release", req.Msg.Id)
+		}
 		return nil, err
 	}
 
