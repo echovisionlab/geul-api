@@ -2,7 +2,6 @@ package maptheme
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
@@ -17,7 +16,9 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestListMapThemesLogsCauseBeforeRPCStatusMapping(t *testing.T) {
+// The handler does not log: the cause stays in the returned error for the one
+// request.completed record.
+func TestListMapThemesKeepsCauseForTheRequestRecord(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(sharedtelemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -34,12 +35,7 @@ func TestListMapThemesLogsCauseBeforeRPCStatusMapping(t *testing.T) {
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
 	require.ErrorIs(t, err, cause)
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "ERROR", entry["level"])
-	require.Contains(t, entry["failure_cause"], cause.Error())
-	require.Equal(t, "maptheme", entry["domain"])
-	require.Equal(t, "ListMapThemes", entry["operation"])
+	require.Empty(t, output.String())
 	require.NoError(t, mock.ExpectationsWereMet())
 	mock.ExpectClose()
 }

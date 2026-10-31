@@ -25,15 +25,7 @@ import (
 func (s *FormService) GetDashboard(
 	ctx context.Context,
 	req *connect.Request[openv1.GetFormDashboardRequest],
-) (rpcResponse *connect.Response[openv1.GetFormDashboardResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetDashboard", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[openv1.GetFormDashboardResponse], error) {
 	if req.Msg.ShareToken == "" {
 		return nil, errs.NotFoundMsg("form not found")
 	}
@@ -109,10 +101,11 @@ func (s *FormService) buildFormDashboard(
 		return nil, errs.Internal(err)
 	}
 
-	return buildFormDashboardFromSubmissions(form, sourceDocument, submissions, time.Now()), nil
+	return buildFormDashboardFromSubmissions(ctx, form, sourceDocument, submissions, time.Now()), nil
 }
 
 func buildFormDashboardFromSubmissions(
+	ctx context.Context,
 	form *model.Form,
 	sourceDocument *formdomain.FormSourceDocument,
 	submissions []model.FormSubmission,
@@ -143,7 +136,7 @@ func buildFormDashboardFromSubmissions(
 
 		var data structured.Fields
 		if err := json.Unmarshal(submission.Data, &data); err != nil {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "decode_dashboard_submission", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Stored form submission is not valid JSON; skipping it in the dashboard", "domain", "form", "event", "form.operation_failed", "operation", "decode_dashboard_submission", "outcome", "failed", failurecause.Attr(err))
 		}
 
 		for fieldID, rawValue := range data {

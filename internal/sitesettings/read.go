@@ -19,15 +19,7 @@ import (
 func (s *SiteSettingService) GetSettings(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSettingsRequest],
-) (_ *connect.Response[managev1.GetSettingsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSettings", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.GetSettingsResponse], error) {
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -99,15 +91,18 @@ func (s *SiteSettingService) GetSettings(
 	}
 	loaderAssets, err := s.loadSiteLoaderAssets(ctx, s.db)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to load site loader assets", "failure_cause", failurecause.Message(err))
 		return nil, errs.Internal(err)
 	}
 	applyLoaderAssetsToPublicSettings(public, loaderAssets)
 
-	if socialLinks := jsonColumnToMap(settings.SocialLinks, "social_links", true); len(socialLinks) > 0 {
+	socialLinks, err := jsonColumnToMap(settings.SocialLinks, true)
+	if err != nil {
+		logInvalidStoredSetting(ctx, "social_links", err)
+	}
+	if len(socialLinks) > 0 {
 		value, err := structpb.NewStruct(socialLinks)
 		if err != nil {
-			slog.WarnContext(ctx, "failed to convert social_links to struct", "failure_cause", failurecause.Message(err))
+			logInvalidStoredSetting(ctx, "social_links", err)
 		} else {
 			public.SocialLinks = value
 		}
@@ -117,7 +112,10 @@ func (s *SiteSettingService) GetSettings(
 		Public:  public,
 		Runtime: &managev1.RuntimeSettings{SiteOrigin: s.siteOrigin},
 	}
-	all.OgImageConfig = jsonColumnToStruct(settings.OGImageConfig, "og_image_config")
+	all.OgImageConfig, err = jsonColumnToStruct(settings.OGImageConfig)
+	if err != nil {
+		logInvalidStoredSetting(ctx, "og_image_config", err)
+	}
 
 	return connect.NewResponse(&managev1.GetSettingsResponse{Settings: all}), nil
 }
@@ -126,15 +124,7 @@ func (s *SiteSettingService) GetSettings(
 func (s *SiteSettingService) GetSetting(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSettingRequest],
-) (_ *connect.Response[managev1.GetSettingResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSetting", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.GetSettingResponse], error) {
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -146,9 +136,12 @@ func (s *SiteSettingService) GetSetting(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	value, ok := settingValue(settings, req.Msg.Key)
+	value, ok, decodeErr := decodedSettingValue(settings, req.Msg.Key)
 	if !ok {
 		return nil, errs.InvalidArgument("key", fmt.Sprintf("invalid setting key: %s", req.Msg.Key))
+	}
+	if decodeErr != nil {
+		logInvalidStoredSetting(ctx, req.Msg.Key, decodeErr)
 	}
 	protoValue, err := structpb.NewValue(value)
 	if err != nil {
@@ -157,4 +150,10 @@ func (s *SiteSettingService) GetSetting(
 	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{
 		Key: req.Msg.Key, Value: protoValue,
 	}}), nil
+}
+
+// logInvalidStoredSetting records a stored setting that a read replaced by its
+// empty fallback. The read still succeeds, so no request record holds it.
+func logInvalidStoredSetting(ctx context.Context, key string, err error) {
+	slog.ErrorContext(ctx, "Stored site setting is invalid; serving it empty", "domain", "sitesettings", "operation", "decode_stored_setting", "outcome", "failed", "key", key, failurecause.Attr(err))
 }

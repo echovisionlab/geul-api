@@ -1,15 +1,12 @@
 package release
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -96,12 +93,10 @@ func (e *AIDocumentRevisionConflictError) Error() string {
 func validateReleaseAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
 	releaseID, err := uuidFromCanonicalString(input.ReleaseID)
 	if err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "release", "operation", "validateReleaseAIDocumentMutation", failurecause.Attr(err))
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("release_id", "must be a canonical UUID")
 	}
 	expected, err := uuidFromCanonicalString(input.ExpectedDocumentRevision)
 	if err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "release", "operation", "validateReleaseAIDocumentMutation", failurecause.Attr(err))
 		return uuid.Nil, uuid.Nil, errs.InvalidArgument("expected_revision", "must be a canonical UUID")
 	}
 	if strings.TrimSpace(input.Locale) == "" || strings.TrimSpace(input.ExpectedSource) == "" {
@@ -136,7 +131,6 @@ func mapReleaseAIDocumentMutationError(err error) error {
 	}
 	var stale *contentblock.StaleRevisionError
 	if errors.As(err, &stale) {
-		slog.WarnContext(context.Background(), "AI document revision conflict", "domain", "release", "operation", "mapReleaseAIDocumentMutationError", failurecause.Attr(err))
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
 		}

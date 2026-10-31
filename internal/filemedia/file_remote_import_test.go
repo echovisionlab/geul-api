@@ -1,7 +1,6 @@
 package filemedia
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"

@@ -81,11 +81,7 @@ func WithMutation(
 			return err
 		}
 		defer func() {
-			releaseErr := authzmutation.ReleaseSession(ctx, connection)
-			if releaseErr != nil {
-				slog.ErrorContext(context.WithoutCancel(ctx), "Operation failed", "reason", "authorization_session_unlock_failed", failurecause.Attr(releaseErr))
-			}
-			returnErr = errors.Join(returnErr, releaseErr)
+			returnErr = errors.Join(returnErr, authzmutation.ReleaseSession(ctx, connection))
 		}()
 		if err := connection.Exec(
 			"SELECT pg_advisory_lock(hashtextextended(?, ?))",
@@ -104,12 +100,15 @@ func WithMutation(
 				identityStateFenceSeed,
 			).Scan(&released).Error
 			if unlockErr != nil {
-				slog.ErrorContext(unlockCtx, "Operation failed", "reason", "identity_state_unlock_failed", failurecause.Attr(unlockErr), "identity_id", identityID)
-				returnErr = errors.Join(returnErr, fmt.Errorf("release user identity state fence: %w", unlockErr))
+				returnErr = errors.Join(returnErr, failurecause.WithAttrs(
+					fmt.Errorf("release user identity state fence: %w", unlockErr),
+					slog.String("identity_id", identityID),
+				))
 			} else if !released {
-				unlockErr := fmt.Errorf("release user identity state fence: lock was not held")
-				slog.ErrorContext(unlockCtx, "Identity state fence release failed", failurecause.Attr(unlockErr), "identity_id", identityID)
-				returnErr = errors.Join(returnErr, unlockErr)
+				returnErr = errors.Join(returnErr, failurecause.WithAttrs(
+					fmt.Errorf("release user identity state fence: lock was not held"),
+					slog.String("identity_id", identityID),
+				))
 			}
 		}()
 		mutationCtx, cancel := context.WithTimeout(ctx, MutationTimeout)
@@ -180,8 +179,7 @@ func RequireFreshCan(
 	}
 	active, err := LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequireFreshCan", failurecause.Attr(err))
-		return errs.Internal(err)
+		return errs.Internal(fmt.Errorf("lock active principal: %w", err))
 	}
 	if !active {
 		if can.Valid() {

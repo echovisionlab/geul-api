@@ -172,8 +172,8 @@ func (s *Lifecycle) bindCompletedOgAsset(
 ) error {
 	var snapshot ogEntitySnapshot
 	if err := json.Unmarshal(generation.EntitySnapshot, &snapshot); err != nil {
-		slog.ErrorContext(ctx, "Failed to decode OG generation entity snapshot", failurecause.Attr(err), "generation_id", generation.ID, "run_id", generation.RunID)
-		return errs.FailedPrecondition("OG generation entity snapshot is invalid")
+		return errs.WithCause(errs.FailedPrecondition("OG generation entity snapshot is invalid"), failurecause.ServerFault(failurecause.WithAttrs(err,
+			slog.String("generation_id", generation.ID), slog.String("run_id", generation.RunID))))
 	}
 	pinnedTarget := Target{
 		EntityType: target.EntityType,

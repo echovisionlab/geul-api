@@ -86,8 +86,7 @@ func (s *FileService) loadValidatedFaviconSource(
 	}
 	objectKey, err := mediaauth.MediaObjectKey(source.ID, source.Extension)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid favicon source metadata", failurecause.Attr(err), "file_id", source.ID)
-		return model.File{}, nil, errs.FailedPrecondition("favicon source metadata is not canonical")
+		return model.File{}, nil, errs.WithCause(errs.FailedPrecondition("favicon source metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", source.ID))))
 	}
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.s3Bucket),
@@ -129,7 +128,8 @@ func (s *FileService) generateFaviconOutputs(
 		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing failed: %v", err))
 	}
 	if err := favicon.ValidateOutputs(outputs, sourceMime); err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err))
+		// The processor generated the bundle; an invalid one is a server fault.
+		return nil, errs.WithCause(errs.FailedPrecondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err)), failurecause.ServerFault(err))
 	}
 	return outputs, nil
 }
@@ -374,6 +374,6 @@ func (s *FileService) scheduleStagedFaviconDeletion(
 			"updated_at":          now,
 		})
 	if result.Error != nil {
-		slog.Error("failed to schedule staged favicon assets for durable cleanup", "asset_ids", ids, failurecause.Attr(result.Error))
+		slog.ErrorContext(ctx, "failed to schedule staged favicon assets for durable cleanup", "asset_ids", ids, failurecause.Attr(result.Error))
 	}
 }

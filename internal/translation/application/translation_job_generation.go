@@ -99,7 +99,7 @@ func (m *TranslationJobManager) generateValidatedResumableDocument(
 	providerPinned := false
 	defer func() {
 		if closeErr := session.Close(ctx); closeErr != nil {
-			translation.LogProviderEvent(ctx, slog.LevelError, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
+			translation.LogProviderEvent(ctx, slog.LevelError, "Translation provider session close failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
 			if retErr != nil {
 				return
 			}
@@ -253,8 +253,10 @@ func translationProviderDocumentHandle(
 	}
 	handle, err := translation.NewProviderDocumentHandle(*job.ProviderDocumentID, *job.ProviderDocumentKey)
 	if err != nil {
-		slog.Error("Translation provider document handle invalid", "domain", "translation", "event", "translation.provider.handle_failed", "job_id", job.ID, "operation_id", job.OperationID, failurecause.Attr(err, *job.ProviderDocumentKey))
-		return translation.ProviderDocumentHandle{}, false, errTranslationProviderDocumentHandleMismatch
+		return translation.ProviderDocumentHandle{}, false, failurecause.WithPrivate(
+			fmt.Errorf("%w: %w", errTranslationProviderDocumentHandleMismatch, err),
+			*job.ProviderDocumentKey,
+		)
 	}
 	return handle, true, nil
 }
@@ -288,7 +290,7 @@ func (m *TranslationJobManager) generateValidatedTranslationRequest(
 			}
 			defer func() {
 				if closeErr := session.Close(callCtx); closeErr != nil {
-					translation.LogProviderEvent(callCtx, slog.LevelError, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
+					translation.LogProviderEvent(callCtx, slog.LevelError, "Translation provider session close failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(closeErr), "request_id", request.RequestID)
 					if retErr != nil {
 						return
 					}

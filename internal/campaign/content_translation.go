@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -138,10 +137,7 @@ func applyCampaignEmailTypedTranslationCandidateWithDB(
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == domain.SourceLocale {
 		memberID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 		if parseErr != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-			if parseErr != nil {
-				slog.ErrorContext(ctx, "Invalid provider translation requester", "domain", "campaign", "event", "campaign.translation_failed", "outcome", "failed", "entity_id", job.EntityID, failurecause.Attr(parseErr))
-			}
-			return errs.InternalMsg("Campaign translation audit requires canonical requester Member")
+			return errs.WithCause(errs.InternalMsg("Campaign translation audit requires canonical requester Member"), parseErr)
 		}
 		batch.ContributorMemberIDs = []uuid.UUID{memberID}
 		result, applyErr := store.ApplyBatchWithMetadata(

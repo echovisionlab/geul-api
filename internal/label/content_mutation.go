@@ -3,13 +3,11 @@ package label
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -219,7 +217,6 @@ func (s *InternalLabelService) updateLabelLocaleTitle(ctx context.Context, id, l
 	}
 	expected, err := uuid.Parse(revision)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.updateLabelLocaleTitle", "outcome", "failed", failurecause.Attr(err))
 		return labelTitleUpdateResult{}, errs.InvalidArgument("expected_revision", "must be a UUID")
 	}
 	doc, err := loadLabelContentDocumentID(ctx, s.db, id)

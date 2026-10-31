@@ -36,13 +36,7 @@ func (s *MapPlaceService) GetMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMapPlaceRequest],
 ) (_ *connect.Response[managev1.MapPlace], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("map_place_id", req.Msg.GetId()))
 
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
@@ -72,15 +66,7 @@ func (s *MapPlaceService) GetMapPlace(
 func (s *MapPlaceService) GetMapPlacesByIds(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMapPlacesByIdsRequest],
-) (_ *connect.Response[managev1.GetMapPlacesByIdsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetMapPlacesByIds", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.GetMapPlacesByIdsResponse], error) {
 	if len(req.Msg.Ids) == 0 {
 		return connect.NewResponse(&managev1.GetMapPlacesByIdsResponse{
 			Places: []*managev1.MapPlace{},
@@ -124,15 +110,7 @@ func (s *MapPlaceService) GetMapPlacesByIds(
 func (s *MapPlaceService) SearchMapPlaces(
 	ctx context.Context,
 	req *connect.Request[managev1.SearchMapPlacesRequest],
-) (_ *connect.Response[managev1.SearchMapPlacesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SearchMapPlaces", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.SearchMapPlacesResponse], error) {
 	limit := int(req.Msg.Limit)
 	if limit <= 0 {
 		limit = 10
@@ -176,15 +154,7 @@ func (s *MapPlaceService) SearchMapPlaces(
 func (s *MapPlaceService) ListMapPlacesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMapPlacesAdminRequest],
-) (_ *connect.Response[managev1.ListMapPlacesAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListMapPlacesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListMapPlacesAdminResponse], error) {
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

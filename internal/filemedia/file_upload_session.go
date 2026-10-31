@@ -27,11 +27,15 @@ func (s *FileService) recordInterruptedMultipartUpload(
 	ctx context.Context,
 	session model.UploadSession,
 	uploadID string,
-	logMessage string,
+	operation string,
 	readErr error,
 ) {
 	fileKey, _ := uploadSessionObjectKey(session)
-	slog.Warn(logMessage, failurecause.Attr(readErr), "fileKey", fileKey, "uploadId", session.UploadID, "partUploadId", uploadID)
+	// The request ends with 408; its record keeps the interrupted read.
+	failurecause.RecorderFrom(ctx).Record(failurecause.Of(failurecause.WithAttrs(
+		fmt.Errorf("%s: %w", operation, readErr),
+		slog.String("upload_id", session.UploadID), slog.String("file_id", session.FileID),
+	)))
 
 	cleanupCtx, cancel := newStorageCompensationContext(ctx)
 	defer cancel()
@@ -48,7 +52,7 @@ func (s *FileService) recordInterruptedMultipartUpload(
 			"last_activity_at": now,
 			"updated_at":       now,
 		}).Error; err != nil {
-		slog.Error("Failed to refresh upload session activity after interruption",
+		slog.ErrorContext(ctx, "Failed to refresh upload session activity after interruption",
 			failurecause.Attr(err),
 			"fileKey", fileKey,
 			"uploadId", session.UploadID,

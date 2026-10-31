@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
@@ -229,7 +230,7 @@ func (h *handler) serveGET(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if !h.protocolVersionAllowed(request, "") {
-		writeRPCError(response, http.StatusBadRequest, nil, -32600, "Unsupported MCP protocol version")
+		writeRPCError(request.Context(), response, http.StatusBadRequest, nil, -32600, "Unsupported MCP protocol version")
 		return
 	}
 	response.Header().Set("Allow", http.MethodPost)
@@ -276,27 +277,27 @@ func (h *handler) servePOST(response http.ResponseWriter, request *http.Request)
 			cause := failurecause.Message(protocolErr.cause, private...)
 			slog.WarnContext(request.Context(), "Invalid MCP request", "failure_cause", cause)
 		}
-		writeRPCError(response, protocolErr.status, protocolErr.id, protocolErr.code, protocolErr.message)
+		writeRPCError(request.Context(), response, protocolErr.status, protocolErr.id, protocolErr.code, protocolErr.message)
 		return
 	}
 
 	if !h.protocolVersionAllowed(request, message.method) {
-		writeRPCError(response, http.StatusBadRequest, message.responseID(), -32600, "Unsupported MCP protocol version")
+		writeRPCError(request.Context(), response, http.StatusBadRequest, message.responseID(), -32600, "Unsupported MCP protocol version")
 		return
 	}
 
 	if !message.hasID {
-		h.handleNotification(response, message)
+		h.handleNotification(request.Context(), response, message)
 		return
 	}
 
 	h.handleRequest(response, request, principal, message)
 }
 
-func (h *handler) handleNotification(response http.ResponseWriter, message incomingMessage) {
+func (h *handler) handleNotification(ctx context.Context, response http.ResponseWriter, message incomingMessage) {
 	switch message.method {
 	case "initialize", "ping", "tools/list", "tools/call":
-		writeRPCError(response, http.StatusBadRequest, nil, -32600, "Invalid Request")
+		writeRPCError(ctx, response, http.StatusBadRequest, nil, -32600, "Invalid Request")
 		return
 	}
 	response.WriteHeader(http.StatusAccepted)
@@ -304,7 +305,7 @@ func (h *handler) handleNotification(response http.ResponseWriter, message incom
 
 func (h *handler) handleRequest(response http.ResponseWriter, request *http.Request, principal Principal, message incomingMessage) {
 	if strings.HasPrefix(message.method, "notifications/") {
-		writeRPCError(response, http.StatusOK, message.id, -32600, "Invalid Request")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32600, "Invalid Request")
 		return
 	}
 	switch message.method {
@@ -312,16 +313,16 @@ func (h *handler) handleRequest(response http.ResponseWriter, request *http.Requ
 		h.handleInitialize(request.Context(), response, message)
 	case "ping":
 		if !paramsAreObjectOrAbsent(message.params) {
-			writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
+			writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Invalid params")
 			return
 		}
-		writeRPCResult(response, message.id, map[string]any{})
+		writeRPCResult(request.Context(), response, message.id, map[string]any{})
 	case "tools/list":
 		h.handleToolsList(response, request, principal, message)
 	case "tools/call":
 		h.handleToolsCall(response, request, principal, message)
 	default:
-		writeRPCError(response, http.StatusOK, message.id, -32601, "Method not found")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32601, "Method not found")
 	}
 }
 
@@ -344,7 +345,7 @@ func (h *handler) handleInitialize(ctx context.Context, response http.ResponseWr
 			cause := failurecause.Message(err, private...)
 			slog.WarnContext(ctx, "Invalid MCP parameters", "method", message.method, "failure_cause", cause)
 		}
-		writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
+		writeRPCError(ctx, response, http.StatusOK, message.id, -32602, "Invalid params")
 		return
 	}
 	// Negotiate our supported revision even when the client requests a different
@@ -355,13 +356,13 @@ func (h *handler) handleInitialize(ctx context.Context, response http.ResponseWr
 		title, err := h.serverTitleSource.ServerTitle(ctx)
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to resolve MCP server title", "failure_cause", failurecause.Message(err), "method", "initialize")
-			writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
+			writeRPCError(ctx, response, http.StatusOK, message.id, -32603, "Internal error")
 			return
 		}
 		serverInfo.Title = strings.TrimSpace(title)
 	}
 
-	writeRPCResult(response, message.id, struct {
+	writeRPCResult(ctx, response, message.id, struct {
 		ProtocolVersion string         `json:"protocolVersion"`
 		Capabilities    map[string]any `json:"capabilities"`
 		ServerInfo      Implementation `json:"serverInfo"`
@@ -389,11 +390,11 @@ func (h *handler) handleToolsList(response http.ResponseWriter, request *http.Re
 			}
 			cause := failurecause.Message(err, private...)
 			slog.WarnContext(request.Context(), "Invalid MCP parameters", "method", message.method, "failure_cause", cause)
-			writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
+			writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Invalid params")
 			return
 		}
 		if _, present := params["cursor"]; present {
-			writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
+			writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Invalid params")
 			return
 		}
 	}
@@ -401,10 +402,10 @@ func (h *handler) handleToolsList(response http.ResponseWriter, request *http.Re
 	tools, err := h.listTools(request.Context(), principal)
 	if err != nil {
 		slog.ErrorContext(request.Context(), "Failed to list MCP tools", "failure_cause", failurecause.Message(err), "method", message.method)
-		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
-	writeRPCResult(response, message.id, struct {
+	writeRPCResult(request.Context(), response, message.id, struct {
 		Tools []Tool `json:"tools"`
 	}{Tools: tools})
 }
@@ -427,17 +428,17 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 			cause := failurecause.Message(err, private...)
 			slog.WarnContext(request.Context(), "Invalid MCP parameters", "method", message.method, "failure_cause", cause)
 		}
-		writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Invalid params")
 		return
 	}
 	if len(params.Task) != 0 {
-		writeRPCError(response, http.StatusOK, message.id, -32601, "Method not found")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32601, "Method not found")
 		return
 	}
 	arguments := ToolArguments{}
 	if len(params.Arguments) != 0 {
 		if !isJSONObject(params.Arguments) || json.Unmarshal(params.Arguments, &arguments) != nil {
-			writeRPCError(response, http.StatusOK, message.id, -32602, "Invalid params")
+			writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Invalid params")
 			return
 		}
 	}
@@ -445,11 +446,11 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 	tools, err := h.listTools(request.Context(), principal)
 	if err != nil {
 		slog.ErrorContext(request.Context(), "Failed to list MCP tools", "failure_cause", failurecause.Message(err), "method", message.method)
-		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
 	if !containsTool(tools, params.Name) {
-		writeRPCError(response, http.StatusOK, message.id, -32602, "Unknown tool")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Unknown tool")
 		return
 	}
 
@@ -493,36 +494,35 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 	if err != nil {
 		if errors.Is(err, ErrUnknownTool) {
 			slog.WarnContext(request.Context(), "MCP tool no longer available", "failure_cause", failurecause.Message(err, private...), "tool", params.Name)
-			writeRPCError(response, http.StatusOK, message.id, -32602, "Unknown tool")
+			writeRPCError(request.Context(), response, http.StatusOK, message.id, -32602, "Unknown tool")
 			return
 		}
 		var executionErr *ToolExecutionError
 		if errors.As(err, &executionErr) {
 			if executionErr == nil {
 				slog.ErrorContext(request.Context(), "MCP dispatcher returned a nil execution error", "tool", params.Name, "error", "nil tool execution error")
-				writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
+				writeRPCError(request.Context(), response, http.StatusOK, message.id, -32603, "Internal error")
 				return
 			}
 			cause := executionErr.Cause
 			if cause == nil {
 				cause = executionErr
 			}
-			level := errs.OperationLogLevel(cause)
-			// The normalizing handler converts error to error_type; error_cause
-			// retains the sanitized diagnostic text through that handler.
-			slog.Log(request.Context(), level, "MCP tool execution rejected", "failure_cause", failurecause.Message(cause, private...), "tool", params.Name)
+			// Tool calls reach services without the RPC boundary, so this is the
+			// call's one failure record.
+			logToolFailure(request.Context(), errs.OperationLogLevel(cause), "MCP tool execution rejected", params.Name, cause, private)
 			messageText := executionErr.Message
 			if messageText == "" {
 				messageText = "Tool execution failed"
 			}
-			writeToolResult(response, message.id, ToolResult{
+			writeToolResult(request.Context(), response, message.id, ToolResult{
 				Content: []ContentBlock{TextContent(messageText)},
 				IsError: true,
 			})
 			return
 		}
-		slog.ErrorContext(request.Context(), "MCP tool execution failed", "failure_cause", failurecause.Message(err, private...), "tool", params.Name)
-		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
+		logToolFailure(request.Context(), slog.LevelError, "MCP tool execution failed", params.Name, err, private)
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
 	if result.Content == nil {
@@ -530,10 +530,19 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 	}
 	if !validContent(result.Content) {
 		slog.ErrorContext(request.Context(), "MCP tool returned invalid content", "tool", params.Name, "error", "invalid tool result content")
-		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
+		writeRPCError(request.Context(), response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
-	writeToolResult(response, message.id, result)
+	writeToolResult(request.Context(), response, message.id, result)
+}
+
+func logToolFailure(ctx context.Context, level slog.Level, message, tool string, err error, private []string) {
+	failure := failurecause.Of(err, private...)
+	if failure.ServerFault {
+		level = slog.LevelError
+	}
+	attrs := append([]slog.Attr{slog.String("failure_cause", failure.Cause), slog.String("tool", tool)}, failure.Attrs...)
+	slog.LogAttrs(ctx, level, message, attrs...)
 }
 
 func (h *handler) listTools(ctx context.Context, principal Principal) ([]Tool, error) {
@@ -890,20 +899,20 @@ type rpcResponse struct {
 
 // writeToolResult retains tools/call's JSON-RPC error contract when a domain
 // result cannot be encoded. Other RPC results retain the HTTP error fallback.
-func writeToolResult(response http.ResponseWriter, id json.RawMessage, result ToolResult) {
-	if err := writeJSON(response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result}); err != nil {
-		writeRPCError(response, http.StatusOK, id, -32603, "Internal error")
+func writeToolResult(ctx context.Context, response http.ResponseWriter, id json.RawMessage, result ToolResult) {
+	if err := writeJSON(ctx, response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result}); err != nil {
+		writeRPCError(ctx, response, http.StatusOK, id, -32603, "Internal error")
 	}
 }
 
-func writeRPCResult(response http.ResponseWriter, id json.RawMessage, result any) {
-	if err := writeJSON(response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result}); err != nil {
+func writeRPCResult(ctx context.Context, response http.ResponseWriter, id json.RawMessage, result any) {
+	if err := writeJSON(ctx, response, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result}); err != nil {
 		writeHTTPError(response, http.StatusInternalServerError, "Internal Server Error")
 	}
 }
 
-func writeRPCError(response http.ResponseWriter, status int, id json.RawMessage, code int, message string) {
-	if err := writeJSON(response, status, rpcResponse{
+func writeRPCError(ctx context.Context, response http.ResponseWriter, status int, id json.RawMessage, code int, message string) {
+	if err := writeJSON(ctx, response, status, rpcResponse{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &rpcErrorBody{Code: code, Message: message},
@@ -914,17 +923,17 @@ func writeRPCError(response http.ResponseWriter, status int, id json.RawMessage,
 
 // writeJSON encodes the complete response before writing headers. Its error
 // reports encoding failure; network write failures are logged after headers commit.
-func writeJSON(response http.ResponseWriter, status int, value any) error {
+func writeJSON(ctx context.Context, response http.ResponseWriter, status int, value any) error {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Failed to encode MCP response", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Failed to encode MCP response", "failure_cause", failurecause.Message(err))
 		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	if _, err := response.Write(append(encoded, '\n')); err != nil {
-		slog.ErrorContext(context.Background(), "Failed to write MCP response", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Failed to write MCP response", "failure_cause", failurecause.Message(err))
 	}
 	return nil
 }

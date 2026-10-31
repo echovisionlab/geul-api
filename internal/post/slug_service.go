@@ -3,7 +3,6 @@ package post
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -11,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,15 +19,7 @@ import (
 func (s *PostService) CheckSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckSlugAvailableResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CheckSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.CheckSlugAvailableResponse], error) {
 	if _, err := s.authz.MustAuthenticate(ctx); err != nil {
 		return nil, err
 	}

@@ -3,7 +3,6 @@ package page
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -102,8 +100,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		if err != nil {
 			switch connect.CodeOf(err) {
 			case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-				slog.WarnContext(ctx, "Page AI document permission rejected", "domain", "page", "operation", "authorize_ai_document_mutation", "outcome", "failed", "page_id", pageID, failurecause.Attr(err))
-				return errs.NotFound("page", pageID)
+				return errs.WithCause(errs.NotFound("page", pageID), err)
 			default:
 				return err
 			}
@@ -183,12 +180,10 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	case errors.As(err, &conflict):
 		return AIDocumentMutationResult{}, conflict
 	case errors.As(err, &stale):
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "map_ai_document_conflict", "outcome", "failed", failurecause.Attr(err))
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: stale.CurrentRevision.String(),
 		}
 	case errors.As(err, &targetConflict):
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "map_ai_document_conflict", "outcome", "failed", failurecause.Attr(err))
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: currentRevision,
 			CurrentTargetRevision: pageTargetConflictRevision(targetConflict),
@@ -237,10 +232,7 @@ func validateCompiledPageAIDocumentMutation(
 ) error {
 	contributor, err := uuid.Parse(mutation.ContributorMemberID)
 	if err != nil || contributor == uuid.Nil || contributor.String() != mutation.ContributorMemberID {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.validateCompiledPageAIDocumentMutation", "outcome", "failed", failurecause.Attr(err))
-		}
-		return errs.InvalidArgument("contributor", "compiled Page contributor must be a canonical Member UUID")
+		return errs.WithCause(errs.InvalidArgument("contributor", "compiled Page contributor must be a canonical Member UUID"), err)
 	}
 	if mutation.PageID != state.Page.ID || mutation.Locale != state.Locale ||
 		mutation.ObservedSourceLocale != state.SourceLocale ||

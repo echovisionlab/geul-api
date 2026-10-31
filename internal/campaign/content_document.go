@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"github.com/echovisionlab/geul-api/internal/translation"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -172,9 +172,10 @@ func requireCampaignEmailDocumentLoad(
 		return errs.AuthenticationRequired()
 	}
 	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
+	// The boundary keeps *_id request fields; this one is a session secret.
+	err = failurecause.WithPrivate(err, principal.GetSessionId())
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Collaboration principal rejected", "domain", "campaign", "event", "campaign.principal_rejected", "outcome", "blocked", failurecause.Attr(err, principal.GetSessionId()))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	if err != nil {
 		return errs.Internal(fmt.Errorf("resolve Campaign collaboration principal: %w", err))
@@ -201,13 +202,11 @@ func requireCampaignEmailDocumentLoad(
 	authorizationCtx := auth.WithUser(ctx, resolved)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation rejected", "domain", "campaign", "event", "campaign.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(authorizationCtx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "campaign", "event", "campaign.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NoPermission(can.Action().Name(), "campaign")
@@ -284,8 +283,7 @@ func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string
 	}
 	normalized, err := normalizeCampaignDocumentLocale(sourceLocale)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "campaign", "event", "campaign.operation_failed", "operation", "load_source_locale", "outcome", "failed", failurecause.Attr(err))
-		return contentblock.DomainContext{}, errs.FailedPrecondition("Campaign translation source locale is invalid")
+		return contentblock.DomainContext{}, errs.WithCause(errs.FailedPrecondition("Campaign translation source locale is invalid"), failurecause.ServerFault(err))
 	}
 	return contentblock.DomainContext{SourceLocale: normalized}, nil
 }
@@ -425,23 +423,18 @@ func normalizeCampaignEmailContentBlockError(entityType string, err error) error
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
-		return errs.NotFoundMsg("campaign content document not found")
+		return errs.WithCause(errs.NotFoundMsg("campaign content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "campaign content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.Warn("Email content operation rejected", "domain", "campaign", "event", "campaign.content_rejected", "outcome", "blocked", "entity_type", entityType, failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "Campaign documents cannot contain File Blocks")
+		return errs.WithCause(errs.InvalidArgument("blocks", "Campaign documents cannot contain File Blocks"), err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
 	default:

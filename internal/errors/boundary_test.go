@@ -285,12 +285,12 @@ func TestBoundaryRecordsIntoTheTerminalRequestRecordWhenPresent(t *testing.T) {
 			if len(logs.records) != 0 {
 				t.Fatalf("boundary logged a second record: %+v", logs.records)
 			}
-			cause, stack, ok := recorder.Recorded()
-			if !ok || cause != tc.cause {
-				t.Fatalf("recorded cause = %q (%v), want %q", cause, ok, tc.cause)
+			failure, ok := recorder.Recorded()
+			if !ok || failure.Cause != tc.cause {
+				t.Fatalf("recorded cause = %q (%v), want %q", failure.Cause, ok, tc.cause)
 			}
-			if tc.stack != strings.Contains(stack, "TestBoundaryRecordsIntoTheTerminalRequestRecordWhenPresent") {
-				t.Fatalf("recorded stack = %q", stack)
+			if tc.stack != strings.Contains(failure.Stack, "TestBoundaryRecordsIntoTheTerminalRequestRecordWhenPresent") {
+				t.Fatalf("recorded stack = %q", failure.Stack)
 			}
 		})
 	}

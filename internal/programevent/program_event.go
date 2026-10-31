@@ -3,7 +3,6 @@ package programevent
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -20,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -299,14 +297,7 @@ func NewAuditedProgramEventTypeService(db *gorm.DB, auditWriter domainaudit.Appe
 func (s *ProgramEventService) CreateProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateProgramEventRequest],
-) (_ *connect.Response[managev1.ProgramEvent], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEvent], error) {
 	can, err := policyv1.ProgramEvent.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -440,8 +431,7 @@ func (s *ProgramEventService) createProgramEventWithDB(
 	event.ContentDocumentID = &contentDocumentID
 	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(event).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "createProgramEventWithDB", failurecause.Attr(err))
-			return errs.SlugAlreadyExists("program event", event.Slug)
+			return errs.WithCause(errs.SlugAlreadyExists("program event", event.Slug), err)
 		}
 		return errs.Internal(err)
 	}
@@ -480,19 +470,11 @@ func (s *ProgramEventService) createProgramEventWithDB(
 func (s *ProgramEventService) GetProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.GetProgramEventRequest],
-) (_ *connect.Response[managev1.ProgramEvent], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "GetProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEvent], error) {
 	proto, err := s.loadAuthorizedProgramEvent(ctx, req.Msg.Id)
 	if err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "GetProgramEvent", failurecause.Attr(err))
-			return nil, errs.NotFound("program event", req.Msg.Id)
+			return nil, errs.WithCause(errs.NotFound("program event", req.Msg.Id), err)
 		}
 		return nil, err
 	}
@@ -502,14 +484,7 @@ func (s *ProgramEventService) GetProgramEvent(
 func (s *ProgramEventService) ListProgramEventsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListProgramEventsAdminRequest],
-) (_ *connect.Response[managev1.ListProgramEventsAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventsAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListProgramEventsAdminResponse], error) {
 	can, err := policyv1.ProgramEvent.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -559,14 +534,7 @@ func (s *ProgramEventService) ListProgramEventsAdmin(
 func (s *ProgramEventService) DeleteProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}
@@ -625,28 +593,14 @@ func (s *ProgramEventService) DeleteProgramEvent(
 func (s *ProgramEventService) PublishProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishProgramEventRequest],
-) (_ *connect.Response[managev1.ProgramEventLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "PublishProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
 	return s.setProgramEventStatus(ctx, req.Msg.Id, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(), true)
 }
 
 func (s *ProgramEventService) ArchiveProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.ArchiveProgramEventRequest],
-) (_ *connect.Response[managev1.ProgramEventLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ArchiveProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
 	return s.setProgramEventStatus(ctx, req.Msg.Id, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String(), false)
 }
 

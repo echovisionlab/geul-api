@@ -3,7 +3,6 @@ package programevent
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
@@ -36,14 +34,12 @@ func programEventSeriesUpdateCan(request *managev1.UpdateProgramEventSeriesReque
 	if request.Status != nil && request.GetStatus() != managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
 		can, err := policyv1.ProgramEventSeries.Publish(request.Id)
 		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "programevent", "operation", "programEventSeriesUpdateCan", failurecause.Attr(err))
 			return policyv1.Can{}, errs.InvalidArgument("id", "must be a canonical resource UUID")
 		}
 		return can, nil
 	}
 	can, err := policyv1.ProgramEventSeries.Edit(request.Id)
 	if err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "programevent", "operation", "programEventSeriesUpdateCan", failurecause.Attr(err))
 		return policyv1.Can{}, errs.InvalidArgument("id", "must be a canonical resource UUID")
 	}
 	return can, nil
@@ -143,8 +139,7 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 		update.fields["updated_at"] = time.Now().UTC()
 		if err := tx.Model(&current).Updates(update.fields).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) && update.slug != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "applyProgramEventSeriesUpdate", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("program event series", request.GetSlug())
+				return errs.WithCause(errs.SlugAlreadyExists("program event series", request.GetSlug()), err)
 			}
 			return errs.Internal(err)
 		}

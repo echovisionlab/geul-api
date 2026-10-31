@@ -3,9 +3,10 @@ package emaildelivery
 import (
 	"context"
 	"errors"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"log/slog"
 	"net/mail"
+
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -24,9 +25,9 @@ func FailureCause(err error, job *managev1.SendEmailEvent) string {
 	return failurecause.Message(err, values...)
 }
 
-// requestFailureCause sanitizes err against the recipient and the string
-// template values of an incoming SendEmail request.
-func requestFailureCause(err error, request *intrav1.SendEmailRequest) string {
+// requestPrivateValues are the recipient and the string template values of an
+// incoming SendEmail request, which no failure log may keep.
+func requestPrivateValues(request *intrav1.SendEmailRequest) []string {
 	values := []string{request.GetRecipient()}
 	if recipient, parseErr := mail.ParseAddress(request.GetRecipient()); parseErr == nil {
 		values = append(values, recipient.Name)
@@ -36,7 +37,7 @@ func requestFailureCause(err error, request *intrav1.SendEmailRequest) string {
 			values = append(values, text)
 		}
 	}
-	return failurecause.Message(err, values...)
+	return values
 }
 
 type deliveryRenderContextKey struct{}

@@ -3,7 +3,6 @@ package programevent
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -26,14 +24,7 @@ import (
 func (s *ProgramEventTypeService) CreateProgramEventType(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateProgramEventTypeRequest],
-) (_ *connect.Response[managev1.ProgramEventType], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventType", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventType], error) {
 	can, err := policyv1.ProgramEvent.CreateType()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -73,8 +64,7 @@ func (s *ProgramEventTypeService) CreateProgramEventType(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(eventType).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventType", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("program event type", slug)
+				return errs.WithCause(errs.SlugAlreadyExists("program event type", slug), err)
 			}
 			return errs.Internal(err)
 		}
@@ -106,14 +96,7 @@ func (s *ProgramEventTypeService) CreateProgramEventType(
 func (s *ProgramEventTypeService) ListProgramEventTypesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListProgramEventTypesAdminRequest],
-) (_ *connect.Response[managev1.ListProgramEventTypesAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventTypesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListProgramEventTypesAdminResponse], error) {
 	can, err := policyv1.ProgramEvent.ListTypes()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -165,14 +148,7 @@ func (s *ProgramEventTypeService) ListProgramEventTypesAdmin(
 func (s *ProgramEventTypeService) UpdateProgramEventType(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventTypeRequest],
-) (_ *connect.Response[managev1.ProgramEventType], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventType", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventType], error) {
 	can, err := policyv1.ProgramEvent.UpdateType()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -195,14 +171,7 @@ func (s *ProgramEventTypeService) UpdateProgramEventType(
 func (s *ProgramEventTypeService) DeleteProgramEventType(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventTypeRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventType", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	can, err := policyv1.ProgramEvent.DeleteType()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -230,8 +199,7 @@ func (s *ProgramEventTypeService) DeleteProgramEventType(
 		}
 		if err := tx.Delete(&eventType).Error; err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventType", failurecause.Attr(err))
-				return errs.FailedPrecondition("program event type is in use")
+				return errs.WithCause(errs.FailedPrecondition("program event type is in use"), err)
 			}
 			return errs.Internal(err)
 		}

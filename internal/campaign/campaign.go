@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
@@ -145,15 +143,7 @@ func (s *CampaignService) requireCampaignCan(
 func (s *CampaignService) GetCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.GetCampaignRequest],
-) (rpcResponse *connect.Response[managev1.GetCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "GetCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.GetCampaignResponse], error) {
 	can, canErr := policyv1.Campaign.View(req.Msg.Id)
 	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -195,15 +185,7 @@ var campaignSortConfig = queryutil.SortConfig{
 func (s *CampaignService) ListCampaignsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCampaignsAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListCampaignsAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "ListCampaignsAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListCampaignsAdminResponse], error) {
 	can, canErr := policyv1.Campaign.List()
 	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -272,15 +254,7 @@ func (s *CampaignService) ListCampaignsAdmin(
 func (s *CampaignService) CreateCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateCampaignRequest],
-) (rpcResponse *connect.Response[managev1.CreateCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "CreateCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.CreateCampaignResponse], error) {
 	campaignCan, err := policyv1.Campaign.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -416,15 +390,7 @@ func normalizeCampaignCreateSourceLocale(runtime LocaleNormalizer, value string)
 func (s *CampaignService) UpdateCampaignName(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateCampaignNameRequest],
-) (rpcResponse *connect.Response[managev1.UpdateCampaignNameResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "UpdateCampaignName", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.UpdateCampaignNameResponse], error) {
 	campaignCan, err := policyv1.Campaign.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -486,15 +452,7 @@ func (s *CampaignService) UpdateCampaignName(
 func (s *CampaignService) UpdateCampaignConfiguration(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateCampaignConfigurationRequest],
-) (rpcResponse *connect.Response[managev1.UpdateCampaignConfigurationResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "UpdateCampaignConfiguration", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.UpdateCampaignConfigurationResponse], error) {
 	campaignCan, err := policyv1.Campaign.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -669,15 +627,7 @@ func observeAndLockCampaignLayouts(
 func (s *CampaignService) DeleteCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteCampaignRequest],
-) (rpcResponse *connect.Response[managev1.DeleteCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "DeleteCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.DeleteCampaignResponse], error) {
 	campaignCan, err := policyv1.Campaign.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -726,10 +676,9 @@ func (s *CampaignService) DeleteCampaign(
 		}
 		if err := tx.Delete(&campaign).Error; err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
-				slog.WarnContext(ctx, "Campaign deletion rejected", "domain", "campaign", "event", "campaign.delete_rejected", "outcome", "blocked", "campaign_id", campaign.ID, failurecause.Attr(err))
-				return errs.FailedPrecondition(
+				return errs.WithCause(errs.FailedPrecondition(
 					"campaign delivery history or another durable reference exists",
-				)
+				), err)
 			}
 			return errs.Internal(err)
 		}
@@ -762,15 +711,7 @@ func (s *CampaignService) DeleteCampaign(
 func (s *CampaignService) ScheduleCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.ScheduleCampaignRequest],
-) (rpcResponse *connect.Response[managev1.ScheduleCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "ScheduleCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ScheduleCampaignResponse], error) {
 	campaignCan, err := policyv1.Campaign.Manage(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -870,15 +811,7 @@ func (s *CampaignService) ScheduleCampaign(
 func (s *CampaignService) CancelCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.CancelCampaignRequest],
-) (rpcResponse *connect.Response[managev1.CancelCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "CancelCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.CancelCampaignResponse], error) {
 	campaignCan, err := policyv1.Campaign.Manage(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -939,15 +872,7 @@ func (s *CampaignService) CancelCampaign(
 func (s *CampaignService) SendCampaignNow(
 	ctx context.Context,
 	req *connect.Request[managev1.SendCampaignNowRequest],
-) (rpcResponse *connect.Response[managev1.SendCampaignNowResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "SendCampaignNow", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.SendCampaignNowResponse], error) {
 	campaignCan, err := policyv1.Campaign.Manage(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -1158,15 +1083,7 @@ func startCampaignSendNowWithDB(
 func (s *CampaignService) PreviewCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewCampaignRequest],
-) (rpcResponse *connect.Response[managev1.PreviewCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "PreviewCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.PreviewCampaignResponse], error) {
 	can, canErr := policyv1.Campaign.View(req.Msg.Id)
 	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -1281,15 +1198,7 @@ func (s *CampaignService) PreviewCampaign(
 func (s *CampaignService) SendTestCampaign(
 	ctx context.Context,
 	req *connect.Request[managev1.SendTestCampaignRequest],
-) (rpcResponse *connect.Response[managev1.SendTestCampaignResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "SendTestCampaign", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, req.Msg.GetEmail(), strings.TrimSpace(req.Msg.GetEmail())))
-	}()
-
+) (*connect.Response[managev1.SendTestCampaignResponse], error) {
 	campaignCan, err := policyv1.Campaign.Manage(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -1366,15 +1275,7 @@ func campaignPreviewUnsubscribeLink(siteOrigin string) string {
 func (s *CampaignService) GetCampaignStats(
 	ctx context.Context,
 	req *connect.Request[managev1.GetCampaignStatsRequest],
-) (rpcResponse *connect.Response[managev1.GetCampaignStatsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "GetCampaignStats", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.GetCampaignStatsResponse], error) {
 	can, canErr := policyv1.Campaign.View(req.Msg.Id)
 	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -1420,15 +1321,7 @@ func (s *CampaignService) GetCampaignStats(
 func (s *CampaignService) GetCampaignRecipients(
 	ctx context.Context,
 	req *connect.Request[managev1.GetCampaignRecipientsRequest],
-) (rpcResponse *connect.Response[managev1.GetCampaignRecipientsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "GetCampaignRecipients", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.GetCampaignRecipientsResponse], error) {
 	can, canErr := policyv1.Campaign.Manage(req.Msg.Id)
 	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err

@@ -2,14 +2,11 @@
 package pageaccess
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -49,9 +46,6 @@ func Normalize(policy *commonv1.PageAccessPolicy) (*commonv1.PageAccessPolicy, e
 	for _, value := range policy.UserTagIds {
 		parsed, err := uuid.Parse(value)
 		if err != nil || parsed == uuid.Nil || parsed.String() != value {
-			if err != nil {
-				slog.WarnContext(context.Background(), "content operation failed", "domain", "pageaccess", "operation", "pageaccess.Normalize", "outcome", "failed", failurecause.Attr(err))
-			}
 			return nil, fmt.Errorf("Page access user tag IDs must be canonical UUIDs")
 		}
 		result.UserTagIds = append(result.UserTagIds, value)

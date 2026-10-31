@@ -3,7 +3,6 @@ package programevent
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -44,8 +42,7 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 			updates["updated_at"] = now
 			if err := tx.Model(&eventType).Updates(updates).Error; err != nil {
 				if dberrors.IsUniqueViolation(err) {
-					slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "updateProgramEventType", failurecause.Attr(err))
-					return errs.SlugAlreadyExists("program event type", request.GetSlug())
+					return errs.WithCause(errs.SlugAlreadyExists("program event type", request.GetSlug()), err)
 				}
 				return errs.Internal(err)
 			}

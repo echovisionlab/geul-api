@@ -79,7 +79,7 @@ func (s *BroadcastSubscriber) Start(ctx context.Context) error {
 		if attempt > 1 {
 			emitPostgreSQLSignalDependencyRecovered(ctx)
 		}
-		slog.Info("PostgreSQL signal subscriber started", "signal", s.signal)
+		slog.InfoContext(ctx, "PostgreSQL signal subscriber started", "signal", s.signal)
 		attempt = 0
 		for ctx.Err() == nil && !isClosed(s.closed) {
 			notification, waitErr := conn.WaitForNotification(ctx)
@@ -110,7 +110,7 @@ func (s *BroadcastSubscriber) process(ctx context.Context, payload string) (resu
 	defer func() {
 		if resultErr != nil {
 			commandID := queueCommandID(Message{MessageID: envelope.MessageID, CorrelationID: envelope.CorrelationID})
-			slog.ErrorContext(ctx, "PostgreSQL signal handler failed", "signal", s.signal, "message_id", envelope.MessageID, "command_id", commandID, "failure_cause", failurecause.Message(resultErr))
+			slog.ErrorContext(ctx, "PostgreSQL signal handler failed", append(failurecause.Args(resultErr), "signal", s.signal, "message_id", envelope.MessageID, "command_id", commandID)...)
 		}
 	}()
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {

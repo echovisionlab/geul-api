@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -420,8 +418,7 @@ func ApplyTranslationCandidateWithDB(
 		candidate.ContentDocumentRevision,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "parse_translation_revision", "outcome", "failed", failurecause.Attr(err), "entity_id", job.EntityID, "target_locale", job.TargetLocale, "job_id", job.ID)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	document := candidate.PageDocument
 	providerTargetExists := false
@@ -520,8 +517,7 @@ func ApplyTranslationCandidateWithDB(
 		pageSystemTranslationDocumentFence(job.EntityID),
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return normalizePageContentBlockError(err)
@@ -579,9 +575,6 @@ func applyPageProviderSourceCandidate(
 ) error {
 	requesterID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-		if err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.applyPageProviderSourceCandidate", "outcome", "failed", failurecause.Attr(err))
-		}
 		return errors.New("page translation provider delivery requires its requesting Member")
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
@@ -627,8 +620,7 @@ func applyPageProviderSourceCandidate(
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "translation_source_changed", "outcome", "failed", failurecause.Attr(err), "job_id", job.ID, "entity_id", job.EntityID, "source_locale", job.SourceLocale, "target_locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return normalizePageContentBlockError(err)

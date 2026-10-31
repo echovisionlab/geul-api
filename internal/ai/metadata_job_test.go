@@ -72,7 +72,7 @@ func TestMetadataSuggestionRegistryKeepsSchemaValidationAndProtoMappingInParity(
 
 			prompt := fmt.Sprintf(`{"task":{"requestedKeys":[%q]}}`, key)
 			require.NoError(t, validateMetadataAIUserPrompt(prompt))
-			schema := buildMetadataResponseJSONSchema(prompt)
+			schema := buildMetadataResponseJSONSchema(t.Context(), prompt)
 			properties, ok := schema["properties"].(structured.Fields)
 			require.True(t, ok)
 			require.Contains(t, properties, key)

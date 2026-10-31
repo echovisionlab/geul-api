@@ -135,10 +135,10 @@ func (s *Scheduler) addJob(schedule string, job Job) {
 			// Scheduler messages are coalescible wake-ups. The next authoritative
 			// DB scan recovers a missed tick, so retry belongs neither here nor in
 			// a second middleware loop around the queue consumer.
-			slog.ErrorContext(ctx, "Failed to push scheduled wake-up", "type", string(job), "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Failed to push scheduled wake-up", append(failurecause.Args(err), "type", string(job))...)
 			return
 		}
-		slog.Info("Pushed scheduled job", "type", string(job))
+		slog.InfoContext(ctx, "Pushed scheduled job", "type", string(job))
 	})
 	if err != nil {
 		slog.Error("Failed to add cron job", "schedule", schedule, "type", job, "failure_cause", failurecause.Message(err))

@@ -117,21 +117,27 @@ func TestIdentityHasExpiredTimedBanRequiresExplicitCurrentBan(t *testing.T) {
 	now := time.Now().UTC()
 	expired := now.Add(-time.Minute).Format(time.RFC3339)
 
-	require.True(t, identityHasExpiredTimedBan(&auth.Identity{MetadataAdmin: structured.Fields{
+	expiredBan, err := identityHasExpiredTimedBan(&auth.Identity{MetadataAdmin: structured.Fields{
 		"banned":      true,
 		"ban_expires": expired,
-	}}, now))
-	require.False(t, identityHasExpiredTimedBan(&auth.Identity{
+	}}, now)
+	require.NoError(t, err)
+	require.True(t, expiredBan)
+	expiredBan, err = identityHasExpiredTimedBan(&auth.Identity{
 		State: auth.KratosStateInactive,
 		MetadataAdmin: structured.Fields{
 			"banned":      false,
 			"ban_expires": expired,
 		},
-	}, now))
-	require.False(t, identityHasExpiredTimedBan(&auth.Identity{MetadataAdmin: structured.Fields{
+	}, now)
+	require.NoError(t, err)
+	require.False(t, expiredBan)
+	expiredBan, err = identityHasExpiredTimedBan(&auth.Identity{MetadataAdmin: structured.Fields{
 		"banned":      true,
 		"ban_expires": "invalid",
-	}}, now))
+	}}, now)
+	require.ErrorContains(t, err, "parse timed ban expiry")
+	require.False(t, expiredBan)
 }
 
 func TestNewUserStateServiceRejectsMissingIdentityManager(t *testing.T) {

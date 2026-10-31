@@ -87,7 +87,7 @@ func (r *TrackTranscodes) CancelFiles(
 
 		if r.canceller != nil {
 			if err := r.canceller.MarkCancelled(ctx, *fileID, reason); err != nil {
-				slog.Warn("Failed to mark track transcode jobs cancelled", "trackId", trackID, "fileId", *fileID, "reason", reason, "failure_cause", failurecause.Message(err))
+				slog.WarnContext(ctx, "Failed to mark track transcode jobs cancelled", "track_id", trackID, "file_id", *fileID, "reason", reason.String(), failurecause.Attr(err))
 			}
 		}
 		if r.publisher != nil {
@@ -95,7 +95,7 @@ func (r *TrackTranscodes) CancelFiles(
 				FileId: *fileID, EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
 				EntityId: trackID, Reason: reason, TimestampMs: time.Now().UnixMilli(),
 			}); err != nil {
-				slog.Warn("Failed to publish track transcode cancel event", "trackId", trackID, "fileId", *fileID, "reason", reason, "failure_cause", failurecause.Message(err))
+				slog.WarnContext(ctx, "Failed to publish track transcode cancel event", "track_id", trackID, "file_id", *fileID, "reason", reason.String(), failurecause.Attr(err))
 			}
 		}
 	}

@@ -3,7 +3,6 @@ package work
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"reflect"
 	"strings"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -33,14 +31,7 @@ type workUpdatePlan struct {
 func (s *WorkService) UpdateWork(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateWorkRequest],
-) (_ *connect.Response[managev1.UpdateWorkResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.UpdateWorkResponse], error) {
 	work, err := loadWorkForUpdate(ctx, s.db, req.Msg.Id)
 	if err != nil {
 		return nil, err
@@ -461,8 +452,7 @@ func mapWorkUpdateError(err error) error {
 		return err
 	}
 	if dberrors.IsUniqueViolation(err) {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "mapWorkUpdateError", failurecause.Attr(err))
-		return errs.SlugAlreadyExists("work", "slug")
+		return errs.WithCause(errs.SlugAlreadyExists("work", "slug"), err)
 	}
 	return errs.Internal(err)
 }

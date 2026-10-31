@@ -3,7 +3,6 @@ package patauth
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/member/pat"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 )
@@ -166,7 +166,7 @@ func TestSaturationAndCancellation(t *testing.T) {
 	}
 }
 
-func TestPATVerificationLogsCauseWithoutSubmittedCredential(t *testing.T) {
+func TestPATVerificationRecordsCauseWithoutSubmittedCredential(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -177,21 +177,22 @@ func TestPATVerificationLogsCauseWithoutSubmittedCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx, recorder := failurecause.WithRecorder(t.Context())
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, authenticatedRequest())
+	handler.ServeHTTP(response, authenticatedRequest().WithContext(ctx))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d", response.Code)
 	}
-	var entry map[string]any
-	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
-		t.Fatal(err)
+	if output.Len() != 0 {
+		t.Fatalf("the HTTP request record owns the failure log: %s", output.String())
 	}
-	if cause, ok := entry["failure_cause"].(string); !ok || !strings.Contains(cause, "database unavailable") {
-		t.Fatalf("missing cause: %v", entry)
+	failure, recorded := recorder.Recorded()
+	if !recorded || !strings.Contains(failure.Cause, "database unavailable") {
+		t.Fatalf("missing cause: %+v", failure)
 	}
 	for _, private := range []string{"test-bearer", "reader@example.test", "secret-value"} {
-		if strings.Contains(output.String(), private) {
-			t.Fatalf("log contains private value %q", private)
+		if strings.Contains(failure.Cause, private) {
+			t.Fatalf("cause contains private value %q", private)
 		}
 	}
 }

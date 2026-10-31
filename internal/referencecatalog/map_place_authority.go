@@ -3,14 +3,12 @@ package referencecatalog
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -42,13 +40,11 @@ func requireLockedMapPlaceAuthority(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.requireLockedMapPlaceAuthority", "outcome", "failed", failurecause.Attr(err))
-		return "", errs.AuthenticationRequired()
+		return "", errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.requireLockedMapPlaceAuthority", "outcome", "failed", failurecause.Attr(err))
-		return "", errs.DependencyUnavailable("SpiceDB")
+		return "", errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		if adminOnly {

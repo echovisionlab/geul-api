@@ -3,12 +3,10 @@ package form
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -21,15 +19,7 @@ import (
 func (s *FormService) GetForm(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFormRequest],
-) (rpcResponse *connect.Response[managev1.Form], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetForm", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.Form], error) {
 	var form model.Form
 	query := s.db.WithContext(ctx)
 	if IsValidUUID(req.Msg.Id) {
@@ -64,15 +54,7 @@ func (s *FormService) GetForm(
 func (s *FormService) CheckFormSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckFormSlugAvailableRequest],
-) (rpcResponse *connect.Response[managev1.CheckFormSlugAvailableResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "CheckFormSlugAvailable", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.CheckFormSlugAvailableResponse], error) {
 	if err := validateSlugWithoutSlash(req.Msg.Slug); err != nil {
 		return nil, err
 	}
@@ -131,15 +113,7 @@ func (s *FormService) authorizeFormSlugCheck(ctx context.Context, excludeID stri
 func (s *FormService) ListFormsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormsAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListFormsAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "ListFormsAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListFormsAdminResponse], error) {
 	// Admin only - this endpoint returns all forms including drafts
 	can, err := policyv1.Form.List()
 	if err != nil {

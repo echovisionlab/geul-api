@@ -3,7 +3,6 @@ package form
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -69,8 +68,7 @@ func ApplyProviderTranslationCandidateWithDB(
 		return errs.FailedPrecondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Form source locale document is invalid")
+		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
 	}
 
 	sourceTitle := ""

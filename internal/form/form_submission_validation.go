@@ -1,9 +1,9 @@
 package form
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"net/mail"
 	"net/url"
@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type formFieldValidationPayload struct {
@@ -34,7 +36,7 @@ type submissionSchemaField struct {
 
 // ValidateFormSubmissionAgainstSchema validates a public response against the
 // current source document. It intentionally does not persist a schema snapshot.
-func ValidateFormSubmissionAgainstSchema(rawSchema, rawSubmission []byte) error {
+func ValidateFormSubmissionAgainstSchema(ctx context.Context, rawSchema, rawSubmission []byte) error {
 	var schema formSchemaPayload
 	if err := json.Unmarshal(rawSchema, &schema); err != nil {
 		return fmt.Errorf("invalid current form schema: %w", err)
@@ -49,7 +51,7 @@ func ValidateFormSubmissionAgainstSchema(rawSchema, rawSubmission []byte) error 
 		return err
 	}
 	for _, field := range fields {
-		if !submissionFieldActive(field, values, fieldKeyByID) {
+		if !submissionFieldActive(ctx, field, values, fieldKeyByID) {
 			continue
 		}
 		value, present := values[field.Key]
@@ -98,27 +100,28 @@ func rejectUnknownSubmissionFields(values submissionObject, fields map[string]su
 	return nil
 }
 
-func submissionFieldActive(field submissionSchemaField, values submissionObject, fieldKeyByID map[string]string) bool {
-	return submissionConditionActive(field.StepCondition, values, fieldKeyByID) &&
-		submissionConditionActive(field.Condition, values, fieldKeyByID)
+func submissionFieldActive(ctx context.Context, field submissionSchemaField, values submissionObject, fieldKeyByID map[string]string) bool {
+	return submissionConditionActive(ctx, field.StepCondition, values, fieldKeyByID) &&
+		submissionConditionActive(ctx, field.Condition, values, fieldKeyByID)
 }
 
-func submissionConditionActive(raw json.RawMessage, values submissionObject, fieldKeyByID map[string]string) bool {
+func submissionConditionActive(ctx context.Context, raw json.RawMessage, values submissionObject, fieldKeyByID map[string]string) bool {
 	if len(raw) == 0 || string(raw) == "null" {
 		return true
 	}
 	var node map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &node); err != nil {
-		slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", failurecause.Attr(err))
 		return false
 	}
 	if childrenRaw, ok := node["conditions"]; ok {
-		return submissionConditionGroupActive(node, childrenRaw, values, fieldKeyByID)
+		return submissionConditionGroupActive(ctx, node, childrenRaw, values, fieldKeyByID)
 	}
-	return submissionConditionLeafActive(node, values, fieldKeyByID)
+	return submissionConditionLeafActive(ctx, node, values, fieldKeyByID)
 }
 
 func submissionConditionGroupActive(
+	ctx context.Context,
 	node map[string]json.RawMessage,
 	childrenRaw json.RawMessage,
 	values submissionObject,
@@ -126,17 +129,17 @@ func submissionConditionGroupActive(
 ) bool {
 	var children []json.RawMessage
 	if err := json.Unmarshal(childrenRaw, &children); err != nil {
-		slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", failurecause.Attr(err))
 		return false
 	}
 	var logic string
 	if raw := node["logic"]; len(raw) != 0 {
 		if err := json.Unmarshal(raw, &logic); err != nil {
-			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "logic", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "logic", failurecause.Attr(err))
 		}
 	}
 	for _, child := range children {
-		active := submissionConditionActive(child, values, fieldKeyByID)
+		active := submissionConditionActive(ctx, child, values, fieldKeyByID)
 		if logic == "or" && active {
 			return true
 		}
@@ -148,6 +151,7 @@ func submissionConditionGroupActive(
 }
 
 func submissionConditionLeafActive(
+	ctx context.Context,
 	node map[string]json.RawMessage,
 	values submissionObject,
 	fieldKeyByID map[string]string,
@@ -156,22 +160,22 @@ func submissionConditionLeafActive(
 	var expected submissionValue
 	if raw := node["fieldId"]; len(raw) != 0 {
 		if err := json.Unmarshal(raw, &fieldID); err != nil {
-			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "fieldId", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "fieldId", failurecause.Attr(err))
 		}
 	}
 	if raw := node["field"]; len(raw) != 0 {
 		if err := json.Unmarshal(raw, &legacyField); err != nil {
-			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "field", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "field", failurecause.Attr(err))
 		}
 	}
 	if raw := node["operator"]; len(raw) != 0 {
 		if err := json.Unmarshal(raw, &operator); err != nil {
-			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "operator", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "operator", failurecause.Attr(err))
 		}
 	}
 	if raw := node["value"]; len(raw) != 0 {
 		if err := json.Unmarshal(raw, &expected); err != nil {
-			slog.Error("Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "value", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Invalid persisted form condition", "domain", "form", "event", "form.condition_invalid", "outcome", "failed", "field", "value", failurecause.Attr(err))
 		}
 	}
 	if fieldID == "" {

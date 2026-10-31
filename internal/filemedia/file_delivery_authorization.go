@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -99,13 +97,11 @@ func (s *FileService) authorizeManageFileDeliveriesWithWitness(
 
 	listCan, err := policyv1.File.List()
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFileDeliveriesWithWitness: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	hasLibraryAccess, err := checkSpiceDBCan(ctx, user, listCan, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFileDeliveriesWithWitness: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	authorization := &manageFileDeliveryAuthorization{
 		principal: user,
@@ -396,13 +392,11 @@ func (s *FileService) authorizeManageFilePermissionTarget(
 	}
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFilePermissionTarget: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFilePermissionTarget: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if isAdmin {
 		return nil
@@ -412,18 +406,15 @@ func (s *FileService) authorizeManageFilePermissionTarget(
 		return errs.PermissionDenied("file access denied")
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "authorizeManageFilePermissionTarget: PermissionDenied", failurecause.Attr(err))
-		return errs.PermissionDenied("file access denied")
+		return errs.WithCause(errs.PermissionDenied("file access denied"), err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "authorizeManageFilePermissionTarget: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "authorizeManageFilePermissionTarget: InternalMsg", failurecause.Attr(err))
-		return errs.InternalMsg("permission check failed")
+		return errs.WithCause(errs.InternalMsg("permission check failed"), err)
 	}
 	if !allowed {
 		return errs.PermissionDenied("file access denied")

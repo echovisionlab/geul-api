@@ -157,14 +157,7 @@ func classifyReleaseMutationError(err error, releaseID string) error {
 func (s *ReleaseService) GetRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.GetReleaseRequest],
-) (_ *connect.Response[managev1.Release], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "GetRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Release], error) {
 	if err := requireReleaseAction(ctx, s.spiceDB, req.Msg.Id, releaseActionView); err != nil {
 		return nil, err
 	}
@@ -198,14 +191,7 @@ func (s *ReleaseService) GetRelease(
 func (s *ReleaseService) ListReleasesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListReleasesAdminRequest],
-) (_ *connect.Response[managev1.ListReleasesAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ListReleasesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
 	if err := requireReleaseList(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -342,14 +328,7 @@ func (s *ReleaseService) ListReleasesAdmin(
 func (s *ReleaseService) CreateRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateReleaseRequest],
-) (_ *connect.Response[managev1.Release], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Release], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
@@ -363,7 +342,6 @@ func (s *ReleaseService) CreateRelease(
 		var err error
 		requestedSourceLocale, err = normalizeReleaseDocumentLocale(requestedSourceLocale)
 		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("source_locale", "must be a supported canonical locale")
 		}
 	}
@@ -483,8 +461,7 @@ func (s *ReleaseService) CreateRelease(
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("release", "slug")
+			return nil, errs.WithCause(errs.SlugAlreadyExists("release", "slug"), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -541,14 +518,7 @@ func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, 
 func (s *ReleaseService) DeleteRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteReleaseRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
@@ -564,11 +534,11 @@ func (s *ReleaseService) DeleteRelease(
 
 	var trackIDs []string
 	deleted := false
+	var uploadsChanged error
 	for range MaxTrackUploadCleanupPasses {
 		if err := s.cleanupReleaseTrackUploadSessions(ctx, req.Msg.Id); err != nil {
 			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(err))
-				return nil, errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release")
+				return nil, errs.WithCause(errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release"), err)
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFound("release", req.Msg.Id)
@@ -665,7 +635,7 @@ func (s *ReleaseService) DeleteRelease(
 			return s.appendReleaseDeletedAudit(ctx, tx, req.Msg.Id)
 		})
 		if errors.Is(err, ErrTrackUploadSessionsChanged) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(err))
+			uploadsChanged = err
 			continue
 		}
 		if err != nil {
@@ -678,7 +648,7 @@ func (s *ReleaseService) DeleteRelease(
 		break
 	}
 	if !deleted {
-		return nil, errs.FailedPrecondition("track audio uploads changed during deletion; retry the request")
+		return nil, errs.WithCause(errs.FailedPrecondition("track audio uploads changed during deletion; retry the request"), uploadsChanged)
 	}
 	if err := s.waveformJobs.CancelTracks(
 		ctx,
@@ -700,14 +670,7 @@ func (s *ReleaseService) DeleteRelease(
 func (s *ReleaseService) PublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishReleaseRequest],
-) (_ *connect.Response[managev1.ReleaseLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "PublishRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -760,14 +723,7 @@ func (s *ReleaseService) PublishRelease(
 func (s *ReleaseService) UnpublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishReleaseRequest],
-) (_ *connect.Response[managev1.ReleaseLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UnpublishRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -142,7 +143,7 @@ func loadProgramEventInterchangeTarget(
 	}
 	documentID, err := canonicalInterchangeDocumentID(root.ContentDocumentID)
 	if err != nil {
-		return programEventInterchangeTarget{}, errs.FailedPrecondition("Program Event content document identity is invalid")
+		return programEventInterchangeTarget{}, errs.WithCause(errs.FailedPrecondition("Program Event content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, db, documentID, plan.SourceLocale)
 	if err != nil {

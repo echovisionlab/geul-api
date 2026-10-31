@@ -169,7 +169,7 @@ func loadCurrentPublicLegalDocuments[Document structured.Value, Proto structured
 	if err == nil {
 		result.scheduled = spec.toScheduled(&scheduled)
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		slog.ErrorContext(ctx, "Failed to load scheduled legal document", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Scheduled legal document lookup failed; serving the current version only", "domain", "legal", "operation", "load_scheduled_document", "outcome", "failed", "entity_type", spec.entityName, failurecause.Attr(err))
 	}
 	return result, nil
 }

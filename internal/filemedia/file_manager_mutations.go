@@ -3,7 +3,6 @@ package filemedia
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"strings"
 
@@ -21,16 +20,8 @@ import (
 )
 
 func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[managev1.RenameFileRequest]) (_ *connect.Response[managev1.RenameFileResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			privateName := ""
-			if req != nil && req.Msg != nil {
-				privateName = req.Msg.GetFileName()
-			}
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "RenameFile", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetFileName())
+
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -83,13 +74,7 @@ func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[manag
 	return connect.NewResponse(&managev1.RenameFileResponse{File: response.Msg.File}), nil
 }
 
-func (s *FileService) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (_ *connect.Response[managev1.MoveFilesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "MoveFiles", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+func (s *FileService) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err

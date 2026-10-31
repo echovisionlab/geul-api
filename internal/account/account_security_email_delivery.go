@@ -61,13 +61,23 @@ func PublishAccountSecurityEventEmail(
 		ReferenceId:      &referenceID,
 		RecipientContext: email.AccountSelectedPrimaryEmailContext(identityID),
 	}
-	err = email.PublishCommand(ctx, publisher, job, messageID)
-	if err != nil {
-		privateValues := []string{job.Recipient}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Account security email publish failed", "template_type", job.TemplateType, "command_id", messageID, failurecause.Attr(err, privateValues...))
+	if err := email.PublishCommand(ctx, publisher, job, messageID); err != nil {
+		return emailPublishFailure(err, job, messageID)
 	}
-	return err
+	return nil
+}
+
+// emailPublishFailure carries a failed email command's identifiers to the
+// record that logs the failure, and marks the recipient, template values, and
+// any other values its text can echo private.
+func emailPublishFailure(err error, job *managev1.SendEmailEvent, commandID string, private ...string) error {
+	values := append([]string{job.Recipient}, private...)
+	for _, value := range job.TemplateData {
+		values = append(values, value)
+	}
+	return failurecause.WithAttrs(
+		failurecause.WithPrivate(err, values...),
+		slog.String("template_type", job.TemplateType),
+		slog.String("command_id", commandID),
+	)
 }

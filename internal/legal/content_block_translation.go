@@ -3,7 +3,7 @@ package legal
 import (
 	"context"
 	"errors"
-	"log/slog"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -140,8 +139,7 @@ func ApplyTypedTranslationCandidateWithDB(
 		"content_document_revision", candidate.ContentDocumentRevision,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "Legal translation source revision is invalid", "failure_cause", failurecause.Message(err), "entity_type", job.EntityType, "entity_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	// A provider result whose target is now the source locale was requested
 	// for a different source, matching validatePostProviderSourceTarget.

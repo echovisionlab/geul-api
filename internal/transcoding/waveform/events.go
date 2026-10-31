@@ -61,7 +61,7 @@ func (p *Processor) publishProgress(
 	}
 
 	if err := p.publisher.PublishWaveformProgress(ctx, progressEvent); err != nil && !p.isCancelled(ctx, err) {
-		slog.Error("Failed to publish waveform progress event",
+		slog.ErrorContext(ctx, "Failed to publish waveform progress event",
 			"event_id", event.EventId,
 			"entity_type", event.EntityType.String(),
 			"entity_id", event.EntityId,
@@ -79,14 +79,6 @@ func (p *Processor) publishFail(
 	startedAt time.Time,
 	cause error,
 ) error {
-	slog.ErrorContext(ctx, "Waveform generation failed",
-		"job_id", event.EventId,
-		"file_id", event.FileId,
-		"entity_type", event.EntityType.String(),
-		"entity_id", event.EntityId,
-		"duration_ms", time.Since(startedAt).Milliseconds(),
-		failurecause.Attr(cause),
-	)
 	failEvent := &apiv1.WaveformFailEvent{
 		EventId:          event.EventId,
 		EntityType:       event.EntityType,
@@ -96,10 +88,18 @@ func (p *Processor) publishFail(
 		ProcessingTimeMs: time.Since(startedAt).Milliseconds(),
 		TimestampMs:      time.Now().UnixMilli(),
 	}
-	if publishErr := p.publisher.PublishWaveformFail(ctx, failEvent); publishErr != nil {
-		return jobresult.Retry(fmt.Errorf("publish waveform failure result: %w; job failure: %v", publishErr, cause))
+	// The queue consumer logs the returned failure; it names the job here.
+	attrs := []slog.Attr{
+		slog.String("job_id", event.GetEventId()),
+		slog.String("file_id", event.GetFileId()),
+		slog.String("entity_type", event.GetEntityType().String()),
+		slog.String("entity_id", event.GetEntityId()),
+		slog.Int64("duration_ms", failEvent.GetProcessingTimeMs()),
 	}
-	return jobresult.Terminal(cause)
+	if publishErr := p.publisher.PublishWaveformFail(ctx, failEvent); publishErr != nil {
+		return failurecause.WithAttrs(jobresult.Retry(fmt.Errorf("publish waveform failure result: %w; job failure: %v", publishErr, cause)), attrs...)
+	}
+	return failurecause.WithAttrs(jobresult.Terminal(cause), attrs...)
 }
 
 func waveformWriteResult(target *commonv1.AssetWriteTarget, payload []byte) *commonv1.AssetWriteResult {

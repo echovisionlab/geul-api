@@ -33,7 +33,7 @@ func (h *Handlers) handleCleanupShareLinks(ctx context.Context) error {
 		return result.Error
 	}
 	if result.RowsAffected > 0 {
-		slog.Info("Cleaned up expired share links", "count", result.RowsAffected)
+		slog.InfoContext(ctx, "Cleaned up expired share links", "count", result.RowsAffected)
 	}
 	return nil
 }

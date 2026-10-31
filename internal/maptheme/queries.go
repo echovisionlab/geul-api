@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	stderrors "errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -24,14 +22,7 @@ import (
 
 func (s *MapThemeService) ListMapThemes(
 	ctx context.Context, _ *connect.Request[managev1.ListMapThemesRequest],
-) (_ *connect.Response[managev1.ListMapThemesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ListMapThemes", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListMapThemesResponse], error) {
 	var defaultID string
 	var themes []model.MapTheme
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -60,14 +51,7 @@ func (s *MapThemeService) ListMapThemes(
 
 func (s *MapThemeService) ResolveMapTheme(
 	ctx context.Context, req *connect.Request[managev1.ResolveMapThemeRequest],
-) (_ *connect.Response[managev1.ResolvedMapTheme], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ResolveMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ResolvedMapTheme], error) {
 	scheme := req.Msg.Scheme
 	if scheme == "" {
 		scheme = "light"
@@ -107,14 +91,7 @@ func (s *MapThemeService) ResolveMapTheme(
 
 func (s *MapThemeService) GetMapTheme(
 	ctx context.Context, req *connect.Request[managev1.GetMapThemeRequest],
-) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "GetMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.MapTheme], error) {
 	id, err := normalizeMapThemeID(req.Msg.Id, "id")
 	if err != nil {
 		return nil, err
@@ -156,14 +133,7 @@ func createMapThemeFromSnapshot(tx *gorm.DB, snapshot mapThemeSnapshot) (*model.
 
 func (s *MapThemeService) CreateMapTheme(
 	ctx context.Context, req *connect.Request[managev1.CreateMapThemeRequest],
-) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "CreateMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.MapTheme], error) {
 	can, err := policyv1.MapTheme.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -215,14 +185,7 @@ func isMapThemeDefaultDeleteViolation(err error) bool {
 
 func (s *MapThemeService) DeleteMapTheme(
 	ctx context.Context, req *connect.Request[managev1.DeleteMapThemeRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "DeleteMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	id, err := normalizeMapThemeID(req.Msg.Id, "id")
 	if err != nil {
 		return nil, err
@@ -265,10 +228,9 @@ func (s *MapThemeService) DeleteMapTheme(
 	})
 	if err != nil {
 		if isMapThemeDefaultDeleteViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "DeleteMapTheme", failurecause.Attr(err))
-			return nil, errs.FailedPrecondition(
+			return nil, errs.WithCause(errs.FailedPrecondition(
 				"the current default or last map theme cannot be deleted; select another default first",
-			)
+			), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -280,14 +242,7 @@ func (s *MapThemeService) DeleteMapTheme(
 
 func (s *MapThemeService) CopyMapTheme(
 	ctx context.Context, req *connect.Request[managev1.CopyMapThemeRequest],
-) (_ *connect.Response[managev1.MapTheme], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "CopyMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.MapTheme], error) {
 	can, err := policyv1.MapTheme.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -347,14 +302,7 @@ func (s *MapThemeService) CopyMapTheme(
 
 func (s *MapThemeService) SetDefaultMapTheme(
 	ctx context.Context, req *connect.Request[managev1.SetDefaultMapThemeRequest],
-) (_ *connect.Response[managev1.SetDefaultMapThemeResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "SetDefaultMapTheme", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.SetDefaultMapThemeResponse], error) {
 	themeID, err := normalizeMapThemeID(req.Msg.ThemeId, "theme_id")
 	if err != nil {
 		return nil, err

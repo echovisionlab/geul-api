@@ -98,13 +98,7 @@ func (s *InternalPostService) LoadPostBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPostBlockDocumentRequest],
 ) (_ *connect.Response[intrav1.LoadPostBlockDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadPostBlockDocument", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -223,13 +217,7 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyPostBlockBatchRequest],
 ) (_ *connect.Response[intrav1.ApplyPostBlockBatchResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ApplyPostBlockBatch", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -398,13 +386,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePostLocaleMetadataRequest],
 ) (_ *connect.Response[intrav1.UpdatePostLocaleMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePostLocaleMetadata", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -597,13 +579,7 @@ func (s *InternalPostService) UpdatePostDocumentMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePostDocumentMetadataRequest],
 ) (_ *connect.Response[intrav1.UpdatePostDocumentMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdatePostDocumentMetadata", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -704,13 +680,7 @@ func (s *InternalPostService) CreatePostVersionCheckpoint(
 	ctx context.Context,
 	req *connect.Request[intrav1.CreatePostVersionCheckpointRequest],
 ) (_ *connect.Response[intrav1.CreatePostVersionCheckpointResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreatePostVersionCheckpoint", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err

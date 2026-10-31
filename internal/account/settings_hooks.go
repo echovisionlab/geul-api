@@ -3,11 +3,9 @@ package account
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 var (
@@ -58,12 +56,6 @@ func (service *AccountSettingsHookService) Stage(
 	}
 	committed, err := service.identities.GetIdentity(ctx, input.IdentityID)
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "reason", "canonical_email_guard_identity_failed", failurecause.Attr(err, privateBody), "identity_id", input.IdentityID)
 		return errors.Join(ErrCanonicalEmailGuardFailed, err)
 	}
 	if committed == nil || strings.TrimSpace(committed.CurrentEmail()) == "" {

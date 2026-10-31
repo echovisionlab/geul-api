@@ -687,7 +687,7 @@ func TestToolResultIsEncodedOnceWithItsRPCEnvelope(t *testing.T) {
 
 func TestOtherRPCResultEncodingFailureKeepsHTTPError(t *testing.T) {
 	response := httptest.NewRecorder()
-	writeRPCResult(response, json.RawMessage(`5`), map[string]any{"invalid": make(chan struct{})})
+	writeRPCResult(t.Context(), response, json.RawMessage(`5`), map[string]any{"invalid": make(chan struct{})})
 	if response.Code != http.StatusInternalServerError || response.Body.String() != "Internal Server Error\n" ||
 		response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
 		t.Fatalf("non-tool encoding error changed its HTTP fallback: %d %s %v", response.Code, response.Body.String(), response.Header())

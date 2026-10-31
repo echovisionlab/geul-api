@@ -225,7 +225,7 @@ func markAssets(
 		}
 	}
 	if marked > 0 {
-		slog.Info(message, "count", marked)
+		slog.InfoContext(ctx, message, "count", marked)
 	}
 	return stderrors.Join(cleanupErrs...)
 }

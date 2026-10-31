@@ -147,15 +147,7 @@ func withPublicPostStatusFence(query *gorm.DB) *gorm.DB {
 func (s *PostService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPostRequest],
-) (_ *connect.Response[openv1.GetPostResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
-	}()
-
+) (*connect.Response[openv1.GetPostResponse], error) {
 	projection, err := s.loadPublicPostSnapshot(ctx, req)
 	if err != nil {
 		return nil, err
@@ -296,15 +288,7 @@ func (s *PostService) loadPublicPostSnapshot(
 func (s *PostService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListPostsRequest],
-) (_ *connect.Response[openv1.ListPostsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.List", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.ListPostsResponse], error) {
 	var posts []model.Post
 	var total int64
 
@@ -428,15 +412,7 @@ func (s *PostService) applyPublicPostFilters(
 func (s *PostService) ListMapFeatures(
 	ctx context.Context,
 	req *connect.Request[openv1.ListPostMapFeaturesRequest],
-) (_ *connect.Response[openv1.ListPostMapFeaturesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.ListMapFeatures", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.ListPostMapFeaturesResponse], error) {
 	viewport, err := normalizePostMapViewport(req.Msg.Viewport)
 	if err != nil {
 		return nil, err
@@ -702,15 +678,7 @@ func postMapItem(group *postMapPlaceGroup) *openv1.PostMapItem {
 func (s *PostService) Search(
 	ctx context.Context,
 	req *connect.Request[openv1.SearchPostsRequest],
-) (_ *connect.Response[openv1.SearchPostsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post/public.Search", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.SearchPostsResponse], error) {
 	query := req.Msg.Query
 	if len(query) < 2 {
 		return connect.NewResponse(&openv1.SearchPostsResponse{

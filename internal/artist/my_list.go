@@ -2,13 +2,11 @@ package artist
 
 import (
 	"context"
-	"log/slog"
 
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -19,32 +17,22 @@ import (
 func (s *ArtistService) ListMyArtists(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMyArtistsRequest],
-) (_ *connect.Response[managev1.ListMyArtistsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListMyArtists", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListMyArtistsResponse], error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.NotAuthenticated()
 	}
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ListMyArtists", failurecause.Attr(err))
-		return nil, errs.NotAuthenticated()
+		return nil, errs.WithCause(errs.NotAuthenticated(), err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ListMyArtists", failurecause.Attr(err))
-		return nil, errs.NotAuthenticated()
+		return nil, errs.WithCause(errs.NotAuthenticated(), err)
 	}
 	artistIDs, err := s.spiceDB.LookupResources(ctx, policyv1.Artist.LookupManage(), actor)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "ListMyArtists", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if len(artistIDs) == 0 {
 		return connect.NewResponse(&managev1.ListMyArtistsResponse{

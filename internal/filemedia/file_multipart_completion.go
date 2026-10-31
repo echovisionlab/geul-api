@@ -90,13 +90,7 @@ func (completion *multipartCompletion) publishFailure(err error) error {
 func (s *FileService) CompleteMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.CompleteMultipartUploadRequest],
-) (_ *connect.Response[managev1.CompleteMultipartUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "CompleteMultipartUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "completion request is required")
 	}
@@ -323,8 +317,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 
 	target, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid completed file object target", failurecause.Attr(err), "file_id", file.ID)
-		return nil, errs.FailedPrecondition("completed file object target is invalid")
+		return nil, errs.WithCause(errs.FailedPrecondition("completed file object target is invalid"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
 	}
 	if err := s.verifyCompletedObjectContent(ctx, target.ObjectKey, file.FileSize, file.MimeType, uploadType); err != nil {
 		return nil, errs.Internal(fmt.Errorf("verify completed file object: %w", err))

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"slices"
 	"strings"
 	"unicode"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -30,13 +28,7 @@ import (
 func (s *FileService) AuthorizeDownload(
 	ctx context.Context,
 	req *connect.Request[openv1.AuthorizeDownloadRequest],
-) (_ *connect.Response[openv1.AuthorizeDownloadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AuthorizeDownload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[openv1.AuthorizeDownloadResponse], error) {
 	entityID := strings.TrimSpace(req.Msg.EntityId)
 	if entityID == "" {
 		return nil, errs.Required("entity_id")

@@ -3,8 +3,9 @@ package campaign
 import (
 	"context"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"gorm.io/gorm"
 
@@ -47,8 +48,7 @@ func loadCampaignSourceLocales(
 	for _, row := range rows {
 		locale, normalizeErr := normalizeCampaignDocumentLocale(row.SourceLocale)
 		if normalizeErr != nil {
-			slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "campaign", "event", "campaign.document_invalid", "outcome", "failed", "operation", "load_source_locale", "campaign_id", row.EntityID, failurecause.Attr(normalizeErr))
-			return nil, errs.FailedPrecondition("Campaign source locale is invalid")
+			return nil, errs.WithCause(errs.FailedPrecondition("Campaign source locale is invalid"), failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID))))
 		}
 		locales[row.EntityID] = locale
 	}

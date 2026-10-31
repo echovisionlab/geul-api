@@ -24,13 +24,13 @@ func (h *Handlers) handleUpdateGeoIP(ctx context.Context) error {
 
 	switch outcome {
 	case geoip.RefreshCurrent:
-		slog.Info("GeoIP database is current")
+		slog.InfoContext(ctx, "GeoIP database is current")
 	case geoip.RefreshProviderUnconfigured:
-		slog.Warn("MaxMind credentials not configured, skipping GeoIP update")
+		slog.WarnContext(ctx, "MaxMind credentials not configured, skipping GeoIP update")
 	case geoip.RefreshUpdated:
-		slog.Info("GeoIP database update completed")
+		slog.InfoContext(ctx, "GeoIP database update completed")
 	case geoip.RefreshBecameCurrent:
-		slog.Info("GeoIP database became current while this update was downloading")
+		slog.InfoContext(ctx, "GeoIP database became current while this update was downloading")
 	}
 	return nil
 }

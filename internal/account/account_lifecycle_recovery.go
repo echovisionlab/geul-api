@@ -4,16 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailpkg "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -30,7 +27,6 @@ func (s *AccountLifecycleService) RequestRecovery(ctx context.Context, email str
 	}
 	token, err := generateToken()
 	if err != nil {
-		slog.ErrorContext(ctx, "Generate account lifecycle token failed", "operation", "RequestRecovery", failurecause.Attr(err))
 		return errs.Wrap(err)
 	}
 	now := time.Now().UTC()
@@ -47,12 +43,6 @@ func (s *AccountLifecycleService) RequestRecovery(ctx context.Context, email str
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestRecovery", failurecause.Attr(err, privateBody))
 		return errs.Internal(err)
 	}
 	var request model.UserDeletionRequest
@@ -80,12 +70,6 @@ func (s *AccountLifecycleService) RequestRecovery(ctx context.Context, email str
 			"updated_at":       now,
 		}).Error
 	}); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestRecovery", failurecause.Attr(err, privateBody))
 		return errs.Internal(err)
 	}
 	if request.ID == "" {
@@ -106,17 +90,7 @@ func (s *AccountLifecycleService) RequestRecovery(ctx context.Context, email str
 		Locale:           request.NotificationLocale,
 	}
 	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-recovery-confirm:"+tokenHash); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		privateValues := []string{privateBody, job.Recipient, token}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestRecovery", failurecause.Attr(err, privateValues...), "template_type", job.TemplateType, "command_id", "account-recovery-confirm:"+tokenHash)
-		return errs.Internal(err)
+		return errs.Internal(emailPublishFailure(err, job, "account-recovery-confirm:"+tokenHash, token))
 	}
 	return nil
 }
@@ -130,7 +104,7 @@ func (s *AccountLifecycleService) ConfirmRecovery(ctx context.Context, token str
 	now := time.Now().UTC()
 	identityID, err := s.deletionRequestIdentityIDForToken(ctx, tokenHash)
 	if err != nil {
-		return accountLifecycleTokenError(ctx, err)
+		return accountLifecycleTokenError(err)
 	}
 	var request model.UserDeletionRequest
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -167,15 +141,9 @@ func (s *AccountLifecycleService) ConfirmRecovery(ctx context.Context, token str
 		}
 		return nil
 	}); err != nil {
-		return accountLifecycleTokenError(ctx, err)
+		return accountLifecycleTokenError(err)
 	}
 	if err := s.ensureTerminalIdentityActive(ctx, request.ID, request.IdentityID); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ConfirmRecovery", failurecause.Attr(err, privateBody))
 		return errs.Internal(fmt.Errorf("reactivate identity after recovery: %w", err))
 	}
 
@@ -192,17 +160,7 @@ func (s *AccountLifecycleService) ConfirmRecovery(ctx context.Context, token str
 		Locale:           request.NotificationLocale,
 	}
 	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-recovery-complete:"+request.ID); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		privateValues := []string{privateBody, job.Recipient, token}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ConfirmRecovery", failurecause.Attr(err, privateValues...), "template_type", job.TemplateType, "command_id", "account-recovery-complete:"+request.ID)
-		return errs.Internal(err)
+		return errs.Internal(emailPublishFailure(err, job, "account-recovery-complete:"+request.ID, token))
 	}
 	return nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -252,8 +251,7 @@ func LoadCanonicalLayoutTranslationDocument(
 	}
 	contentHTML, contentText, err := MaterializeLayoutSourceLocale(*document.ContentHTML)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Email Layout source locale markers are invalid")
+		return nil, errs.WithCause(errs.FailedPrecondition("Email Layout source locale markers are invalid"), failurecause.ServerFault(err))
 	}
 	document.ContentHTML = contentHTML
 	document.ContentText = contentText

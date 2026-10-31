@@ -3,7 +3,6 @@ package email
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -114,8 +113,7 @@ func PrepareLayoutSourceLocaleSwitch(
 		)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching"), failurecause.ServerFault(err))
 	}
 	if entry == nil {
 		return UpsertLayoutTranslationEntry(ctx, db, layoutID, requestedLocale, translation.EntryWrite{
@@ -166,8 +164,7 @@ func normalizeLayoutTargetRepresentations(
 			row.ContentHTML.String,
 		)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-			return errs.FailedPrecondition("Email Layout target markers require backfill before source editing")
+			return errs.WithCause(errs.FailedPrecondition("Email Layout target markers require backfill before source editing"), failurecause.ServerFault(err))
 		}
 		if dereferenceString(nextHTML) == row.ContentHTML.String &&
 			row.ContentText.Valid && dereferenceString(nextText) == row.ContentText.String {
@@ -209,8 +206,7 @@ func SeedLayoutTranslationEntryFromSource(
 	sourceHTML := dereferenceString(source.ContentHTML)
 	units, err := ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target"), failurecause.ServerFault(err))
 	}
 	values := make(map[string]string, len(units))
 	for _, unit := range units {

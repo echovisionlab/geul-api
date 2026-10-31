@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -58,17 +58,13 @@ func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) 
 	if err := db.WithContext(ctx).Table("form").Select("featured_image_file_id").
 		Where("id = ?", formID).Scan(&row).Error; err != nil || row.FileID == nil {
 		if err != nil {
-			slog.ErrorContext(ctx, "Failed to resolve Form featured image", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Form featured image lookup failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID)
 		}
 		return nil
 	}
 	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, db, a.cdnDomain, *row.FileID, "image")
 	if err != nil {
-		level := slog.LevelError
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Failed to resolve Form featured image", "failure_cause", failurecause.Message(err))
+		slog.Log(ctx, errs.OperationLogLevel(err), "Form featured image asset resolution failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID, "file_id", *row.FileID)
 		return nil
 	}
 	return asset

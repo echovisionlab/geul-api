@@ -2,7 +2,6 @@ package emailauthoring
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -23,15 +21,7 @@ import (
 func (s *EmailTemplateService) GetEventMappings(
 	ctx context.Context,
 	req *connect.Request[managev1.GetEventMappingsRequest],
-) (rpcResponse *connect.Response[managev1.GetEventMappingsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "GetEventMappings", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.GetEventMappingsResponse], error) {
 	can, canErr := policyv1.EmailTemplate.List()
 	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -68,15 +58,7 @@ func (s *EmailTemplateService) GetEventMappings(
 func (s *EmailTemplateService) UpdateEventMapping(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateEventMappingRequest],
-) (rpcResponse *connect.Response[managev1.SuccessResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "UpdateEventMapping", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.SuccessResponse], error) {
 	mappingCan, err := policyv1.EmailEventMapping.Update()
 	if err != nil {
 		return nil, errs.Internal(err)

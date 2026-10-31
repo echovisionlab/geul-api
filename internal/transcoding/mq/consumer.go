@@ -2,12 +2,14 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/transcoding/jobregistry"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobs"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -58,7 +60,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		c.wg.Add(1)
 		go c.worker(ctx, workerID)
 	}
-	slog.Info("Started PGMQ consumer", "queue", c.config.Name, "workers", c.config.Workers)
+	slog.InfoContext(ctx, "Started PGMQ consumer", "queue", c.config.Name, "workers", c.config.Workers)
 	return nil
 }
 
@@ -112,6 +114,7 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 	}
 	settlement := newDeliverySettlement(c.conn.DB(), c.client, c.config.Name, message, body)
 	if !settlement.envelopeMatchesCommand() {
+		slog.WarnContext(parent, "PGMQ command identity rejected", failurecause.Attr(fmt.Errorf("command event_id is missing or differs from the envelope message_id")), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
 		emitQueueDeliveryFailed(parent, message, c.config.Name, time.Since(startedAt), sharedtelemetry.QueueFailureHandlerFailed)
 		c.deadLetter(parent, message, "transcode command envelope identity mismatch archive failed")
 		return
@@ -119,13 +122,14 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 	parent = withDeliverySettlement(parent, settlement)
 	jobCtx, cancel := context.WithTimeout(parent, c.config.Timeout)
 	err = c.handler(jobCtx, body)
-	// The normalizing handler reduces "error" to a type; "cause" keeps the sanitized diagnostic.
 	if err != nil {
+		// A worker shutdown and an explicit (user or file-lifecycle) cancellation
+		// are expected outcomes; a job timeout is not.
 		level := slog.LevelError
-		if jobCtx.Err() != nil {
+		if parent.Err() != nil || errors.Is(err, jobregistry.ErrExplicitCancellation) {
 			level = slog.LevelWarn
 		}
-		slog.Log(jobCtx, level, "PGMQ handler failed", failurecause.Attr(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))
+		slog.Log(jobCtx, level, "PGMQ handler failed", append(failurecause.Args(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))...)
 	}
 	cancel()
 	settled := settlement.finish()

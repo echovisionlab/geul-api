@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -134,11 +133,7 @@ func (s *AIDocumentService) Load(ctx context.Context, campaignID, locale string)
 		)
 		return err
 	})
-	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "AI document load failed", "domain", "campaign", "event", "campaign.document_load_failed", "outcome", "failed", "entity_id", campaignID, "locale", locale, failurecause.Attr(err))
-	}
-	return state, err
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "campaign"), slog.String("entity_id", campaignID), slog.String("locale", locale))
 }
 
 var errRollbackCampaignAIDocumentValidation = errors.New("rollback Campaign AI document validation")
@@ -235,21 +230,11 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	if err != nil {
 		var compilerErr *campaignAIDocumentCompilerError
 		if errors.As(err, &compilerErr) {
-			slog.WarnContext(ctx, "AI document compilation rejected", "domain", "campaign", "event", "campaign.document_rejected", "outcome", "blocked", "entity_id", campaignID, "locale", locale, failurecause.Attr(err))
-			return AIDocumentMutationResult{}, compilerErr.cause
+			err = compilerErr.cause
+		} else {
+			err = mapCampaignAIDocumentError(err, currentDocumentRevision)
 		}
-		level := slog.LevelWarn
-		var conflict *AIDocumentRevisionConflictError
-		var stale *contentblock.StaleRevisionError
-		var target *translation.TargetRevisionConflict
-		if !errors.As(err, &conflict) && !errors.As(err, &stale) && !errors.As(err, &target) && !errors.Is(err, contentblock.ErrStaleRevision) {
-			switch connect.CodeOf(err) {
-			case connect.CodeInternal, connect.CodeUnknown, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
-				level = slog.LevelError
-			}
-		}
-		slog.Log(ctx, level, "AI document mutation failed", "domain", "campaign", "event", "campaign.document_mutation_failed", "outcome", "failed", "entity_id", campaignID, "locale", locale, failurecause.Attr(err))
-		return AIDocumentMutationResult{}, mapCampaignAIDocumentError(err, currentDocumentRevision)
+		return AIDocumentMutationResult{}, failurecause.WithAttrs(err, slog.String("entity_type", "campaign"), slog.String("entity_id", campaignID), slog.String("locale", locale))
 	}
 	return output, nil
 }

@@ -75,7 +75,7 @@ func (e *Executor) GenerateAudioSpectrogramWithProgress(
 		onProgress(100)
 	}
 
-	slog.Debug("Generated audio spectrogram",
+	slog.DebugContext(ctx, "Generated audio spectrogram",
 		"input", inputPath,
 		"output", outputPath,
 		"width", opts.Width,

@@ -4,18 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailpkg "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -36,39 +33,14 @@ func (s *AccountLifecycleService) RequestDeletion(
 		return nil, errs.InternalMsg("Member deletion lifecycle is unavailable")
 	}
 	if err := authorizationtarget.ValidateActivePair(ctx, s.db, memberID, identityID); err != nil {
-		level := slog.LevelError
-		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
-			level = slog.LevelWarn
-		}
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.Log(ctx, level, "Account deletion link resolution failed", failurecause.Attr(err, privateBody), "member_id", memberID, "identity_id", identityID)
-		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
-			return nil, errs.FailedPrecondition("an active member and identity link is required")
-		}
-		return nil, errs.Internal(err)
+		return nil, accountDeletionLinkError(err)
 	}
 	if _, err := NewAccountEmailService(s.db, s.kratosClient, s.memberEmails).
 		SyncMemberEmailProjection(ctx, identityID, nil, nil); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestDeletion", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(fmt.Errorf("sync deletion Member email projection: %w", err))
 	}
 	accountEmail, _, err := ResolveMemberPrimaryEmailForIdentity(ctx, s.db, s.memberEmails, s.kratosClient, identityID)
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Resolve account deletion email failed", "identity_id", identityID, failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(accountIdentityLookupError{cause: err})
 	}
 	if accountEmail == nil {
@@ -76,20 +48,7 @@ func (s *AccountLifecycleService) RequestDeletion(
 	}
 	member, err := s.memberDeletion.NotificationSnapshot(ctx, s.db, memberID, identityID)
 	if err != nil {
-		level := slog.LevelError
-		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
-			level = slog.LevelWarn
-		}
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.Log(ctx, level, "Account deletion link resolution failed", failurecause.Attr(err, privateBody), "member_id", memberID, "identity_id", identityID)
-		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
-			return nil, errs.FailedPrecondition("an active member and identity link is required")
-		}
-		return nil, errs.Internal(err)
+		return nil, accountDeletionLinkError(err)
 	}
 	if member.PrimaryEmail == "" || !accountEmailsEqual(member.PrimaryEmail, accountEmail.Email) {
 		return nil, errs.FailedPrecondition("Member primary email is not synchronized")
@@ -104,7 +63,6 @@ func (s *AccountLifecycleService) RequestDeletion(
 
 	token, err := generateToken()
 	if err != nil {
-		slog.ErrorContext(ctx, "Generate account lifecycle token failed", "operation", "RequestDeletion", failurecause.Attr(err))
 		return nil, errs.Wrap(err)
 	}
 	now := time.Now().UTC()
@@ -161,12 +119,6 @@ func (s *AccountLifecycleService) RequestDeletion(
 			},
 		)
 	}); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestDeletion", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if alreadyScheduled {
@@ -187,19 +139,18 @@ func (s *AccountLifecycleService) RequestDeletion(
 		Locale:           request.NotificationLocale,
 	}
 	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-deletion-confirm:"+tokenHash); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		privateValues := []string{privateBody, job.Recipient, token}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestDeletion", failurecause.Attr(err, privateValues...), "template_type", job.TemplateType, "command_id", "account-deletion-confirm:"+tokenHash)
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(emailPublishFailure(err, job, "account-deletion-confirm:"+tokenHash, token))
 	}
 	return &AccountDeletionRequestResult{}, nil
+}
+
+// accountDeletionLinkError answers a deletion request whose Member and
+// Identity are no longer an active pair, keeping the reason for the record.
+func accountDeletionLinkError(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, authorizationtarget.ErrIneligible) {
+		return errs.WithCause(errs.FailedPrecondition("an active member and identity link is required"), err)
+	}
+	return errs.Internal(fmt.Errorf("resolve account deletion link: %w", err))
 }
 
 func accountLifecycleStringPointer(value string) *string {
@@ -224,16 +175,10 @@ func accountLifecycleNotificationIdentity(
 	return recipient, name, nil
 }
 
-func accountLifecycleTokenError(ctx context.Context, err error) error {
+func accountLifecycleTokenError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFoundMsg("invalid or expired token")
+		return errs.WithCause(errs.NotFoundMsg("invalid or expired token"), err)
 	}
-	var upstreamError *auth.KratosHTTPError
-	privateBody := ""
-	if errors.As(err, &upstreamError) {
-		privateBody = upstreamError.Body
-	}
-	slog.ErrorContext(ctx, "Account operation failed", failurecause.Attr(err, privateBody))
 	return errs.Internal(err)
 }
 
@@ -263,7 +208,7 @@ func (s *AccountLifecycleService) ConfirmDeletion(
 	now := dbtime.Now()
 	identityID, err := s.deletionRequestIdentityIDForToken(ctx, tokenHash)
 	if err != nil {
-		return nil, accountLifecycleTokenError(ctx, err)
+		return nil, accountLifecycleTokenError(err)
 	}
 	var request model.UserDeletionRequest
 
@@ -315,15 +260,9 @@ func (s *AccountLifecycleService) ConfirmDeletion(
 		if errors.Is(err, ErrLastActiveAdminDeletion) {
 			return nil, errs.FailedPrecondition("the last active admin cannot be deleted")
 		}
-		return nil, accountLifecycleTokenError(ctx, err)
+		return nil, accountLifecycleTokenError(err)
 	}
 	if err := s.ensureScheduledIdentityInactive(ctx, request.ID, request.IdentityID); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ConfirmDeletion", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(fmt.Errorf("converge scheduled deletion identity: %w", err))
 	}
 
@@ -349,17 +288,7 @@ func (s *AccountLifecycleService) ConfirmDeletion(
 		Locale:           request.NotificationLocale,
 	}
 	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-deletion-scheduled:"+request.ID); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		privateValues := []string{privateBody, job.Recipient, token}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ConfirmDeletion", failurecause.Attr(err, privateValues...), "template_type", job.TemplateType, "command_id", "account-deletion-scheduled:"+request.ID)
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(emailPublishFailure(err, job, "account-deletion-scheduled:"+request.ID, token))
 	}
 	return &AccountDeletionScheduledResult{ScheduledAt: *request.ScheduledAt}, nil
 }
@@ -373,7 +302,7 @@ func (s *AccountLifecycleService) CancelDeletion(ctx context.Context, token stri
 	now := time.Now().UTC()
 	identityID, err := s.deletionRequestIdentityIDForToken(ctx, tokenHash)
 	if err != nil {
-		return accountLifecycleTokenError(ctx, err)
+		return accountLifecycleTokenError(err)
 	}
 	var request model.UserDeletionRequest
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -410,17 +339,11 @@ func (s *AccountLifecycleService) CancelDeletion(ctx context.Context, token stri
 		}
 		return nil
 	}); err != nil {
-		return accountLifecycleTokenError(ctx, err)
+		return accountLifecycleTokenError(err)
 	}
 	// The terminal domain transition commits first. Explicit retry and the
 	// leader-elected reconciler share the same guarded convergence path.
 	if err := s.ensureTerminalIdentityActive(ctx, request.ID, request.IdentityID); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "CancelDeletion", failurecause.Attr(err, privateBody))
 		return errs.Internal(fmt.Errorf("reactivate identity after deletion cancellation: %w", err))
 	}
 
@@ -437,17 +360,7 @@ func (s *AccountLifecycleService) CancelDeletion(ctx context.Context, token stri
 		Locale:           request.NotificationLocale,
 	}
 	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-deletion-cancelled:"+request.ID); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		privateValues := []string{privateBody, job.Recipient, token}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "CancelDeletion", failurecause.Attr(err, privateValues...), "template_type", job.TemplateType, "command_id", "account-deletion-cancelled:"+request.ID)
-		return errs.Internal(err)
+		return errs.Internal(emailPublishFailure(err, job, "account-deletion-cancelled:"+request.ID, token))
 	}
 	return nil
 }

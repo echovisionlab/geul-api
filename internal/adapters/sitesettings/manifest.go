@@ -36,7 +36,7 @@ func (ManifestMenus) Localize(
 ) ([]model.MenuItem, error) {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to load menu localization settings", "failure_cause", failurecause.Message(err), "menu_id", menuID)
+		slog.ErrorContext(ctx, "Menu localization settings load failed; using default settings", failurecause.Attr(err), "menu_id", menuID)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	requested := settings.DefaultLocale
@@ -276,7 +276,7 @@ func (ManifestMenus) TargetSlug(ctx context.Context, db *gorm.DB, item *model.Me
 	}
 	if err := db.WithContext(ctx).Table(table).Select("slug").Where("id = ?", strings.TrimSpace(*item.TargetID)).Take(&row).Error; err != nil || row.Slug == nil || strings.TrimSpace(*row.Slug) == "" {
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "Failed to load menu target slug", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Menu target slug lookup failed; keeping the stored slug", failurecause.Attr(err), "link_type", item.LinkType, "target_id", strings.TrimSpace(*item.TargetID))
 		}
 		return item.TargetSlug
 	}

@@ -3,12 +3,10 @@ package page
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -31,21 +29,18 @@ func RequireCollaborationEditForPrincipal(
 	}
 	can, err := policyv1.Page.Edit(resourceID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.RequireCollaborationEditForPrincipal", "outcome", "failed", failurecause.Attr(err))
-		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
+		return errs.WithCause(errs.InvalidArgument("resource.id", "must be a canonical resource UUID"), err)
 	}
 	if principal == nil || !principal.Authenticated {
 		return errs.AuthenticationRequired()
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.RequireCollaborationEditForPrincipal", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.RequireCollaborationEditForPrincipal", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NoPermission(can.Action().Name(), "page")
@@ -61,8 +56,7 @@ func requireDocumentContributors(ctx context.Context, db *gorm.DB, memberIDs []s
 	for _, memberID := range memberIDs {
 		memberID = strings.TrimSpace(memberID)
 		if _, err := uuidutil.ParseCanonical(memberID, "contributor_member_ids"); err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.requireDocumentContributors", "outcome", "failed", failurecause.Attr(err))
-			return errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
+			return errs.WithCause(errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs"), err)
 		}
 		if len(unique) > 0 && unique[len(unique)-1] >= memberID {
 			return errs.InvalidArgument("contributor_member_ids", "must be sorted and contain unique canonical Member UUIDs")
@@ -127,19 +121,16 @@ func requirePageContributorsPermission(
 	}
 	can, err := action(pageID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePageContributorsPermission", "outcome", "failed", failurecause.Attr(err))
-		return errs.NotFound("page", pageID)
+		return errs.WithCause(errs.NotFound("page", pageID), err)
 	}
 	for _, memberID := range memberIDs {
 		actor, err := policyv1.NewAccountIdentityActor(identities[memberID])
 		if err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePageContributorsPermission", "outcome", "failed", failurecause.Attr(err))
-			return errs.NoPermission("edit", "page contributor")
+			return errs.WithCause(errs.NoPermission("edit", "page contributor"), err)
 		}
 		allowed, err := spiceDB.CheckActorCan(ctx, actor, can)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.requirePageContributorsPermission", "outcome", "failed", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		if !allowed {
 			return errs.NoPermission("edit", "page contributor")

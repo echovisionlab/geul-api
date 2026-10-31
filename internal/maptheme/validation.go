@@ -1,9 +1,7 @@
 package maptheme
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"math"
 	"regexp"
 	"strconv"
@@ -11,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 )
@@ -85,7 +82,6 @@ func normalizeMapThemeID(value, field string) (string, error) {
 		return "", errs.Required(field)
 	}
 	if _, err := uuidutil.ParseCanonical(value, field); err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "maptheme", "operation", "normalizeMapThemeID", failurecause.Attr(err))
 		return "", errs.InvalidArgument(field, "must be a canonical UUID")
 	}
 	return value, nil

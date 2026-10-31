@@ -3,11 +3,9 @@ package release
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"gorm.io/gorm"
 )
@@ -32,7 +30,6 @@ func LoadTypedTranslationInterchangeTarget(
 		return TranslationInterchangeTarget{}, errs.Internal(errors.New("release translation interchange dependencies are not configured"))
 	}
 	if _, err := uuidFromCanonicalString(releaseID); err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "LoadTypedTranslationInterchangeTarget", failurecause.Attr(err))
 		return TranslationInterchangeTarget{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
 	}
 	targetLocale, err := normalizeReleaseDocumentLocale(targetLocale)

@@ -48,14 +48,7 @@ func NewPersonalAccessTokenHandler(
 func (handler *PersonalAccessTokenHandler) CreateMyPersonalAccessToken(
 	ctx context.Context,
 	_ *connect.Request[managev1.CreateMyPersonalAccessTokenRequest],
-) (rpcResponse *connect.Response[managev1.CreateMyPersonalAccessTokenResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "CreateMyPersonalAccessToken", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.CreateMyPersonalAccessTokenResponse], error) {
 	principal, err := requireFreshBrowserSecurityPrincipal(ctx, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -66,14 +59,7 @@ func (handler *PersonalAccessTokenHandler) CreateMyPersonalAccessToken(
 func (handler *PersonalAccessTokenHandler) CreateAccountPersonalAccessToken(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateAccountPersonalAccessTokenRequest],
-) (rpcResponse *connect.Response[managev1.CreateMyPersonalAccessTokenResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "CreateAccountPersonalAccessToken", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.CreateMyPersonalAccessTokenResponse], error) {
 	if _, err := requireFreshBrowserSecurityPrincipal(ctx, time.Now().UTC()); err != nil {
 		return nil, err
 	}
@@ -105,14 +91,7 @@ func (handler *PersonalAccessTokenHandler) createPersonalAccessToken(
 func (handler *PersonalAccessTokenHandler) ListMyPersonalAccessTokens(
 	ctx context.Context,
 	_ *connect.Request[managev1.ListMyPersonalAccessTokensRequest],
-) (rpcResponse *connect.Response[managev1.ListMyPersonalAccessTokensResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ListMyPersonalAccessTokens", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.ListMyPersonalAccessTokensResponse], error) {
 	principal, err := requireBrowserSecurityPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -123,14 +102,7 @@ func (handler *PersonalAccessTokenHandler) ListMyPersonalAccessTokens(
 func (handler *PersonalAccessTokenHandler) ListAccountPersonalAccessTokens(
 	ctx context.Context,
 	req *connect.Request[managev1.ListAccountPersonalAccessTokensRequest],
-) (rpcResponse *connect.Response[managev1.ListMyPersonalAccessTokensResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ListAccountPersonalAccessTokens", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.ListMyPersonalAccessTokensResponse], error) {
 	if _, err := requireBrowserSecurityPrincipal(ctx); err != nil {
 		return nil, err
 	}
@@ -165,14 +137,7 @@ func (handler *PersonalAccessTokenHandler) listPersonalAccessTokens(
 func (handler *PersonalAccessTokenHandler) RegenerateMyPersonalAccessToken(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateMyPersonalAccessTokenRequest],
-) (rpcResponse *connect.Response[managev1.RegenerateMyPersonalAccessTokenResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "RegenerateMyPersonalAccessToken", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.RegenerateMyPersonalAccessTokenResponse], error) {
 	principal, err := requireFreshBrowserSecurityPrincipal(ctx, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -187,14 +152,7 @@ func (handler *PersonalAccessTokenHandler) RegenerateMyPersonalAccessToken(
 func (handler *PersonalAccessTokenHandler) RegenerateAccountPersonalAccessToken(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateAccountPersonalAccessTokenRequest],
-) (rpcResponse *connect.Response[managev1.RegenerateMyPersonalAccessTokenResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "RegenerateAccountPersonalAccessToken", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.RegenerateMyPersonalAccessTokenResponse], error) {
 	if _, err := requireFreshBrowserSecurityPrincipal(ctx, time.Now().UTC()); err != nil {
 		return nil, err
 	}
@@ -228,14 +186,7 @@ func (handler *PersonalAccessTokenHandler) regeneratePersonalAccessToken(
 func (handler *PersonalAccessTokenHandler) DeleteMyPersonalAccessToken(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMyPersonalAccessTokenRequest],
-) (rpcResponse *connect.Response[managev1.DeleteMyPersonalAccessTokenResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "DeleteMyPersonalAccessToken", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.DeleteMyPersonalAccessTokenResponse], error) {
 	principal, err := requireFreshBrowserSecurityPrincipal(ctx, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -250,14 +201,7 @@ func (handler *PersonalAccessTokenHandler) DeleteMyPersonalAccessToken(
 func (handler *PersonalAccessTokenHandler) DeleteAccountPersonalAccessToken(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteAccountPersonalAccessTokenRequest],
-) (rpcResponse *connect.Response[managev1.DeleteMyPersonalAccessTokenResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "DeleteAccountPersonalAccessToken", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.DeleteMyPersonalAccessTokenResponse], error) {
 	if _, err := requireFreshBrowserSecurityPrincipal(ctx, time.Now().UTC()); err != nil {
 		return nil, err
 	}
@@ -314,9 +258,10 @@ func requireBrowserSecurityPrincipal(ctx context.Context) (*auth.UserInfo, error
 func personalAccessTokenMetadataProto(metadata pat.Metadata) (*managev1.PersonalAccessToken, error) {
 	createdAt := timestamppb.New(metadata.CreatedAt)
 	if err := createdAt.CheckValid(); err != nil {
-		cause := failurecause.Message(err)
-		slog.Error("Stored personal access token timestamp is invalid", "failure_cause", cause, "token_id", string(metadata.ID))
-		return nil, errs.Internal(fmt.Errorf("stored personal access token has an invalid creation time"))
+		return nil, errs.Internal(failurecause.WithAttrs(
+			fmt.Errorf("stored personal access token has an invalid creation time: %w", err),
+			slog.String("token_id", string(metadata.ID)),
+		))
 	}
 	return &managev1.PersonalAccessToken{
 		Id:        string(metadata.ID),
@@ -327,14 +272,12 @@ func personalAccessTokenMetadataProto(metadata pat.Metadata) (*managev1.Personal
 func personalAccessTokenServiceError(err error, invalidField, tokenID string) error {
 	switch {
 	case errors.Is(err, pat.ErrInvalidInput):
-		cause := failurecause.Message(err)
-		slog.Warn("Personal access token input rejected", "failure_cause", cause, "field", invalidField)
 		if invalidField != "" {
 			return errs.InvalidArgument(invalidField, "invalid identifier")
 		}
-		return errs.Internal(fmt.Errorf("personal access token service rejected server-derived input"))
+		return errs.Internal(fmt.Errorf("personal access token service rejected server-derived input: %w", err))
 	case errors.Is(err, pat.ErrTokenAlreadyExists):
-		return errs.AlreadyExistsMsg("personal access token already exists")
+		return errs.WithCause(errs.AlreadyExistsMsg("personal access token already exists"), err)
 	case errors.Is(err, pat.ErrTokenNotFound):
 		return errs.NotFound("personal access token", tokenID)
 	default:

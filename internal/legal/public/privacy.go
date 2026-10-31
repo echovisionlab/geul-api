@@ -50,14 +50,7 @@ func NewPrivacyServiceWithContentBlocks(
 func (s *PrivacyService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPrivacyRequest],
-) (rpcResponse *connect.Response[openv1.GetPrivacyResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr, optionalStringValue(req.Msg.ShareToken), optionalStringValue(req.Msg.SharePassword))
-			slog.Log(ctx, level, "RPC failed", "service", "public.Privacy", "method", "Get", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[openv1.GetPrivacyResponse], error) {
 	result, err := getPublicLegalDocument(ctx, s.db, s.contentBlocks, s.media, s.publicLegalSpec(), publicLegalRequest{
 		requestedID:    optionalStringValue(req.Msg.Id),
 		shareToken:     optionalStringValue(req.Msg.ShareToken),
@@ -106,13 +99,8 @@ func (s *PrivacyService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListPrivacyRequest],
 ) (rpcResponse *connect.Response[openv1.ListPrivacyResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "service", "public.Privacy", "method", "List", "failure_cause", cause)
-		}
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("service", "public.Privacy"))
+
 	limit := req.Msg.Limit
 	if limit <= 0 {
 		limit = 10

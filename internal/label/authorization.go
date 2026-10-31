@@ -51,13 +51,11 @@ func requireLabelGlobalAction(ctx context.Context, checker labelPermissionChecke
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelGlobalAction", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelGlobalAction", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.AdminRequired()
@@ -87,8 +85,7 @@ func requireLabelPermission(ctx context.Context, checker labelPermissionChecker,
 	}
 	allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, action, auth.GetUser(ctx))
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelPermission", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), failurecause.WithAttrs(err, slog.String("label_id", labelID)))
 	}
 	if !allowed {
 		return errs.NotFound("label", labelID)
@@ -99,8 +96,7 @@ func requireLabelPermission(ctx context.Context, checker labelPermissionChecker,
 func requireLabelView(ctx context.Context, checker labelPermissionChecker, labelID string) error {
 	allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, policyv1.Label.View, auth.GetUser(ctx))
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelView", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), failurecause.WithAttrs(err, slog.String("label_id", labelID)))
 	}
 	if !allowed {
 		return errs.NotFound("label", labelID)
@@ -140,8 +136,7 @@ func requireLockedLabelPermission(ctx context.Context, tx *gorm.DB, checker labe
 	}
 	allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, action, principal)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLockedLabelPermission", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), failurecause.WithAttrs(err, slog.String("label_id", labelID)))
 	}
 	if !allowed {
 		return errs.NotFound("label", labelID)
@@ -171,8 +166,7 @@ func labelAllowedActions(ctx context.Context, checker labelPermissionChecker, la
 	for _, check := range checks {
 		allowed, err := checkLabelPermissionForPrincipal(ctx, checker, labelID, check.can, principal)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.labelAllowedActions", "outcome", "failed", failurecause.Attr(err), "label_id", labelID)
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), failurecause.WithAttrs(err, slog.String("label_id", labelID)))
 		}
 		if allowed {
 			actions = append(actions, check.action)
@@ -190,8 +184,7 @@ func mapLabelParticipantMutationError(err error) error {
 		return err
 	}
 	if isLabelLastOwnerConstraint(err) {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_participant_mutation_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("a Label must retain at least one durable Owner")
+		return errs.WithCause(errs.FailedPrecondition("a Label must retain at least one durable Owner"), err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("Label participant not found")

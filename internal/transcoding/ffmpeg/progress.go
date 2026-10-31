@@ -83,7 +83,7 @@ func listenFFmpegProgressWith(
 	// Create Unix socket listener
 	listener, err := listen("unix", sockPath)
 	if err != nil {
-		slog.Warn("Failed to create progress socket", failurecause.Attr(err))
+		slog.WarnContext(ctx, "Failed to create progress socket", failurecause.Attr(err))
 		return
 	}
 	defer func() { _ = listener.Close() }()
@@ -105,12 +105,12 @@ func listenFFmpegProgressWith(
 		return
 	case result := <-acceptCh:
 		if result.err != nil {
-			slog.Warn("Failed to accept progress connection", failurecause.Attr(result.err))
+			slog.WarnContext(ctx, "Failed to accept progress connection", failurecause.Attr(result.err))
 			return
 		}
 		conn = result.conn
 	case <-time.After(acceptTimeout):
-		slog.Warn("Timeout waiting for FFmpeg progress connection")
+		slog.WarnContext(ctx, "Timeout waiting for FFmpeg progress connection")
 		return
 	}
 	defer func() { _ = conn.Close() }()

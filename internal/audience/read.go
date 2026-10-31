@@ -43,15 +43,7 @@ var segmentFilterConfig = &queryutil.FilterConfig{
 func (s *AudienceService) GetSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSegmentRequest],
-) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "GetSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.Segment], error) {
 	can, err := policyv1.AudienceSegment.View(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -76,7 +68,7 @@ func (s *AudienceService) GetSegment(
 	if count, err := s.estimateCount(ctx, &segment); err == nil {
 		proto.EstimatedCount = &count
 	} else {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "audience", "event", "audience.operation_failed", "operation", "estimate_segment_count", "outcome", "failed", "segment_id", segment.ID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Audience segment count estimate failed; returning segment without a count", "domain", "audience", "event", "audience.operation_failed", "operation", "estimate_segment_count", "outcome", "failed", "segment_id", segment.ID, failurecause.Attr(err))
 	}
 	return connect.NewResponse(proto), nil
 }
@@ -84,15 +76,7 @@ func (s *AudienceService) GetSegment(
 func (s *AudienceService) ListSegmentsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSegmentsAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListSegmentsAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "ListSegmentsAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListSegmentsAdminResponse], error) {
 	can, err := policyv1.AudienceSegment.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -144,15 +128,7 @@ func (s *AudienceService) ListSegmentsAdmin(
 func (s *AudienceService) ListSegmentsForAuthenticatedAccess(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSegmentsForAuthenticatedAccessRequest],
-) (rpcResponse *connect.Response[managev1.ListSegmentsForAuthenticatedAccessResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "ListSegmentsForAuthenticatedAccess", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListSegmentsForAuthenticatedAccessResponse], error) {
 	if _, err := requireDownloadPolicyAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
@@ -106,8 +105,7 @@ func (s *PostService) LoadAIDocumentState(
 
 func validatePostAIDocumentIdentity(postID, locale string) (string, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "post.validatePostAIDocumentIdentity", "outcome", "failed", failurecause.Attr(err))
-		return "", errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return "", errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), err)
 	}
 	normalizedLocale := localization.NormalizeExactSupportedLocale(locale)
 	if normalizedLocale == nil {
@@ -151,8 +149,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 ) (AIDocumentState, error) {
 	documentID, err := uuidutil.ParseCanonical(*root.ContentDocumentID, "content_document_id")
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.loadAIDocumentStateAfterAuthorization", "outcome", "failed", failurecause.Attr(err))
-		return AIDocumentState{}, errs.FailedPrecondition("Post content document identity is invalid")
+		return AIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Post content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	domain, err := loadPostContentDomainContext(ctx, tx, root.ID)
 	if err != nil {

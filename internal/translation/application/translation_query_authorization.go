@@ -64,7 +64,7 @@ func (s *TranslationService) authorizeTranslationJobList(
 		return errs.AuthenticationRequired()
 	}
 	if isAdmin, err := checkSpiceDBAdmin(ctx, auth.GetUser(ctx), s.spiceDB); err != nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	} else if isAdmin {
 		return nil
 	}
@@ -117,7 +117,7 @@ func (s *TranslationService) authorizeTranslationRead(
 	entityID string,
 ) error {
 	if isAdmin, err := checkSpiceDBAdmin(ctx, auth.GetUser(ctx), s.spiceDB); err != nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	} else if isAdmin {
 		return nil
 	}

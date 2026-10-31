@@ -28,14 +28,7 @@ import (
 func (s *ProgramEventService) AddProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.AddProgramEventCreditRequest],
-) (_ *connect.Response[managev1.ProgramEventCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "AddProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventCredit], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -93,14 +86,7 @@ func (s *ProgramEventService) AddProgramEventCredit(
 func (s *ProgramEventService) UpdateProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventCreditRequest],
-) (_ *connect.Response[managev1.ProgramEventCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventCredit], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -159,14 +145,7 @@ func (s *ProgramEventService) UpdateProgramEventCredit(
 func (s *ProgramEventService) DeleteProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventCreditRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -208,14 +187,7 @@ func (s *ProgramEventService) DeleteProgramEventCredit(
 func (s *ProgramEventService) ReorderProgramEventCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderProgramEventCreditsRequest],
-) (_ *connect.Response[managev1.ReorderProgramEventCreditsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ReorderProgramEventCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ReorderProgramEventCreditsResponse], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -561,7 +533,7 @@ func (s *ProgramEventService) toProtoProgramEventCredit(ctx context.Context, row
 	}
 	summaries, err := s.creditMembers.LoadCreditMemberSummaries(ctx, memberIDs)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_credit_member_summaries", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
+		slog.ErrorContext(ctx, "Program Event credit member lookup failed; serving credit without member summary", "domain", "programevent", "operation", "load_credit_member_summaries", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
 	}
 	return toProtoProgramEventCredit(ctx, s.db, s.runtime, row, summaries)
 }
@@ -596,10 +568,8 @@ func toProtoProgramEventCredit(ctx context.Context, db *gorm.DB, mediaAssets Med
 			if imageAsset := loadProgramEventArtistImageAsset(ctx, db, mediaAssets, artist.ID); imageAsset != nil {
 				credit.Artist.ImageAsset = imageAsset
 			}
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "toProtoProgramEventCredit", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
-			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "Program Event credit artist lookup failed; serving credit without artist", "domain", "programevent", "operation", "load_credit_artist", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
 		}
 	}
 
@@ -630,13 +600,13 @@ func loadProgramEventArtistImageAsset(ctx context.Context, db *gorm.DB, mediaAss
 		Limit(1).
 		Scan(&result).Error; err != nil || result.FileID == "" {
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventArtistImageAsset", failurecause.Attr(err), "artist_id", artistID)
+			slog.ErrorContext(ctx, "Program Event artist image lookup failed; serving artist without image", "domain", "programevent", "operation", "load_artist_image", failurecause.Attr(err), "artist_id", artistID)
 		}
 		return nil
 	}
 	asset, err := mediaAssets.ReadyPublicAssetRefForSourceFile(ctx, db, result.FileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventArtistImageAsset", failurecause.Attr(err), "artist_id", artistID, "file_id", result.FileID)
+		slog.ErrorContext(ctx, "Program Event artist image asset resolution failed; serving artist without image", "domain", "programevent", "operation", "resolve_artist_image_asset", failurecause.Attr(err), "artist_id", artistID, "file_id", result.FileID)
 		return nil
 	}
 	return asset

@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -171,11 +171,7 @@ func (r *Runtime) ResolveReadyAssetForSourceFile(
 	for _, kind := range kinds {
 		ref, err := r.ReadyPublicAssetRefForSourceFile(ctx, r.db, sourceFileID, kind)
 		if err != nil {
-			level := slog.LevelError
-			if connect.CodeOf(err) == connect.CodeNotFound {
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Failed to resolve Work public asset", "failure_cause", failurecause.Message(err), "file_id", sourceFileID, "kind", kind)
+			slog.Log(ctx, errs.OperationLogLevel(err), "Work public asset resolution failed; trying the next asset kind", failurecause.Attr(err), "file_id", sourceFileID, "kind", kind)
 		}
 		if err == nil && ref != nil {
 			return ref
@@ -193,7 +189,7 @@ func (r *Runtime) ResolveArtistImageAsset(ctx context.Context, artistID string) 
 		ORDER BY sort_order ASC LIMIT 1
 	`, artistID).Scan(&row).Error; err != nil || row.FileID == "" {
 		if err != nil {
-			slog.ErrorContext(ctx, "Failed to load Work artist image", "failure_cause", failurecause.Message(err), "artist_id", artistID)
+			slog.ErrorContext(ctx, "Work artist image lookup failed; serving the artist without an image", failurecause.Attr(err), "artist_id", artistID)
 		}
 		return nil
 	}

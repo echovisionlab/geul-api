@@ -226,12 +226,6 @@ func (s *AccountEmailChangeLifecycle) resolveAccountEmailApplyError(
 	if !auth.IsKratosConflict(applyErr) {
 		return applyErr
 	}
-	var upstreamError *auth.KratosHTTPError
-	privateBody := ""
-	if errors.As(applyErr, &upstreamError) {
-		privateBody = upstreamError.Body
-	}
-	slog.WarnContext(ctx, "Operation failed", "reason", "account_email_apply_conflict", failurecause.Attr(applyErr, privateBody), "identity_id", request.IdentityID, "request_id", request.ID)
 	current, err := s.identity.GetIdentity(ctx, request.IdentityID)
 	if err != nil {
 		return err
@@ -239,7 +233,11 @@ func (s *AccountEmailChangeLifecycle) resolveAccountEmailApplyError(
 	if err := s.clearConflictingAccountEmailRequest(ctx, db, request, current); err != nil {
 		return err
 	}
-	return fmt.Errorf("%w: %v", ErrAccountEmailChangeConflict, applyErr)
+	// The text keeps the Kratos conflict; its body stays private.
+	return failurecause.WithPrivate(
+		fmt.Errorf("%w: %v", ErrAccountEmailChangeConflict, applyErr),
+		failurecause.PrivateValues(applyErr)...,
+	)
 }
 
 func (s *AccountEmailChangeLifecycle) applyAccountEmailChangeRequest(
@@ -361,7 +359,7 @@ func (s *AccountEmailChangeLifecycle) finishAccountEmailChangeRequest(
 		}
 		return err
 	}
-	slog.Info(
+	slog.InfoContext(db.Statement.Context,
 		"Account email change request finished",
 		"domain", "auth",
 		"event", "auth.account_email_change.finished",

@@ -86,7 +86,7 @@ func (s *Cleanup) CleanupRetiredGenerations(ctx context.Context, now time.Time) 
 		}
 	}
 	if deleted > 0 {
-		slog.Info("Cleaned retired media generations", "count", deleted)
+		slog.InfoContext(ctx, "Cleaned retired media generations", "count", deleted)
 	}
 	return stderrors.Join(cleanupErrs...)
 }
@@ -177,10 +177,12 @@ func lockDueUnreferencedRetiredGeneration(tx *gorm.DB, generationID string, now 
 		return generation, false, nil
 	}
 	expectedPrefix, err := mediaauth.MediaHLSObjectPrefix(generation.FileID, generation.ID)
-	if err != nil || generation.ObjectPrefix != expectedPrefix {
-		if err != nil {
-			slog.ErrorContext(tx.Statement.Context, "Invalid retired media generation object prefix", failurecause.Attr(err), "generation_id", generation.ID, "file_id", generation.FileID)
-		}
+	if err != nil {
+		return model.MediaGeneration{}, false, failurecause.WithAttrs(
+			fmt.Errorf("media generation %s has invalid object prefix: %w", generation.ID, err),
+			slog.String("file_id", generation.FileID))
+	}
+	if generation.ObjectPrefix != expectedPrefix {
 		return model.MediaGeneration{}, false, fmt.Errorf("media generation %s has invalid object prefix", generation.ID)
 	}
 	var references int64
@@ -229,19 +231,19 @@ func (s *Cleanup) CleanupOrphanHLSPrefixes(ctx context.Context, cutoff time.Time
 	}
 	deletable, inconsistent := SelectOrphanHLSPrefixesForCleanup(inventory, referenced, active, cutoff)
 	for _, prefix := range inconsistent {
-		slog.Warn("Skipping HLS prefix cleanup because DB still references missing manifest",
-			"prefix", prefix.Prefix, "fileId", prefix.FileID, "generationId", prefix.GenerationID)
+		slog.WarnContext(ctx, "Skipping HLS prefix cleanup because DB still references missing manifest",
+			"prefix", prefix.Prefix, "file_id", prefix.FileID, "generation_id", prefix.GenerationID)
 	}
 	deleted := 0
 	for _, prefix := range deletable {
 		if err := s.objects.DeletePrefix(ctx, prefix.Prefix); err != nil {
-			slog.Error("Failed to delete orphan HLS prefix", "prefix", prefix.Prefix, "fileId", prefix.FileID, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Failed to delete orphan HLS prefix; retrying on the next cleanup", "prefix", prefix.Prefix, "file_id", prefix.FileID, failurecause.Attr(err))
 			continue
 		}
 		deleted++
 	}
 	if deleted > 0 {
-		slog.Info("Cleaned orphan HLS prefixes", "count", deleted)
+		slog.InfoContext(ctx, "Cleaned orphan HLS prefixes", "count", deleted)
 	}
 	return nil
 }

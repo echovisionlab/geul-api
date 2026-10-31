@@ -24,7 +24,7 @@ func resolveInitialSourceLocale(
 			Select("preferred_locale").
 			Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
 			Scan(&preferredLocale).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to load preferred source locale", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Member preferred locale load failed; inferring the source locale from the request", "domain", "legal", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
 		} else if preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
@@ -36,7 +36,7 @@ func resolveInitialSourceLocale(
 	}
 	if db != nil {
 		if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
-			slog.ErrorContext(ctx, "Failed to load source locale settings", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Translation settings load failed; using the built-in default locale", "domain", "legal", "operation", "load_default_locale", "outcome", "failed", failurecause.Attr(err))
 		} else {
 			return settings.DefaultLocale
 		}

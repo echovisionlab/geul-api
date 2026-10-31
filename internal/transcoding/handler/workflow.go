@@ -2,10 +2,10 @@ package handler
 
 import (
 	"context"
-	"log/slog"
+	"errors"
+	"fmt"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobregistry"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -36,8 +36,13 @@ func (w transcodeWorkflow[T]) run(ctx context.Context, command T) error {
 	complete, err := w.transcode(session.Context, command, session.reportProgress, startedAt)
 	if err != nil {
 		if jobregistry.IsExplicitCancellation(session.Context) {
-			slog.WarnContext(session.Context, "Transcode cancelled after processing failure", failurecause.Attr(err), "job_id", command.GetEventId(), "file_id", command.GetFileId(), "media_type", w.mediaType)
-			return publishExplicitCancellationResult(w, session.Context, command, startedAt)
+			// The cancellation is the job's outcome. The queue consumer logs it
+			// with the processing failure it interrupted; %v keeps that failure
+			// from changing the delivery classification of the result.
+			return errors.Join(
+				publishExplicitCancellationResult(w, session.Context, command, startedAt),
+				fmt.Errorf("processing failure before the cancellation: %v", err),
+			)
 		}
 		return w.fail(session.Context, command, startedAt, err)
 	}

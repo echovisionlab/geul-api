@@ -26,10 +26,10 @@ func (h *Handlers) HandleTranscodeProgress(ctx context.Context, body []byte) (re
 	}
 
 	var event managev1.TranscodeProgressEvent
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeProgress", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal transcode progress event: %w", err)

@@ -4,9 +4,10 @@ package post_test
 
 import (
 	"context"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"

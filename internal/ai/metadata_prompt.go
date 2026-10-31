@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -25,11 +26,11 @@ type metadataContextPayload struct {
 	} `json:"source"`
 }
 
-func buildMetadataResponseJSONSchema(userPrompt string) structured.Fields {
+func buildMetadataResponseJSONSchema(ctx context.Context, userPrompt string) structured.Fields {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil || len(payload.Task.RequestedKeys) == 0 {
 		if err != nil {
-			slog.Error("Metadata response schema parsing failed", "domain", "ai", "event", "ai.metadata.schema_failed", failurecause.Attr(err, userPrompt))
+			slog.WarnContext(ctx, "Metadata response schema parsing failed; requesting without a schema", "domain", "ai", "event", "ai.metadata.schema_failed", failurecause.Attr(err, userPrompt))
 		}
 		return nil
 	}
@@ -79,7 +80,6 @@ func metadataAIUserPrompt(contextText, prompt string) string {
 func validateMetadataAIUserPrompt(userPrompt string) error {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil {
-		slog.Warn("Invalid metadata context", "domain", "ai", "event", "ai.metadata.context_rejected", "failure_cause", failurecause.Message(err, userPrompt))
 		return errs.InvalidArgument("context", "metadata-json requires a valid structured JSON payload")
 	}
 	if payload == nil || len(payload.Task.RequestedKeys) == 0 {

@@ -6,14 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -133,7 +131,7 @@ func (p *pagePort) executeMutation(
 			if err != nil {
 				return pagedomain.AIDocumentMutation{}, err
 			}
-			mutation, issues, err := p.compile(state, contributor, current, run.command.Operations)
+			mutation, issues, err := p.compile(ctx, state, contributor, current, run.command.Operations)
 			if err != nil {
 				return pagedomain.AIDocumentMutation{}, err
 			}
@@ -145,7 +143,7 @@ func (p *pagePort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == pagedomain.AIDocumentExecutionValidate,
+			err, mode == pagedomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
@@ -232,7 +230,7 @@ func canonicalPageContributor(memberID string) (uuid.UUID, error) {
 	return contributor, nil
 }
 
-func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UUID, loaded core.Document, operations []core.Operation) (pagedomain.AIDocumentMutation, []core.OperationIssue, error) {
+func (p *pagePort) compile(ctx context.Context, state pagedomain.AIDocumentState, contributor uuid.UUID, loaded core.Document, operations []core.Operation) (pagedomain.AIDocumentMutation, []core.OperationIssue, error) {
 	expected, err := uuid.Parse(string(loaded.DocumentRevision))
 	if err != nil || expected == uuid.Nil || expected.String() != string(loaded.DocumentRevision) {
 		return pagedomain.AIDocumentMutation{}, nil, errors.New("page AI document revision is not a canonical UUID")
@@ -275,7 +273,7 @@ func (p *pagePort) compile(state pagedomain.AIDocumentState, contributor uuid.UU
 		contentOperations = append(contentOperations, operation)
 		contentIndexes = append(contentIndexes, index)
 	}
-	batch, issues, err := p.codec.Compile(state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations)
+	batch, issues, err := p.codec.Compile(ctx, state.Snapshot.Document.ID, state.Document, loaded.Role(), loaded.DocumentRevision, contributor, contentOperations)
 	for index := range issues {
 		if issues[index].Operation >= 0 && issues[index].Operation < len(contentIndexes) {
 			issues[index].Operation = contentIndexes[issues[index].Operation]
@@ -460,7 +458,6 @@ func pageDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
-	slog.Warn("Page document operation rejected", failurecause.Attr(err), "operation_index", index)
 	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
 }
 

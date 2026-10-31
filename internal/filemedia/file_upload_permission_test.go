@@ -4,12 +4,13 @@ package filemedia
 
 import (
 	"context"
+	"testing"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCheckEntityPermissionAllowsAdminProgramEventPosterForSeriesID(t *testing.T) {

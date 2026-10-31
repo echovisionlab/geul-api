@@ -819,13 +819,11 @@ func checkUploadPrincipalPolicy(
 ) (bool, error) {
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-		return true, errs.DependencyUnavailable("SpiceDB")
+		return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-		return true, errs.DependencyUnavailable("SpiceDB")
+		return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if isAdmin {
 		return true, nil
@@ -833,13 +831,11 @@ func checkUploadPrincipalPolicy(
 	if target.authorOnly {
 		authorCan, err := policyv1.File.List()
 		if err != nil {
-			slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-			return true, errs.DependencyUnavailable("SpiceDB")
+			return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		isAuthor, err := checkSpiceDBCan(ctx, user, authorCan, spiceDB)
 		if err != nil {
-			slog.ErrorContext(ctx, "checkUploadPrincipalPolicy: DependencyUnavailable", failurecause.Attr(err))
-			return true, errs.DependencyUnavailable("SpiceDB")
+			return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		if !isAuthor {
 			return true, errs.NoPermission("upload to", "the file manager")
@@ -877,13 +873,11 @@ func (s *FileService) checkSpiceDBUploadPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "checkSpiceDBUploadPermission: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "SpiceDB permission check failed", failurecause.Attr(err), "resourceType", target.resourceType, "entityID", entityID)
-		return errs.InternalMsg("permission check failed")
+		return errs.WithCause(errs.InternalMsg("permission check failed"), failurecause.WithAttrs(err, slog.String("resource_type", target.resourceType), slog.String("entity_id", entityID)))
 	}
 	if !hasPermission {
 		return errs.NoPermission("upload to", "this entity")
@@ -944,13 +938,7 @@ func uploadPermissionResourceTable(resourceType string) (string, bool) {
 func (s *FileService) AbortMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.AbortMultipartUploadRequest],
-) (_ *connect.Response[managev1.AbortMultipartUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AbortMultipartUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.AbortMultipartUploadResponse], error) {
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).
 		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
@@ -1040,13 +1028,7 @@ func (s *FileService) AbortMultipartUpload(
 func (s *FileService) FindMultipartUploadCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (_ *connect.Response[managev1.FindMultipartUploadCandidateResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "FindMultipartUploadCandidate", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()

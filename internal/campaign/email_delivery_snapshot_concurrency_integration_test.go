@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -161,8 +160,8 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 				return assign(operationCtx, assignmentDB)
 			})
 			close(start)
-			deleteErr := waitForDurableEmailOperation(t, deleteDone)
-			assignmentErr := waitForDurableEmailOperation(t, assignmentDone)
+			deleteErr := <-deleteDone
+			assignmentErr := <-assignmentDone
 			deleteWon := deleteErr == nil
 			if deleteWon {
 				require.Equal(t, connect.CodeNotFound, connect.CodeOf(assignmentErr))
@@ -378,8 +377,8 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 				return assign(operationCtx, assignmentDB)
 			})
 			close(start)
-			deleteErr := waitForDurableEmailOperation(t, deleteDone)
-			assignmentErr := waitForDurableEmailOperation(t, assignmentDone)
+			deleteErr := <-deleteDone
+			assignmentErr := <-assignmentDone
 			deleteWon := deleteErr == nil
 			if deleteWon {
 				require.Equal(t, connect.CodeNotFound, connect.CodeOf(assignmentErr))
@@ -435,17 +434,6 @@ func startDurableEmailOperation(
 func durableEmailApplicationName(prefix string) string {
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	return "geul_" + prefix + "_" + suffix[:16]
-}
-
-func waitForDurableEmailOperation(t *testing.T, done <-chan error) error {
-	t.Helper()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for durable Email operation")
-		return nil
-	}
 }
 
 // campaignEmailAuthoringConcurrencyFixture mirrors the production Email

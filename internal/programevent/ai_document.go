@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -122,14 +121,7 @@ func (s *ProgramEventService) LoadAIDocumentState(
 	ctx context.Context,
 	eventID string,
 	requestedLocale string,
-) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (AIDocumentState, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentState{}, errs.DependencyUnavailable("Program Event AI document")
 	}
@@ -166,7 +158,6 @@ func (s *ProgramEventService) LoadAIDocumentState(
 
 func validateProgramEventAIDocumentIdentity(eventID, requestedLocale string) (string, error) {
 	if _, err := uuidutil.ParseCanonical(eventID, "event_id"); err != nil {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "programevent", "operation", "validateProgramEventAIDocumentIdentity", failurecause.Attr(err))
 		return "", errs.InvalidArgument("event_id", "must be a canonical UUID")
 	}
 	locale := localization.NormalizeExactSupportedLocale(requestedLocale)
@@ -210,8 +201,7 @@ func (s *ProgramEventService) loadAIDocumentStateAfterAuthorization(
 ) (AIDocumentState, error) {
 	documentID, err := uuidutil.ParseCanonical(*root.ContentDocumentID, "content_document_id")
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadAIDocumentStateAfterAuthorization", failurecause.Attr(err))
-		return AIDocumentState{}, errs.FailedPrecondition("Program Event content document identity is invalid")
+		return AIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Program Event content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	sourceState, err := loadProgramEventSourceLocale(ctx, tx, root.ID, false)
 	if err != nil {
@@ -270,22 +260,7 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 	requestedLocale string,
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentCommandCompiler,
-) (_ AIDocumentResult, terminalErr error) {
-	defer func() {
-		var conflict *AIDocumentConflict
-		expected := errors.As(terminalErr, &conflict)
-		if expected {
-			if terminalErr != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "ExecuteAIDocumentCommand", failurecause.Attr(terminalErr))
-			}
-		} else {
-			if terminalErr != nil {
-				level := errs.OperationLogLevel(terminalErr)
-				slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ExecuteAIDocumentCommand", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-			}
-		}
-	}()
-
+) (AIDocumentResult, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentResult{}, errs.DependencyUnavailable("Program Event AI document")
 	}
@@ -367,13 +342,11 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 		case errors.As(err, &compilerErr):
 			return AIDocumentResult{}, compilerErr.cause
 		case errors.As(err, &stale):
-			slog.WarnContext(ctx, "AI document revision conflict", "domain", "programevent", "operation", "ExecuteAIDocumentCommand", "event_id", eventID, "locale", requestedLocale, failurecause.Attr(err))
 			return AIDocumentResult{}, &AIDocumentConflict{
 				Kind:                    AIDocumentDocumentRevisionConflict,
 				CurrentDocumentRevision: stale.CurrentRevision.String(),
 			}
 		case errors.As(err, &target):
-			slog.WarnContext(ctx, "AI document revision conflict", "domain", "programevent", "operation", "ExecuteAIDocumentCommand", "event_id", eventID, "locale", requestedLocale, failurecause.Attr(err))
 			var current *string
 			if target.CurrentExists {
 				value := target.CurrentRevision
@@ -394,8 +367,7 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 func programEventAIDocumentMutationAccessError(eventID string, err error) error {
 	switch connect.CodeOf(err) {
 	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-		slog.WarnContext(context.Background(), "AI document access rejected", "domain", "programevent", "operation", "programEventAIDocumentMutationAccessError", "event_id", eventID, failurecause.Attr(err))
-		return errs.NotFound("program event", eventID)
+		return errs.WithCause(errs.NotFound("program event", eventID), err)
 	default:
 		return err
 	}

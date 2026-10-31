@@ -184,7 +184,7 @@ func (c *QueueConsumer) processMessage(parent context.Context, delivery eventpkg
 		if parent.Err() != nil {
 			level = slog.LevelWarn
 		}
-		slog.Log(ctx, level, "PGMQ handler failed", "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount, "failure_cause", failurecause.Message(err, private...))
+		slog.Log(ctx, level, "PGMQ handler failed", append(failurecause.Args(err, private...), "queue", c.config.Name, "message_id", message.MessageID, "transport_id", delivery.TransportID, "command_id", queueCommandID(message), "retry_count", retryCount)...)
 	}
 	decision := decideQueueDelivery(parent.Err() != nil, err, retryCount, c.config.MaxRetries)
 	switch decision {

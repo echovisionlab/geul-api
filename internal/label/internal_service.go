@@ -3,7 +3,6 @@ package label
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -11,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -121,15 +119,7 @@ func validateLabelParentTransition(ctx context.Context, tx *gorm.DB, labelID, pa
 func (s *InternalLabelService) LoadLabelBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadLabelBlockDocumentRequest],
-) (_ *connect.Response[intrav1.LoadLabelBlockDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.LoadLabelBlockDocument", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[intrav1.LoadLabelBlockDocumentResponse], error) {
 	if req == nil || req.Msg == nil || strings.TrimSpace(req.Msg.GetLocale()) == "" {
 		return nil, errs.Required("locale")
 	}
@@ -206,15 +196,7 @@ func (s *InternalLabelService) LoadLabelBlockDocument(
 func (s *InternalLabelService) ApplyLabelBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyLabelBlockBatchRequest],
-) (_ *connect.Response[intrav1.ApplyLabelBlockBatchResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ApplyLabelBlockBatch", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[intrav1.ApplyLabelBlockBatchResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.Required("request")
 	}
@@ -255,15 +237,7 @@ func (s *InternalLabelService) ApplyLabelBlockBatch(
 func (s *InternalLabelService) UpdateLabelLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateLabelLocaleMetadataRequest],
-) (_ *connect.Response[intrav1.UpdateLabelLocaleMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.UpdateLabelLocaleMetadata", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[intrav1.UpdateLabelLocaleMetadataResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.Required("request")
 	}

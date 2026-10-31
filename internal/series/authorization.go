@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"strings"
 	"unicode"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -113,21 +111,18 @@ func checkSeriesPermission(
 	}
 	can, err := action(seriesID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "checkSeriesPermission", failurecause.Attr(err))
-		return errs.NotFound("series", seriesID)
+		return errs.WithCause(errs.NotFound("series", seriesID), err)
 	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
 		return errs.AuthenticationRequired()
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "checkSeriesPermission", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "checkSeriesPermission", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NotFound("series", seriesID)
@@ -157,13 +152,11 @@ func requireSeriesPlatformPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "requireSeriesPlatformPermission", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "requireSeriesPlatformPermission", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NoPermission(can.Action().Name(), can.Resource().Type())
@@ -201,21 +194,18 @@ func (s *SeriesService) lookupSeriesResources(
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "lookupSeriesResources", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "lookupSeriesResources", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	if s.permissions == nil {
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 	ids, err := s.permissions.LookupResources(ctx, lookup, actor)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "lookupSeriesResources", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	return ids, nil
 }
@@ -314,7 +304,6 @@ func validateSeriesPostOrder(postIDs []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(postIDs))
 	for i, postID := range postIDs {
 		if _, err := uuidutil.ParseCanonical(postID, "post_ids"); err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "series", "operation", "validateSeriesPostOrder", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("post_ids", "must contain canonical Post UUIDs")
 		}
 		if _, exists := seen[postID]; exists {

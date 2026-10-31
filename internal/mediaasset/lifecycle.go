@@ -325,8 +325,8 @@ func (s *Lifecycle) storePublicAssetBinding(
 		}
 		if err := tx.Create(&binding).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "Public asset binding changed concurrently", failurecause.Attr(err), "asset_id", input.AssetID, "owner_type", input.OwnerType, "owner_id", input.OwnerID)
-				return errs.FailedPrecondition("public asset binding changed concurrently; retry")
+				return errs.WithCause(errs.FailedPrecondition("public asset binding changed concurrently; retry"), failurecause.WithAttrs(err,
+					slog.String("asset_id", input.AssetID), slog.String("owner_type", input.OwnerType), slog.String("owner_id", input.OwnerID)))
 			}
 			return errs.Internal(err)
 		}

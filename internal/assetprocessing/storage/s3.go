@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	appconfig "github.com/echovisionlab/geul-api/internal/assetprocessing/config"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type S3Client struct {
@@ -82,13 +81,12 @@ func (c *S3Client) Download(ctx context.Context, key string, localPath string) e
 		writeErr = fmt.Errorf("write local file: %w", writeErr)
 	}
 	if closeErr != nil {
-		slog.ErrorContext(ctx, "Failed to close downloaded file", failurecause.Attr(closeErr), "bucket", c.bucket)
 		closeErr = fmt.Errorf("close local file: %w", closeErr)
 	}
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	slog.Debug("Downloaded object", "key", key, "path", localPath, "bytes", written)
+	slog.DebugContext(ctx, "Downloaded object", "key", key, "path", localPath, "bytes", written)
 	return nil
 }
 

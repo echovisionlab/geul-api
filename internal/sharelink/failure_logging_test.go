@@ -3,11 +3,12 @@ package sharelink
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -26,7 +27,9 @@ func (a *failedDeleteAuthority) Delete(context.Context, managev1.ShareLinkEntity
 	return a.err
 }
 
-func TestValidationQueryFailureLogsCauseWithoutCredentials(t *testing.T) {
+// Callers decide how to answer; the error carries the redacted cause, the
+// entity and the server-fault mark for the one failure record.
+func TestValidationQueryFailureCarriesCauseWithoutCredentials(t *testing.T) {
 	db := newManageDB(t)
 	const token = "private-share-token"
 	const password = "private-share-password"
@@ -43,16 +46,14 @@ func TestValidationQueryFailureLogsCauseWithoutCredentials(t *testing.T) {
 	link, err := ValidateForEntity(t.Context(), db, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, entityID)
 	require.Nil(t, link)
 	require.ErrorIs(t, err, cause)
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "ERROR", entry["level"])
-	require.Equal(t, entityID, entry["entity_id"])
-	require.Equal(t, `query "share_link": connection reset for [redacted] [redacted]`, entry["failure_cause"])
-	require.NotContains(t, output.String(), token)
-	require.NotContains(t, output.String(), password)
+	require.Empty(t, output.String())
+	failure := failurecause.Of(err)
+	require.True(t, failure.ServerFault)
+	require.Equal(t, `load share link: query "share_link": connection reset for [redacted] [redacted]`, failure.Cause)
+	require.Contains(t, failure.Attrs, slog.String("entity_id", entityID))
 }
 
-func TestDeleteFailureLogsCauseAndEntityWithoutStoredCredentials(t *testing.T) {
+func TestDeleteFailureCarriesCauseAndEntityWithoutStoredCredentials(t *testing.T) {
 	db := newManageDB(t)
 	const linkID = "22222222-2222-4222-8222-222222222222"
 	const entityID = "11111111-1111-4111-8111-111111111111"
@@ -72,13 +73,13 @@ func TestDeleteFailureLogsCauseAndEntityWithoutStoredCredentials(t *testing.T) {
 	require.Nil(t, response)
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "ERROR", entry["level"])
-	require.Equal(t, linkID, entry["share_link_id"])
-	require.Equal(t, entityID, entry["entity_id"])
-	require.Equal(t, entityType.String(), entry["entity_type"])
-	require.Equal(t, `internal: delete from "share_link": connection reset for [redacted] [redacted]`, entry["failure_cause"])
-	require.NotContains(t, output.String(), token)
-	require.NotContains(t, output.String(), hash)
+	// The request record logs the failure from what the error carries.
+	require.Empty(t, output.String())
+	failure := failurecause.Of(err)
+	require.Equal(t, `internal: delete from "share_link": connection reset for [redacted] [redacted]`, failure.Cause)
+	attrs := map[string]string{}
+	for _, attr := range failure.Attrs {
+		attrs[attr.Key] = attr.Value.String()
+	}
+	require.Equal(t, map[string]string{"share_link_id": linkID, "entity_id": entityID, "entity_type": entityType.String()}, attrs)
 }

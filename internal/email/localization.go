@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
@@ -99,8 +100,7 @@ func applyCanonicalEmailTemplateSourceContent(
 
 	row, err := loadExactCanonicalEmailTemplateSourceRow(ctx, db, source.ID, sourceLocale)
 	if err != nil {
-		slog.Warn("failed to load canonical email template source row", "template_id", source.ID, "source_locale", sourceLocale, "error", err)
-		return source, err
+		return source, failurecause.WithAttrs(err, slog.String("template_id", source.ID), slog.String("source_locale", sourceLocale))
 	}
 	if row == nil {
 		return source, errs.NotFound("email template source translation", source.ID+":"+sourceLocale)
@@ -192,7 +192,7 @@ func ResolveLocalizedEmailLayoutHTML(
 	}
 	localizedHTML = NormalizeTemplatePlaceholders(localizedHTML)
 	if issues := ValidateLayoutHTMLContent(localizedHTML); len(issues) > 0 {
-		slog.Warn("invalid localized email layout html, falling back to source layout",
+		slog.WarnContext(ctx, "invalid localized email layout html, falling back to source layout",
 			"layout_id", layoutID,
 			"requested_locale", requestedLocale,
 			"displayed_locale", displayedLocale,
@@ -212,7 +212,7 @@ func loadCanonicalEmailLayoutSourceLocale(ctx context.Context, db *gorm.DB, layo
 			return normalized
 		}
 	} else if err != nil {
-		slog.Warn("failed to load canonical email layout source locale", "layout_id", layoutID, "error", err)
+		slog.WarnContext(ctx, "failed to load canonical email layout source locale; using the stored source locale", "layout_id", layoutID, failurecause.Attr(err))
 	}
 
 	return loadEmailSourceLocale(ctx, db, "email_layout", layoutID)
@@ -231,8 +231,7 @@ func loadCanonicalEmailLayoutSourceHTML(
 
 	row, err := loadExactCanonicalEmailLayoutSourceRow(ctx, db, layoutID, sourceLocale)
 	if err != nil {
-		slog.Warn("failed to load canonical email layout source row", "layout_id", layoutID, "source_locale", sourceLocale, "error", err)
-		return "", err
+		return "", failurecause.WithAttrs(err, slog.String("layout_id", layoutID), slog.String("source_locale", sourceLocale))
 	}
 	if row == nil || row.HTMLContent == nil {
 		return "", errs.NotFound("email layout source translation", layoutID+":"+sourceLocale)
@@ -298,7 +297,7 @@ func loadEmailSourceLocale(ctx context.Context, db *gorm.DB, entityType, entityI
 		Where("id = ?", entityID).
 		Take(&sourceState).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.Warn("failed to load email translation source locale", "entity_type", entityType, "entity_id", entityID, "error", err)
+			slog.WarnContext(ctx, "failed to load email translation source locale", "entity_type", entityType, "entity_id", entityID, failurecause.Attr(err))
 		}
 		return ""
 	}

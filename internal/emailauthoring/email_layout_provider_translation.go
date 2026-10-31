@@ -3,7 +3,6 @@ package emailauthoring
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
 	"strings"
 
@@ -39,10 +38,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	}
 	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-		if err != nil {
-			slog.ErrorContext(ctx, "Invalid provider translation requester", "domain", "emailauthoring", "event", "emailauthoring.translation_failed", "outcome", "failed", "entity_id", job.EntityID, failurecause.Attr(err))
-		}
-		return errs.InternalMsg("Email Layout provider translation requires canonical requester Member")
+		return errs.WithCause(errs.InternalMsg("Email Layout provider translation requires canonical requester Member"), err)
 	}
 	now := input.Now.UTC()
 	if now.IsZero() {
@@ -65,8 +61,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	sourceHTML := derefString(source.ContentHTML)
 	descriptors, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout source unit markers require repair before provider apply")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before provider apply"), failurecause.ServerFault(err))
 	}
 	allowed := make(map[string]struct{}, len(descriptors))
 	for _, descriptor := range descriptors {
@@ -84,8 +79,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	} else if entry != nil && entry.ContentHTML != nil {
 		currentValues, err = emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-			return errs.FailedPrecondition("Email Layout target unit markers require repair before provider apply")
+			return errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require repair before provider apply"), failurecause.ServerFault(err))
 		}
 	}
 	nextValues := maps.Clone(currentValues)

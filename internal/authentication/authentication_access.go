@@ -3,13 +3,11 @@ package authentication
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	"gorm.io/gorm"
 )
@@ -72,7 +70,6 @@ func (recorder *AuthenticationAccessRecorder) Wrap(next http.Handler) http.Handl
 
 		var response bufferedKratosResponse
 		if bodyErr != nil {
-			slog.WarnContext(ctx, "Operation failed", "reason", "inspect_authentication_request", "status_code", http.StatusRequestEntityTooLarge, failurecause.Attr(bodyErr), "flow_kind", string(observation.FlowKind), "authentication_method", string(observation.Method), "provider", observation.Provider)
 			response = bufferedAuthenticationError(http.StatusRequestEntityTooLarge, "request body is too large")
 		} else {
 			capture := newKratosResponseCapture(nil, maxKratosProxyRequestBytes)

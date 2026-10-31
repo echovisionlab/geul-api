@@ -2,8 +2,9 @@ package post
 
 import (
 	"context"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"

@@ -3,7 +3,6 @@ package release
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -11,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -22,14 +20,7 @@ import (
 func (s *ReleaseService) SetReleaseArtwork(
 	ctx context.Context,
 	req *connect.Request[managev1.SetReleaseArtworkRequest],
-) (_ *connect.Response[managev1.SetReleaseArtworkResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetReleaseArtwork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.SetReleaseArtworkResponse], error) {
 	var release model.Release
 	if err := s.db.WithContext(ctx).
 		Select("id").
@@ -127,14 +118,7 @@ func (s *ReleaseService) SetReleaseArtwork(
 func (s *ReleaseService) DeleteReleaseArtwork(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteReleaseArtworkRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteReleaseArtwork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var release model.Release
 	if err := s.db.WithContext(ctx).
 		Select("id").

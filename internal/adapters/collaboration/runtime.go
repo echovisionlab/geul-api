@@ -131,13 +131,11 @@ func (a resourceAuthorizer) check(
 ) (bool, error) {
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return false, errs.AuthenticationRequired()
+		return false, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := a.checker.CheckActorCan(ctx, actor, can)
 	if err != nil {
-		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	return allowed, nil
 }

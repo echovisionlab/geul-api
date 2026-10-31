@@ -77,12 +77,7 @@ func (h *Handlers) publishMediaProcessingLifecycle(
 	}
 
 	if err := h.publisher.PublishMediaProcessingLifecycle(ctx, event); err != nil {
-		slog.Error("Failed to publish media processing lifecycle",
-			"fileId", options.FileID,
-			"status", event.Status.String(),
-			failurecause.Attr(err),
-		)
-		return err
+		return failurecause.WithAttrs(err, slog.String("lifecycle_status", event.Status.String()))
 	}
 
 	return nil

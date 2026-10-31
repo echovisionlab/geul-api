@@ -3,8 +3,6 @@ package public
 
 import (
 	"context"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -13,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -70,15 +67,7 @@ func NewAuditedFormService(
 func (s *FormService) CheckAccess(
 	ctx context.Context,
 	req *connect.Request[openv1.CheckFormAccessRequest],
-) (rpcResponse *connect.Response[openv1.CheckFormAccessResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "CheckAccess", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[openv1.CheckFormAccessResponse], error) {
 	target := normalizeFormAccessTarget(req.Msg.Target)
 	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
 	if err != nil {

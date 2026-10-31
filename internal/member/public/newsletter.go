@@ -2,7 +2,6 @@ package public
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/member"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
@@ -53,11 +51,9 @@ func (s *NewsletterService) Unsubscribe(
 ) (*connect.Response[openv1.UnsubscribeNewsletterResponse], error) {
 	identityID, err := member.ValidateNewsletterUnsubscribeToken(req.Msg.GetToken(), s.tokenSecret)
 	if err != nil {
-		slog.WarnContext(ctx, "Newsletter unsubscribe token rejected", failurecause.Attr(err, req.Msg.GetToken(), s.tokenSecret))
 		return nil, errs.InvalidArgument("token", "must be a valid unsubscribe token")
 	}
 	if err := s.unsubscribeWithAudit(ctx, identityID); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "Unsubscribe", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&openv1.UnsubscribeNewsletterResponse{Success: true}), nil

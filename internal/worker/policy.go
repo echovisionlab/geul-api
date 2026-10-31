@@ -122,7 +122,7 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 			effectiveRun,
 		)
 	}
-	slog.Info(spec.logMessage, "count", activatedCount)
+	slog.InfoContext(ctx, spec.logMessage, "count", activatedCount)
 	return nil
 }
 
@@ -167,7 +167,7 @@ func (h *Handlers) handleUnbanExpiredWith(
 			}
 			expires, err := time.Parse(time.RFC3339, expiresStr)
 			if err != nil {
-				slog.Warn("invalid ban_expires format", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
+				slog.WarnContext(ctx, "Skipping timed ban with invalid ban_expires", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
 				continue
 			}
 			if expires.After(now) {
@@ -176,7 +176,7 @@ func (h *Handlers) handleUnbanExpiredWith(
 
 			cleared, err := clearExpiredTimedBan(ctx, identity.ID, now)
 			if err != nil {
-				slog.ErrorContext(ctx, "failed to clear expired ban", "user_id", identity.ID, "failure_cause", failurecause.Message(err))
+				slog.ErrorContext(ctx, "Expired timed ban clear failed", append(failurecause.Args(err), "user_id", identity.ID)...)
 				continue
 			}
 			if cleared {
@@ -191,7 +191,7 @@ func (h *Handlers) handleUnbanExpiredWith(
 	}
 
 	if unbannedCount > 0 {
-		slog.Info("Unbanned expired users", "count", unbannedCount)
+		slog.InfoContext(ctx, "Unbanned expired users", "count", unbannedCount)
 	}
 	return nil
 }

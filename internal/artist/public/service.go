@@ -76,14 +76,7 @@ func NewArtistService(db *gorm.DB, spiceDB *auth.SpiceDBClient, media MediaProje
 func (s *ArtistService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListArtistsRequest],
-) (_ *connect.Response[openv1.ListArtistsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListArtistsResponse], error) {
 	// Base query - only published artists
 	query := s.db.WithContext(ctx).Model(&model.Artist{}).Where("status = ?", openv1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String())
 
@@ -220,14 +213,7 @@ func buildArtistSummary(artist *model.Artist) *openv1.ArtistSummary {
 func (s *ArtistService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetArtistRequest],
-) (_ *connect.Response[openv1.GetArtistResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetArtistResponse], error) {
 	slugOrID := req.Msg.Slug
 	shareToken := req.Msg.GetShareToken()
 	sharePassword := req.Msg.GetSharePassword()
@@ -282,14 +268,7 @@ func (s *ArtistService) requireDraftArtistAccess(
 func (s *ArtistService) GetReleases(
 	ctx context.Context,
 	req *connect.Request[openv1.GetArtistReleasesRequest],
-) (_ *connect.Response[openv1.GetArtistReleasesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "GetReleases", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetArtistReleasesResponse], error) {
 	artistID := req.Msg.ArtistId
 	limit := int32(20)
 	if req.Msg.Limit > 0 {
@@ -348,7 +327,7 @@ func (s *ArtistService) GetReleases(
 		Joins("JOIN release ON release.id = release_artist.release_id").
 		Where("release_artist.artist_id = ? AND release.status = ?", artistID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).
 		Scan(&total).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "release_count", failurecause.Attr(err), "artist_id", artistID)
+		slog.ErrorContext(ctx, "Artist release count query failed; reporting a zero total", "domain", "artist", "operation", "count_artist_releases", failurecause.Attr(err), "artist_id", artistID)
 	}
 	releaseIDs := make([]string, 0, len(releases))
 	for _, release := range releases {
@@ -396,14 +375,7 @@ func (s *ArtistService) GetReleases(
 func (s *ArtistService) GetWorks(
 	ctx context.Context,
 	req *connect.Request[openv1.GetArtistWorksRequest],
-) (_ *connect.Response[openv1.GetArtistWorksResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "GetWorks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetArtistWorksResponse], error) {
 	artistID := req.Msg.ArtistId
 	limit := int32(20)
 	if req.Msg.Limit > 0 {
@@ -469,7 +441,7 @@ func (s *ArtistService) GetWorks(
 		req.Header().Get("Accept-Language"),
 	)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to resolve artist work localizations", "artistId", artistID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Artist work localization lookup failed; serving unlocalized Works", "domain", "artist", "operation", "resolve_work_localizations", failurecause.Attr(err), "artist_id", artistID)
 	}
 
 	// Get total count
@@ -483,7 +455,7 @@ func (s *ArtistService) GetWorks(
 			managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
 		}).
 		Scan(&total).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "work_count", failurecause.Attr(err), "artist_id", artistID)
+		slog.ErrorContext(ctx, "Artist work count query failed; reporting a zero total", "domain", "artist", "operation", "count_artist_works", failurecause.Attr(err), "artist_id", artistID)
 	}
 	workFileIDs := make(map[string]*string, len(works))
 	for _, work := range works {
@@ -573,7 +545,7 @@ func (s *ArtistService) buildArtistResponseInTransaction(
 	*artist = current
 	localization, err := publiccontent.Resolve(ctx, s.db, artistLocalizationSpec, artistID, acceptLanguage)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to resolve artist localization", "artistId", artistID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Artist localization lookup failed; serving the unlocalized Artist", "domain", "artist", "operation", "resolve_artist_localization", failurecause.Attr(err), "artist_id", artistID)
 	}
 	localization, err = publiccontent.ResolveOGConsistency(
 		ctx, s.db, artistLocalizationSpec, artistID, localization, s.localizedOGAssetReady,
@@ -706,7 +678,7 @@ func (s *ArtistService) isArtistGroup(ctx context.Context, artistID string) bool
 		Model(&model.Artist{}).
 		Where("parent_artist_id = ?", artistID).
 		Count(&count).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "isArtistGroup", failurecause.Attr(err), "artist_id", artistID)
+		slog.ErrorContext(ctx, "Artist group lookup failed; treating the Artist as solo", "domain", "artist", "operation", "check_artist_group", failurecause.Attr(err), "artist_id", artistID)
 		return false
 	}
 
@@ -722,7 +694,7 @@ func (s *ArtistService) getArtistReleaseCount(ctx context.Context, artistID stri
 		JOIN release ON release.id = release_artist.release_id
 		WHERE release_artist.artist_id = ? AND release.status = ?
 	`, artistID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).Scan(&count).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "getArtistReleaseCount", failurecause.Attr(err), "artist_id", artistID)
+		slog.ErrorContext(ctx, "Artist release count query failed; reporting zero", "domain", "artist", "operation", "count_artist_releases", failurecause.Attr(err), "artist_id", artistID)
 	}
 	return int32(count)
 }
@@ -739,7 +711,7 @@ func (s *ArtistService) getArtistWorkCount(ctx context.Context, artistID string)
 		managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
 		managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
 	).Scan(&count).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "getArtistWorkCount", failurecause.Attr(err), "artist_id", artistID)
+		slog.ErrorContext(ctx, "Artist work count query failed; reporting zero", "domain", "artist", "operation", "count_artist_works", failurecause.Attr(err), "artist_id", artistID)
 	}
 	return int32(count)
 }

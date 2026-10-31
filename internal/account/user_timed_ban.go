@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -111,8 +110,9 @@ func ClearExpiredTimedBan(
 		if identity == nil {
 			return errors.New("expired ban identity was not found")
 		}
-		if !identityHasExpiredTimedBan(identity, now) {
-			return nil
+		expired, err := identityHasExpiredTimedBan(identity, now)
+		if err != nil || !expired {
+			return err
 		}
 		if err := NewUserStateService(identityManager).ClearBan(mutationCtx, identityID); err != nil {
 			return err
@@ -144,21 +144,23 @@ func ClearExpiredTimedBan(
 	return cleared, err
 }
 
-func identityHasExpiredTimedBan(identity *auth.Identity, now time.Time) bool {
+// identityHasExpiredTimedBan reports an unreadable expiry as an error, so
+// the unban scheduler logs it instead of skipping the identity silently.
+func identityHasExpiredTimedBan(identity *auth.Identity, now time.Time) (bool, error) {
 	if identity == nil || identity.MetadataAdmin == nil {
-		return false
+		return false, nil
 	}
 	banned, ok := identity.MetadataAdmin["banned"].(bool)
 	if !ok || !banned {
-		return false
+		return false, nil
 	}
 	expiresRaw, ok := identity.MetadataAdmin["ban_expires"].(string)
 	if !ok || strings.TrimSpace(expiresRaw) == "" {
-		return false
+		return false, nil
 	}
 	expiresAt, err := time.Parse(time.RFC3339, expiresRaw)
 	if err != nil {
-		slog.Error("Invalid timed ban expiry", "identity_id", identity.ID, failurecause.Attr(err, expiresRaw))
+		return false, failurecause.WithPrivate(fmt.Errorf("parse timed ban expiry: %w", err), expiresRaw)
 	}
-	return err == nil && !expiresAt.After(now)
+	return !expiresAt.After(now), nil
 }

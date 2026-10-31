@@ -58,17 +58,17 @@ func queueHandoffContext(message eventpkg.Message, queue string) sharedtelemetry
 
 func emitQueueDeliverySucceeded(ctx context.Context, message eventpkg.Message, queue string, duration time.Duration) {
 	record, err := sharedtelemetry.NewQueueDeliverySucceededRecord(apptelemetry.SystemMetadata(ctx, time.Now()), queueDeliveryContext(message, queue, duration))
-	_ = apptelemetry.EmitSystem(ctx, record, err)
+	apptelemetry.EmitSystem(ctx, record, err)
 }
 
 func emitQueueDeliveryFailed(ctx context.Context, message eventpkg.Message, queue string, duration time.Duration, reason sharedtelemetry.QueueFailureReason) {
 	record, err := sharedtelemetry.NewQueueDeliveryFailedRecord(apptelemetry.SystemMetadata(ctx, time.Now()), queueDeliveryContext(message, queue, duration), reason)
-	_ = apptelemetry.EmitSystem(ctx, record, err)
+	apptelemetry.EmitSystem(ctx, record, err)
 }
 
 func emitQueueDeliveryRequeued(ctx context.Context, message eventpkg.Message, queue string, duration time.Duration) {
 	record, err := sharedtelemetry.NewQueueDeliveryRequeuedRecord(apptelemetry.SystemMetadata(ctx, time.Now()), queueDeliveryContext(message, queue, duration), sharedtelemetry.QueueFailureShutdown)
-	_ = apptelemetry.EmitSystem(ctx, record, err)
+	apptelemetry.EmitSystem(ctx, record, err)
 }
 
 func emitQueueRetryResult(ctx context.Context, message eventpkg.Message, queue string, failure bool) {
@@ -76,11 +76,11 @@ func emitQueueRetryResult(ctx context.Context, message eventpkg.Message, queue s
 	handoff := queueHandoffContext(message, queue)
 	if failure {
 		record, err := sharedtelemetry.NewQueueRetryFailedRecord(metadata, handoff, sharedtelemetry.QueueFailureVisibilityUpdateFailed)
-		_ = apptelemetry.EmitSystem(ctx, record, err)
+		apptelemetry.EmitSystem(ctx, record, err)
 		return
 	}
 	record, err := sharedtelemetry.NewQueueRetryAcceptedRecord(metadata, handoff)
-	_ = apptelemetry.EmitSystem(ctx, record, err)
+	apptelemetry.EmitSystem(ctx, record, err)
 }
 
 func emitQueueDLQResult(ctx context.Context, message eventpkg.Message, queue string, failure bool) {
@@ -88,11 +88,11 @@ func emitQueueDLQResult(ctx context.Context, message eventpkg.Message, queue str
 	handoff := queueHandoffContext(message, queue)
 	if failure {
 		record, err := sharedtelemetry.NewQueueDLQFailedRecord(metadata, handoff, sharedtelemetry.QueueFailureArchiveFailed)
-		_ = apptelemetry.EmitSystem(ctx, record, err)
+		apptelemetry.EmitSystem(ctx, record, err)
 		return
 	}
 	record, err := sharedtelemetry.NewQueueDLQAcceptedRecord(metadata, handoff)
-	_ = apptelemetry.EmitSystem(ctx, record, err)
+	apptelemetry.EmitSystem(ctx, record, err)
 }
 
 func emitQueuePublishResult(ctx context.Context, queue, messageID string, duration time.Duration, failure bool) {
@@ -100,9 +100,9 @@ func emitQueuePublishResult(ctx context.Context, queue, messageID string, durati
 	publish := sharedtelemetry.QueuePublishContext{Queue: queue, MessageID: messageID, CommandID: messageID, DurationMS: duration.Milliseconds()}
 	if failure {
 		record, err := sharedtelemetry.NewQueuePublishFailedRecord(metadata, publish, sharedtelemetry.QueueFailureEnqueueFailed)
-		_ = apptelemetry.EmitSystem(ctx, record, err)
+		apptelemetry.EmitSystem(ctx, record, err)
 		return
 	}
 	record, err := sharedtelemetry.NewQueuePublishSucceededRecord(metadata, publish)
-	_ = apptelemetry.EmitSystem(ctx, record, err)
+	apptelemetry.EmitSystem(ctx, record, err)
 }

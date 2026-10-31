@@ -5,9 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -117,8 +116,7 @@ func requireProgramEventBlockBootstrap(
 		principalMessage.GetSessionId(),
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventBlockBootstrap", failurecause.Attr(err))
-		return uuid.Nil, nil, errs.AuthenticationRequired()
+		return uuid.Nil, nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	if err != nil {
 		return uuid.Nil, nil, errs.Internal(fmt.Errorf("resolve Program Event collaboration principal: %w", err))
@@ -141,8 +139,7 @@ func requireProgramEventBlockBootstrap(
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventBlockBootstrap", failurecause.Attr(err))
-		return uuid.Nil, nil, errs.AuthenticationRequired()
+		return uuid.Nil, nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	var root struct {
 		Status string `gorm:"column:status"`
@@ -157,8 +154,7 @@ func requireProgramEventBlockBootstrap(
 	}
 	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, tx, principalMessage.GetSessionId(), principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventBlockBootstrap", failurecause.Attr(err))
-			return uuid.Nil, nil, errs.AuthenticationRequired()
+			return uuid.Nil, nil, errs.WithCause(errs.AuthenticationRequired(), err)
 		}
 		return uuid.Nil, nil, errs.Internal(fmt.Errorf("lock Program Event collaboration session: %w", err))
 	}
@@ -185,22 +181,21 @@ func normalizeProgramEventContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
+	// A revision conflict keeps err out of its chain: CollaborationConflict
+	// already reads the revisions from it, and AI document callers treat a
+	// stale or target revision error in the chain as their own conflict result.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
-		return errs.NotFoundMsg("Program Event content document not found")
+		return errs.WithCause(errs.NotFoundMsg("Program Event content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "Program Event content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "programevent", "operation", "normalizeProgramEventContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
 		return errs.InvalidArgument("blocks", err.Error())
 	case errors.Is(err, contentblock.ErrInvalidMutation):

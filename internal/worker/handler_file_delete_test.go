@@ -156,7 +156,7 @@ func TestHandleFileDeleteMessageRoutesMalformedPayloadDirectlyToDLQ(t *testing.T
 		Body:        []byte("private/object/key owner@example.test"),
 		ContentType: "text/plain",
 	})
-	require.EqualError(t, err, "invalid file delete event: invalid file delete payload: unsupported encoding")
+	require.ErrorContains(t, err, "invalid file delete event: invalid file delete payload: unsupported encoding: proto:")
 	require.NotContains(t, err.Error(), "private/object/key")
 	require.NotContains(t, err.Error(), "owner@example.test")
 	class, terminal := mq.TerminalDeliveryErrorClass(err)

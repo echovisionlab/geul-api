@@ -119,19 +119,7 @@ func WithTranslationServiceInterchangeDomains(domains TranslationInterchangeDoma
 func (s *TranslationService) ExportEntityTranslationXLIFF(
 	ctx context.Context,
 	req *connect.Request[managev1.ExportEntityTranslationXLIFFRequest],
-) (_ *connect.Response[managev1.ExportEntityTranslationXLIFFResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ExportEntityTranslationXLIFF")
-		}
-	}()
+) (*connect.Response[managev1.ExportEntityTranslationXLIFFResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -214,19 +202,7 @@ func (s *TranslationService) ExportEntityTranslationXLIFF(
 func (s *TranslationService) ImportEntityTranslationXLIFF(
 	ctx context.Context,
 	req *connect.Request[managev1.ImportEntityTranslationXLIFFRequest],
-) (_ *connect.Response[managev1.ImportEntityTranslationXLIFFResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ImportEntityTranslationXLIFF")
-		}
-	}()
+) (*connect.Response[managev1.ImportEntityTranslationXLIFFResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -626,14 +602,16 @@ func validateTranslationXLIFFArtifactRef(ref *commonv1.ExpiringMediaRef, now tim
 		return fmt.Errorf("translation XLIFF artifact reference is required")
 	}
 	if _, err := canonicalTranslationXLIFFFileID(ref.FileId); err != nil {
-		slog.Error("Translation XLIFF artifact File ID invalid", "domain", "translation", "event", "translation.xliff.file_id_invalid", failurecause.Attr(err))
-		return fmt.Errorf("translation XLIFF artifact returned an invalid File ID")
+		return fmt.Errorf("translation XLIFF artifact returned an invalid File ID: %w", err)
 	}
 	parsed, err := url.Parse(ref.Url)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		if err != nil {
-			slog.Error("Translation XLIFF artifact delivery URL invalid", "domain", "translation", "event", "translation.xliff.delivery_url_invalid", failurecause.Attr(err), "file_id", ref.FileId)
-		}
+	if err != nil {
+		return failurecause.WithAttrs(
+			fmt.Errorf("translation XLIFF artifact returned an invalid delivery URL: %w", err),
+			slog.String("file_id", ref.FileId),
+		)
+	}
+	if (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
 		return fmt.Errorf("translation XLIFF artifact returned an invalid delivery URL")
 	}
 	if ref.ExpiresAt == nil || !ref.ExpiresAt.IsValid() || !ref.ExpiresAt.AsTime().After(now) {

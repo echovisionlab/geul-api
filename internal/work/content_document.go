@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/translation"
-	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -29,9 +28,6 @@ func parseWorkContentUUID(fieldName string, value string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "parseWorkContentUUID", failurecause.Attr(err))
-		}
 		return uuid.Nil, errs.InvalidArgument(fieldName, "must be a canonical UUID")
 	}
 	return parsed, nil
@@ -41,24 +37,24 @@ func normalizeWorkContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
+	// A revision conflict keeps err out of its chain: CollaborationConflict
+	// already reads the revisions from it, and AI document callers treat a
+	// stale or target revision error in the chain as their own conflict result.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
-		return errs.NotFoundMsg("work content document not found")
+		return errs.WithCause(errs.NotFoundMsg("work content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "work content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "work", "operation", "normalizeWorkContentBlockError", failurecause.Attr(err))
+		// The AI document adapter turns ErrFileReference in the chain into an
+		// operation issue; this path has always answered FailedPrecondition.
 		return errs.FailedPrecondition("a Work Block File reference is not attachable")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
@@ -161,8 +157,7 @@ func requireWorkLoadPrincipal(
 		principalMessage.GetSessionId(),
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkLoadPrincipal", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -189,8 +184,7 @@ func requireWorkLoadPrincipal(
 	}
 	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, principalMessage.GetSessionId(), principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkLoadPrincipal", failurecause.Attr(err))
-			return nil, errs.AuthenticationRequired()
+			return nil, errs.WithCause(errs.AuthenticationRequired(), err)
 		}
 		return nil, errs.Internal(fmt.Errorf("lock Work collaboration session: %w", err))
 	}

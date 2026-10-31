@@ -165,7 +165,10 @@ func (s *BulkCampaignStore) ListPending(
 	}
 	result := make([]emaildelivery.BulkDelivery, 0, len(jobs))
 	for _, job := range jobs {
-		command, _ := s.BuildCommand(job)
+		command, _, err := s.buildCommand(job)
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to decode campaign delivery template data", "failure_cause", failurecause.Message(err), "run_id", job.Run.ID, "message_id", job.Recipient.ID, "template_type", campaign.EmailDeliveryRunTemplateType(job.Run))
+		}
 		result = append(result, emaildelivery.BulkDelivery{
 			RecipientID: job.Recipient.ID, RecipientEmail: job.Recipient.RecipientEmail,
 			TemplateType: campaign.EmailDeliveryRunTemplateType(job.Run), Command: command,
@@ -191,17 +194,25 @@ func (s *BulkCampaignStore) MarkResult(
 func (s *BulkCampaignStore) BuildCommand(
 	delivery campaign.CampaignDeliveryRecipientJob,
 ) (*managev1.SendEmailEvent, bool) {
+	command, ok, _ := s.buildCommand(delivery)
+	return command, ok
+}
+
+// buildCommand also returns why the run's template data could not be decoded;
+// the recipient is then blocked without a command.
+func (s *BulkCampaignStore) buildCommand(
+	delivery campaign.CampaignDeliveryRecipientJob,
+) (*managev1.SendEmailEvent, bool, error) {
 	recipient := delivery.Recipient
 	run := delivery.Run
 	templateType := campaign.EmailDeliveryRunTemplateType(run)
 	referenceID := campaign.EmailDeliveryRunReferenceID(run)
 	templateData, err := campaign.CampaignDeliveryRunTemplateData(run)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Failed to decode campaign delivery template data", "failure_cause", failurecause.Message(err), "run_id", run.ID, "message_id", recipient.ID, "template_type", templateType)
-		return nil, false
+		return nil, false, err
 	}
 	if _, persisted := templateData["recipient_email"]; persisted {
-		return nil, false
+		return nil, false, nil
 	}
 	templateData["recipient_email"] = recipient.RecipientEmail
 
@@ -210,7 +221,7 @@ func (s *BulkCampaignStore) BuildCommand(
 	case campaign.BulkEmailContextNewsletterSubscription, campaign.BulkEmailContextAccountCurrent:
 		if recipient.IdentityID == nil || strings.TrimSpace(*recipient.IdentityID) == "" ||
 			recipient.MemberID == nil || strings.TrimSpace(*recipient.MemberID) == "" {
-			return nil, false
+			return nil, false, nil
 		}
 		if strings.TrimSpace(s.tokenSigningSecret) != "" {
 			token := crypto.GenerateSignedToken(
@@ -222,7 +233,7 @@ func (s *BulkCampaignStore) BuildCommand(
 			)
 		}
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 
 	deliveryRecipientID := recipient.ID
@@ -240,7 +251,7 @@ func (s *BulkCampaignStore) BuildCommand(
 	case campaign.BulkEmailContextAccountCurrent:
 		command.RecipientContext = email.AccountSelectedPrimaryEmailContext(*recipient.IdentityID)
 	}
-	return command, command.GetRecipientContext() != nil
+	return command, command.GetRecipientContext() != nil, nil
 }
 
 type CampaignEmailRenderer interface {

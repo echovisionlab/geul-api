@@ -1,22 +1,21 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
+	"strings"
+	"time"
+
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"log/slog"
-	"strings"
-	"time"
 )
 
 const formContentDocumentProfile = "compact"
@@ -24,15 +23,7 @@ const formContentDocumentProfile = "compact"
 func (s *FormService) CreateForm(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateFormRequest],
-) (rpcResponse *connect.Response[managev1.Form], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "CreateForm", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.Form], error) {
 	// Validate required fields
 	title := strings.TrimSpace(req.Msg.Title)
 	if title == "" {

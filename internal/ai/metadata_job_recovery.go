@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -84,7 +83,6 @@ func (m *MetadataJobManager) RecoverExpiredJobs(ctx context.Context, limit int) 
 		return nil
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "Metadata AI job recovery failed", "domain", "ai", "event", "ai.metadata.recovery_failed", failurecause.Attr(err))
 		return 0, err
 	}
 	if republished > 0 {

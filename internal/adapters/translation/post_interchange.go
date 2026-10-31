@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -137,7 +138,7 @@ func loadPostInterchangeTarget(
 	}
 	documentID, err := canonicalInterchangeDocumentID(root.ContentDocumentID)
 	if err != nil {
-		return postInterchangeTarget{}, errs.FailedPrecondition("Post content document identity is invalid")
+		return postInterchangeTarget{}, errs.WithCause(errs.FailedPrecondition("Post content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, db, documentID, plan.SourceLocale)
 	if err != nil {

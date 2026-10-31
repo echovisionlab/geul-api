@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -153,29 +151,28 @@ func normalizeLabelContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
+	// A revision conflict carries its current revisions in the conflict
+	// detail and does not keep its cause: callers branch on errors.Is/As for
+	// raw stale and target-revision errors, and an already-normalized
+	// conflict must not take those branches.
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
 			"Label target locale changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.NotFoundMsg("label content document not found")
+		return errs.WithCause(errs.NotFoundMsg("label content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 			"Label document changed since it was loaded; reload before saving", err,
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "label", "operation", "map_content_block_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks")
+		return errs.WithCause(errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks"), err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
 	default:

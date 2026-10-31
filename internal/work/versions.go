@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -29,14 +28,7 @@ import (
 func (s *WorkService) ListWorkVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListWorkVersionsRequest],
-) (_ *connect.Response[managev1.ListWorkVersionsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListWorkVersions", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListWorkVersionsResponse], error) {
 	var root model.Work
 	if err := s.db.WithContext(ctx).Select("id", "status").Take(&root, "id = ?", req.Msg.WorkId).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -88,8 +80,7 @@ func (s *WorkService) ListWorkVersions(
 	for index := range versions {
 		protoVersions[index], err = s.toProtoWorkVersion(&versions[index], contributorNames)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "ListWorkVersions", failurecause.Attr(err))
-			return nil, errs.FailedPrecondition("Work Version typed snapshot is invalid")
+			return nil, errs.WithCause(errs.FailedPrecondition("Work Version typed snapshot is invalid"), failurecause.ServerFault(err))
 		}
 	}
 
@@ -111,14 +102,7 @@ func (s *WorkService) ListWorkVersions(
 func (s *WorkService) RestoreWorkVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.RestoreWorkVersionRequest],
-) (_ *connect.Response[managev1.Work], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "RestoreWorkVersion", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Work], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
@@ -129,8 +113,7 @@ func (s *WorkService) RestoreWorkVersion(
 	}
 	versionEnvelope, versionDocument, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "RestoreWorkVersion", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Work Version typed snapshot is invalid")
+		return nil, errs.WithCause(errs.FailedPrecondition("Work Version typed snapshot is invalid"), failurecause.ServerFault(err))
 	}
 	if versionEnvelope.Title == nil || strings.TrimSpace(*versionEnvelope.Title) == "" {
 		return nil, errs.FailedPrecondition("Work Version source title is invalid")

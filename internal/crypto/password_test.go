@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -67,6 +68,10 @@ func TestPasswordHasherRejectsInvalidHashFormats(t *testing.T) {
 			ok, err := hasher.Verify("password", tc.hash)
 			assert.False(t, ok)
 			assert.True(t, errors.Is(err, tc.err))
+			assert.True(t, failurecause.IsServerFault(err), "a stored hash that cannot be decoded needs an operator")
+			if len(tc.hash) >= 4 {
+				assert.NotContains(t, failurecause.Message(err), tc.hash)
+			}
 			assert.True(t, hasher.NeedsRehash(tc.hash))
 		})
 	}

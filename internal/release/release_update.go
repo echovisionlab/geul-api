@@ -2,7 +2,6 @@ package release
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -23,14 +21,7 @@ import (
 func (s *ReleaseService) UpdateRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateReleaseRequest],
-) (_ *connect.Response[managev1.UpdateReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.UpdateReleaseResponse], error) {
 	updates, err := s.buildReleaseUpdates(ctx, req.Msg)
 	if err != nil {
 		return nil, err
@@ -46,10 +37,7 @@ func (s *ReleaseService) UpdateRelease(
 		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageReleaseContentUpdatedEvent(req.Msg))
 	}); err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			if err != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "UpdateRelease", failurecause.Attr(err))
-			}
-			return nil, errs.SlugAlreadyExists("release", "slug")
+			return nil, errs.WithCause(errs.SlugAlreadyExists("release", "slug"), err)
 		}
 		return nil, classifyReleaseMutationError(err, req.Msg.Id)
 	}

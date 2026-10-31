@@ -3,7 +3,6 @@ package public
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -50,20 +49,8 @@ func NewService(db *gorm.DB, targets TargetResolver) *ShareLinkService {
 func (s *ShareLinkService) Validate(
 	ctx context.Context,
 	req *connect.Request[openv1.ValidateShareLinkRequest],
-) (_ *connect.Response[openv1.ValidateShareLinkResponse], returnErr error) {
+) (*connect.Response[openv1.ValidateShareLinkResponse], error) {
 	var link model.ShareLink
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		private := []string{req.Msg.GetToken(), req.Msg.GetPassword()}
-		if link.PasswordHash != nil {
-			private = append(private, *link.PasswordHash)
-		}
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink/public.Validate", "outcome", "failed", "entity_type", link.EntityType, "entity_id", link.EntityID, failurecause.Attr(returnErr, private...))
-	}()
-
 	token := req.Msg.Token
 	if token == "" {
 		return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
@@ -71,7 +58,6 @@ func (s *ShareLinkService) Validate(
 
 	if err := s.db.WithContext(ctx).First(&link, "token = ?", token).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "sharelink", "operation", "validate_share_link", "outcome", "failed", failurecause.Attr(err), "reason", "not_found")
 			return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
 		}
 		return nil, errs.Internal(err)
@@ -131,7 +117,7 @@ func (s *ShareLinkService) Validate(
 		}
 		match, err := crypto.NewPasswordHasher(nil).Verify(req.Msg.GetPassword(), *link.PasswordHash)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, errs.Internal(failurecause.WithPrivate(err, *link.PasswordHash))
 		}
 		if !match {
 			return connect.NewResponse(response), nil

@@ -5,11 +5,12 @@ package post_test
 import (
 	"context"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"google.golang.org/protobuf/proto"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"google.golang.org/protobuf/proto"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"

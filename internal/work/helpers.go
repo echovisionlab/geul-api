@@ -34,9 +34,7 @@ func normalizeInitialSourceLocale(ctx context.Context, db *gorm.DB, locale strin
 			return *normalized
 		}
 	} else {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "normalizeInitialSourceLocale", failurecause.Attr(err))
-		}
+		slog.ErrorContext(ctx, "Translation runtime settings lookup failed; using the default Work source locale", "domain", "work", "operation", "resolve_initial_source_locale", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }
@@ -51,10 +49,8 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 			if locale := localization.NormalizeSupportedLocale(*preferred); locale != nil {
 				return *locale
 			}
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
-			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "Member preferred locale lookup failed; inferring Work source locale from the request", "domain", "work", "operation", "resolve_initial_source_locale", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {

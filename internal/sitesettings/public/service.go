@@ -59,15 +59,7 @@ func NewManifestService(
 func (s *ManifestService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetRequest],
-) (_ *connect.Response[openv1.GetResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings/public.Get", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.GetResponse], error) {
 	user, err := s.getUserContext(ctx)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -172,22 +164,21 @@ func (s *ManifestService) buildSettings(ctx context.Context, settings *model.Sit
 	}
 	loaderAssets, err := s.projection.LoaderAssets(ctx)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to load manifest loader URLs", "failure_cause", failurecause.Message(err))
 		return nil, err
 	}
 	result.LoaderAssets = loaderAssets
-	result.SocialLinks = manifestSocialLinks(settings.SocialLinks)
+	result.SocialLinks = manifestSocialLinks(ctx, settings.SocialLinks)
 	return result, nil
 }
 
-func manifestSocialLinks(raw []byte) map[string]string {
+func manifestSocialLinks(ctx context.Context, raw []byte) map[string]string {
 	result := make(map[string]string)
 	if len(raw) == 0 {
 		return result
 	}
 	var values structured.Fields
 	if err := json.Unmarshal(raw, &values); err != nil {
-		slog.WarnContext(context.Background(), "failed to unmarshal social_links for manifest", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Stored social_links site setting is not valid JSON; serving no social links", "domain", "sitesettings", "operation", "decode_stored_setting", "outcome", "failed", "key", "social_links", failurecause.Attr(err))
 		return result
 	}
 	for key, value := range values {

@@ -2,6 +2,7 @@ package contentblock
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/google/uuid"
@@ -122,7 +123,7 @@ func localizedData(
 	return json.RawMessage(`{}`)
 }
 
-func changedMutationLocales(before, after aggregate, mutation persistedMutation) []string {
+func changedMutationLocales(before, after aggregate, mutation persistedMutation) ([]string, error) {
 	affectedBlocks := make(map[uuid.UUID]struct{}, len(mutation.upsertOrder)+len(mutation.deleteOrder)+len(mutation.localeMutations))
 	for _, blockID := range mutation.upsertOrder {
 		affectedBlocks[blockID] = struct{}{}
@@ -156,12 +157,18 @@ func changedMutationLocales(before, after aggregate, mutation persistedMutation)
 		for blockID := range affectedBlocks {
 			beforeData, beforeExists := before.locales[blockID][locale]
 			afterData, afterExists := after.locales[blockID][locale]
-			if beforeExists != afterExists ||
-				(beforeExists && !sameCanonicalJSON(beforeData, afterData)) {
+			same := beforeExists == afterExists
+			if same && beforeExists {
+				var err error
+				if same, err = sameCanonicalJSON(beforeData, afterData); err != nil {
+					return nil, fmt.Errorf("compare Block %s locale %s: %w", blockID, locale, err)
+				}
+			}
+			if !same {
 				changed = append(changed, locale)
 				break
 			}
 		}
 	}
-	return changed
+	return changed, nil
 }

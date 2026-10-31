@@ -3,7 +3,6 @@ package artist
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -11,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -127,14 +125,7 @@ func NewInternalArtistService(db *gorm.DB, asyncPublisher AsyncPublisher, spiceD
 func (s *InternalArtistService) LoadArtistBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadArtistBlockDocumentRequest],
-) (_ *connect.Response[intrav1.LoadArtistBlockDocumentResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "LoadArtistBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.LoadArtistBlockDocumentResponse], error) {
 	locale, err := normalizeArtistDocumentLocale(req.Msg.Locale)
 	if err != nil {
 		return nil, err
@@ -195,14 +186,7 @@ func (s *InternalArtistService) LoadArtistBlockDocument(
 func (s *InternalArtistService) ApplyArtistBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyArtistBlockBatchRequest],
-) (_ *connect.Response[intrav1.ApplyArtistBlockBatchResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ApplyArtistBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.ApplyArtistBlockBatchResponse], error) {
 	if s.contentBlocks == nil || req.Msg == nil || req.Msg.Batch == nil {
 		return nil, errs.Required("batch")
 	}
@@ -231,9 +215,6 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 	}
 	expectedDocumentRevision, err := uuid.Parse(req.Msg.Batch.ExpectedRevision)
 	if err != nil || expectedDocumentRevision == uuid.Nil {
-		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ApplyArtistBlockBatch", failurecause.Attr(err))
-		}
 		return nil, errs.InvalidArgument("batch.expected_revision", "must be a UUID")
 	}
 	now := time.Now().UTC()
@@ -352,14 +333,7 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateArtistLocaleMetadataRequest],
-) (_ *connect.Response[intrav1.UpdateArtistLocaleMetadataResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UpdateArtistLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.UpdateArtistLocaleMetadataResponse], error) {
 	locale, err := normalizeArtistDocumentLocale(req.Msg.Locale)
 	if err != nil {
 		return nil, err
@@ -371,7 +345,6 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 	if locale != sourceAuthority.SourceLocale {
 		expectedRevision, parseErr := uuid.Parse(req.Msg.ExpectedRevision)
 		if parseErr != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "UpdateArtistLocaleMetadata", failurecause.Attr(parseErr))
 			return nil, errs.InvalidArgument("expected_revision", "must be a UUID")
 		}
 		documentID, loadErr := loadCreativeContentDocumentID(ctx, s.db, artistContentEntity, req.Msg.ArtistId)

@@ -3,7 +3,6 @@ package account
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -193,8 +191,7 @@ func (s *AccountEmailChangeLifecycle) replaceAccountEmailChangeStage(
 	}
 	if err := tx.Create(&request).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(tx.Statement.Context, "Operation failed", "reason", "account_email_change_conflict", failurecause.Attr(err), "identity_id", stage.identityID, "request_id", request.ID)
-			return ErrAccountEmailChangeConflict
+			return fmt.Errorf("%w: %w", ErrAccountEmailChangeConflict, err)
 		}
 		return err
 	}

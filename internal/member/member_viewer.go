@@ -2,14 +2,13 @@ package member
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"net/http"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -28,13 +27,11 @@ func (s *MemberService) currentMySections(
 	}
 	subject, err := auth.NewAccountIdentitySubject(identityID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
-		return nil, errs.InvalidSession()
+		return nil, errs.WithCause(errs.InvalidSession(), err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
-		return nil, errs.InvalidSession()
+		return nil, errs.WithCause(errs.InvalidSession(), err)
 	}
 	resources := []struct {
 		lookup  policyv1.ResourceLookup
@@ -47,8 +44,7 @@ func (s *MemberService) currentMySections(
 	for _, resource := range resources {
 		ids, lookupErr := s.spicedb.LookupResources(ctx, resource.lookup, actor)
 		if lookupErr != nil {
-			slog.ErrorContext(ctx, "Operation failed", "reason", "section_resource_lookup_failed", failurecause.Attr(lookupErr))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), fmt.Errorf("lookup section resources: %w", lookupErr))
 		}
 		if len(ids) != 0 {
 			sections = append(sections, resource.section)
@@ -100,7 +96,6 @@ func (s *MemberService) GetCurrentSession(
 	}
 	assets, err := s.loadAvatarAssets(ctx, []string{member.ID})
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetCurrentSession", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	account, err := s.sessionAccountSummary(ctx, member.ID)

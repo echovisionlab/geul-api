@@ -5,14 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -25,12 +22,7 @@ func (h *UnifiedAuthHandler) handleInitialLoginCodeChallenge(
 ) {
 	_, exists, err := h.identityFinder.FindIdentityByCredentialIdentifier(request.Context(), identifier)
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "find_login_identity", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err, privateBody))
+		recordAuthenticationFailure(request.Context(), fmt.Errorf("find login identity: %w", err), identifier)
 		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
@@ -38,7 +30,7 @@ func (h *UnifiedAuthHandler) handleInitialLoginCodeChallenge(
 	if !exists {
 		blocked, err = h.registrationEmailReuseBlocked(request.Context(), identifier)
 		if err != nil {
-			slog.ErrorContext(request.Context(), "Operation failed", "reason", "check_registration_reuse", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+			recordAuthenticationFailure(request.Context(), err, identifier)
 			writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 			return
 		}
@@ -64,7 +56,7 @@ func (h *UnifiedAuthHandler) handleBlockedRegistrationCode(
 	}
 	blocked, err := h.registrationEmailReuseBlocked(request.Context(), registrationEmail)
 	if err != nil {
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "check_registration_reuse", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		recordAuthenticationFailure(request.Context(), err, registrationEmail)
 		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return true
 	}
@@ -124,7 +116,7 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 		if err == nil {
 			err = errors.New("registration flow ID is missing")
 		}
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "decode_registration_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		recordAuthenticationFailure(request.Context(), fmt.Errorf("decode registration flow: %w", err))
 		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
@@ -143,7 +135,6 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 	} else {
 		payload, err = buildRegistrationCodePayload(originalBody, contentType, registrationFlow, true)
 		if err != nil {
-			slog.WarnContext(request.Context(), "Operation failed", "reason", "build_registration_payload", "status_code", http.StatusBadRequest, failurecause.Attr(err))
 			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 			return
 		}
@@ -214,7 +205,7 @@ func (h *UnifiedAuthHandler) copyUndeliveredCodeFlow(
 ) {
 	var payload unifiedAuthObject
 	if err := json.Unmarshal(response.Body, &payload); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "decode_undelivered_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		recordAuthenticationFailure(ctx, fmt.Errorf("decode undelivered flow: %w", err))
 		writeKratosProxyError(ctx, w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
@@ -236,7 +227,7 @@ func (h *UnifiedAuthHandler) copyUndeliveredCodeFlow(
 	payload["state"] = "sent_email"
 	body, err := json.Marshal(payload)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "encode_undelivered_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		recordAuthenticationFailure(ctx, fmt.Errorf("encode undelivered flow: %w", err))
 		writeKratosProxyError(ctx, w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}

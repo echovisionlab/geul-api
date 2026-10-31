@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -111,14 +109,7 @@ func NewSeriesService(
 func (s *SeriesService) ListSeriesPosts(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSeriesPostsRequest],
-) (_ *connect.Response[managev1.ListSeriesPostsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "ListSeriesPosts", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListSeriesPostsResponse], error) {
 	var posts []seriesPostRow
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := s.requireSeriesViewAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
@@ -149,14 +140,7 @@ func (s *SeriesService) ListSeriesPosts(
 func (s *SeriesService) ListMySeries(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMySeriesRequest],
-) (_ *connect.Response[managev1.ListMySeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "ListMySeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListMySeriesResponse], error) {
 	seriesIDs, err := s.lookupSeriesResources(ctx, policyv1.PostSeries.LookupView())
 	if err != nil {
 		return nil, err
@@ -239,14 +223,7 @@ func (s *SeriesService) ListMySeries(
 func (s *SeriesService) ListSeriesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSeriesAdminRequest],
-) (_ *connect.Response[managev1.ListSeriesAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "ListSeriesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListSeriesAdminResponse], error) {
 	listCan, err := policyv1.PostSeries.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -330,14 +307,7 @@ func (s *SeriesService) ListSeriesAdmin(
 func (s *SeriesService) ListSeriesSimple(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSeriesSimpleRequest],
-) (_ *connect.Response[managev1.ListSeriesSimpleResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "ListSeriesSimple", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListSeriesSimpleResponse], error) {
 	seriesIDs, err := s.lookupSeriesResources(ctx, policyv1.PostSeries.LookupManage())
 	if err != nil {
 		return nil, err
@@ -375,14 +345,7 @@ func (s *SeriesService) ListSeriesSimple(
 func (s *SeriesService) CreateSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateSeriesRequest],
-) (_ *connect.Response[managev1.Series], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "CreateSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Series], error) {
 	// Validate required fields
 	title := strings.TrimSpace(req.Msg.Title)
 	if title == "" {
@@ -466,8 +429,7 @@ func (s *SeriesService) CreateSeries(
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "CreateSeries", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("series", slug)
+			return nil, errs.WithCause(errs.SlugAlreadyExists("series", slug), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -486,14 +448,7 @@ func (s *SeriesService) CreateSeries(
 func (s *SeriesService) CheckSeriesSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckSeriesSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckSeriesSlugAvailableResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "CheckSeriesSlugAvailable", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.CheckSeriesSlugAvailableResponse], error) {
 	slug, err := validateSeriesSlug(req.Msg.Slug)
 	if err != nil {
 		return nil, err
@@ -537,14 +492,7 @@ func (s *SeriesService) CheckSeriesSlugAvailable(
 func (s *SeriesService) DeleteSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteSeriesRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "DeleteSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		var series model.Series
 		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.Id, policyv1.PostSeries.Delete); err != nil {
@@ -562,8 +510,7 @@ func (s *SeriesService) DeleteSeries(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "DeleteSeries", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		deleteRelationships, restoreRelationships, err := seriesAuthorizationSnapshotMutations(series.ID, snapshots)
 		if err != nil {
@@ -626,14 +573,7 @@ func (s *SeriesService) DeleteSeries(
 func (s *SeriesService) SetSeriesFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetSeriesFeaturedImageRequest],
-) (_ *connect.Response[managev1.SetSeriesFeaturedImageResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "SetSeriesFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.SetSeriesFeaturedImageResponse], error) {
 	var imageAsset *commonv1.AssetRef
 	var ogGenerationRunID *string
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -686,14 +626,7 @@ func (s *SeriesService) SetSeriesFeaturedImage(
 func (s *SeriesService) DeleteSeriesFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteSeriesFeaturedImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "DeleteSeriesFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var ogGenerationRunID *string
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var series model.Series

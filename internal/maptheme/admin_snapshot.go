@@ -4,13 +4,11 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -87,8 +85,7 @@ func (s *MapThemeService) UpdateMapThemeSnapshot(ctx context.Context, themeID st
 	})
 	if err != nil {
 		if stderrors.Is(err, errMapThemeRevisionConflict) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "UpdateMapThemeSnapshot", failurecause.Attr(err))
-			return nil, false, errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving")
+			return nil, false, errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving"), err)
 		}
 		return nil, false, errs.Internal(err)
 	}

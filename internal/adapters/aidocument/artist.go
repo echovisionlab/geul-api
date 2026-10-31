@@ -109,7 +109,7 @@ func (p *artistPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == artistdomain.AIDocumentExecutionValidate,
+			err, mode == artistdomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

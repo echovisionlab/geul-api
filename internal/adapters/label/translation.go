@@ -26,7 +26,7 @@ func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB,
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
 		var preferred *string
 		if err := db.WithContext(ctx).Model(&model.Member{}).Select("preferred_locale").Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).Scan(&preferred).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to load preferred source locale", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Preferred source locale lookup failed; inferring the locale from the request", failurecause.Attr(err))
 		} else if preferred != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferred); locale != nil {
 				return *locale
@@ -37,7 +37,7 @@ func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB,
 		return *locale
 	}
 	if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
-		slog.ErrorContext(ctx, "Failed to load source locale settings", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Source locale settings load failed; using the default locale", failurecause.Attr(err))
 	} else {
 		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {
 			return *locale
@@ -51,7 +51,7 @@ func (*Translation) NormalizeInitialSourceLocale(ctx context.Context, db *gorm.D
 		return *normalized
 	}
 	if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
-		slog.ErrorContext(ctx, "Failed to load source locale settings", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Source locale settings load failed; using the default locale", failurecause.Attr(err))
 	} else {
 		if normalized := localization.NormalizeSupportedLocale(settings.DefaultLocale); normalized != nil {
 			return *normalized

@@ -50,12 +50,12 @@ func (milestone progressMilestone) step() progressStep {
 	}
 }
 
-func (p *Processor) createWorkDir(event *apiv1.WaveformGenerateEvent, startedAt time.Time) (string, error) {
+func (p *Processor) createWorkDir(ctx context.Context, event *apiv1.WaveformGenerateEvent, startedAt time.Time) (string, error) {
 	workDir, err := p.workDirs.CreateJobWorkDir("waveform-" + event.EventId)
 	if err != nil {
 		return "", fmt.Errorf("create work dir: %w", err)
 	}
-	slog.Info("Waveform work directory created",
+	slog.InfoContext(ctx, "Waveform work directory created",
 		"job_id", event.EventId,
 		"work_dir", workDir,
 		"elapsed_ms", time.Since(startedAt).Milliseconds(),
@@ -63,9 +63,9 @@ func (p *Processor) createWorkDir(event *apiv1.WaveformGenerateEvent, startedAt 
 	return workDir, nil
 }
 
-func (p *Processor) cleanupWorkDir(eventID string) {
+func (p *Processor) cleanupWorkDir(ctx context.Context, eventID string) {
 	if err := p.workDirs.CleanupJobWorkDir("waveform-" + eventID); err != nil {
-		slog.Error("Failed to cleanup waveform work dir", "job_id", eventID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Failed to cleanup waveform work dir", "job_id", eventID, failurecause.Attr(err))
 	}
 }
 
@@ -78,7 +78,7 @@ func (p *Processor) downloadSource(
 	source := event.GetSource()
 	sourcePath := filepath.Join(workDir, "source."+source.GetExtension())
 	p.publishProgress(ctx, event, downloadStarted.step())
-	slog.Info("Waveform source download started",
+	slog.InfoContext(ctx, "Waveform source download started",
 		"job_id", event.EventId,
 		"source_path", sourcePath,
 		"source_key", source.GetObjectKey(),
@@ -86,7 +86,7 @@ func (p *Processor) downloadSource(
 	if err := p.storage.Download(ctx, source.GetObjectKey(), sourcePath); err != nil {
 		return "", fmt.Errorf("download source asset: %w", err)
 	}
-	slog.Info("Waveform source download completed",
+	slog.InfoContext(ctx, "Waveform source download completed",
 		"job_id", event.EventId,
 		"elapsed_ms", time.Since(startedAt).Milliseconds(),
 	)
@@ -101,7 +101,7 @@ func (p *Processor) generatePeaks(
 	startedAt time.Time,
 ) ([][]float64, error) {
 	p.publishProgress(ctx, event, peaksStarted.step())
-	slog.Info("Waveform peak generation started", "job_id", event.EventId, "source_path", sourcePath)
+	slog.InfoContext(ctx, "Waveform peak generation started", "job_id", event.EventId, "source_path", sourcePath)
 	peaks, err := p.generator.GeneratePeaks(ctx, sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("extract waveform: %w", err)
@@ -112,7 +112,7 @@ func (p *Processor) generatePeaks(
 	if channels > 0 {
 		points = len(peaks[0])
 	}
-	slog.Info("Waveform peak generation completed",
+	slog.InfoContext(ctx, "Waveform peak generation completed",
 		"job_id", event.EventId,
 		"channels", channels,
 		"points", points,
@@ -147,7 +147,7 @@ func (p *Processor) uploadWaveform(
 ) (*apiv1.WaveformCompleteEvent, error) {
 	output := event.GetOutput()
 	p.publishProgress(ctx, event, uploadStarted.step())
-	slog.Info("Waveform upload started", "job_id", event.EventId, "waveform_key", output.GetObjectKey())
+	slog.InfoContext(ctx, "Waveform upload started", "job_id", event.EventId, "waveform_key", output.GetObjectKey())
 	complete := &apiv1.WaveformCompleteEvent{
 		EventId:          event.EventId,
 		EntityType:       event.EntityType,
@@ -164,7 +164,7 @@ func (p *Processor) uploadWaveform(
 	if err := p.storage.UploadCompleted(ctx, output.GetObjectKey(), path, output.GetMimeType(), completion); err != nil {
 		return nil, fmt.Errorf("upload waveform asset: %w", err)
 	}
-	slog.Info("Waveform upload completed",
+	slog.InfoContext(ctx, "Waveform upload completed",
 		"job_id", event.EventId,
 		"waveform_key", output.GetObjectKey(),
 		"elapsed_ms", time.Since(startedAt).Milliseconds(),

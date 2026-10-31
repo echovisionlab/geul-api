@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -879,7 +878,8 @@ func restrictedFileDownloadMemberMatchesFilterSegment(
 	}
 	requested, err := normalizeFileDownloadAccountPermissions(config.AccountRoles)
 	if err != nil {
-		slog.Error("Invalid stored file download account permissions", failurecause.Attr(err))
+		// resolveRestrictedFileDownloadPermissions already failed the request
+		// for these stored permissions; never match on them.
 		return false
 	}
 	if len(requested) > 0 {
@@ -917,7 +917,8 @@ func resolveRestrictedFileDownloadPermissions(
 		}
 		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)
 		if err != nil {
-			return nil, err
+			// The permissions come from a stored segment, not from this request.
+			return nil, failurecause.ServerFault(err)
 		}
 		for _, permission := range permissions {
 			requested[permission] = struct{}{}
@@ -937,13 +938,11 @@ func resolveRestrictedFileDownloadPermissions(
 		}
 		decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 		if err != nil {
-			slog.WarnContext(ctx, "resolveRestrictedFileDownloadPermissions: AuthenticationRequired", failurecause.Attr(err))
-			return nil, errs.AuthenticationRequired()
+			return nil, errs.WithCause(errs.AuthenticationRequired(), err)
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			slog.ErrorContext(ctx, "resolveRestrictedFileDownloadPermissions: DependencyUnavailable", failurecause.Attr(checkErr))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 		}
 		resolved[permission] = allowed
 	}

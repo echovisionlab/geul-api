@@ -259,7 +259,7 @@ func (s *FileService) checkRoleAndSpiceDBUploadPermission(
 		}
 		return nil
 	}
-	return s.checkSpiceDBEntityUploadPermission(ctx, target, entityID, userID)
+	return s.checkSpiceDBEntityUploadPermission(ctx, target, entityID)
 }
 
 func (s *FileService) requireUploadRole(
@@ -287,7 +287,6 @@ func (s *FileService) checkSpiceDBEntityUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
-	userID string,
 ) error {
 	if !target.requiresSpiceDBCheck || target.resourceType == "" || entityID == "" {
 		return nil
@@ -305,13 +304,10 @@ func (s *FileService) checkSpiceDBEntityUploadPermission(
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "SpiceDB permission check failed during part upload",
-			failurecause.Attr(err),
-			"resourceType", target.resourceType,
-			"entityID", entityID,
-			"userID", userID,
+		return failurecause.WithAttrs(
+			fmt.Errorf("permission check failed: %w", err),
+			slog.String("resource_type", target.resourceType), slog.String("entity_id", entityID),
 		)
-		return fmt.Errorf("permission check failed")
 	}
 	if !hasPermission {
 		return fmt.Errorf("no permission to upload to this entity")

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -41,15 +40,7 @@ type formUpdatePlan struct {
 func (s *FormService) UpdateForm(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFormRequest],
-) (rpcResponse *connect.Response[managev1.Form], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "UpdateForm", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.Form], error) {
 	var form model.Form
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
@@ -334,10 +325,7 @@ func (s *FormService) applyFormUpdate(
 	if plan.nextSourceTitle != nil || plan.nextSourceSchema != nil {
 		documentID, err := uuid.Parse(form.ContentDocumentID)
 		if err != nil || documentID == uuid.Nil {
-			if err != nil {
-				slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(err))
-			}
-			return errs.FailedPrecondition("Form Content Document is not initialized")
+			return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), failurecause.ServerFault(err))
 		}
 		var documentRevision uuid.UUID
 		if err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Take(&documentRevision).Error; err != nil {

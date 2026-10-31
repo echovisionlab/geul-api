@@ -3,11 +3,9 @@ package member
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -38,7 +36,6 @@ func (s *MemberService) loadCurrentSessionMember(ctx context.Context, memberID s
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("member", memberID)
 		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "loadCurrentSessionMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	return &member, nil
@@ -130,7 +127,6 @@ func loadAuthorizationEligibleMemberSummary(
 	}
 	summaries, err := loadMemberSummaries(ctx, db, cdnDomain, []string{memberID})
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "loadAuthorizationEligibleMemberSummary", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	summary := summaries[memberID]
@@ -195,7 +191,6 @@ func (s *MemberService) memberProfileByID(ctx context.Context, memberID string) 
 	}
 	members, err := s.loadMembers(ctx, []string{memberID})
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "memberProfileByID", failurecause.Attr(err))
 		return nil, nil, errs.Internal(err)
 	}
 	if len(members) != 1 {
@@ -203,7 +198,6 @@ func (s *MemberService) memberProfileByID(ctx context.Context, memberID string) 
 	}
 	assets, err := s.loadAvatarAssets(ctx, []string{memberID})
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "memberProfileByID", failurecause.Attr(err))
 		return nil, nil, errs.Internal(err)
 	}
 	return &members[0], memberProfile(members[0], assets[memberID]), nil

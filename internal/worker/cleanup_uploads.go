@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -32,12 +31,14 @@ func (h *Handlers) handleCleanupIncompleteUploads(ctx context.Context) error {
 		return err
 	}
 
-	var cleanupErr error
-	var cleaned int64
+	var cleaned, failed int64
 	for _, session := range expiredUploads {
 		removed, err := h.cleanupExpiredUploadSession(ctx, session, cutoff, now)
 		if err != nil {
-			cleanupErr = stderrors.Join(cleanupErr, err)
+			// The next run retries the session; this is the only record of why it
+			// was left behind.
+			failed++
+			slog.ErrorContext(ctx, "Expired upload session cleanup failed", append(failurecause.Args(err), "upload_id", session.UploadID, "file_id", session.FileID, "upload_type", session.UploadType)...)
 			continue
 		}
 		if removed {
@@ -46,9 +47,12 @@ func (h *Handlers) handleCleanupIncompleteUploads(ctx context.Context) error {
 	}
 
 	if cleaned > 0 {
-		slog.Info("Cleaned up old upload sessions", "count", cleaned)
+		slog.InfoContext(ctx, "Cleaned up old upload sessions", "count", cleaned)
 	}
-	return cleanupErr
+	if failed > 0 {
+		return fmt.Errorf("%d of %d expired upload sessions were not cleaned up", failed, len(expiredUploads))
+	}
+	return nil
 }
 
 type expiredUploadSession struct {
@@ -134,12 +138,7 @@ func (h *Handlers) cleanupExpiredUploadSession(
 		if _, err := h.publishExpiredFileIngest(ctx, session, expiredAt); err != nil {
 			// This event is a realtime UI projection. Storage cleanup remains
 			// authoritative and must not be retained until the publisher recovers.
-			slog.Warn(
-				"Failed to publish expired file ingest lifecycle before cleanup",
-				"failure_cause", failurecause.Message(err),
-				"uploadId", session.UploadID,
-				"fileId", session.FileID,
-			)
+			slog.WarnContext(ctx, "Failed to publish expired file ingest lifecycle before cleanup", append(failurecause.Args(err), "upload_id", session.UploadID, "file_id", session.FileID, "upload_type", session.UploadType)...)
 		}
 	}
 
@@ -179,35 +178,33 @@ func isExpiredFileIngestLifecycleUploadType(uploadType string) bool {
 	}
 }
 
-func isExpiredFileIngestLifecyclePublishable(session expiredUploadSession) bool {
+// expiredFileIngestLifecycleIdentityError reports why an expired session
+// cannot identify the file ingest lifecycle it would end, or nil.
+func expiredFileIngestLifecycleIdentityError(session expiredUploadSession) error {
 	entityType := expiredUploadEntityType(session)
-	entityID := expiredUploadEntityID(session, entityType)
 	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED ||
-		entityID == "" ||
+		expiredUploadEntityID(session, entityType) == "" ||
 		session.FileID == "" ||
 		session.RequestedMime == "" {
-		return false
+		return fmt.Errorf("entity, file or requested MIME type is missing")
 	}
 	_, err := expiredUploadProjectionIdentity(session, entityType)
-	if err != nil {
-		slog.Warn("Expired upload projection identity rejected", "upload_id", session.UploadID, "file_id", session.FileID, "upload_type", session.UploadType, "entity_type", entityType.String(), "failure_cause", failurecause.Message(err))
-	}
-	return err == nil
+	return err
 }
 
 func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session expiredUploadSession, expiredAt time.Time) (bool, error) {
 	entityType := expiredUploadEntityType(session)
 	entityID := expiredUploadEntityID(session, entityType)
-	if !isExpiredFileIngestLifecyclePublishable(session) {
-		slog.Warn(
-			"Skipping expired file ingest lifecycle without required identity",
-			"uploadType", session.UploadType,
-			"entityType", entityType.String(),
-			"entityId", entityID,
-			"fileId", session.FileID,
-			"uploadId", session.UploadID,
-			"slotId", uploadStringValue(session.SlotID),
-			"attemptId", uploadStringValue(session.AttemptID),
+	if err := expiredFileIngestLifecycleIdentityError(session); err != nil {
+		slog.WarnContext(ctx, "Skipping expired file ingest lifecycle without required identity",
+			"failure_cause", failurecause.Message(err),
+			"upload_type", session.UploadType,
+			"entity_type", entityType.String(),
+			"entity_id", entityID,
+			"file_id", session.FileID,
+			"upload_id", session.UploadID,
+			"slot_id", uploadStringValue(session.SlotID),
+			"attempt_id", uploadStringValue(session.AttemptID),
 		)
 		return false, nil
 	}
@@ -220,16 +217,7 @@ func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session expired
 		return false, fmt.Errorf("file ingest lifecycle publisher is not configured")
 	}
 	if err := h.fileIngest.PublishFileIngest(ctx, event); err != nil {
-		slog.Warn(
-			"Failed to publish expired file ingest lifecycle",
-			"failure_cause", failurecause.Message(err),
-			"uploadType", session.UploadType,
-			"entityType", entityType.String(),
-			"entityId", entityID,
-			"fileId", session.FileID,
-			"uploadId", session.UploadID,
-		)
-		return false, err
+		return false, failurecause.WithAttrs(err, slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))
 	}
 	return true, nil
 }
@@ -285,8 +273,7 @@ func expiredUploadProjectionIdentity(
 	if session.ExpectedCurrentFileID != nil {
 		value := strings.TrimSpace(*session.ExpectedCurrentFileID)
 		if _, err := uuid.Parse(value); err != nil {
-			slog.Warn("Invalid expired upload projection identity", "upload_id", session.UploadID, "file_id", session.FileID, "failure_cause", failurecause.Message(err))
-			return nil, fmt.Errorf("expected current file ID is invalid")
+			return nil, fmt.Errorf("expected current file ID is invalid: %w", err)
 		}
 		expectedCurrentFileID = &value
 	}

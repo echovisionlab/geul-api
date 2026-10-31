@@ -49,13 +49,7 @@ func (s *ClientService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetClientRequest],
 ) (_ *connect.Response[openv1.GetClientResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.GetClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
 
 	var client model.Client
 	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
@@ -73,15 +67,7 @@ func (s *ClientService) Get(
 func (s *ClientService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListClientsRequest],
-) (_ *connect.Response[openv1.ListClientsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog/public.ListClients", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.ListClientsResponse], error) {
 	var clients []model.Client
 	var total int64
 

@@ -90,6 +90,12 @@ func writeKratosProxyError(ctx context.Context, w http.ResponseWriter, status in
 			"message": message,
 		},
 	}); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "write_authentication_error_response", "status_code", status, failurecause.Attr(err))
+		slog.WarnContext(ctx, "Authentication error response write failed", "operation", "write_authentication_error_response", "status_code", status, failurecause.Attr(err))
 	}
+}
+
+// recordAuthenticationFailure gives err to the HTTP request record, which logs
+// the failed request once with the status the handler writes.
+func recordAuthenticationFailure(ctx context.Context, err error, private ...string) {
+	failurecause.RecorderFrom(ctx).Record(failurecause.Of(err, private...))
 }

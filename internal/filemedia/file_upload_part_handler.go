@@ -41,6 +41,21 @@ type multipartUploadPartRequest struct {
 	fileKey       string
 }
 
+// failureAttrs names the upload part for the HTTP request record.
+func (request multipartUploadPartRequest) failureAttrs() []slog.Attr {
+	return []slog.Attr{
+		slog.String("upload_id", request.uploadID),
+		slog.String("file_id", request.session.FileID),
+		slog.Int("part_number", int(request.partNumber)),
+	}
+}
+
+// recordUploadFailure gives err to the HTTP request record, which logs the
+// failed request once with the status the handler writes.
+func recordUploadFailure(r *http.Request, err error, attrs ...slog.Attr) {
+	failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(failurecause.WithAttrs(err, attrs...)))
+}
+
 type multipartPresignResponse struct {
 	URL       string `json:"url"`
 	ExpiresAt string `json:"expiresAt"`
@@ -81,7 +96,7 @@ func (s *FileService) rejectMultipartUploadPart(
 			http.Error(w, "Upload session is finalizing", http.StatusConflict)
 			return false
 		}
-		slog.Error("Failed to abort rejected multipart upload", failurecause.Attr(err), "uploadId", session.UploadID)
+		recordUploadFailure(r, fmt.Errorf("abort rejected multipart upload: %w", err), slog.String("upload_id", session.UploadID))
 		http.Error(w, "Failed to abort rejected upload", http.StatusInternalServerError)
 		return false
 	}
@@ -230,7 +245,7 @@ func (s *FileService) uploadAndRecordMultipartPart(
 			})
 			if err != nil {
 				if updateErr := lockedService.recordRetryableMultipartPartFailure(ctx, session, time.Now()); updateErr != nil {
-					slog.Error("Failed to preserve multipart upload session after retryable part failure",
+					slog.ErrorContext(ctx, "Failed to preserve multipart upload session after retryable part failure",
 						failurecause.Attr(updateErr),
 						"uploadId", session.UploadID,
 						"fileId", session.FileID,
@@ -326,13 +341,12 @@ func (s *FileService) validateRelayedMultipartUploadPart(
 		return false
 	}
 	if err := validateMultipartPartContentLength(request.session, request.partNumber, r.ContentLength); err != nil {
-		slog.WarnContext(r.Context(), "Upload part length rejected", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		writeMultipartPartFailure(w, progressEmitter, err.Error(), http.StatusBadRequest)
 		return false
 	}
 	claimed, err := s.claimMultipartUploadPartActivity(r.Context(), request.session.UploadID, request.session.FileID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "Failed to refresh upload session", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
+		recordUploadFailure(r, fmt.Errorf("refresh upload session: %w", err), request.failureAttrs()...)
 		http.Error(w, "Failed to refresh upload session", http.StatusInternalServerError)
 		return false
 	}
@@ -364,7 +378,7 @@ func (s *FileService) readMultipartPartBody(
 	bodyBytes, err := readMultipartUploadBody(body, r.ContentLength)
 	if err != nil {
 		s.recordInterruptedMultipartUpload(
-			r.Context(), request.session, request.uploadID, "Failed to read upload part body", err,
+			r.Context(), request.session, request.uploadID, "read upload part body", err,
 		)
 		http.Error(w, "Upload interrupted", http.StatusRequestTimeout)
 		return nil, false
@@ -384,16 +398,11 @@ func (s *FileService) uploadRelayedMultipartPart(
 		r.Context(), request.session, request.fileKey, request.partNumber, body, detectedMIME,
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
-		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return "", false
 	}
 	if err != nil {
-		slog.Error("Failed to upload relayed multipart part",
-			failurecause.Attr(err),
-			"fileKey", request.fileKey,
-			"partNumber", request.partNumber,
-		)
+		recordUploadFailure(r, fmt.Errorf("upload relayed multipart part: %w", err), request.failureAttrs()...)
 		writeMultipartPartFailure(w, progressEmitter, "Failed to upload part", http.StatusInternalServerError)
 		return "", false
 	}
@@ -409,7 +418,7 @@ func (s *FileService) prepareMultipartFirstPart(
 	prefix, uploadBody, err := readMultipartSniffPrefix(r.Body, r.ContentLength)
 	if err != nil {
 		s.recordInterruptedMultipartUpload(
-			r.Context(), request.session, request.uploadID, "Failed to read request body prefix", err,
+			r.Context(), request.session, request.uploadID, "read request body prefix", err,
 		)
 		http.Error(w, "Upload interrupted", http.StatusRequestTimeout)
 		return nil, "", false
@@ -429,7 +438,6 @@ func (s *FileService) prepareMultipartFirstPart(
 		return nil, "", false
 	}
 	if err := validateMultipartFirstPartGLB(prefix, request.session, detected); err != nil {
-		slog.WarnContext(r.Context(), "Upload GLB prefix rejected", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		s.rejectMultipartFirstPart(w, r, request.session, err.Error())
 		return nil, "", false
 	}
@@ -459,9 +467,6 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 	}
 	prefix, err := io.ReadAll(http.MaxBytesReader(w, r.Body, expectedPrefixSize))
 	if err != nil || int64(len(prefix)) != expectedPrefixSize {
-		if err != nil {
-			slog.WarnContext(r.Context(), "Failed to read upload prefix", failurecause.Attr(err), "uploadId", request.uploadID)
-		}
 		http.Error(w, "Failed to read upload prefix", http.StatusBadRequest)
 		return
 	}
@@ -480,7 +485,6 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := validateMultipartFirstPartGLB(prefix, request.session, detected); err != nil {
-		slog.WarnContext(r.Context(), "Upload GLB prefix rejected", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		s.rejectMultipartFirstPart(w, r, request.session, err.Error())
 		return
 	}
@@ -508,12 +512,11 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
-		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "Failed to verify upload prefix", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
+		recordUploadFailure(r, fmt.Errorf("verify upload prefix: %w", err), request.failureAttrs()...)
 		http.Error(w, "Failed to verify upload prefix", http.StatusInternalServerError)
 		return
 	}
@@ -562,12 +565,11 @@ func (s *FileService) HandlePresignUploadPart(w http.ResponseWriter, r *http.Req
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
-		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "Failed to prepare upload part", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
+		recordUploadFailure(r, fmt.Errorf("prepare upload part: %w", err), request.failureAttrs()...)
 		http.Error(w, "Failed to prepare upload part", http.StatusInternalServerError)
 		return
 	}
@@ -585,7 +587,7 @@ func (s *FileService) HandlePresignUploadPart(w http.ResponseWriter, r *http.Req
 		func(options *s3.PresignOptions) { options.Expires = multipartPresignTTL },
 	)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "Failed to sign upload part", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
+		recordUploadFailure(r, fmt.Errorf("sign upload part: %w", err), request.failureAttrs()...)
 		http.Error(w, "Failed to sign upload part", http.StatusInternalServerError)
 		return
 	}
@@ -645,17 +647,15 @@ func (s *FileService) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Req
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
-		slog.WarnContext(r.Context(), "Multipart upload part no longer writable", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Upload session is no longer writable", http.StatusConflict)
 		return
 	}
 	if errors.Is(err, errMultipartUploadedPartNotFound) {
-		slog.WarnContext(r.Context(), "Uploaded multipart part missing", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
 		http.Error(w, "Uploaded part was not found in object storage", http.StatusConflict)
 		return
 	}
 	if err != nil {
-		slog.Error("Failed to confirm multipart upload part", failurecause.Attr(err), "uploadId", request.uploadID, "partNumber", request.partNumber)
+		recordUploadFailure(r, fmt.Errorf("confirm multipart upload part: %w", err), request.failureAttrs()...)
 		http.Error(w, "Failed to confirm upload part", http.StatusInternalServerError)
 		return
 	}
@@ -745,17 +745,15 @@ func (s *FileService) loadMultipartUploadPartRequest(
 			status = http.StatusNotFound
 			message = "Upload session not found"
 		}
-		level := slog.LevelError
-		if status == http.StatusNotFound {
-			level = slog.LevelWarn
+		if status != http.StatusNotFound {
+			recordUploadFailure(r, fmt.Errorf("load upload session: %w", err), slog.String("upload_id", request.uploadID))
 		}
-		slog.Log(r.Context(), level, "Failed to load upload session", failurecause.Attr(err), "uploadId", request.uploadID)
 		http.Error(w, message, status)
 		return request, false
 	}
 	fileKey, err := uploadSessionObjectKey(request.session)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "Invalid upload session target", failurecause.Attr(err), "uploadId", request.uploadID, "fileId", request.session.FileID, "partNumber", request.partNumber)
+		recordUploadFailure(r, fmt.Errorf("resolve upload session target: %w", err), request.failureAttrs()...)
 		http.Error(w, "Invalid upload session target", http.StatusInternalServerError)
 		return request, false
 	}
@@ -769,7 +767,11 @@ func (s *FileService) validateMultipartUploadPartPermission(
 	request multipartUploadPartRequest,
 ) bool {
 	if err := s.checkPartUploadPermission(r.Context(), request.memberID, request.session); err != nil {
-		slog.WarnContext(r.Context(), "Upload part permission denied", failurecause.Attr(err), "member_id", request.memberID, "uploadId", request.uploadID, "fileId", request.session.FileID, "entityType", derefString(request.session.EntityType), "entityID", request.session.EntityID, "uploadType", request.session.UploadType)
+		recordUploadFailure(r, err, append(request.failureAttrs(),
+			slog.String("entity_type", derefString(request.session.EntityType)),
+			slog.String("entity_id", request.session.EntityID),
+			slog.String("upload_type", request.session.UploadType),
+		)...)
 		http.Error(w, "permission denied", http.StatusForbidden)
 		return false
 	}

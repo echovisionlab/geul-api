@@ -217,7 +217,7 @@ func TestFormAccessNormalizationAndStatusMapping(t *testing.T) {
 func TestApplyLocalizedFormDocumentHandlesNilCanonicalAndFallbackContent(t *testing.T) {
 	t.Parallel()
 
-	applyLocalizedFormDocument(nil, localizedContentSelection{
+	applyLocalizedFormDocument(t.Context(), nil, localizedContentSelection{
 		Title: new("ignored"),
 	})
 
@@ -230,7 +230,7 @@ func TestApplyLocalizedFormDocumentHandlesNilCanonicalAndFallbackContent(t *test
 	}
 	localizedTitle := "Localized title"
 	localizedText := "Contact\nNombre"
-	applyLocalizedFormDocument(document, localizedContentSelection{
+	applyLocalizedFormDocument(t.Context(), document, localizedContentSelection{
 		Title:           &localizedTitle,
 		ContentJSON:     []byte(`{"id":"schema","steps":[{"id":"step","title":"Contacto","fields":[{"id":"name","label":"Nombre"}]}]}`),
 		ContentText:     &localizedText,
@@ -249,7 +249,7 @@ func TestApplyLocalizedFormDocumentHandlesNilCanonicalAndFallbackContent(t *test
 		Schema:      sourceSchema,
 		ContentText: &sourceText,
 	}
-	applyLocalizedFormDocument(fallback, localizedContentSelection{
+	applyLocalizedFormDocument(t.Context(), fallback, localizedContentSelection{
 		ContentJSON:     rawLocalizedSchema,
 		ContentText:     &rawText,
 		SourceLocale:    "en",
@@ -274,12 +274,12 @@ func TestVerifyFormPasswordSupportsArgon2idAndLegacyBcrypt(t *testing.T) {
 
 	argonHash, err := hasher.Hash("correct")
 	require.NoError(t, err)
-	assert.True(t, svc.verifyFormPassword("correct", argonHash))
-	assert.False(t, svc.verifyFormPassword("wrong", argonHash))
-	assert.False(t, svc.verifyFormPassword("correct", "$argon2id$not-valid"))
+	assert.True(t, svc.verifyFormPassword(t.Context(), "correct", argonHash))
+	assert.False(t, svc.verifyFormPassword(t.Context(), "wrong", argonHash))
+	assert.False(t, svc.verifyFormPassword(t.Context(), "correct", "$argon2id$not-valid"))
 
 	bcryptHash, err := bcrypt.GenerateFromPassword([]byte("legacy"), bcrypt.MinCost)
 	require.NoError(t, err)
-	assert.True(t, svc.verifyFormPassword("legacy", string(bcryptHash)))
-	assert.False(t, svc.verifyFormPassword("wrong", string(bcryptHash)))
+	assert.True(t, svc.verifyFormPassword(t.Context(), "legacy", string(bcryptHash)))
+	assert.False(t, svc.verifyFormPassword(t.Context(), "wrong", string(bcryptHash)))
 }

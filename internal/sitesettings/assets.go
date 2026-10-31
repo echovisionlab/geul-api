@@ -77,7 +77,7 @@ func (s *SiteSettingService) getFileAsset(ctx context.Context, fileID string, ex
 	}
 	asset, err := s.assets.ReadyRef(ctx, s.db, fileID, expectedKind)
 	if err != nil {
-		slog.WarnContext(ctx, "ready asset referenced in site setting not found", "file_id", fileID, "failure_cause", failurecause.Message(err))
+		slog.WarnContext(ctx, "Site setting asset lookup failed; serving the setting without it", "domain", "sitesettings", "operation", "resolve_setting_asset", "outcome", "failed", "file_id", fileID, failurecause.Attr(err))
 		return nil
 	}
 	return asset

@@ -82,7 +82,7 @@ func TestBuildProtoFormUsesLocalizedFormTranslationWhenRequested(t *testing.T) {
 		ContentJSON:     []byte(`{"id":"schema-1","steps":[{"id":"step-1","title":"문의","fields":[{"id":"field-email","key":"email","label":"이메일","type":"email"}]}]}`),
 		ContentText:     new("문의\n이메일"),
 	}
-	applyLocalizedFormDocument(sourceDocument, localization)
+	applyLocalizedFormDocument(t.Context(), sourceDocument, localization)
 
 	protoForm := buildProtoFormFromResolvedDocument(
 		form,
@@ -113,7 +113,7 @@ func TestApplyLocalizedFormDocumentCanonicalizesAgainstCurrentSourceStructure(t 
 		ContentText:     new("문의\n이메일\n오래된 단계\n전화번호"),
 	}
 
-	applyLocalizedFormDocument(sourceDocument, localization)
+	applyLocalizedFormDocument(t.Context(), sourceDocument, localization)
 
 	assert.Equal(t, "문의 폼", sourceDocument.Title)
 	assert.JSONEq(

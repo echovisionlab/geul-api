@@ -3,7 +3,6 @@ package mcp
 import (
 	"encoding/base64"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,7 +50,7 @@ func NewGatewayAssertionHandler(
 		}
 		ctx, err := mcpserver.WithPrincipal(request.Context(), principal)
 		if err != nil {
-			slog.WarnContext(request.Context(), "Invalid MCP gateway principal", "failure_cause", failurecause.Message(err))
+			failurecause.RecorderFrom(request.Context()).Record(failurecause.Of(err))
 			writeAuthenticationHTTPError(response, http.StatusUnauthorized)
 			return
 		}
@@ -77,7 +76,7 @@ func decodeAuthenticatedContext(authHeaderName string, request *http.Request) (m
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != encoded {
 		if err != nil {
-			slog.WarnContext(request.Context(), "Failed to decode MCP gateway assertion", "failure_cause", failurecause.Message(err, encoded, string(raw)))
+			failurecause.RecorderFrom(request.Context()).Record(failurecause.Of(err, encoded, string(raw)))
 		}
 		clear(raw)
 		return mcpserver.Principal{}, false
@@ -88,7 +87,7 @@ func decodeAuthenticatedContext(authHeaderName string, request *http.Request) (m
 	if err != nil || len(assertion.ProtoReflect().GetUnknown()) != 0 ||
 		assertion.GetDelegationMethod() != intrav1.MCPDelegationMethod_MCP_DELEGATION_METHOD_OAUTH {
 		if err != nil {
-			slog.WarnContext(request.Context(), "Failed to parse MCP gateway assertion", "failure_cause", failurecause.Message(err, encoded))
+			failurecause.RecorderFrom(request.Context()).Record(failurecause.Of(err, encoded))
 		}
 		return mcpserver.Principal{}, false
 	}

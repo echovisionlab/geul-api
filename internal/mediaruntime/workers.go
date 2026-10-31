@@ -2,6 +2,7 @@ package mediaruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -44,7 +45,7 @@ func StartWorkers(parent context.Context, cfg *config.Config) (_ *Workers, err e
 	runtime := &Workers{group: group, cancel: cancel}
 	defer func() {
 		if err != nil {
-			_ = runtime.Close()
+			err = errors.Join(err, runtime.Close())
 		}
 	}()
 	if err = configureTranscoding(group, cfg, conn); err != nil {

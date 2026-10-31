@@ -18,13 +18,7 @@ import (
 
 // GetPostEditorDocument uses the same authorized projection as room bootstrap.
 func (s *PostService) GetPostEditorDocument(ctx context.Context, req *connect.Request[managev1.GetPostEditorDocumentRequest]) (_ *connect.Response[managev1.GetPostEditorDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.GetPostEditorDocument", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.SessionID == "" {
@@ -51,9 +45,6 @@ func (s *PostService) GetPostEditorDocument(ctx context.Context, req *connect.Re
 			_, editErr := requirePostActionForStatus(ctx, s.spiceDB, req.Msg.PostId, model.PostStatus(row.Status), policyv1.Post.Edit)
 			if editErr != nil && connect.CodeOf(editErr) != connect.CodePermissionDenied {
 				return editErr
-			}
-			if editErr != nil {
-				slog.WarnContext(ctx, "archived Post editor is read-only", "domain", "post", "operation", "check_editor_permission", "outcome", "failed", "post_id", req.Msg.PostId, failurecause.Attr(editErr))
 			}
 			editable = editErr == nil
 		}

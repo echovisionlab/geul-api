@@ -75,15 +75,7 @@ var genreCRUD = referenceCRUD[model.Genre]{
 func (s *GenreService) ListGenres(
 	ctx context.Context,
 	req *connect.Request[managev1.ListGenresRequest],
-) (_ *connect.Response[managev1.ListGenresResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListGenres", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListGenresResponse], error) {
 	genres, total, page, err := genreCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -100,15 +92,7 @@ func (s *GenreService) ListGenres(
 func (s *GenreService) ListGenresAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListGenresAdminRequest],
-) (_ *connect.Response[managev1.ListGenresAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListGenresAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListGenresAdminResponse], error) {
 	can, err := policyv1.Genre.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -140,15 +124,7 @@ func (s *GenreService) ListGenresAdmin(
 func (s *GenreService) CreateGenre(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateGenreRequest],
-) (_ *connect.Response[managev1.Genre], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateGenre", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Genre], error) {
 	can, err := policyv1.Genre.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -191,13 +167,7 @@ func (s *GenreService) UpdateGenre(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateGenreRequest],
 ) (_ *connect.Response[managev1.Genre], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateGenre", "outcome", "failed", "genre_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("genre_id", req.Msg.GetId()))
 
 	can, err := policyv1.Genre.Edit(req.Msg.Id)
 	if err != nil {
@@ -235,13 +205,7 @@ func (s *GenreService) DeleteGenre(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteGenreRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteGenre", "outcome", "failed", "genre_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("genre_id", req.Msg.GetId()))
 
 	can, err := policyv1.Genre.Delete(req.Msg.Id)
 	if err != nil {

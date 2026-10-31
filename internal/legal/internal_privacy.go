@@ -2,7 +2,6 @@ package legal
 
 import (
 	"context"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -10,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
@@ -63,14 +61,7 @@ func NewAuditedInternalPrivacyService(
 func (s *InternalPrivacyService) LoadPrivacyBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPrivacyBlockDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadPrivacyBlockDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "LoadPrivacyBlockDocument", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[intrav1.LoadPrivacyBlockDocumentResponse], error) {
 	result, err := s.legal.loadDocument(ctx, req.Msg.PrivacyId, req.Msg.Locale, req.Msg.Principal)
 	if err != nil {
 		return nil, err
@@ -100,14 +91,7 @@ func (s *InternalPrivacyService) LoadPrivacyBlockDocument(
 func (s *InternalPrivacyService) ApplyPrivacyBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyPrivacyBlockBatchRequest],
-) (rpcResponse *connect.Response[intrav1.ApplyPrivacyBlockBatchResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ApplyPrivacyBlockBatch", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[intrav1.ApplyPrivacyBlockBatchResponse], error) {
 	result, err := s.legal.applyDocumentMutation(
 		ctx, req.Msg.PrivacyId, req.Msg.Locale, req.Msg.ExpectedTargetRevision,
 		req.Msg.Batch, req.Msg.AffectedLocaleValues,
@@ -125,14 +109,7 @@ func (s *InternalPrivacyService) ApplyPrivacyBlockBatch(
 func (s *InternalPrivacyService) UpdatePrivacyLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePrivacyLocaleMetadataRequest],
-) (rpcResponse *connect.Response[intrav1.UpdatePrivacyLocaleMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "UpdatePrivacyLocaleMetadata", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[intrav1.UpdatePrivacyLocaleMetadataResponse], error) {
 	if req.Msg.Title == nil {
 		return nil, errs.InvalidArgument("title", "must be provided")
 	}

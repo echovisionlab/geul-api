@@ -3,7 +3,6 @@ package campaign
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -14,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -65,15 +63,7 @@ func NewAuditedInternalCampaignService(db *gorm.DB, auditWriter domainaudit.Appe
 func (s *InternalCampaignService) ApplyBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyCampaignBlockBatchRequest],
-) (rpcResponse *connect.Response[intrav1.ApplyCampaignBlockBatchResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "ApplyBlockBatch", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.ApplyCampaignBlockBatchResponse], error) {
 	if err := s.requireContentBlockRuntime(); err != nil {
 		return nil, err
 	}
@@ -232,15 +222,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateCampaignLocaleMetadataRequest],
-) (rpcResponse *connect.Response[intrav1.UpdateCampaignLocaleMetadataResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "UpdateCampaignLocaleMetadata", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.UpdateCampaignLocaleMetadataResponse], error) {
 	if err := s.requireContentBlockRuntime(); err != nil {
 		return nil, err
 	}
@@ -381,15 +363,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 func (s *InternalCampaignService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadCampaignDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadCampaignDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "campaign", "event", "campaign.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.LoadCampaignDocumentResponse], error) {
 	if err := s.requireContentBlockRuntime(); err != nil {
 		return nil, err
 	}

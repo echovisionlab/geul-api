@@ -117,8 +117,8 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 	})
 	close(start)
 
-	deleteErr := waitForDurableEmailOperation(t, deleteDone)
-	scheduleErr := waitForDurableEmailOperation(t, scheduleDone)
+	deleteErr := <-deleteDone
+	scheduleErr := <-scheduleDone
 	require.NoError(t, scheduleErr)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(deleteErr), deleteErr)
 	var persisted model.Campaign

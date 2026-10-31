@@ -55,7 +55,7 @@ func (s *FileService) refreshUploadSessionActivity(ctx context.Context, uploadID
 			"last_activity_at": now,
 			"updated_at":       now,
 		}).Error; err != nil {
-		slog.Error("Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", uploadID)
+		slog.ErrorContext(ctx, "Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", uploadID)
 	}
 }
 

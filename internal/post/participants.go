@@ -38,13 +38,7 @@ func (s *PostService) ListPostParticipants(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPostParticipantsRequest],
 ) (_ *connect.Response[managev1.ListPostParticipantsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -132,8 +126,7 @@ func (s *PostService) ListPostParticipants(
 			}
 			ok, checkErr := s.spiceDB.CheckActorCan(ctx, actor, can)
 			if checkErr != nil {
-				slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", failurecause.Attr(checkErr))
-				return nil, errs.DependencyUnavailable("SpiceDB")
+				return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 			}
 			effective = ok
 		}
@@ -153,13 +146,7 @@ func (s *PostService) AddPostAuthor(
 	ctx context.Context,
 	req *connect.Request[managev1.AddPostAuthorRequest],
 ) (_ *connect.Response[managev1.PostParticipant], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	principal := auth.GetUser(ctx)
 	if principal == nil {
@@ -188,8 +175,7 @@ func (s *PostService) AddPostAuthor(
 		}
 		canAuthor, checkErr := s.spiceDB.CheckActorCan(ctx, targetActor, can)
 		if checkErr != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", failurecause.Attr(checkErr))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 		}
 		if !canAuthor {
 			return errs.InvalidArgument("member_id", "post authors must have the site Author or Admin role")
@@ -269,13 +255,7 @@ func (s *PostService) RemovePostAuthor(
 	ctx context.Context,
 	req *connect.Request[managev1.RemovePostAuthorRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostAuthor", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	principal := auth.GetUser(ctx)
 	if principal == nil {
@@ -345,13 +325,7 @@ func (s *PostService) AddPostCollaborator(
 	ctx context.Context,
 	req *connect.Request[managev1.AddPostCollaboratorRequest],
 ) (_ *connect.Response[managev1.PostParticipant], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.AddPostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	principal := auth.GetUser(ctx)
 	if principal == nil {
@@ -461,13 +435,7 @@ func (s *PostService) RemovePostCollaborator(
 	ctx context.Context,
 	req *connect.Request[managev1.RemovePostCollaboratorRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RemovePostCollaborator", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	principal := auth.GetUser(ctx)
 	if principal == nil {

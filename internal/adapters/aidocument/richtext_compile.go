@@ -3,13 +3,11 @@ package aidocumentadapter
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -42,8 +40,7 @@ func (c *RichTextCodec) Compile(
 			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: "Rich Text Blocks do not expose generic relations"}}, nil
 		}
 		if err := c.applyOperation(working, operation, deleted); err != nil {
-			slog.Warn("Rich Text operation rejected", failurecause.Attr(err), "document_id", documentID.String(), "operation_index", index)
-			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil
+			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil //nolint:nilerr // an operation the document rejects is an operation issue, not a failure
 		}
 	}
 	mutation := &contentv1.RichTextBlockMutationBatch{

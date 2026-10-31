@@ -200,7 +200,7 @@ func Projection(
 ) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
 	set, err := LoadSet(ctx, db, cdnDomain, sourceFileID)
 	if err != nil {
-		slog.Warn("invalid generated favicon derivative set", "file_id", sourceFileID, failurecause.Attr(err))
+		slog.WarnContext(ctx, "Generated favicon set is invalid; serving no favicon", "domain", "favicon", "operation", "load_favicon_set", "outcome", "failed", "file_id", sourceFileID, failurecause.Attr(err))
 		return nil, nil
 	}
 	if set != nil {
@@ -208,7 +208,7 @@ func Projection(
 	}
 	legacy, err := readySourceAssetRef(ctx, db, cdnDomain, sourceFileID)
 	if err != nil {
-		slog.Warn("legacy favicon source asset not found", "file_id", sourceFileID, failurecause.Attr(err))
+		slog.WarnContext(ctx, "Favicon source asset lookup failed; serving no favicon", "domain", "favicon", "operation", "load_favicon_source", "outcome", "failed", "file_id", sourceFileID, failurecause.Attr(err))
 		return nil, nil
 	}
 	return legacy, nil

@@ -2,11 +2,9 @@ package programevent
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -25,18 +23,15 @@ func requireProgramEventPermissionForSubject(
 	}
 	can, err := action(eventID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventPermissionForSubject", failurecause.Attr(err))
-		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
+		return errs.WithCause(errs.InvalidArgument("resource.id", "must be a canonical resource UUID"), err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventPermissionForSubject", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.CheckActorCan(ctx, actor, can)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventPermissionForSubject", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NoPermission(can.Action().Name(), "program event")
@@ -56,18 +51,15 @@ func requireProgramEventPermission(
 	}
 	can, err := action(eventID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventPermission", failurecause.Attr(err))
-		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
+		return errs.WithCause(errs.InvalidArgument("resource.id", "must be a canonical resource UUID"), err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventPermission", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireProgramEventPermission", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NoPermission(can.Action().Name(), "program event")

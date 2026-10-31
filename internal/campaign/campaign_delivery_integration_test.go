@@ -289,20 +289,15 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	require.NoError(t, blocker.Commit().Error)
 	blockerFinished = true
 
-	select {
-	case archiveErr := <-archiveResult:
-		logPostgresErrorDetail(t, archiveErr)
-		require.NoError(t, archiveErr)
-	case <-time.After(5 * time.Second):
-		t.Fatal("audience archive deadlocked with campaign cancellation")
-	}
-	select {
-	case cancelErr := <-cancelResult:
-		if cancelErr != nil {
-			require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(cancelErr))
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("campaign cancellation deadlocked with audience archive")
+	// A lock-order cycle does not hang: PostgreSQL's deadlock detector aborts
+	// one side with SQLSTATE 40P01, so each result is the condition to wait on.
+	// A wall-clock bound would only measure how loaded the database is.
+	archiveErr := <-archiveResult
+	logPostgresErrorDetail(t, archiveErr)
+	require.NoError(t, archiveErr, "audience archive must not deadlock with campaign cancellation")
+	if cancelErr := <-cancelResult; cancelErr != nil {
+		logPostgresErrorDetail(t, cancelErr)
+		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(cancelErr), "campaign cancellation must not deadlock with audience archive")
 	}
 
 	var persistedSegment model.AudienceSegment
@@ -557,12 +552,9 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 
 			require.NoError(t, blocker.Rollback().Error)
 			blockerFinished = true
-			select {
-			case err := <-result:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("campaign delivery mutation did not resume")
-			}
+			// The mutation was waiting on the blocker's lock; once that is
+			// released its result is the condition to wait on.
+			require.NoError(t, <-result)
 
 			var persistedRun model.CampaignDeliveryRun
 			require.NoError(t, db.First(
@@ -631,7 +623,8 @@ func requireCampaignDeliveryOperationWaitingOnLock(
 			`SELECT EXISTS (
 				SELECT 1
 				FROM pg_stat_activity
-				WHERE application_name = ?
+				WHERE datname = current_database()
+					AND application_name = ?
 					AND wait_event_type = 'Lock'
 			)`,
 			applicationName,

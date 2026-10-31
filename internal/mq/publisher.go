@@ -130,15 +130,15 @@ func EnqueueProtobuf(
 	startedAt := time.Now()
 	_, err = (eventpkg.PGMQ{}).Enqueue(ctx, executor, queue, envelope, InjectTraceContext(ctx), 0)
 	if err != nil {
-		cause := err
 		if job, ok := message.(*managev1.SendEmailEvent); ok {
+			// The returned error reaches the caller's failure record too.
 			private := []string{job.GetRecipient()}
 			for _, value := range job.GetTemplateData() {
 				private = append(private, value)
 			}
-			cause = fmt.Errorf("%s", failurecause.Message(err, private...))
+			err = failurecause.WithPrivate(err, private...)
 		}
-		emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), sharedtelemetry.QueueFailureEnqueueFailed, cause)
+		emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), sharedtelemetry.QueueFailureEnqueueFailed, err)
 		return err
 	}
 	emitQueuePublishResult(ctx, queue, messageID, time.Since(startedAt), "")

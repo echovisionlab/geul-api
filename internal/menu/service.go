@@ -107,13 +107,7 @@ func (s *MenuService) GetMenuById(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMenuByIdRequest],
 ) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.GetMenuById", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
 
 	// Validate ID is provided
 	id := strings.TrimSpace(req.Msg.Id)
@@ -144,15 +138,7 @@ func (s *MenuService) GetMenuById(
 func (s *MenuService) ListMenus(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMenusRequest],
-) (_ *connect.Response[managev1.ListMenusResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.ListMenus", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListMenusResponse], error) {
 	can, err := policyv1.Menu.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -192,11 +178,8 @@ func (s *MenuService) ListMenus(
 	for i := range menus {
 		protoMenu, err := s.toProtoMenu(&menus[i])
 		if err != nil {
-			// Log the error but continue with other menus
-			// This prevents one corrupted menu from breaking the whole list
-			slog.ErrorContext(ctx, "failed to parse menu items JSON",
-				"menuId", menus[i].ID,
-				"failure_cause", failurecause.Message(err))
+			// One corrupted menu must not break the whole list.
+			slog.ErrorContext(ctx, "Stored Menu items are not valid; omitting the menu from the list", "domain", "menu", "operation", "decode_menu_items", "outcome", "failed", "menu_id", menus[i].ID, failurecause.Attr(err))
 			continue
 		}
 		protoMenus = append(protoMenus, protoMenu)
@@ -217,15 +200,7 @@ func (s *MenuService) ListMenus(
 func (s *MenuService) CreateMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMenuRequest],
-) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.CreateMenu", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Menu], error) {
 	can, err := policyv1.Menu.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -322,13 +297,7 @@ func (s *MenuService) UpdateMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMenuRequest],
 ) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.UpdateMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
 
 	// Validate ID
 	id := strings.TrimSpace(req.Msg.Id)
@@ -359,13 +328,7 @@ func (s *MenuService) DeleteMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMenuRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.DeleteMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
 
 	menuID := strings.TrimSpace(req.Msg.Id)
 	if menuID == "" {
@@ -428,18 +391,19 @@ func (s *MenuService) DeleteMenu(
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
 }
 
+// semanticMenuItemsEqual treats undecodable items as changed. It runs after
+// menuUpdateAction, whose topology comparison already logged a decode failure
+// of the same stored and requested items.
 func semanticMenuItemsEqual(stored, requested []byte) bool {
 	var storedItems []model.MenuItem
 	if len(stored) > 0 {
 		if err := json.Unmarshal(stored, &storedItems); err != nil {
-			slog.ErrorContext(context.Background(), "content operation failed", "domain", "menu", "operation", "compare_stored_items", "outcome", "failed", failurecause.Attr(err))
 			return false
 		}
 	}
 	var requestedItems []model.MenuItem
 	if len(requested) > 0 {
 		if err := json.Unmarshal(requested, &requestedItems); err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "compare_requested_items", "outcome", "failed", failurecause.Attr(err))
 			return false
 		}
 	}
@@ -583,7 +547,6 @@ func validateMenuItemLink(item *managev1.MenuItem, itemPath string) error {
 		return nil
 	}
 	if _, err := url.ParseRequestURI(urlString); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.validateMenuItemLink", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidArgument(itemPath, "url must be a valid URL or relative path")
 	}
 	return nil
@@ -742,10 +705,8 @@ func (s *MenuService) protoItemToModel(item *managev1.MenuItem) model.MenuItem {
 		modelItem.OpenInNewTab = item.OpenInNewTab
 	}
 	if item.Visibility != nil {
-		roles, err := normalizeUserRoleList("visibility.roles", item.Visibility.Roles)
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "normalize_visibility_roles", "outcome", "failed", failurecause.Attr(err))
-		}
+		// validateMenuItems has already rejected unknown roles.
+		roles, _ := normalizeUserRoleList("visibility.roles", item.Visibility.Roles)
 		modelItem.Visibility = &model.MenuVisibility{
 			Mode:  s.protoVisibilityModeToString(item.Visibility.Mode),
 			Roles: roles,

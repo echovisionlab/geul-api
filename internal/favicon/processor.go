@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image/png"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -541,15 +539,31 @@ func validateGeneratedFaviconPNG(data []byte, spec Spec) error {
 	}
 	config, err := png.DecodeConfig(bytes.NewReader(data))
 	if err != nil || config.Width != spec.PixelSize || config.Height != spec.PixelSize {
-		if err != nil {
-			slog.ErrorContext(context.Background(), "Failed to decode generated favicon PNG", failurecause.Attr(err), "derivative_type", spec.DerivativeType.String())
+		return invalidDerivativeError{
+			message: fmt.Sprintf("favicon derivative %s must be %dx%d PNG", spec.DerivativeType.String(), spec.PixelSize, spec.PixelSize),
+			cause:   err,
 		}
-		return fmt.Errorf(
-			"favicon derivative %s must be %dx%d PNG",
-			spec.DerivativeType.String(), spec.PixelSize, spec.PixelSize,
-		)
 	}
 	return nil
+}
+
+// invalidDerivativeError states the requirement a derivative failed; callers
+// put that text in client messages. The decode failure behind it stays in
+// the chain and in the failure record.
+type invalidDerivativeError struct {
+	message string
+	cause   error
+}
+
+func (e invalidDerivativeError) Error() string { return e.message }
+func (e invalidDerivativeError) Unwrap() error { return e.cause }
+
+// OperationContext implements failurecause.OperationContext.
+func (e invalidDerivativeError) OperationContext() (rendered, operation string) {
+	if e.cause == nil {
+		return e.message, e.message
+	}
+	return e.message, e.message + ": " + e.cause.Error()
 }
 
 func validateGeneratedFaviconICO(data []byte, spec Spec) error {

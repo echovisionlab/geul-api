@@ -42,13 +42,11 @@ func (s *FileService) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "loadVisibleFileUsageCounts: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, can, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "loadVisibleFileUsageCounts: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if isAdmin {
 		return loadFileUsageCounts(ctx, s.db, fileIDs)
@@ -210,13 +208,11 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		slog.ErrorContext(ctx, "filterVisibleFileUsages: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, can, s.spiceDB)
 	if err != nil {
-		slog.ErrorContext(ctx, "filterVisibleFileUsages: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if isAdmin || len(rows) == 0 {
 		return rows, nil
@@ -274,13 +270,11 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 		}
 		decision, decisionErr := auth.AuthorizationDecision(ctx, can)
 		if decisionErr != nil {
-			slog.WarnContext(ctx, "filterVisibleFileUsages: AuthenticationRequired", failurecause.Attr(decisionErr))
-			return nil, errs.AuthenticationRequired()
+			return nil, errs.WithCause(errs.AuthenticationRequired(), decisionErr)
 		}
 		allowed, checkErr := s.spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			slog.ErrorContext(ctx, "filterVisibleFileUsages: DependencyUnavailable", failurecause.Attr(checkErr))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 		}
 		if allowed {
 			allowedTargets[key] = struct{}{}
@@ -347,13 +341,7 @@ func fileUsageProto(row fileUsageRow) *managev1.FileUsage {
 func (s *FileService) ListFileUsages(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFileUsagesRequest],
-) (_ *connect.Response[managev1.ListFileUsagesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileUsages", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.ListFileUsagesResponse], error) {
 	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

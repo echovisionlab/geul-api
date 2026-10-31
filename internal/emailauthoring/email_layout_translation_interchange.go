@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -225,8 +224,7 @@ func projectEmailLayoutInterchangeTarget(
 	if entry.ContentHTML != nil {
 		values, err = email.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 		if err != nil {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "project_layout_interchange", "outcome", "failed", failurecause.Attr(err))
-			return EmailLayoutTranslationInterchangeTarget{}, errs.FailedPrecondition("Email Layout target unit markers require backfill before interchange")
+			return EmailLayoutTranslationInterchangeTarget{}, errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require backfill before interchange"), failurecause.ServerFault(err))
 		}
 	}
 	updatedAt := entry.UpdatedAt

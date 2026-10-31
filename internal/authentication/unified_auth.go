@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const unifiedAuthPath = "/login"
@@ -129,7 +128,6 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 	}
 	body, err := readBoundedKratosBody(request.Body)
 	if err != nil {
-		slog.WarnContext(request.Context(), "Operation failed", "reason", "read_request", "status_code", http.StatusRequestEntityTooLarge, failurecause.Attr(err))
 		writeKratosProxyError(request.Context(), w, http.StatusRequestEntityTooLarge, "request body is too large", 0)
 		return
 	}
@@ -141,7 +139,7 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 	}
 	flow, err := decodeUnifiedAuthFlow(flowResponse.Body)
 	if err != nil {
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "decode_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+		recordAuthenticationFailure(request.Context(), fmt.Errorf("decode flow: %w", err))
 		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
@@ -162,7 +160,6 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 	if kind == unifiedAuthRegistrationFlow && strings.EqualFold(method, "code") {
 		body, err = buildRegistrationCodePayload(body, request.Header.Get("Content-Type"), flow, false)
 		if err != nil {
-			slog.WarnContext(request.Context(), "Operation failed", "reason", "build_registration_payload", "status_code", http.StatusBadRequest, failurecause.Attr(err))
 			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 			return
 		}

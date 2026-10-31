@@ -53,13 +53,7 @@ func (s *CommentService) ListCommentsByPost(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCommentsByPostRequest],
 ) (_ *connect.Response[managev1.ListCommentsByPostResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListCommentsByPost", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	// Require authentication for Secure API
 	user := auth.GetUser(ctx)
@@ -228,13 +222,7 @@ func (s *CommentService) LoadMoreReplies(
 	ctx context.Context,
 	req *connect.Request[managev1.LoadMoreRepliesRequest],
 ) (_ *connect.Response[managev1.LoadMoreRepliesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.LoadMoreReplies", "outcome", "failed", "comment_id", req.Msg.GetCommentId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("comment_id", req.Msg.GetCommentId()))
 
 	// Require authentication for Secure API
 	user := auth.GetUser(ctx)
@@ -307,7 +295,7 @@ func (s *CommentService) ReadCommentReplies(
 			query = query.Where("c.created_at > ? OR (c.created_at = ? AND c.id > ?)",
 				cursorComment.CreatedAt, cursorComment.CreatedAt, *req.Msg.Cursor)
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", req.Msg.CommentId, "cursor_id", *req.Msg.Cursor)
+			slog.ErrorContext(ctx, "Reply cursor lookup failed; listing replies from the start", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", req.Msg.CommentId, "cursor_id", *req.Msg.Cursor)
 		}
 	}
 
@@ -378,15 +366,7 @@ func (s *CommentService) ReadCommentReplies(
 func (s *CommentService) CreateComment(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateCommentRequest],
-) (_ *connect.Response[managev1.CreateCommentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CreateComment", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.CreateCommentResponse], error) {
 	user := auth.GetUser(ctx)
 	if user == nil || user.MemberID.String() == "" {
 		return nil, errs.AuthenticationRequired()
@@ -524,13 +504,7 @@ func (s *CommentService) UpdateComment(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateCommentRequest],
 ) (_ *connect.Response[managev1.UpdateCommentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.UpdateComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("comment_id", req.Msg.GetId()))
 
 	// Get authenticated user
 	user := auth.GetUser(ctx)
@@ -606,13 +580,7 @@ func (s *CommentService) DeleteComment(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteCommentRequest],
 ) (_ *connect.Response[managev1.DeleteCommentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.DeleteComment", "outcome", "failed", "comment_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("comment_id", req.Msg.GetId()))
 
 	// Get authenticated user
 	user := auth.GetUser(ctx)

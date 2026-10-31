@@ -129,13 +129,14 @@ func (s *PageService) loadPageContentProjection(
 				ctx, tx, s.spiceDB, page.ID, policyv1.Page.View,
 			)
 			if err != nil {
-				level := slog.LevelError
-				switch connect.CodeOf(err) {
-				case connect.CodeUnauthenticated, connect.CodePermissionDenied, connect.CodeNotFound:
-					level = slog.LevelWarn
+				cause := failurecause.WithAttrs(err, slog.String("page_id", page.ID))
+				if code := connect.CodeOf(err); code != connect.CodeUnauthenticated &&
+					code != connect.CodePermissionDenied && code != connect.CodeNotFound {
+					// Every failure answers not found; a dependency failure is
+					// still a server fault.
+					cause = failurecause.ServerFault(cause)
 				}
-				slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.loadPageContentProjection", "outcome", "failed", "page_id", page.ID, failurecause.Attr(err))
-				return errs.NotFound("page", value)
+				return errs.WithCause(errs.NotFound("page", value), cause)
 			}
 			if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
 				return err
@@ -249,15 +250,7 @@ func (s *PageService) toProtoPageSummary(p *model.Page) (*managev1.PageSummary, 
 func (s *PageService) CheckPageSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckPageSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckPageSlugAvailableResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CheckPageSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.CheckPageSlugAvailableResponse], error) {
 	excludeID := ""
 	if req.Msg.ExcludeId != nil {
 		excludeID = *req.Msg.ExcludeId
@@ -269,8 +262,7 @@ func (s *PageService) CheckPageSlugAvailable(
 	}
 	slug := strings.TrimSpace(req.Msg.Slug)
 	if err := routeregistry.ValidatePagePath(slug); err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "page.CheckPageSlugAvailable", "outcome", "failed", failurecause.Attr(err))
-		return connect.NewResponse(&managev1.CheckPageSlugAvailableResponse{Available: false}), nil
+		return connect.NewResponse(&managev1.CheckPageSlugAvailableResponse{Available: false}), nil //nolint:nilerr // an invalid path is an unavailable slug, not a failed check
 	}
 
 	available, err := isSlugAvailable(ctx, s.db, &model.Page{}, slug, excludeID)

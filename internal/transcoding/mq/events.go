@@ -26,7 +26,7 @@ func (p *Publisher) PublishComplete(ctx context.Context, value *apiv1.TranscodeC
 	} else if err := p.enqueue(ctx, eventpkg.QueueTranscodeResult, value.EventId, messageType, value); err != nil {
 		return fmt.Errorf("publish transcode result: %w", err)
 	}
-	slog.Info("Enqueued transcode result", "event_id", value.EventId, "success", value.Success)
+	slog.InfoContext(ctx, "Enqueued transcode result", "event_id", value.EventId, "success", value.Success)
 	return nil
 }
 

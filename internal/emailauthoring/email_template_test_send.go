@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/mail"
 	"strings"
 
@@ -14,7 +13,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -37,15 +35,7 @@ func validateEmail(email string) error {
 func (s *EmailTemplateService) SendTestEmail(
 	ctx context.Context,
 	req *connect.Request[managev1.SendTestEmailRequest],
-) (rpcResponse *connect.Response[managev1.SuccessResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "SendTestEmail", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, req.Msg.GetEmail(), strings.TrimSpace(req.Msg.GetEmail())))
-	}()
-
+) (*connect.Response[managev1.SuccessResponse], error) {
 	can, canErr := policyv1.EmailTemplate.Manage(req.Msg.Id)
 	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err

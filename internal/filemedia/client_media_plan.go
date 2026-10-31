@@ -175,8 +175,7 @@ func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
-		slog.Error("Invalid prepared client media manifest", failurecause.Attr(err), "upload_id", session.UploadID, "file_id", session.FileID)
-		return errs.FailedPrecondition("invalid prepared client media manifest")
+		return errs.WithCause(errs.FailedPrecondition("invalid prepared client media manifest"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("upload_id", session.UploadID), slog.String("file_id", session.FileID))))
 	}
 	if !strings.HasPrefix(verifiedMime, plan.Kind+"/") {
 		return errs.FailedPrecondition("client media kind differs from verified original")

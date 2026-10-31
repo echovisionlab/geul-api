@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -23,14 +21,7 @@ import (
 func (s *SeriesService) GetSeriesWithManagers(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSeriesWithManagersRequest],
-) (_ *connect.Response[managev1.GetSeriesWithManagersResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "GetSeriesWithManagers", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.GetSeriesWithManagersResponse], error) {
 	if err := s.requireSeriesPermissionOrNotFound(ctx, req.Msg.Id, policyv1.PostSeries.View); err != nil {
 		return nil, err
 	}
@@ -69,14 +60,7 @@ func (s *SeriesService) GetSeriesWithManagers(
 func (s *SeriesService) ListSeriesManagers(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSeriesManagersRequest],
-) (_ *connect.Response[managev1.ListSeriesManagersResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "ListSeriesManagers", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListSeriesManagersResponse], error) {
 	if err := s.requireSeriesPermissionOrNotFound(ctx, req.Msg.SeriesId, policyv1.PostSeries.View); err != nil {
 		return nil, err
 	}
@@ -104,14 +88,7 @@ func (s *SeriesService) ListSeriesManagers(
 func (s *SeriesService) AddSeriesManager(
 	ctx context.Context,
 	req *connect.Request[managev1.AddSeriesManagerRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "AddSeriesManager", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.SeriesId, policyv1.PostSeries.ManageParticipants); err != nil {
 			return err
@@ -148,14 +125,7 @@ func (s *SeriesService) AddSeriesManager(
 func (s *SeriesService) RemoveSeriesManager(
 	ctx context.Context,
 	req *connect.Request[managev1.RemoveSeriesManagerRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "RemoveSeriesManager", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	// A retired target has no remaining SpiceDB identity relationship. Keep
 	// that cleanup on a transaction which performs the same one exact Series
 	// permission check but deliberately performs no authorization write.
@@ -183,8 +153,7 @@ func (s *SeriesService) RemoveSeriesManager(
 		target, targetErr := authorizationtarget.RequireLockedLinked(ctx, tx, req.Msg.MemberId)
 		if targetErr != nil {
 			if connect.CodeOf(targetErr) == connect.CodeNotFound {
-				slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "RemoveSeriesManager", failurecause.Attr(targetErr))
-				return errs.FailedPrecondition("series manager target changed; retry")
+				return errs.WithCause(errs.FailedPrecondition("series manager target changed; retry"), targetErr)
 			}
 			return targetErr
 		}

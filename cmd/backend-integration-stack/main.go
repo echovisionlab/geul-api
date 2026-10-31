@@ -163,7 +163,7 @@ func startHookServer(ctx context.Context) (*hookServer, string, error) {
 	errCh := make(chan error, 1)
 	go func() {
 		if err := server.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			slog.Error("Backend integration hook server failed", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Backend integration hook server failed", "failure_cause", failurecause.Message(err))
 			errCh <- err
 		}
 	}()
@@ -171,14 +171,14 @@ func startHookServer(ctx context.Context) (*hookServer, string, error) {
 	select {
 	case err := <-errCh:
 		if closeErr := listener.Close(); closeErr != nil {
-			slog.Error("Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
+			slog.ErrorContext(ctx, "Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
 		}
 		return nil, "", err
 	default:
 		_, port, err := net.SplitHostPort(listener.Addr().String())
 		if err != nil {
 			if closeErr := listener.Close(); closeErr != nil {
-				slog.Error("Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
+				slog.ErrorContext(ctx, "Backend integration listener close failed", "failure_cause", failurecause.Message(closeErr))
 			}
 			return nil, "", err
 		}

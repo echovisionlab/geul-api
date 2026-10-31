@@ -31,13 +31,7 @@ func (s *PageService) ListPageVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPageVersionsRequest],
 ) (_ *connect.Response[managev1.ListPageVersionsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ListPageVersions", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := requirePagePermission(ctx, s.spiceDB, req.Msg.PageId, policyv1.Page.View); err != nil {
 		return nil, err
@@ -105,13 +99,7 @@ func (s *PageService) RestorePageVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.RestorePageVersionRequest],
 ) (_ *connect.Response[managev1.Page], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.RestorePageVersion", "outcome", "failed", "page_id", req.Msg.GetPageId(), "version_id", req.Msg.GetVersionId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()), slog.String("version_id", req.Msg.GetVersionId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
@@ -131,8 +119,10 @@ func (s *PageService) RestorePageVersion(
 	}
 	versionSnapshot, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.RestorePageVersion", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Page version typed snapshot is invalid")
+		return nil, failurecause.WithAttrs(
+			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), failurecause.ServerFault(err)),
+			slog.String("page_version_id", version.ID),
+		)
 	}
 
 	var contributorMemberIDs []string
@@ -365,8 +355,10 @@ func (s *PageService) toProtoPageVersion(
 ) (*managev1.PageVersion, error) {
 	snapshot, err := DecodeVersionContentSnapshot(v.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.toProtoPageVersion", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Page version typed snapshot is invalid")
+		return nil, failurecause.WithAttrs(
+			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), failurecause.ServerFault(err)),
+			slog.String("page_version_id", v.ID),
+		)
 	}
 	contributors, err := toProtoVersionContributors(v.ContributorMemberIDs, contributorNames)
 	if err != nil {

@@ -361,10 +361,7 @@ func sourceAssetPromotionTarget(
 	}
 	expectedObjectKey, err := mediaauth.AssetObjectKey(existing.ID, existing.Extension)
 	if err != nil || expectedObjectKey != existing.ObjectKey {
-		if err != nil {
-			slog.Error("Invalid source asset object key", failurecause.Attr(err), "asset_id", existing.ID)
-		}
-		return nil, errs.FailedPrecondition("source file public asset has a non-canonical object key")
+		return nil, errs.WithCause(errs.FailedPrecondition("source file public asset has a non-canonical object key"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("asset_id", existing.ID))))
 	}
 	return &commonv1.AssetWriteTarget{
 		AssetId:     existing.ID,

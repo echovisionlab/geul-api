@@ -69,7 +69,7 @@ func (s *MenuService) applyMenuUpdate(
 		if err != nil {
 			return err
 		}
-		action := menuUpdateAction(*locked, request, update)
+		action := menuUpdateAction(ctx, *locked, request, update)
 		if err := requireFreshMenuPermission(ctx, tx, s.permissions, menuID, action); err != nil {
 			return err
 		}
@@ -146,6 +146,7 @@ func (s *MenuService) applyMenuUpdate(
 }
 
 func menuUpdateAction(
+	ctx context.Context,
 	current model.Menu,
 	request *managev1.UpdateMenuRequest,
 	update menuUpdate,
@@ -154,24 +155,24 @@ func menuUpdateAction(
 		return policyv1.Menu.Edit
 	}
 	requested, ok := update.fields["items"].(json.RawMessage)
-	if !ok || menuItemTopologyEqual(current.Items, requested) {
+	if !ok || menuItemTopologyEqual(ctx, current.ID, current.Items, requested) {
 		return policyv1.Menu.Edit
 	}
 	return policyv1.Menu.Manage
 }
 
-func menuItemTopologyEqual(stored, requested []byte) bool {
+func menuItemTopologyEqual(ctx context.Context, menuID string, stored, requested []byte) bool {
 	var storedItems []model.MenuItem
 	if len(stored) != 0 {
 		if err := json.Unmarshal(stored, &storedItems); err != nil {
-			slog.ErrorContext(context.Background(), "failed to decode stored Menu topology", "domain", "menu", "operation", "compare_stored_topology", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Stored Menu items are not valid JSON; requiring Manage permission", "domain", "menu", "operation", "compare_stored_topology", "outcome", "failed", "menu_id", menuID, failurecause.Attr(err))
 			return false
 		}
 	}
 	var requestedItems []model.MenuItem
 	if len(requested) != 0 {
 		if err := json.Unmarshal(requested, &requestedItems); err != nil {
-			slog.WarnContext(context.Background(), "failed to decode requested Menu topology", "domain", "menu", "operation", "compare_requested_topology", "outcome", "failed", failurecause.Attr(err))
+			slog.WarnContext(ctx, "Encoded Menu request items are not valid JSON; requiring Manage permission", "domain", "menu", "operation", "compare_requested_topology", "outcome", "failed", "menu_id", menuID, failurecause.Attr(err))
 			return false
 		}
 	}

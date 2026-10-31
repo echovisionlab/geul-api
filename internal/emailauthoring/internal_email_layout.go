@@ -2,7 +2,6 @@ package emailauthoring
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -62,15 +61,7 @@ func NewAuditedInternalEmailLayoutService(db *gorm.DB, auditWriter domainaudit.A
 func (s *InternalEmailLayoutService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveEmailLayoutDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.SaveEmailLayoutDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "SaveDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.SaveEmailLayoutDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -287,8 +278,7 @@ func compileEmailLayoutTargetValues(
 ) (*string, *string, error) {
 	units, err := emailutil.ExtractLayoutContentUnits(canonicalSource)
 	if err != nil {
-		slog.Error("Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return nil, nil, errs.FailedPrecondition("Email Layout source unit markers require backfill before collaboration editing")
+		return nil, nil, errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require backfill before collaboration editing"), failurecause.ServerFault(err))
 	}
 	allowed := make(map[string]struct{}, len(units))
 	for _, unit := range units {
@@ -320,15 +310,7 @@ func compileEmailLayoutTargetValues(
 func (s *InternalEmailLayoutService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadEmailLayoutDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadEmailLayoutDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.LoadEmailLayoutDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -360,10 +342,9 @@ func (s *InternalEmailLayoutService) LoadDocument(
 			}
 			sourceUnits, unitErr := emailutil.ExtractLayoutContentUnits(derefString(state.ContentHTML))
 			if unitErr != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(unitErr))
-				return errs.FailedPrecondition(
+				return errs.WithCause(errs.FailedPrecondition(
 					"Email Layout source unit markers require backfill before collaboration editing",
-				)
+				), failurecause.ServerFault(unitErr))
 			}
 			units = make([]*intrav1.EmailLayoutContentUnit, 0, len(sourceUnits))
 			for _, unit := range sourceUnits {
@@ -375,10 +356,9 @@ func (s *InternalEmailLayoutService) LoadDocument(
 			if entry != nil && entry.ContentHTML != nil {
 				storedValues, valueErr := emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 				if valueErr != nil {
-					slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(valueErr))
-					return errs.FailedPrecondition(
+					return errs.WithCause(errs.FailedPrecondition(
 						"Email Layout target unit markers require backfill before collaboration editing",
-					)
+					), failurecause.ServerFault(valueErr))
 				}
 				localeValues = make([]*intrav1.EmailLayoutLocaleValue, 0, len(storedValues))
 				for _, unit := range sourceUnits {

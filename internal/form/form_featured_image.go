@@ -3,12 +3,10 @@ package form
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -21,15 +19,7 @@ import (
 func (s *FormService) SetFormFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetFormFeaturedImageRequest],
-) (rpcResponse *connect.Response[managev1.SetFormFeaturedImageResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "SetFormFeaturedImage", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.SetFormFeaturedImageResponse], error) {
 	var (
 		current    model.Form
 		file       model.File
@@ -96,13 +86,10 @@ func (s *FormService) SetFormFeaturedImage(
 				Model(&model.Form{}).
 				Where("id = ?", req.Msg.FormId).
 				Count(&count).Error
-			if lookupErr != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "resolve_missing_featured_image", "outcome", "failed", failurecause.Attr(lookupErr))
-			}
 			if lookupErr == nil && count == 0 {
 				return nil, errs.NotFound("form", req.Msg.FormId)
 			}
-			return nil, errs.NotFound("file", req.Msg.FileId)
+			return nil, errs.WithCause(errs.NotFound("file", req.Msg.FileId), lookupErr)
 		}
 		return nil, errs.Wrap(err)
 	}
@@ -116,15 +103,7 @@ func (s *FormService) SetFormFeaturedImage(
 func (s *FormService) DeleteFormFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteFormFeaturedImageRequest],
-) (rpcResponse *connect.Response[managev1.OgAssetDeleteResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "DeleteFormFeaturedImage", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var current model.Form
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

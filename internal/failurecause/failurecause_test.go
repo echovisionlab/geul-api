@@ -3,6 +3,7 @@ package failurecause
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -96,16 +97,84 @@ func TestMessageRendersOperationContextHiddenFromErrorText(t *testing.T) {
 }
 
 func TestRecorderCarriesLastCauseThroughContext(t *testing.T) {
-	if _, _, ok := RecorderFrom(t.Context()).Recorded(); ok {
+	if _, ok := RecorderFrom(t.Context()).Recorded(); ok {
 		t.Fatal("empty context reported a recorded cause")
 	}
 	ctx, recorder := WithRecorder(t.Context())
 	if RecorderFrom(ctx) != recorder {
 		t.Fatal("recorder not found in its context")
 	}
-	recorder.Record("first", "")
-	recorder.Record("panic cause", "goroutine 1 [running]")
-	if cause, stack, ok := recorder.Recorded(); !ok || cause != "panic cause" || stack != "goroutine 1 [running]" {
-		t.Fatalf("Recorded() = %q, %q, %v", cause, stack, ok)
+	recorder.Record(Failure{Cause: "first"})
+	recorder.Record(Failure{Cause: "panic cause", Stack: "goroutine 1 [running]", Attrs: []slog.Attr{slog.String("page_id", "p1")}})
+	failure, ok := recorder.Recorded()
+	if !ok || failure.Cause != "panic cause" || failure.Stack != "goroutine 1 [running]" || len(failure.Attrs) != 1 {
+		t.Fatalf("Recorded() = %+v, %v", failure, ok)
+	}
+}
+
+type upstreamError struct{ body string }
+
+func (e *upstreamError) Error() string           { return "upstream returned 409: " + e.body }
+func (e *upstreamError) PrivateValues() []string { return []string{e.body} }
+
+// Private values and identifiers travel with the error, so every sink redacts
+// and annotates the same way however deep the error ends up.
+func TestChainCarriesPrivateValuesAndAttrsThroughWrapsAndJoins(t *testing.T) {
+	upstream := &upstreamError{body: `{"traits":{"name":"Private Person"}}`}
+	nickname := WithPrivate(errors.New("nickname quiet-river is taken"), "quiet-river")
+	err := fmt.Errorf("complete onboarding: %w", WithAttrs(
+		errors.Join(
+			fmt.Errorf("lock identity: %w", upstream),
+			WithAttrs(fmt.Errorf("reserve: %w", nickname), slog.String("member_id_hint", "inner"), slog.String("locale", "ko")),
+		),
+		slog.String("member_id_hint", "outer"),
+	))
+
+	got := Message(err)
+	for _, private := range []string{"Private Person", "quiet-river"} {
+		if strings.Contains(got, private) {
+			t.Fatalf("Message() kept %q: %q", private, got)
+		}
+	}
+	if want := "complete onboarding: lock identity: upstream returned 409: [redacted]\nreserve: nickname [redacted] is taken"; got != want {
+		t.Fatalf("Message() = %q, want %q", got, want)
+	}
+	if err.Error() == got {
+		t.Fatal("annotation must not change the error text")
+	}
+	if !errors.Is(err, upstream) {
+		t.Fatal("annotation broke errors.Is")
+	}
+	attrs := Attrs(err)
+	if len(attrs) != 2 || attrs[0].String() != "member_id_hint=outer" || attrs[1].String() != "locale=ko" {
+		t.Fatalf("Attrs() = %v", attrs)
+	}
+	failure := Of(err, "complete")
+	if !strings.HasPrefix(failure.Cause, "[redacted] onboarding:") || len(failure.Attrs) != 2 {
+		t.Fatalf("Of() = %+v", failure)
+	}
+	if WithPrivate(nil, "x") != nil || WithAttrs(nil, slog.String("k", "v")) != nil {
+		t.Fatal("annotating nil must stay nil")
+	}
+}
+
+func TestServerFaultSurvivesWrapsAndJoins(t *testing.T) {
+	fault := ServerFault(errors.New("decode stored snapshot: unexpected EOF"))
+	err := fmt.Errorf("restore version: %w", errors.Join(errors.New("other"), WithAttrs(fault, slog.String("page_id", "p1"))))
+	if !IsServerFault(err) || !Of(err).ServerFault {
+		t.Fatal("server fault lost through wrapping")
+	}
+	if IsServerFault(errors.New("not found")) || ServerFault(nil) != nil {
+		t.Fatal("unmarked errors are not server faults")
+	}
+	if err.Error() != "restore version: other\ndecode stored snapshot: unexpected EOF" {
+		t.Fatalf("marking changed the text: %q", err.Error())
+	}
+}
+
+func TestPanicRedactsPrivateValuesOfAnErrorValue(t *testing.T) {
+	cause, _ := Panic(fmt.Errorf("lock identity: %w", &upstreamError{body: "traits quiet-river"}))
+	if cause != "lock identity: upstream returned 409: [redacted]" {
+		t.Fatalf("Panic cause = %q", cause)
 	}
 }

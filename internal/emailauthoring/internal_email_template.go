@@ -3,10 +3,9 @@ package emailauthoring
 import (
 	"context"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -68,15 +67,7 @@ func NewAuditedInternalEmailTemplateService(db *gorm.DB, auditWriter domainaudit
 func (s *InternalEmailTemplateService) ApplyBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyEmailTemplateBlockBatchRequest],
-) (rpcResponse *connect.Response[intrav1.ApplyEmailTemplateBlockBatchResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "ApplyBlockBatch", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.ApplyEmailTemplateBlockBatchResponse], error) {
 	if err := s.requireContentBlockRuntime(); err != nil {
 		return nil, err
 	}
@@ -251,15 +242,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateEmailTemplateLocaleMetadataRequest],
-) (rpcResponse *connect.Response[intrav1.UpdateEmailTemplateLocaleMetadataResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "UpdateEmailTemplateLocaleMetadata", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.UpdateEmailTemplateLocaleMetadataResponse], error) {
 	if err := s.requireContentBlockRuntime(); err != nil {
 		return nil, err
 	}
@@ -392,15 +375,7 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 func (s *InternalEmailTemplateService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadEmailTemplateDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadEmailTemplateDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.LoadEmailTemplateDocumentResponse], error) {
 	if err := s.requireContentBlockRuntime(); err != nil {
 		return nil, err
 	}

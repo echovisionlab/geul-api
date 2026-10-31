@@ -3,13 +3,11 @@ package work
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -90,7 +88,6 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 	for _, contributor := range contributors {
 		contributor = strings.TrimSpace(contributor)
 		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireDocumentContributors", failurecause.Attr(err))
 			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
 		}
 		if len(normalized) > 0 && normalized[len(normalized)-1] >= contributor {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -205,8 +204,7 @@ func PrepareSourceLocaleSwitch(
 		return errs.FailedPrecondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Form source locale document is invalid")
+		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
 	}
 	requested, requestedExists, err := loadFormAIDocumentLocale(
 		ctx, db, formID, requestedLocale, true,
@@ -216,15 +214,13 @@ func PrepareSourceLocaleSwitch(
 	}
 	if requestedExists {
 		if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-			return errs.FailedPrecondition("Form requested source locale document is invalid")
+			return errs.WithCause(errs.FailedPrecondition("Form requested source locale document is invalid"), failurecause.ServerFault(err))
 		}
 		return nil
 	}
 	emptySchema, err := formAIDocumentEmptyTargetSchema(source.Schema)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Form source locale document is invalid")
+		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
 	}
 	writeTime := now.UTC()
 	result := db.WithContext(ctx).Exec(

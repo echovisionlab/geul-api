@@ -1,16 +1,13 @@
 package sitesettings
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
@@ -85,47 +82,38 @@ func validateSiteSettingEmail(key, value string) error {
 	return fmt.Errorf("%s must be a valid email address", key)
 }
 
-func jsonColumnToMap(raw []byte, key string, emptyDefault bool) siteSettingObject {
+// jsonColumnToMap decodes a stored JSON object column. An undecodable column
+// yields the empty fallback together with the decode error, so a read that
+// serves the fallback can log it.
+func jsonColumnToMap(raw []byte, emptyDefault bool) (siteSettingObject, error) {
 	if len(raw) == 0 {
 		if emptyDefault {
-			return siteSettingObject{}
+			return siteSettingObject{}, nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	var result siteSettingObject
 	if err := json.Unmarshal(raw, &result); err != nil {
-		slog.WarnContext(context.Background(), "failed to unmarshal site setting JSON column",
-			"key", key,
-			"failure_cause", failurecause.Message(err))
 		if emptyDefault {
-			return siteSettingObject{}
+			return siteSettingObject{}, err
 		}
-		return nil
+		return nil, err
 	}
 
 	if result == nil && emptyDefault {
-		return siteSettingObject{}
+		return siteSettingObject{}, nil
 	}
 
-	return result
+	return result, nil
 }
 
-func jsonColumnToStruct(raw []byte, key string) *structpb.Struct {
-	m := jsonColumnToMap(raw, key, false)
-	if len(m) == 0 {
-		return nil
+func jsonColumnToStruct(raw []byte) (*structpb.Struct, error) {
+	m, err := jsonColumnToMap(raw, false)
+	if err != nil || len(m) == 0 {
+		return nil, err
 	}
-
-	st, err := structpb.NewStruct(m)
-	if err != nil {
-		slog.WarnContext(context.Background(), "failed to convert site setting JSON to protobuf struct",
-			"key", key,
-			"failure_cause", failurecause.Message(err))
-		return nil
-	}
-
-	return st
+	return structpb.NewStruct(m)
 }
 
 func optionalString(v *string) siteSettingValue {
@@ -189,7 +177,6 @@ func parseJSONObjectBytes(value siteSettingValue, nullable bool) ([]byte, error)
 
 	var object siteSettingObject
 	if err := json.Unmarshal(payload, &object); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "sitesettings.parseJSONObjectBytes", "outcome", "failed", failurecause.Attr(err))
 		return nil, fmt.Errorf("expected JSON object")
 	}
 
@@ -207,9 +194,6 @@ func parseOgImageConfigRoot(raw []byte) (siteSettingObject, error) {
 	root := siteSettingObject{}
 	if len(raw) > 0 && string(raw) != "null" {
 		if err := json.Unmarshal(raw, &root); err != nil || root == nil {
-			if err != nil {
-				slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "decode_og_image_config", "outcome", "failed", failurecause.Attr(err))
-			}
 			return nil, fmt.Errorf("stored og_image_config must be a JSON object")
 		}
 	}
@@ -237,9 +221,6 @@ func applyOgImageConfigSection(settings *model.SiteSettings, section string, val
 	}
 	var object siteSettingObject
 	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "sitesettings.applyOgImageConfigSection", "outcome", "failed", failurecause.Attr(err))
-		}
 		return fmt.Errorf("og_image_config.%s must be a JSON object", section)
 	}
 	root, err := parseOgImageConfigRoot(settings.OGImageConfig)
@@ -254,72 +235,83 @@ func applyOgImageConfigSection(settings *model.SiteSettings, section string, val
 	return nil
 }
 
+// settingValue returns the comparable value of a setting. Comparisons treat an
+// undecodable stored value as its fallback; GetSetting, which serves the
+// value, logs the decode error.
 func settingValue(settings *model.SiteSettings, key string) (siteSettingValue, bool) {
+	value, known, _ := decodedSettingValue(settings, key)
+	return value, known
+}
+
+// decodedSettingValue is settingValue with the error that replaced an
+// undecodable stored value by its fallback.
+func decodedSettingValue(settings *model.SiteSettings, key string) (siteSettingValue, bool, error) {
 	switch key {
 	case "site_title":
-		return settings.SiteTitle, true
+		return settings.SiteTitle, true, nil
 	case "company_name":
-		return settings.CompanyName, true
+		return settings.CompanyName, true, nil
 	case "company_address":
-		return settings.CompanyAddress, true
+		return settings.CompanyAddress, true, nil
 	case "tax_id":
-		return settings.TaxID, true
+		return settings.TaxID, true, nil
 	case "legal_email":
-		return settings.LegalEmail, true
+		return settings.LegalEmail, true, nil
 	case "contact_email":
-		return settings.ContactEmail, true
+		return settings.ContactEmail, true, nil
 	case "social_links":
-		return jsonColumnToMap(settings.SocialLinks, "social_links", true), true
+		value, err := jsonColumnToMap(settings.SocialLinks, true)
+		return value, true, err
 	case "logo_full_light_file_id":
-		return optionalString(settings.LogoFullLightFileID), true
+		return optionalString(settings.LogoFullLightFileID), true, nil
 	case "logo_full_dark_file_id":
-		return optionalString(settings.LogoFullDarkFileID), true
+		return optionalString(settings.LogoFullDarkFileID), true, nil
 	case "logo_symbol_light_file_id":
-		return optionalString(settings.LogoSymbolLightFileID), true
+		return optionalString(settings.LogoSymbolLightFileID), true, nil
 	case "logo_symbol_dark_file_id":
-		return optionalString(settings.LogoSymbolDarkFileID), true
+		return optionalString(settings.LogoSymbolDarkFileID), true, nil
 	case "logo_email_light_file_id":
-		return optionalString(settings.LogoEmailLightFileID), true
+		return optionalString(settings.LogoEmailLightFileID), true, nil
 	case "logo_email_dark_file_id":
-		return optionalString(settings.LogoEmailDarkFileID), true
+		return optionalString(settings.LogoEmailDarkFileID), true, nil
 	case "favicon_file_id":
-		return optionalString(settings.FaviconFileID), true
+		return optionalString(settings.FaviconFileID), true, nil
 	case "site_og_background_file_id":
-		return optionalString(settings.SiteOgBackgroundFileID), true
+		return optionalString(settings.SiteOgBackgroundFileID), true, nil
 	case "privacy_og_background_file_id":
-		return optionalString(settings.PrivacyOgBackgroundFileID), true
+		return optionalString(settings.PrivacyOgBackgroundFileID), true, nil
 	case "terms_og_background_file_id":
-		return optionalString(settings.TermsOgBackgroundFileID), true
+		return optionalString(settings.TermsOgBackgroundFileID), true, nil
 	case "primary_color":
-		return settings.PrimaryColor, true
+		return settings.PrimaryColor, true, nil
 	case "default_comments_enabled":
-		return settings.DefaultCommentsEnabled, true
+		return settings.DefaultCommentsEnabled, true, nil
 	case "homepage_page_id":
-		return optionalString(settings.HomepagePageID), true
+		return optionalString(settings.HomepagePageID), true, nil
 	case "menu_header_id":
-		return optionalString(settings.MenuHeaderID), true
+		return optionalString(settings.MenuHeaderID), true, nil
 	case "menu_secondary_id":
-		return optionalString(settings.MenuSecondaryID), true
+		return optionalString(settings.MenuSecondaryID), true, nil
 	case "menu_footer_id":
-		return optionalString(settings.MenuFooterID), true
+		return optionalString(settings.MenuFooterID), true, nil
 	case "menu_avatar_dropdown_id":
-		return optionalString(settings.MenuAvatarDropdownID), true
+		return optionalString(settings.MenuAvatarDropdownID), true, nil
 	case "meta_description":
-		return settings.MetaDescription, true
+		return settings.MetaDescription, true, nil
 	case "google_analytics_id":
-		return optionalString(settings.GoogleAnalyticsID), true
+		return optionalString(settings.GoogleAnalyticsID), true, nil
 	case "og_image_config":
-		return jsonColumnToMap(settings.OGImageConfig, "og_image_config", false), true
+		value, err := jsonColumnToMap(settings.OGImageConfig, false)
+		return value, true, err
 	case "og_image_config.home", "og_image_config.content":
 		root, err := parseOgImageConfigRoot(settings.OGImageConfig)
 		if err != nil {
-			slog.ErrorContext(context.Background(), "content operation failed", "domain", "sitesettings", "operation", "load_og_image_config_section", "outcome", "failed", failurecause.Attr(err), "key", key)
-			return nil, true
+			return nil, true, err
 		}
 		section := strings.TrimPrefix(key, "og_image_config.")
-		return root[section], true
+		return root[section], true, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 

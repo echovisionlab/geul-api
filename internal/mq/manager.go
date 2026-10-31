@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const consumerFatalDrainTimeout = time.Second
@@ -60,7 +62,7 @@ func (m *ConsumerManager) start(ctx context.Context, ready chan<- error) error {
 	m.mu.Unlock()
 
 	if len(consumers) == 0 {
-		slog.Warn("No consumers registered")
+		slog.WarnContext(ctx, "No consumers registered")
 		if ready != nil {
 			ready <- nil
 		}
@@ -68,7 +70,7 @@ func (m *ConsumerManager) start(ctx context.Context, ready chan<- error) error {
 		return nil
 	}
 
-	slog.Info("Starting consumer manager", "queues", len(consumers))
+	slog.InfoContext(ctx, "Starting consumer manager", "queues", len(consumers))
 
 	consumerReady := make(chan error, len(consumers))
 	starts := make([]func(context.Context) error, 0, len(consumers))
@@ -97,7 +99,7 @@ func (m *ConsumerManager) start(ctx context.Context, ready chan<- error) error {
 					ready <- readyErr
 				}
 				firstErr := <-groupDone
-				slog.Info("Consumer manager stopped")
+				slog.InfoContext(ctx, "Consumer manager stopped")
 				return firstErr
 			}
 		case firstErr := <-groupDone:
@@ -107,14 +109,14 @@ func (m *ConsumerManager) start(ctx context.Context, ready chan<- error) error {
 			if ready != nil {
 				ready <- firstErr
 			}
-			slog.Info("Consumer manager stopped")
+			slog.InfoContext(ctx, "Consumer manager stopped")
 			return firstErr
 		case <-ctx.Done():
 			if ready != nil {
 				ready <- ctx.Err()
 			}
 			firstErr := <-groupDone
-			slog.Info("Consumer manager stopped")
+			slog.InfoContext(ctx, "Consumer manager stopped")
 			return firstErr
 		}
 	}
@@ -124,7 +126,7 @@ func (m *ConsumerManager) start(ctx context.Context, ready chan<- error) error {
 	}
 	firstErr := <-groupDone
 
-	slog.Info("Consumer manager stopped")
+	slog.InfoContext(ctx, "Consumer manager stopped")
 	return firstErr
 }
 
@@ -163,13 +165,15 @@ func runConsumerGroupWithDrainTimeout(
 			case siblingErr := <-results:
 				remaining--
 				if siblingErr != nil {
-					slog.Error("Consumer error during drain", "reason", reason, "error", siblingErr)
 					if firstErr == nil {
 						firstErr = siblingErr
+						continue
 					}
+					// Only the first error reaches the caller.
+					slog.ErrorContext(ctx, "Consumer error during drain", "reason", reason, failurecause.Attr(siblingErr))
 				}
 			case <-timer.C:
-				slog.Error(
+				slog.ErrorContext(ctx,
 					"Consumer group drain timed out",
 					"reason", reason,
 					"remaining_consumers", remaining,
@@ -187,7 +191,6 @@ func runConsumerGroupWithDrainTimeout(
 			if err == nil {
 				continue
 			}
-			slog.Error("Consumer error", "error", err)
 			cancel()
 			return drainRemaining(err, "fatal_error")
 		case <-ctx.Done():

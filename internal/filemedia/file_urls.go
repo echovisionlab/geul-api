@@ -111,7 +111,7 @@ func (s *FileService) resolveContentFileDeliveries(
 		result[file.ID] = delivery
 	}
 	if err := s.populateFileProcessingStatus(ctx, result); err != nil {
-		slog.Error("Failed to populate content file processing status", failurecause.Attr(err), "fileCount", len(result))
+		slog.ErrorContext(ctx, "Failed to populate content file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 	return result, nil
 }
@@ -122,13 +122,7 @@ const MaxMediaDeliveryBatchSize = 100
 func (s *FileService) GetMediaDelivery(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMediaDeliveryRequest],
-) (_ *connect.Response[managev1.GetMediaDeliveryResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetMediaDelivery", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
 	return s.getMediaDelivery(ctx, req, true)
 }
 
@@ -176,13 +170,7 @@ func (s *FileService) getMediaDelivery(
 func (s *FileService) GetBulkMediaDeliveries(
 	ctx context.Context,
 	req *connect.Request[managev1.GetBulkMediaDeliveriesRequest],
-) (_ *connect.Response[managev1.GetBulkMediaDeliveriesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetBulkMediaDeliveries", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.GetBulkMediaDeliveriesResponse], error) {
 	if len(req.Msg.FileIds) > MaxMediaDeliveryBatchSize {
 		return nil, errs.InvalidArgument(
 			"file_ids",
@@ -313,7 +301,7 @@ func (s *FileService) loadFileURLResponses(
 	}
 
 	if err := s.populateFileProcessingStatus(ctx, deliveries); err != nil {
-		slog.Error("Failed to populate bulk file processing status", failurecause.Attr(err), "fileCount", len(result))
+		slog.ErrorContext(ctx, "Failed to populate bulk file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 
 	return result, nil

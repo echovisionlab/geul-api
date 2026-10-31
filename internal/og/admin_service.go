@@ -9,7 +9,6 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -59,13 +58,7 @@ func NewAdminService(
 func (s *AdminService) RegenerateOgImage(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateOgImageRequest],
-) (_ *connect.Response[managev1.RegenerateOgImageResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "RegenerateOgImage", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.RegenerateOgImageResponse], error) {
 	if err := s.authorizer.RequireAuthenticated(ctx); err != nil {
 		return nil, err
 	}
@@ -106,13 +99,7 @@ func (s *AdminService) RegenerateOgImage(
 func (s *AdminService) RegenerateAllOgImages(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateAllOgImagesRequest],
-) (_ *connect.Response[managev1.RegenerateAllOgImagesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "RegenerateAllOgImages", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.RegenerateAllOgImagesResponse], error) {
 	if err := s.authorizer.RequireAdmin(ctx); err != nil {
 		return nil, err
 	}
@@ -137,7 +124,7 @@ func (s *AdminService) RegenerateAllOgImages(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	slog.Info("queued one OG regeneration run for all targets", "runId", plan.RunID, "generationCount", len(plan.GenerationIDs))
+	slog.InfoContext(ctx, "Queued one OG regeneration run for all targets", "run_id", plan.RunID, "generation_count", len(plan.GenerationIDs))
 	return connect.NewResponse(&managev1.RegenerateAllOgImagesResponse{
 		RunId: plan.RunID, GenerationCount: boundedInt32(int64(len(plan.GenerationIDs))),
 	}), nil

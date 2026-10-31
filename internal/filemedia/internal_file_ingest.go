@@ -35,13 +35,7 @@ func NewInternalFileIngestService(files *FileService) *InternalFileIngestService
 func (s *InternalFileIngestService) AttachTrackOriginalAudio(
 	ctx context.Context,
 	req *connect.Request[intrav1.AttachTrackOriginalAudioRequest],
-) (_ *connect.Response[intrav1.AttachTrackOriginalAudioResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AttachTrackOriginalAudio", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[intrav1.AttachTrackOriginalAudioResponse], error) {
 	if req.Msg == nil {
 		return nil, errs.Required("request")
 	}
@@ -114,8 +108,7 @@ func (s *FileService) attachTrackOriginalAudio(
 			return errs.FailedPrecondition("File ingest attempt does not match")
 		}
 		if _, err := CanonicalMediaObjectTargetForFile(file); err != nil {
-			slog.ErrorContext(ctx, "Invalid verified file metadata", failurecause.Attr(err), "file_id", file.ID)
-			return errs.FailedPrecondition("verified File metadata is not canonical")
+			return errs.WithCause(errs.FailedPrecondition("verified File metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
 		}
 		var binding model.FileIngestBinding
 		if err := tx.Where("file_id = ?", fileID).Take(&binding).Error; err != nil {

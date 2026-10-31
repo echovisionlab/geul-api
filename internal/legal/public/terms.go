@@ -50,14 +50,7 @@ func NewTermsServiceWithContentBlocks(
 func (s *TermsService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetTermsRequest],
-) (rpcResponse *connect.Response[openv1.GetTermsResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr, optionalStringValue(req.Msg.ShareToken), optionalStringValue(req.Msg.SharePassword))
-			slog.Log(ctx, level, "RPC failed", "service", "public.Terms", "method", "Get", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[openv1.GetTermsResponse], error) {
 	result, err := getPublicLegalDocument(ctx, s.db, s.contentBlocks, s.media, s.publicLegalSpec(), publicLegalRequest{
 		requestedID:    optionalStringValue(req.Msg.Id),
 		shareToken:     optionalStringValue(req.Msg.ShareToken),
@@ -106,13 +99,8 @@ func (s *TermsService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListTermsRequest],
 ) (rpcResponse *connect.Response[openv1.ListTermsResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "service", "public.Terms", "method", "List", "failure_cause", cause)
-		}
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("service", "public.Terms"))
+
 	limit := req.Msg.Limit
 	if limit <= 0 {
 		limit = 10

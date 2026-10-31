@@ -72,15 +72,7 @@ var formatListCRUD = referenceCRUD[model.Format]{filters: formatFilterConfig, so
 func (s *FormatService) ListFormats(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormatsRequest],
-) (_ *connect.Response[managev1.ListFormatsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListFormats", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListFormatsResponse], error) {
 	formats, total, page, err := formatListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -100,15 +92,7 @@ func (s *FormatService) ListFormats(
 func (s *FormatService) ListFormatsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormatsAdminRequest],
-) (_ *connect.Response[managev1.ListFormatsAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListFormatsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListFormatsAdminResponse], error) {
 	can, err := policyv1.Format.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -147,15 +131,7 @@ func (s *FormatService) ListFormatsAdmin(
 func (s *FormatService) CreateFormat(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateFormatRequest],
-) (_ *connect.Response[managev1.Format], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateFormat", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Format], error) {
 	can, err := policyv1.Format.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -191,8 +167,7 @@ func (s *FormatService) CreateFormat(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(format).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("format", slug)
+				return errs.WithCause(errs.SlugAlreadyExists("format", slug), err)
 			}
 			return errs.Internal(err)
 		}
@@ -223,13 +198,7 @@ func (s *FormatService) UpdateFormat(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFormatRequest],
 ) (_ *connect.Response[managev1.Format], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateFormat", "outcome", "failed", "format_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("format_id", req.Msg.GetId()))
 
 	can, err := policyv1.Format.Edit(req.Msg.Id)
 	if err != nil {
@@ -298,8 +267,7 @@ func (s *FormatService) applyFormatUpdates(
 	}
 	if err := db.WithContext(ctx).Model(format).Updates(updates).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return errs.SlugAlreadyExists("format", optionalStringValue(slug))
+			return errs.WithCause(errs.SlugAlreadyExists("format", optionalStringValue(slug)), err)
 		}
 		return errs.Internal(err)
 	}
@@ -318,13 +286,7 @@ func (s *FormatService) DeleteFormat(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteFormatRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteFormat", "outcome", "failed", "format_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("format_id", req.Msg.GetId()))
 
 	can, err := policyv1.Format.Delete(req.Msg.Id)
 	if err != nil {

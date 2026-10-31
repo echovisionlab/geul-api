@@ -45,13 +45,7 @@ func (s *MemberService) CompleteMyOnboarding(
 	welcomeOutcome := ""
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := identitystate.Lock(tx, principal.IdentityID.String()); err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
-			}
-			slog.ErrorContext(ctx, "Operation failed", "operation", "CompleteMyOnboarding", failurecause.Attr(err, privateBody, nickname))
-			return errs.Internal(err)
+			return errs.Internal(fmt.Errorf("lock identity state: %w", err))
 		}
 		result := tx.Model(&model.Member{}).
 			Where(`id = ?::uuid
@@ -65,11 +59,9 @@ func (s *MemberService) CompleteMyOnboarding(
 			})
 		if result.Error != nil {
 			if dberrors.IsUniqueViolation(result.Error) {
-				slog.WarnContext(ctx, "Member onboarding nickname conflict", failurecause.Attr(result.Error, nickname))
-				return errs.AlreadyExists("member", "nickname", nickname)
+				return errs.WithCause(errs.AlreadyExists("member", "nickname", nickname), result.Error)
 			}
-			slog.ErrorContext(ctx, "Operation failed", "operation", "CompleteMyOnboarding", failurecause.Attr(result.Error, nickname))
-			return errs.Internal(result.Error)
+			return errs.Internal(fmt.Errorf("complete member onboarding: %w", result.Error))
 		}
 		if result.RowsAffected != 1 {
 			current, err := resolveUnchangedMemberOnboarding(
@@ -80,13 +72,7 @@ func (s *MemberService) CompleteMyOnboarding(
 		}
 		transitioned = true
 		if err := tx.Where("id = ?::uuid", principal.MemberID.String()).Take(&member).Error; err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
-			}
-			slog.ErrorContext(ctx, "Operation failed", "operation", "CompleteMyOnboarding", failurecause.Attr(err, privateBody, nickname))
-			return errs.Internal(err)
+			return errs.Internal(fmt.Errorf("load onboarded member: %w", err))
 		}
 		if err := domainaudit.AppendMember(
 			ctx,
@@ -121,20 +107,10 @@ func (s *MemberService) CompleteMyOnboarding(
 		s.onboardingMetrics.recordWelcomePublish(ctx, welcomeOutcome)
 	}
 	if err != nil {
-		level := slog.LevelError
-		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
-			level = slog.LevelWarn
-		}
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.Log(ctx, level, "Operation failed", "operation", "CompleteMyOnboarding", failurecause.Attr(err, privateBody, nickname))
-		return nil, errs.Wrap(err)
+		return nil, errs.Wrap(failurecause.WithPrivate(err, nickname))
 	}
 	if transitioned && welcomeOutcome == "accepted" {
-		slog.Info(
+		slog.InfoContext(ctx,
 			"Member onboarding welcome command confirmed",
 			"domain", "member",
 			"event", "member.onboarding_welcome_published",
@@ -166,13 +142,7 @@ func resolveUnchangedMemberOnboarding(
 		return current, errs.InvalidSession()
 	}
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(tx.Statement.Context, "Operation failed", "operation", "resolveUnchangedMemberOnboarding", failurecause.Attr(err, privateBody))
-		return current, errs.Internal(err)
+		return current, errs.Internal(fmt.Errorf("load member for unchanged onboarding: %w", err))
 	}
 	if !current.Onboarded {
 		return current, errs.FailedPrecondition("member onboarding could not be completed")
@@ -209,34 +179,20 @@ func enqueueMemberOnboardingWelcomeEmail(
 	projection AccountEmailProjection,
 ) (string, error) {
 	if projection == nil || publisher == nil {
-		err := errors.New("account email projection and welcome publisher are required")
-		slog.ErrorContext(ctx, "Member onboarding welcome dependencies missing", "domain", "member", "event", "member.onboarding_welcome_publish_failed", "outcome", "failed", "reason", "dependency_missing", "member_id", memberID, "identity_id", identityID, "failure_cause", failurecause.Message(err))
-		return "failed", errs.Internal(err)
+		return "failed", errs.Internal(errors.New("account email projection and welcome publisher are required"))
 	}
 	recipient, linkedMemberID, reason, err := projection.ResolveDelivery(ctx, tx, identity, identityID)
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx,
-			"Member onboarding welcome recipient resolution failed",
-			"domain", "member",
-			"event", "member.onboarding_welcome_publish_failed",
-			"outcome", "failed",
-			"reason", "recipient_resolution_failed",
-			"identity_id", identityID,
-			"member_id", memberID,
-			"failure_cause", failurecause.Message(err, privateBody),
+		return "failed", errs.WithCause(
+			errs.DependencyUnavailable("account email"),
+			fmt.Errorf("resolve welcome email recipient: %w", err),
 		)
-		return "failed", errs.DependencyUnavailable("account email")
 	}
 	if recipient == "" {
 		if reason == "" {
 			reason = "member_link_mismatch"
 		}
-		slog.Info(
+		slog.InfoContext(ctx,
 			"Member onboarding welcome skipped",
 			"domain", "member",
 			"event", "member.onboarding_welcome_skipped",
@@ -261,9 +217,7 @@ func enqueueMemberOnboardingWelcomeEmail(
 	}
 	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
 	if !ok {
-		err := errors.New("database transaction does not expose a PGMQ executor")
-		slog.ErrorContext(ctx, "Member onboarding welcome publish failed", "domain", "member", "event", "member.onboarding_welcome_publish_failed", "outcome", "failed", "reason", "executor_unavailable", "identity_id", identityID, "member_id", memberID, "failure_cause", failurecause.Message(err))
-		return "failed", errs.Internal(err)
+		return "failed", errs.Internal(errors.New("database transaction does not expose a PGMQ executor"))
 	}
 	nickname, locale := memberWelcomeRecipientFields(member)
 	commandID := "welcome:" + identityID
@@ -285,19 +239,10 @@ func enqueueMemberOnboardingWelcomeEmail(
 		for _, value := range job.TemplateData {
 			privateValues = append(privateValues, value)
 		}
-		slog.ErrorContext(ctx,
-			"Member onboarding welcome publish failed",
-			"domain", "member",
-			"event", "member.onboarding_welcome_publish_failed",
-			"outcome", "failed",
-			"reason", "queue_publish_failed",
-			"identity_id", identityID,
-			"member_id", memberID,
-			"command_id", commandID,
-			"template_type", job.TemplateType,
-			"failure_cause", failurecause.Message(err, privateValues...),
-		)
-		return "failed", errs.Internal(err)
+		return "failed", errs.Internal(failurecause.WithAttrs(
+			failurecause.WithPrivate(fmt.Errorf("publish welcome email command: %w", err), privateValues...),
+			slog.String("command_id", commandID),
+		))
 	}
 	return "accepted", nil
 }
@@ -397,12 +342,6 @@ func (s *MemberService) UpdateMyPreferences(
 			if connect.CodeOf(err) != connect.CodeUnknown {
 				return nil, err
 			}
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
-			}
-			slog.ErrorContext(ctx, "Operation failed", "operation", "UpdateMyPreferences", failurecause.Attr(err, privateBody))
 			return nil, errs.Internal(err)
 		}
 	}

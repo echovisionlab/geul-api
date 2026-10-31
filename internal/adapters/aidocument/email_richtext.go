@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"strings"
 
@@ -14,7 +13,6 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -195,7 +193,7 @@ func (p *emailRichTextPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == emailRichTextExecutionValidate,
+			err, mode == emailRichTextExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
@@ -460,7 +458,6 @@ func emailRichTextDomainIssue(err error, operations []core.Operation) *core.Oper
 	if index < 0 {
 		return nil
 	}
-	slog.Warn("Email document File operation rejected", failurecause.Attr(err), "operation_index", index)
 	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 

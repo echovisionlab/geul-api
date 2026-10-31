@@ -28,15 +28,7 @@ import (
 func (s *ClientService) CreateClient(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateClientRequest],
-) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateClient", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Client], error) {
 	can, err := policyv1.Client.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -65,8 +57,7 @@ func (s *ClientService) CreateClient(
 		}
 		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}}}).Create(&client).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-				return errs.AlreadyExistsMsg("client with this name already exists")
+				return errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
 			}
 			return errs.Internal(err)
 		}
@@ -87,8 +78,7 @@ func (s *ClientService) CreateClient(
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.AlreadyExistsMsg("client with this name already exists")
+			return nil, errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
 		}
 		return nil, err
 	}
@@ -101,13 +91,7 @@ func (s *ClientService) UpdateClient(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateClientRequest],
 ) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
 
 	can, err := policyv1.Client.Edit(req.Msg.Id)
 	if err != nil {
@@ -171,8 +155,7 @@ func (s *ClientService) applyClientUpdates(ctx context.Context, db *gorm.DB, cli
 	}
 	if err := db.WithContext(ctx).Model(client).Updates(updates).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return errs.AlreadyExistsMsg("client with this name already exists")
+			return errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
 		}
 		return errs.Internal(err)
 	}
@@ -184,13 +167,7 @@ func (s *ClientService) DeleteClient(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteClientRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
 
 	can, err := policyv1.Client.Delete(req.Msg.Id)
 	if err != nil {

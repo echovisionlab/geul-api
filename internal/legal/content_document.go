@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -67,8 +66,7 @@ func loadLegalContentDocumentRoot(
 		return legalContentDocumentRoot{}, errs.FailedPrecondition(kind + " source locale is missing")
 	}
 	if _, err := canonicalLegalLocale(root.SourceLocale); err != nil {
-		slog.ErrorContext(ctx, "Stored legal source locale is invalid", failurecause.Attr(err), "entity_type", kind, "entity_id", entityID)
-		return legalContentDocumentRoot{}, errs.FailedPrecondition(kind + " source locale is not canonical")
+		return legalContentDocumentRoot{}, errs.WithCause(errs.FailedPrecondition(kind+" source locale is not canonical"), failurecause.ServerFault(err))
 	}
 	return root, nil
 }
@@ -211,8 +209,7 @@ func authorizeLegalBlockBootstrap(
 		principalMessage.GetSessionId(),
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		slog.WarnContext(ctx, "Legal collaboration session rejected", failurecause.Attr(err, principalMessage.GetSessionId()), "entity_type", kind, "entity_id", entityID)
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), failurecause.WithPrivate(err, principalMessage.GetSessionId()))
 	}
 	if err != nil {
 		return errs.Internal(fmt.Errorf("resolve %s collaboration principal: %w", kind, err))
@@ -264,17 +261,13 @@ func normalizeLegalContentBlockError(kind string, err error) error {
 	}
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.NotFoundMsg(kind + " content document not found")
+		return errs.WithCause(errs.NotFoundMsg(kind+" content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.FailedPrecondition(kind + " content revision changed; reload before saving")
+		return errs.WithCause(errs.FailedPrecondition(kind+" content revision changed; reload before saving"), err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.Warn("Legal content operation rejected", failurecause.Attr(err), "entity_type", kind)
-		return errs.InvalidArgument("blocks", "File Blocks are not allowed in legal policy documents")
+		return errs.WithCause(errs.InvalidArgument("blocks", "File Blocks are not allowed in legal policy documents"), err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
 	default:

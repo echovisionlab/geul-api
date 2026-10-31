@@ -22,7 +22,7 @@ func (recorder *AuthenticationAccessRecorder) resolveIncomingMember(request *htt
 	sessionID, err := recorder.sessionIDFromWhoAmI(request.Context(), request.Cookies())
 	if err != nil || sessionID == "" {
 		if err != nil {
-			slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_incoming_session", failurecause.Attr(err))
+			slog.ErrorContext(request.Context(), "Incoming session lookup failed; recording OIDC callback without a signed-in member", "operation", "resolve_incoming_session", failurecause.Attr(err))
 		}
 		return nil
 	}
@@ -33,7 +33,7 @@ func (recorder *AuthenticationAccessRecorder) resolveIncomingMember(request *htt
 			if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 				level = slog.LevelWarn
 			}
-			slog.Log(request.Context(), level, "Operation failed", "reason", "resolve_incoming_principal", failurecause.Attr(err))
+			slog.Log(request.Context(), level, "Incoming principal lookup failed; recording OIDC callback without a signed-in member", "operation", "resolve_incoming_principal", failurecause.Attr(err))
 		}
 		return nil
 	}

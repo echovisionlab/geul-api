@@ -31,15 +31,15 @@ var (
 // It stores derivative files (thumbnails, HLS manifests, audio sidecars) in the file_derivative table.
 func (h *Handlers) HandleTranscodeComplete(ctx context.Context, body []byte) (resultErr error) {
 	event, err := parseTranscodeCompleteEvent(body)
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeComplete", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err != nil {
 		return err
 	}
-	logTranscodeComplete(event)
+	logTranscodeComplete(ctx, event)
 
 	skipped, err := h.skipUnavailableTranscodeSource(ctx, event)
 	if err != nil || skipped {
@@ -181,7 +181,7 @@ func (h *Handlers) retireStaleTranscodeOutputs(ctx context.Context, event *manag
 			return err
 		}
 		if tracked == nil {
-			slog.Warn("Skipped stale transcode output retirement without matching allocation",
+			slog.WarnContext(ctx, "Skipped stale transcode output retirement without matching allocation",
 				"fileId", event.FileId,
 				"entityType", event.EntityType.String(),
 				"entityId", event.EntityId,
@@ -466,7 +466,7 @@ func (h *Handlers) finalizeTrackTranscodeStateWithDB(
 	}
 
 	if result.RowsAffected == 0 {
-		slog.Debug("Skipped stale track transcode completion", "trackId", event.EntityId, "fileId", event.FileId)
+		slog.DebugContext(ctx, "Skipped stale track transcode completion", "trackId", event.EntityId, "fileId", event.FileId)
 		return false, nil
 	}
 
@@ -533,7 +533,7 @@ func (h *Handlers) publishWaveformGenerate(
 
 	if err := h.publisher.PublishWaveformGenerate(ctx, job); err != nil {
 		if markErr := h.markWaveformJobFailed(ctx, job.EventId, err.Error()); markErr != nil {
-			slog.Error("Failed to mark waveform job publish failure", "eventId", job.EventId, failurecause.Attr(markErr))
+			return errors.Join(err, fmt.Errorf("mark waveform job %s publish failure: %w", job.EventId, markErr))
 		}
 		return err
 	}

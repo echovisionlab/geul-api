@@ -75,15 +75,7 @@ var styleCRUD = referenceCRUD[model.Style]{
 func (s *StyleService) ListStyles(
 	ctx context.Context,
 	req *connect.Request[managev1.ListStylesRequest],
-) (_ *connect.Response[managev1.ListStylesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListStyles", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListStylesResponse], error) {
 	styles, total, page, err := styleCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -100,15 +92,7 @@ func (s *StyleService) ListStyles(
 func (s *StyleService) ListStylesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListStylesAdminRequest],
-) (_ *connect.Response[managev1.ListStylesAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListStylesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListStylesAdminResponse], error) {
 	can, err := policyv1.Style.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -140,15 +124,7 @@ func (s *StyleService) ListStylesAdmin(
 func (s *StyleService) CreateStyle(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateStyleRequest],
-) (_ *connect.Response[managev1.Style], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateStyle", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Style], error) {
 	can, err := policyv1.Style.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -191,13 +167,7 @@ func (s *StyleService) UpdateStyle(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateStyleRequest],
 ) (_ *connect.Response[managev1.Style], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateStyle", "outcome", "failed", "style_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("style_id", req.Msg.GetId()))
 
 	can, err := policyv1.Style.Edit(req.Msg.Id)
 	if err != nil {
@@ -235,13 +205,7 @@ func (s *StyleService) DeleteStyle(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteStyleRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteStyle", "outcome", "failed", "style_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("style_id", req.Msg.GetId()))
 
 	can, err := policyv1.Style.Delete(req.Msg.Id)
 	if err != nil {

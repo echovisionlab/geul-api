@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -211,7 +209,6 @@ func updateCreativeLocaleTitle(
 	}
 	parsedRevision, err := uuid.Parse(expectedRevision)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "updateCreativeLocaleTitle", failurecause.Attr(err))
 		return creativeLocaleTitleUpdateResult{}, errs.InvalidArgument("expected_revision", "must be a UUID")
 	}
 	documentID, err := loadCreativeContentDocumentID(ctx, db, entityType, entityID)
@@ -462,8 +459,7 @@ func loadCreativeContentBlockBootstrap(
 			ctx, tx, principalMessage.GetSessionId(),
 		)
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "loadCreativeContentBlockBootstrap", failurecause.Attr(err))
-			return errs.AuthenticationRequired()
+			return errs.WithCause(errs.AuthenticationRequired(), err)
 		}
 		if err != nil {
 			return errs.Internal(fmt.Errorf("resolve %s collaboration principal: %w", entityType, err))
@@ -479,18 +475,15 @@ func loadCreativeContentBlockBootstrap(
 		}
 		can, err := policyv1.Artist.Edit(entityID)
 		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "loadCreativeContentBlockBootstrap", failurecause.Attr(err))
 			return errs.InvalidArgument("artist_id", "must be a canonical Artist UUID")
 		}
 		decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "loadCreativeContentBlockBootstrap", failurecause.Attr(err))
-			return errs.AuthenticationRequired()
+			return errs.WithCause(errs.AuthenticationRequired(), err)
 		}
 		allowed, err := spiceDB.Can(ctx, decision)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "loadCreativeContentBlockBootstrap", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		if !allowed {
 			return errs.NoPermission("edit", "artist")
@@ -623,29 +616,27 @@ func normalizeCreativeContentBlockError(entityType string, err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
+	// A revision conflict does not keep its cause: callers branch on
+	// errors.Is/As for raw stale and target-revision errors, and an
+	// already-normalized conflict must not take those branches.
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", entityType, "operation", "normalizeCreativeContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
 			entityType+" target locale changed since it was loaded; reload before saving",
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", entityType, "operation", "normalizeCreativeContentBlockError", failurecause.Attr(err))
-		return errs.NotFoundMsg(entityType + " content document not found")
+		return errs.WithCause(errs.NotFoundMsg(entityType+" content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", entityType, "operation", "normalizeCreativeContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 			entityType+" content revision changed; reload before saving",
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", entityType, "operation", "normalizeCreativeContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", entityType, "operation", "normalizeCreativeContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks")
+		return errs.WithCause(errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks"), err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
 	default:

@@ -24,7 +24,7 @@ func ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 				return *locale
 			}
 		} else if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Member preferred locale load failed; inferring the source locale from the request", "domain", "form", "event", "form.operation_failed", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -45,7 +45,7 @@ func TranslationDefaultLocale(ctx context.Context, db *gorm.DB) string {
 		if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
 			return settings.DefaultLocale
 		} else {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_default_locale", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Translation settings load failed; using the built-in default locale", "domain", "form", "event", "form.operation_failed", "operation", "load_default_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	return translation.DefaultLocale

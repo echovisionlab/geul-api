@@ -50,7 +50,7 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 				return *locale
 			}
 		} else if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_preferred_locale", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Preferred locale lookup failed; inferring the Post source locale", "domain", "post", "operation", "load_preferred_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -61,7 +61,7 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 			return *locale
 		}
 	} else {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Localization settings lookup failed; using the default Post source locale", "domain", "post", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }

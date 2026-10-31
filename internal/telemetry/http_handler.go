@@ -86,6 +86,7 @@ func NewHTTPHandler(mux *http.ServeMux, trustIncomingRequestID func(*http.Reques
 		)
 		defer span.End()
 
+		ctx, recorder := failurecause.WithRecorder(ctx)
 		request := r.WithContext(ctx)
 		metrics := httpsnoop.CaptureMetrics(dispatch, w, request)
 		route := normalizeHTTPRoute(request.Pattern, r.Method)
@@ -101,7 +102,7 @@ func NewHTTPHandler(mux *http.ServeMux, trustIncomingRequestID func(*http.Reques
 			span.SetStatus(codes.Error, "")
 		}
 		if !connectRequestRecorded(ctx) {
-			logHTTPRequest(ctx, r.Method, route, metrics.Code, metrics.Duration)
+			logHTTPRequest(ctx, r.Method, route, metrics.Code, metrics.Duration, recorder)
 		}
 	})
 }
@@ -170,7 +171,10 @@ func trustedSourceIP(request *http.Request) string {
 	return address.Unmap().String()
 }
 
-func logHTTPRequest(ctx context.Context, method, route string, statusCode int, duration time.Duration) {
+// logHTTPRequest emits the terminal record of a plain HTTP request. A handler
+// that failed records its cause through the failurecause.Recorder in its
+// request context instead of logging a second record.
+func logHTTPRequest(ctx context.Context, method, route string, statusCode int, duration time.Duration, recorder *failurecause.Recorder) {
 	actor, correlation := requestActorAndCorrelation(ctx)
 	result, err := sharedtelemetry.ClassifyHTTPResult(statusCode, duration.Milliseconds())
 	if err != nil {
@@ -184,7 +188,11 @@ func logHTTPRequest(ctx context.Context, method, route string, statusCode int, d
 		slog.ErrorContext(ctx, "Build HTTP request record failed", "http_method", method, "http_route", route, "failure_cause", failurecause.Message(err))
 		return
 	}
-	if err := sharedtelemetry.EmitRequest(ctx, slogDefaultHandler(), record); err != nil {
+	handler := slogDefaultHandler()
+	if failure, recorded := recorder.Recorded(); recorded && statusCode >= http.StatusBadRequest {
+		handler = &requestFailureHandler{Handler: handler, failure: failure, status: statusCode}
+	}
+	if err := sharedtelemetry.EmitRequest(ctx, handler, record); err != nil {
 		slog.ErrorContext(ctx, "Emit HTTP request record failed", "http_method", method, "http_route", route, "failure_cause", failurecause.Message(err))
 	}
 }

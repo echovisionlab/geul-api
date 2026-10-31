@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
@@ -122,7 +123,7 @@ func resolvePageLocalizedMetadataSelection(
 	); availableErr == nil {
 		selection.AvailableLocales = filterPageAvailableLocales(available, selection.SourceLocale, documentLocales)
 	} else {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "page_id", pageID)
+		slog.ErrorContext(ctx, "Available locale lookup failed; serving Page without its locale list", "domain", "page", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "page_id", pageID)
 	}
 	return selection, nil
 }
@@ -189,15 +190,7 @@ func NewPageService(
 func (s *PageService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPageRequest],
-) (_ *connect.Response[openv1.GetPageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
-	}()
-
+) (*connect.Response[openv1.GetPageResponse], error) {
 	slug := req.Msg.Slug
 	shareToken := req.Msg.ShareToken
 	sharePassword := ""
@@ -272,7 +265,7 @@ func (s *PageService) buildPageResponse(
 	}
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, s.db)
 	if settingsErr != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
+		slog.ErrorContext(ctx, "Localization settings lookup failed; serving Page with default settings", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
 		settings = translation.DefaultRuntimeSettings()
 	}
 

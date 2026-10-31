@@ -317,10 +317,10 @@ func dispatchCreatedLegalNoticeRun(
 		return
 	}
 	if err := notice.DispatchRun(ctx, run.ID); err != nil {
-		slog.Warn("legal notice delivery run dispatch will be retried by scheduler",
+		slog.WarnContext(ctx, "Legal notice delivery run dispatch failed; the scheduler will retry it",
 			"run_id", run.ID,
 			"run_kind", run.RunKind,
-			"failure_cause", failurecause.Message(err),
+			failurecause.Attr(err),
 		)
 	}
 }
@@ -363,11 +363,11 @@ func cancelScheduledLegalUpdateNoticeAfterActivation(
 		referenceColumn = "privacy_id"
 		eventKey = email.EventPrivacyUpdate.String()
 	default:
-		slog.Warn(
-			"legal policy activation committed without update notice cleanup",
+		slog.WarnContext(ctx,
+			"Legal policy activation committed without update notice cleanup",
 			"reference_type", referenceType,
 			"reference_id", referenceID,
-			"error", "unsupported legal notice reference type",
+			"failure_cause", "unsupported legal notice reference type",
 		)
 		return
 	}
@@ -383,12 +383,12 @@ func cancelScheduledLegalUpdateNoticeAfterActivation(
 			"completed_at": now.UTC(),
 		})
 	if result.Error != nil {
-		slog.Warn(
-			"legal policy activation committed without update notice cleanup",
+		slog.WarnContext(ctx,
+			"Legal policy activation committed without update notice cleanup",
 			"reference_type", referenceType,
 			"reference_id", referenceID,
 			"event_key", eventKey,
-			"failure_cause", failurecause.Message(result.Error),
+			failurecause.Attr(result.Error),
 		)
 	}
 }
