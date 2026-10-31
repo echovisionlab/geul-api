@@ -40,7 +40,7 @@ func programEventCatalog(codec *RichTextCodec) core.Catalog {
 // aggregate service. The adapter owns only generated Rich Text projection and
 // compilation; Program Event owns authorization, lifecycle, transaction, CAS,
 // locale presence and File reuse validation.
-func NewProgramEventRegistration(service *programeventdomain.ProgramEventService) (DomainRegistration, error) {
+func NewProgramEventRegistration(service *programeventdomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("program Event AI document service is required")
 	}
@@ -57,14 +57,8 @@ type programEventPort struct {
 }
 
 type programEventDocumentAPI interface {
-	LoadAIDocumentState(context.Context, string, string) (programeventdomain.AIDocumentState, error)
-	ExecuteAIDocumentCommand(
-		context.Context,
-		string,
-		string,
-		programeventdomain.AIDocumentExecutionMode,
-		programeventdomain.AIDocumentCommandCompiler,
-	) (programeventdomain.AIDocumentResult, error)
+	LoadAIDocumentState(context.Context, programeventdomain.AIDocumentStateQuery) (programeventdomain.AIDocumentState, error)
+	ExecuteAIDocument(context.Context, programeventdomain.ExecuteAIDocumentCommand) (programeventdomain.AIDocumentResult, error)
 }
 
 func (p *programEventPort) Load(
@@ -75,7 +69,7 @@ func (p *programEventPort) Load(
 	if err := validateProgramEventIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.service.LoadAIDocumentState(ctx, string(identity.Reference), string(locale))
+	state, err := p.service.LoadAIDocumentState(ctx, programeventdomain.AIDocumentStateQuery{EventID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -138,12 +132,11 @@ func (p *programEventPort) executeMutation(
 
 	run := newExactMutationRun("Program Event")
 	var changes []core.Change
-	domainResult, err := p.service.ExecuteAIDocumentCommand(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state programeventdomain.AIDocumentState) (programeventdomain.AIDocumentCommand, error) {
+	domainResult, err := p.service.ExecuteAIDocument(ctx, programeventdomain.ExecuteAIDocumentCommand{
+		EventID: string(identity.Reference),
+		Locale:  string(request.Locale),
+		Mode:    mode,
+		Compiler: func(state programeventdomain.AIDocumentState) (programeventdomain.AIDocumentCommand, error) {
 			current, err := p.project(identity, request.Locale, state)
 			if err != nil {
 				return programeventdomain.AIDocumentCommand{}, err
@@ -175,7 +168,7 @@ func (p *programEventPort) executeMutation(
 			}
 			return compiled, nil
 		},
-	)
+	})
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
 			err, mode == programeventdomain.AIDocumentExecutionValidate,

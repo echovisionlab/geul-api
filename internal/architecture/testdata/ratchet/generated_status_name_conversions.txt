@@ -19,8 +19,7 @@
 3 internal/page/public
 50 internal/post
 10 internal/post/public
-28 internal/programevent
-15 internal/programevent/public
+3 internal/programevent/public
 2 internal/referencecatalog/public
 5 internal/series
 3 internal/series/public

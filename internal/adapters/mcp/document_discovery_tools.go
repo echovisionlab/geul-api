@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -47,7 +48,7 @@ type PageDocumentDiscovery interface {
 }
 
 type ProgramEventDocumentDiscovery interface {
-	ListProgramEventsAdmin(context.Context, *connect.Request[managev1.ListProgramEventsAdminRequest]) (*connect.Response[managev1.ListProgramEventsAdminResponse], error)
+	ListProgramEventsAdmin(context.Context, programevent.ListProgramEventsQuery) (programevent.EventList, error)
 }
 
 type ReleaseDocumentDiscovery interface {
@@ -227,17 +228,16 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
 	case "program_event":
-		request := connect.NewRequest(&managev1.ListProgramEventsAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, programevent.ListProgramEventsQuery{
+			Limit: int32(limit), Offset: int32(offset),
+			Filters: discoverySearchFilters(query),
+			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Events))
-		for _, event := range listed.Msg.Events {
+		documents := make([]map[string]any, 0, len(listed.Events))
+		for _, event := range listed.Events {
 			if event == nil || event.UpdatedAt == nil {
 				continue
 			}
@@ -246,7 +246,7 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 				strings.TrimPrefix(event.Status.String(), "PROGRAM_EVENT_STATUS_"), event.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
 	case "release":
 		listed, err := tools.releases.ListReleasesAdmin(ctx, releasedomain.ListReleasesQuery{
 			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),

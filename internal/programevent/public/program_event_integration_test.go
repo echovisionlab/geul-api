@@ -28,7 +28,6 @@ import (
 	eventdomain "github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -63,7 +62,10 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	publicFileSvc := publicProgramEventFileGateway{db: db}
 	manageFileGateway := publicFileSvc
 
-	typeSvc := eventdomain.NewProgramEventTypeService(db, publicIntegrationSpiceDB(t))
+	manageEvents := manageProgramEvents(t, db, eventdomain.Deps{
+		Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: contentBlocks, MediaHydrator: manageFileGateway,
+	})
+	typeSvc := eventdomain.NewTypeConnectHandler(manageEvents)
 	typeResp, err := typeSvc.CreateProgramEventType(adminCtx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 		Slug:              "public-program-event-type-" + suffix,
 		Locale:            "en",
@@ -75,7 +77,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	seriesPosterFileID, seriesPosterAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "series-poster.webp", "image/webp", "poster")
-	seriesSvc := eventdomain.NewProgramEventSeriesService(db, newManageProgramEventRuntime("https://cdn.example.com"), publicIntegrationSpiceDB(t))
+	seriesSvc := eventdomain.NewSeriesConnectHandler(manageEvents)
 	seriesResp, err := seriesSvc.CreateProgramEventSeries(adminCtx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title:        "Public Program Event Series " + suffix,
 		Slug:         "public-program-event-series-" + suffix,
@@ -101,17 +103,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	eventSvc := eventdomain.NewAuditedProgramEventService(
-		db,
-		newManageProgramEventRuntime("https://cdn.example.com"),
-		manageFileGateway,
-		apitelemetry.NewDurableWriter(db),
-		publicIntegrationSpiceDB(t),
-		programeventadapter.NewCreditMemberSummaries(db, "https://cdn.example.com"),
-		eventdomain.WithProgramEventContentBlockStore(contentBlocks),
-		// Production wires the PostgreSQL publisher; content.updated is required in-transaction.
-		eventdomain.WithProgramEventAsyncPublisher(publicProgramEventSignals{}),
-	)
+	eventSvc := eventdomain.NewConnectHandler(manageEvents)
 	startsAt := time.Now().UTC().Add(6 * time.Hour)
 	eventResp, err := eventSvc.CreateProgramEvent(adminCtx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Public Program Event " + suffix,
@@ -151,14 +143,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	internalEventSvc := eventdomain.NewInternalProgramEventService(
-		db,
-		publicProgramEventSignals{},
-		eventdomain.WithInternalProgramEventSpiceDB(publicIntegrationSpiceDB(t)),
-		eventdomain.WithInternalProgramEventContentBlockStore(contentBlocks),
-		eventdomain.WithInternalProgramEventMediaHydrator(manageFileGateway),
-		eventdomain.WithInternalProgramEventCheckpoints(testcollaboration.NewCheckpoints(db, publicIntegrationSpiceDB(t))),
-	)
+	internalEventSvc := eventdomain.NewInternalConnectHandler(manageEvents)
 	blockID := uuid.NewString()
 	sourceApplied, err := internalEventSvc.ApplyProgramEventBlockBatch(adminCtx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 		EventId: eventResp.Msg.Id,
@@ -211,13 +196,12 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	_, err = eventSvc.PublishProgramEvent(adminCtx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: eventResp.Msg.Id}))
 	require.NoError(t, err)
 
-	publicEventSvc := NewProgramEventService(
-		db,
-		newPublicProgramEventAssets(db, "https://cdn.example.com"),
-		programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
-		WithProgramEventContentBlockStore(contentBlocks),
-		WithProgramEventFileService(publicFileSvc),
-	)
+	publicEvents := publicServiceForTest(t, Deps{
+		DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"),
+		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
+		ContentBlocks: contentBlocks, Files: publicFileSvc,
+	})
+	publicEventSvc := NewConnectHandler(publicEvents)
 	getReq := connect.NewRequest(&openv1.GetProgramEventRequest{Slug: "public-program-event-" + suffix})
 	getReq.Header().Set("Accept-Language", "ko")
 	fetched, err := publicEventSvc.Get(context.Background(), getReq)
@@ -330,7 +314,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	publicSeriesSvc := NewProgramEventSeriesService(db, newPublicProgramEventAssets(db, "https://cdn.example.com"))
+	publicSeriesSvc := NewSeriesConnectHandler(publicEvents)
 	seriesGet, err := publicSeriesSvc.Get(context.Background(), connect.NewRequest(&openv1.GetProgramEventSeriesRequest{
 		Slug: "public-program-event-series-" + suffix,
 	}))
@@ -366,7 +350,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	require.Len(t, seriesList.Msg.Series, 1)
 	require.Equal(t, seriesResp.Msg.Id, seriesList.Msg.Series[0].Id)
 
-	publicTypeSvc := NewProgramEventTypeService(db)
+	publicTypeSvc := NewTypeConnectHandler(publicEvents)
 	typeList, err := publicTypeSvc.List(context.Background(), connect.NewRequest(&openv1.ListProgramEventTypesRequest{
 		Filters: []*commonv1.FilterSpec{
 			nil,

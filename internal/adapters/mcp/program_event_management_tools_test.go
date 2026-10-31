@@ -11,9 +11,10 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -91,22 +92,21 @@ func TestProgramEventManagementCreateForwardsCompleteNativeRequest(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := owner.create.Msg
-	want := &managev1.CreateProgramEventRequest{
-		Title: "Concert", Slug: "concert", SourceLocale: "ko", TypeId: programEventManagementTypeID,
-		StartsAt: timestamppb.New(time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)),
-		EndsAt:   timestamppb.New(time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)), Timezone: "Asia/Seoul", AllDay: true,
-		LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID,
-		MapPlaceId:   proto.String(programEventManagementRelationID), Summary: proto.String("Summary"),
-		SeriesId: proto.String(programEventManagementRelationID), SeriesOrder: proto.Int32(0), PosterFileId: proto.String(programEventManagementRelationID),
-		TicketUrl: proto.String("https://example.test/ticket"), StreamUrl: proto.String("https://example.test/live"), ExternalUrl: proto.String("https://example.test/event"),
-		Artists: []*managev1.ProgramEventArtist{{ArtistId: programEventManagementRelationID, Role: proto.String("performer"), SortOrder: 2}},
-		Labels:  []*managev1.ProgramEventLabel{{LabelId: programEventManagementRelationID, Role: proto.String("organizer"), SortOrder: 3}},
-		Clients: []*managev1.ProgramEventClient{{ClientId: programEventManagementRelationID, Role: proto.String("host"), SortOrder: 4}},
-		Credits: []*managev1.ProgramEventCredit{{MemberId: proto.String(programEventManagementRelationID), CreditRole: proto.String("producer"), Description: proto.String("Credit"), SortOrder: 5}},
+	startsAt, endsAt := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 10, 13, 0, 0, 0, time.UTC)
+	want := programevent.CreateProgramEventCommand{
+		Title: "Concert", Slug: "concert", SourceLocale: "ko", AcceptLanguage: "ko", TypeID: programEventManagementTypeID,
+		StartsAt: &startsAt, EndsAt: &endsAt, Timezone: "Asia/Seoul", AllDay: true,
+		LocationMode: model.ProgramEventLocationModeHybrid,
+		MapPlaceID:   proto.String(programEventManagementRelationID), Summary: proto.String("Summary"),
+		SeriesID: proto.String(programEventManagementRelationID), SeriesOrder: proto.Int32(0), PosterFileID: proto.String(programEventManagementRelationID),
+		TicketURL: proto.String("https://example.test/ticket"), StreamURL: proto.String("https://example.test/live"), ExternalURL: proto.String("https://example.test/event"),
+		Artists: []programevent.Relation{{ID: programEventManagementRelationID, Role: proto.String("performer"), SortOrder: 2}},
+		Labels:  []programevent.Relation{{ID: programEventManagementRelationID, Role: proto.String("organizer"), SortOrder: 3}},
+		Clients: []programevent.Relation{{ID: programEventManagementRelationID, Role: proto.String("host"), SortOrder: 4}},
+		Credits: []programevent.Credit{{MemberID: proto.String(programEventManagementRelationID), CreditRole: proto.String("producer"), Description: proto.String("Credit"), SortOrder: 5}},
 	}
-	if !proto.Equal(r, want) || owner.create.Header().Get("Accept-Language") != "ko" {
-		t.Fatalf("native create = %v; want %v", r, want)
+	if !reflect.DeepEqual(owner.create, want) {
+		t.Fatalf("create command = %+v; want %+v", owner.create, want)
 	}
 	if result.StructuredContent["status"] != "draft" || result.StructuredContent["document_revision"] != programEventManagementRevision || result.StructuredContent["changed"] != true {
 		t.Fatalf("created result = %#v", result.StructuredContent)
@@ -137,12 +137,13 @@ func TestProgramEventManagementSettingsReadAndObservedRelationRoundTrip(t *testi
 	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventSettingsUpdate, arguments); err != nil {
 		t.Fatal(err)
 	}
-	r := owner.update.Msg
-	if !r.ReplaceArtists || !r.ReplaceLabels || !r.ReplaceClients || !r.ReplaceCredits || len(r.Artists)+len(r.Labels)+len(r.Clients)+len(r.Credits) != 0 {
-		t.Fatalf("empty replacement flags lost: %v", r)
+	r := owner.update
+	if !r.Artists.Replace || !r.Labels.Replace || !r.Clients.Replace || !r.Credits.Replace || len(r.Artists.Desired)+len(r.Labels.Desired)+len(r.Clients.Desired)+len(r.Credits.Desired) != 0 {
+		t.Fatalf("empty replacement flags lost: %+v", r)
 	}
-	if !proto.Equal(r.ObservedArtists, &managev1.ProgramEventArtistsSnapshot{Artists: owner.event.Artists}) || !proto.Equal(r.ObservedLabels, &managev1.ProgramEventLabelsSnapshot{Labels: owner.event.Labels}) || !proto.Equal(r.ObservedClients, &managev1.ProgramEventClientsSnapshot{Clients: owner.event.Clients}) {
-		t.Fatalf("observed snapshots changed: %v", r)
+	observed := func(rows []programevent.Relation) *[]programevent.Relation { return &rows }
+	if !reflect.DeepEqual(r.Artists.Observed, observed(programevent.ArtistRelations(owner.event.Artists))) || !reflect.DeepEqual(r.Labels.Observed, observed(programevent.LabelRelations(owner.event.Labels))) || !reflect.DeepEqual(r.Clients.Observed, observed(programevent.ClientRelations(owner.event.Clients))) {
+		t.Fatalf("observed snapshots changed: %+v", r)
 	}
 }
 
@@ -162,20 +163,22 @@ func TestProgramEventManagementSettingsForwardsNativeOptionalFields(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := owner.update.Msg
-	want := &managev1.UpdateProgramEventRequest{
-		Id: programEventManagementID, Slug: proto.String("renamed"), TypeId: proto.String(programEventManagementTypeID),
-		StartsAt: timestamppb.New(time.Date(2026, 10, 10, 11, 0, 0, 0, time.UTC)), EndsAt: timestamppb.New(time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)), ClearEndsAt: true,
-		Timezone: proto.String("UTC"), AllDay: proto.Bool(false), LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.Enum(),
-		MapPlaceId: proto.String(""), SeriesId: proto.String(""), SeriesOrder: proto.Int32(0), ClearSeriesOrder: true,
-		PosterFileId: proto.String(""), TicketUrl: proto.String(""), StreamUrl: proto.String(""), ExternalUrl: proto.String(""),
-		Artists: []*managev1.ProgramEventArtist{{ArtistId: programEventManagementRelationID, Role: proto.String("performer"), SortOrder: 7}}, ReplaceArtists: true, ObservedArtists: &managev1.ProgramEventArtistsSnapshot{},
-		Labels: []*managev1.ProgramEventLabel{{LabelId: programEventManagementRelationID, SortOrder: 8}}, ReplaceLabels: true, ObservedLabels: &managev1.ProgramEventLabelsSnapshot{},
-		Clients: []*managev1.ProgramEventClient{{ClientId: programEventManagementRelationID, SortOrder: 9}}, ReplaceClients: true, ObservedClients: &managev1.ProgramEventClientsSnapshot{},
-		Credits: []*managev1.ProgramEventCredit{{Id: programEventManagementRelationID, DisplayName: proto.String("Guest"), CreditRole: proto.String("speaker"), SortOrder: 10}}, ReplaceCredits: true,
+	startsAt, endsAt := time.Date(2026, 10, 10, 11, 0, 0, 0, time.UTC), time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	tba := model.ProgramEventLocationModeTBA
+	none := []programevent.Relation{}
+	want := programevent.UpdateProgramEventCommand{
+		ID: programEventManagementID, Slug: proto.String("renamed"), TypeID: proto.String(programEventManagementTypeID),
+		StartsAt: &startsAt, EndsAt: &endsAt, ClearEndsAt: true,
+		Timezone: proto.String("UTC"), AllDay: proto.Bool(false), LocationMode: &tba,
+		MapPlaceID: proto.String(""), SeriesID: proto.String(""), SeriesOrder: proto.Int32(0), ClearSeriesOrder: true,
+		PosterFileID: proto.String(""), TicketURL: proto.String(""), StreamURL: proto.String(""), ExternalURL: proto.String(""),
+		Artists: programevent.RelationsEdit{Replace: true, Desired: []programevent.Relation{{ID: programEventManagementRelationID, Role: proto.String("performer"), SortOrder: 7}}, Observed: &none},
+		Labels:  programevent.RelationsEdit{Replace: true, Desired: []programevent.Relation{{ID: programEventManagementRelationID, SortOrder: 8}}, Observed: &none},
+		Clients: programevent.RelationsEdit{Replace: true, Desired: []programevent.Relation{{ID: programEventManagementRelationID, SortOrder: 9}}, Observed: &none},
+		Credits: programevent.CreditsEdit{Replace: true, Desired: []programevent.Credit{{ID: programEventManagementRelationID, DisplayName: proto.String("Guest"), CreditRole: proto.String("speaker"), SortOrder: 10}}},
 	}
-	if !proto.Equal(r, want) {
-		t.Fatalf("native settings = %v; want %v", r, want)
+	if !reflect.DeepEqual(owner.update, want) {
+		t.Fatalf("settings command = %+v; want %+v", owner.update, want)
 	}
 }
 
@@ -241,7 +244,7 @@ func TestProgramEventManagementCreateReadUpdateLifecycleFlow(t *testing.T) {
 			t.Fatalf("publication date changed: %#v", result.StructuredContent)
 		}
 	}
-	if !reflect.DeepEqual(owner.calls, []string{"create", "get", "update", "publish", "archive", "publish", "delete"}) || owner.published.Id != programEventManagementID || owner.archived.Id != programEventManagementID || owner.deleted.Id != programEventManagementID {
+	if !reflect.DeepEqual(owner.calls, []string{"create", "get", "update", "publish", "archive", "publish", "delete"}) || owner.published.ID != programEventManagementID || owner.archived.ID != programEventManagementID || owner.deleted.ID != programEventManagementID {
 		t.Fatalf("native flow = %v", owner.calls)
 	}
 	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, "program_event_unpublish", idArguments); !errors.Is(err, mcpserver.ErrUnknownTool) {
@@ -290,16 +293,15 @@ func TestProgramEventManagementPreservesOwningAuthorityAndSafeErrors(t *testing.
 type programEventManagementContextKey struct{}
 
 type recordingProgramEventManagement struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
 	event     *managev1.ProgramEvent
 	err       error
 	ctx       context.Context
 	calls     []string
-	create    *connect.Request[managev1.CreateProgramEventRequest]
-	update    *connect.Request[managev1.UpdateProgramEventRequest]
-	published *managev1.PublishProgramEventRequest
-	archived  *managev1.ArchiveProgramEventRequest
-	deleted   *managev1.DeleteProgramEventRequest
+	create    programevent.CreateProgramEventCommand
+	update    programevent.UpdateProgramEventCommand
+	published programevent.PublishProgramEventCommand
+	archived  programevent.ArchiveProgramEventCommand
+	deleted   programevent.DeleteProgramEventCommand
 }
 
 func newRecordingProgramEventManagement() *recordingProgramEventManagement {
@@ -318,57 +320,63 @@ func (owner *recordingProgramEventManagement) record(ctx context.Context, call s
 	return owner.err
 }
 
-func (owner *recordingProgramEventManagement) CreateProgramEvent(ctx context.Context, request *connect.Request[managev1.CreateProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error) {
-	owner.create = request
+func (owner *recordingProgramEventManagement) CreateProgramEvent(ctx context.Context, command programevent.CreateProgramEventCommand) (*managev1.ProgramEvent, error) {
+	owner.create = command
 	if err := owner.record(ctx, "create"); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(owner.event), nil
+	return owner.event, nil
 }
 
-func (owner *recordingProgramEventManagement) GetProgramEvent(ctx context.Context, request *connect.Request[managev1.GetProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error) {
+func (owner *recordingProgramEventManagement) GetProgramEvent(ctx context.Context, query programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error) {
 	if err := owner.record(ctx, "get"); err != nil {
 		return nil, err
 	}
-	if request.Msg.Id != owner.event.Id {
+	if query.ID != owner.event.Id {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("program event not found"))
 	}
-	return connect.NewResponse(owner.event), nil
+	return owner.event, nil
 }
 
-func (owner *recordingProgramEventManagement) UpdateProgramEvent(ctx context.Context, request *connect.Request[managev1.UpdateProgramEventRequest]) (*connect.Response[managev1.UpdateProgramEventResponse], error) {
-	owner.update = request
+func (owner *recordingProgramEventManagement) UpdateProgramEvent(ctx context.Context, command programevent.UpdateProgramEventCommand) (programevent.EventUpdate, error) {
+	owner.update = command
 	if err := owner.record(ctx, "update"); err != nil {
-		return nil, err
+		return programevent.EventUpdate{}, err
 	}
-	return connect.NewResponse(&managev1.UpdateProgramEventResponse{Id: request.Msg.Id, Changed: true, UpdatedAt: owner.event.UpdatedAt}), nil
+	return programevent.EventUpdate{ID: command.ID, Changed: true, UpdatedAt: owner.event.UpdatedAt.AsTime()}, nil
 }
 
-func (owner *recordingProgramEventManagement) PublishProgramEvent(ctx context.Context, request *connect.Request[managev1.PublishProgramEventRequest]) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
-	owner.published = request.Msg
+func (owner *recordingProgramEventManagement) lifecycle(id string, status model.ProgramEventStatus) programevent.LifecycleChange {
+	change := programevent.LifecycleChange{ID: id, Changed: true, Status: status, UpdatedAt: owner.event.UpdatedAt.AsTime()}
+	if owner.event.PublishedAt != nil {
+		publishedAt := owner.event.PublishedAt.AsTime()
+		change.PublishedAt = &publishedAt
+	}
+	return change
+}
+
+func (owner *recordingProgramEventManagement) PublishProgramEvent(ctx context.Context, command programevent.PublishProgramEventCommand) (programevent.LifecycleChange, error) {
+	owner.published = command
 	if err := owner.record(ctx, "publish"); err != nil {
-		return nil, err
+		return programevent.LifecycleChange{}, err
 	}
 	owner.event.Status = managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED
 	if owner.event.PublishedAt == nil {
 		owner.event.PublishedAt = owner.event.UpdatedAt
 	}
-	return connect.NewResponse(&managev1.ProgramEventLifecycleMutationResponse{Id: request.Msg.Id, Changed: true, Status: owner.event.Status, PublishedAt: owner.event.PublishedAt, UpdatedAt: owner.event.UpdatedAt}), nil
+	return owner.lifecycle(command.ID, model.ProgramEventStatusPublished), nil
 }
 
-func (owner *recordingProgramEventManagement) ArchiveProgramEvent(ctx context.Context, request *connect.Request[managev1.ArchiveProgramEventRequest]) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
-	owner.archived = request.Msg
+func (owner *recordingProgramEventManagement) ArchiveProgramEvent(ctx context.Context, command programevent.ArchiveProgramEventCommand) (programevent.LifecycleChange, error) {
+	owner.archived = command
 	if err := owner.record(ctx, "archive"); err != nil {
-		return nil, err
+		return programevent.LifecycleChange{}, err
 	}
 	owner.event.Status = managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED
-	return connect.NewResponse(&managev1.ProgramEventLifecycleMutationResponse{Id: request.Msg.Id, Changed: true, Status: owner.event.Status, PublishedAt: owner.event.PublishedAt, UpdatedAt: owner.event.UpdatedAt}), nil
+	return owner.lifecycle(command.ID, model.ProgramEventStatusArchived), nil
 }
 
-func (owner *recordingProgramEventManagement) DeleteProgramEvent(ctx context.Context, request *connect.Request[managev1.DeleteProgramEventRequest]) (*connect.Response[managev1.DeleteResponse], error) {
-	owner.deleted = request.Msg
-	if err := owner.record(ctx, "delete"); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+func (owner *recordingProgramEventManagement) DeleteProgramEvent(ctx context.Context, command programevent.DeleteProgramEventCommand) error {
+	owner.deleted = command
+	return owner.record(ctx, "delete")
 }

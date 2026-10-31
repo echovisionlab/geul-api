@@ -31,7 +31,7 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
-	typeResponse, err := NewProgramEventTypeService(db, spiceDB).CreateProgramEventType(
+	typeResponse, err := typeHandlerForTest(t, db, spiceDB).CreateProgramEventType(
 		ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 			Slug:              "archived-program-event-" + suffix,
@@ -43,8 +43,7 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	)
 	require.NoError(t, err)
 
-	eventService := NewProgramEventService(db, newProgramEventRuntime("https://cdn.example.com"), spiceDB, newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), files)
-	eventService.contentBlocks = store
+	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	created, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Archived Program Event " + suffix,
 		Slug:         "archived-program-event-" + suffix,
@@ -56,15 +55,7 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	}))
 	require.NoError(t, err)
 	sessionID := insertProgramEventIntegrationSession(t, db, adminID)
-	internalService := NewAuditedInternalProgramEventService(
-		db,
-		&capturingAsyncPublisher{},
-		apitelemetry.NewDurableWriter(db),
-		WithInternalProgramEventSpiceDB(spiceDB),
-		WithInternalProgramEventCheckpoints(programEventIntegrationCheckpoints(db, spiceDB)),
-		WithInternalProgramEventContentBlockStore(store),
-		WithInternalProgramEventMediaHydrator(files),
-	)
+	internalService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	initial, err := internalService.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
 		EventId:   created.Msg.Id,
 		Locale:    "en",

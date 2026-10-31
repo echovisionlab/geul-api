@@ -13,7 +13,6 @@
 2 internal/menu
 12 internal/page
 13 internal/post
-5 internal/programevent
 2 internal/series
 1 internal/sitesettings
 5 internal/translation/application

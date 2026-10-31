@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -29,11 +29,11 @@ func initializeProgramEventBlockTranslationSource(
 	now time.Time,
 ) error {
 	if tx == nil {
-		return errs.Internal(errors.New("program Event translation source transaction is required"))
+		return errors.New("program Event translation source transaction is required")
 	}
 	sourceLocale = strings.TrimSpace(sourceLocale)
 	if strings.TrimSpace(eventID) == "" || sourceLocale == "" {
-		return errs.Internal(errors.New("program Event ID and source locale are required"))
+		return errors.New("program Event ID and source locale are required")
 	}
 	if err := tx.WithContext(ctx).Create(&model.ProgramEventTranslation{
 		EntityID:  eventID,
@@ -42,43 +42,45 @@ func initializeProgramEventBlockTranslationSource(
 		CreatedAt: now,
 		UpdatedAt: now,
 	}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
 
-func (s *ProgramEventService) loadProgramEvent(ctx context.Context, id string) (*managev1.ProgramEvent, error) {
+// loadProgramEvent returns the administrator view of an event the caller
+// just changed, read under a share lock of the event row.
+func (s *Service) loadProgramEvent(ctx context.Context, id string) (*managev1.ProgramEvent, error) {
 	var output *managev1.ProgramEvent
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var event model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("program event", id)
-			}
-			return errs.Internal(err)
+	err := lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+		event, err := lockProgramEventForRead(ctx, tx, id)
+		if err != nil {
+			return err
 		}
-		scoped := *s
-		scoped.db = tx
-		var err error
-		output, err = scoped.toProtoProgramEvent(ctx, &event)
+		output, err = s.toProtoProgramEvent(ctx, tx, event)
 		return err
 	})
 	return output, err
 }
 
-func (s *ProgramEventService) loadAuthorizedProgramEvent(ctx context.Context, id string) (*managev1.ProgramEvent, error) {
-	var output *managev1.ProgramEvent
-	hydrator, ok := s.fileDeleter.(ContentBlockMediaHydrator)
-	if !ok || hydrator == nil {
-		return nil, errs.InternalMsg("Program Event Block media hydrator is not configured")
+func lockProgramEventForRead(ctx context.Context, tx *gorm.DB, id string) (*model.ProgramEvent, error) {
+	var event model.ProgramEvent
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerr.ResourceNotFound("program event", id)
+		}
+		return nil, err
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var event model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("program event", id)
-			}
-			return errs.Internal(err)
+	return &event, nil
+}
+
+// loadAuthorizedProgramEvent requires the active principal to view the
+// share-locked event and returns its view with authorized Block media.
+func (s *Service) loadAuthorizedProgramEvent(ctx context.Context, id string) (*managev1.ProgramEvent, error) {
+	var output *managev1.ProgramEvent
+	err := lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+		event, err := lockProgramEventForRead(ctx, tx, id)
+		if err != nil {
+			return err
 		}
 		if err := requireActiveProgramEventPrincipal(ctx, tx, "view", true); err != nil {
 			return err
@@ -88,10 +90,7 @@ func (s *ProgramEventService) loadAuthorizedProgramEvent(ctx context.Context, id
 		); err != nil {
 			return err
 		}
-		scoped := *s
-		scoped.db = tx
-		var err error
-		output, err = scoped.toProtoProgramEvent(ctx, &event)
+		output, err = s.toProtoProgramEvent(ctx, tx, event)
 		if err != nil {
 			return err
 		}
@@ -99,7 +98,7 @@ func (s *ProgramEventService) loadAuthorizedProgramEvent(ctx context.Context, id
 		if err != nil {
 			return err
 		}
-		output.BlockMedia, err = hydrator.HydrateAuthorizedProgramEventBlockMediaWithDB(
+		output.BlockMedia, err = s.mediaHydrator.HydrateAuthorizedProgramEventBlockMediaWithDB(
 			ctx, tx, event.ID, documentID, auth.GetUser(ctx), output.BlockMedia,
 		)
 		return err
@@ -107,15 +106,12 @@ func (s *ProgramEventService) loadAuthorizedProgramEvent(ctx context.Context, id
 	return output, err
 }
 
-func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *model.ProgramEvent) (*managev1.ProgramEvent, error) {
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Program Event content Block store is not configured")
-	}
-	documentID, err := loadProgramEventContentDocumentID(ctx, s.db, event.ID, false)
+func (s *Service) toProtoProgramEvent(ctx context.Context, db *gorm.DB, event *model.ProgramEvent) (*managev1.ProgramEvent, error) {
+	documentID, err := loadProgramEventContentDocumentID(ctx, db, event.ID, false)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, s.db, documentID, event.SourceLocale)
+	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, db, documentID, event.SourceLocale)
 	if err != nil {
 		return nil, normalizeProgramEventContentBlockError(err)
 	}
@@ -123,47 +119,47 @@ func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *mo
 	if err != nil {
 		return nil, normalizeProgramEventContentBlockError(err)
 	}
-	blockMedia, err := contentblock.LoadMediaReferences(ctx, s.db, documentID)
+	blockMedia, err := contentblock.LoadMediaReferences(ctx, db, documentID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	locales, err := loadProgramEventLocales(
 		ctx,
-		s.db,
+		db,
 		event.ID,
 		snapshot,
-		newContentBlockFileRenderResolver(s.db, s.runtime),
+		newContentBlockFileRenderResolver(db, s.media),
 	)
 	if err != nil {
 		return nil, err
 	}
-	artists, err := loadProgramEventArtists(ctx, s.db, event.ID)
+	artists, err := loadProgramEventArtists(ctx, db, event.ID)
 	if err != nil {
 		return nil, err
 	}
-	labels, err := loadProgramEventLabels(ctx, s.db, event.ID)
+	labels, err := loadProgramEventLabels(ctx, db, event.ID)
 	if err != nil {
 		return nil, err
 	}
-	clients, err := loadProgramEventClients(ctx, s.db, event.ID)
+	clients, err := loadProgramEventClients(ctx, db, event.ID)
 	if err != nil {
 		return nil, err
 	}
-	credits, err := s.loadProgramEventCredits(ctx, event.ID)
+	credits, err := s.loadProgramEventCredits(ctx, db, event.ID)
 	if err != nil {
 		return nil, err
 	}
-	media, err := loadProgramEventMedia(ctx, s.db, event.ID)
+	media, err := loadProgramEventMedia(ctx, db, event.ID)
 	if err != nil {
 		return nil, err
 	}
-	primaryPosterFileID, err := loadProgramEventPrimaryPosterFileID(ctx, s.db, event.ID)
+	primaryPosterFileID, err := loadProgramEventPrimaryPosterFileID(ctx, db, event.ID)
 	if err != nil {
 		return nil, err
 	}
 	proto := &managev1.ProgramEvent{
 		Id:               event.ID,
-		Status:           manageProgramEventStatus(event.Status),
+		Status:           programEventStatusToProto(event.Status),
 		SourceLocale:     event.SourceLocale,
 		TypeId:           event.TypeID,
 		SeriesId:         event.SeriesID,
@@ -172,7 +168,7 @@ func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *mo
 		EndsAt:           timestampProtoPtr(event.EndsAt),
 		Timezone:         event.Timezone,
 		AllDay:           event.AllDay,
-		LocationMode:     manageProgramEventLocationMode(event.LocationMode),
+		LocationMode:     locationModeToProto(event.LocationMode),
 		MapPlaceId:       event.MapPlaceID,
 		PosterFileId:     primaryPosterFileID,
 		TicketUrl:        event.TicketURL,
@@ -196,7 +192,7 @@ func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *mo
 	return proto, nil
 }
 
-func (s *ProgramEventSeriesService) loadProgramEventSeriesRow(ctx context.Context, idOrSlug string) (*model.ProgramEventSeries, error) {
+func (s *Service) loadProgramEventSeriesRow(ctx context.Context, idOrSlug string) (*model.ProgramEventSeries, error) {
 	series := &model.ProgramEventSeries{}
 	db := s.db.WithContext(ctx)
 	var err error
@@ -207,14 +203,14 @@ func (s *ProgramEventSeriesService) loadProgramEventSeriesRow(ctx context.Contex
 	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("program event series", idOrSlug)
+			return nil, domainerr.ResourceNotFound("program event series", idOrSlug)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return series, nil
 }
 
-func (s *ProgramEventSeriesService) loadProgramEventSeries(ctx context.Context, idOrSlug string) (*managev1.ProgramEventSeries, error) {
+func (s *Service) loadProgramEventSeries(ctx context.Context, idOrSlug string) (*managev1.ProgramEventSeries, error) {
 	series, err := s.loadProgramEventSeriesRow(ctx, idOrSlug)
 	if err != nil {
 		return nil, err
@@ -222,10 +218,10 @@ func (s *ProgramEventSeriesService) loadProgramEventSeries(ctx context.Context, 
 	return s.toProtoProgramEventSeries(series)
 }
 
-func (s *ProgramEventSeriesService) toProtoProgramEventSeries(series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
+func (s *Service) toProtoProgramEventSeries(series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
 	return &managev1.ProgramEventSeries{
 		Id:           series.ID,
-		Status:       manageProgramEventSeriesStatus(series.Status),
+		Status:       programEventSeriesStatusToProto(series.Status),
 		PosterFileId: series.PosterFileID,
 		Slug:         series.Slug,
 		Title:        series.Title,
@@ -236,21 +232,21 @@ func (s *ProgramEventSeriesService) toProtoProgramEventSeries(series *model.Prog
 	}, nil
 }
 
-func (s *ProgramEventTypeService) loadProgramEventType(ctx context.Context, id string) (*managev1.ProgramEventType, error) {
+func (s *Service) loadProgramEventType(ctx context.Context, id string) (*managev1.ProgramEventType, error) {
 	var eventType model.ProgramEventType
 	if err := s.db.WithContext(ctx).First(&eventType, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("program event type", id)
+			return nil, domainerr.ResourceNotFound("program event type", id)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return s.toProtoProgramEventType(ctx, &eventType)
 }
 
-func (s *ProgramEventTypeService) toProtoProgramEventType(ctx context.Context, eventType *model.ProgramEventType) (*managev1.ProgramEventType, error) {
+func (s *Service) toProtoProgramEventType(ctx context.Context, eventType *model.ProgramEventType) (*managev1.ProgramEventType, error) {
 	var locales []model.ProgramEventTypeLocale
 	if err := s.db.WithContext(ctx).Where("type_id = ?", eventType.ID).Order("locale ASC").Find(&locales).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	protoLocales := make([]*managev1.ProgramEventTypeLocale, 0, len(locales))
 	for i := range locales {
@@ -263,7 +259,7 @@ func (s *ProgramEventTypeService) toProtoProgramEventType(ctx context.Context, e
 	return &managev1.ProgramEventType{
 		Id:                eventType.ID,
 		Slug:              eventType.Slug,
-		Status:            manageProgramEventTypeStatus(eventType.Status),
+		Status:            programEventTypeStatusToProto(eventType.Status),
 		SortOrder:         eventType.SortOrder,
 		RequiresPlace:     eventType.RequiresPlace,
 		RequiresStreamUrl: eventType.RequiresStreamURL,
@@ -290,7 +286,7 @@ func loadProgramEventLocales(
 		Where("translation.entity_id = ?", eventID).
 		Order("translation.locale = event.source_locale DESC, translation.locale ASC").
 		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	result := make([]*managev1.ProgramEventLocale, 0, len(rows))
 	for i := range rows {

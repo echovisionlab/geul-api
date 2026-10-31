@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	audienceadapter "github.com/echovisionlab/geul-api/internal/adapters/audience"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
@@ -467,7 +468,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", aiPath)
 
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
-	programEventRuntime := programeventadapter.NewRuntime(cfg.CDNURL)
 	translationRegistry := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
 	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(memberService), handlerOpts...)
 	mux.Handle(memberPath, memberHandler)
@@ -516,26 +516,26 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(categoryPath, categoryHandler)
 	slog.Info("Registered service", "path", categoryPath)
 
-	programEventTypeService := programevent.NewAuditedProgramEventTypeService(db, telemetryWriter, spicedbClient)
-	programEventTypePath, programEventTypeHandler := managev1connect.NewProgramEventTypeServiceHandler(programEventTypeService, handlerOpts...)
+	programEventService, err := programevent.NewService(programevent.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, ContentBlocks: contentBlockStore,
+		Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
+		MediaHydrator: programeventadapter.NewFiles(fileService),
+		CreditMembers: programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
+		CreditArtists: artistadapter.CreditArtists{}, Members: memberadapter.ContentMembers{},
+		Checkpoints: collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize program event service: %w", err)
+	}
+	programEventTypePath, programEventTypeHandler := managev1connect.NewProgramEventTypeServiceHandler(programevent.NewTypeConnectHandler(programEventService), handlerOpts...)
 	mux.Handle(programEventTypePath, programEventTypeHandler)
 	slog.Info("Registered service", "path", programEventTypePath)
 
-	programEventSeriesService := programevent.NewAuditedProgramEventSeriesService(
-		db, programEventRuntime, telemetryWriter, spicedbClient,
-	)
-	programEventSeriesPath, programEventSeriesHandler := managev1connect.NewProgramEventSeriesServiceHandler(programEventSeriesService, handlerOpts...)
+	programEventSeriesPath, programEventSeriesHandler := managev1connect.NewProgramEventSeriesServiceHandler(programevent.NewSeriesConnectHandler(programEventService), handlerOpts...)
 	mux.Handle(programEventSeriesPath, programEventSeriesHandler)
 	slog.Info("Registered service", "path", programEventSeriesPath)
 
-	programEventFiles := programeventadapter.NewFiles(fileService)
-	programEventService := programevent.NewAuditedProgramEventService(
-		db, programEventRuntime, programEventFiles, telemetryWriter, spicedbClient,
-		programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
-		programevent.WithProgramEventContentBlockStore(contentBlockStore),
-		programevent.WithProgramEventAsyncPublisher(servicePublisher),
-	)
-	programEventPath, programEventHandler := managev1connect.NewProgramEventServiceHandler(programEventService, handlerOpts...)
+	programEventPath, programEventHandler := managev1connect.NewProgramEventServiceHandler(programevent.NewConnectHandler(programEventService), handlerOpts...)
 	mux.Handle(programEventPath, programEventHandler)
 	slog.Info("Registered service", "path", programEventPath)
 
@@ -760,7 +760,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workRuntime:                 workRuntime,
 		fileService:                 fileService,
 		postMedia:                   postMedia,
-		programEventFiles:           programEventFiles,
+		programEvents:               programEventService,
 		emailAuthoringReferences:    emailAuthoringReferences,
 		legalRuntime:                legalRuntime,
 		legalDependencies:           legalDependencies,
@@ -856,8 +856,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 			members:       memberService,
 			artists:       artistService,
 			files:         fileService,
-			eventTypes:    programEventTypeService,
-			eventSeries:   programEventSeriesService,
+			eventTypes:    programEventService,
+			eventSeries:   programEventService,
 			labels:        labelService,
 			genres:        referenceCatalog,
 			styles:        referenceCatalog,

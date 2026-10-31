@@ -3,9 +3,12 @@ package programevent
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -15,25 +18,17 @@ func TestProgramEventSeriesStatusStorageMapping(t *testing.T) {
 		managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_DRAFT,
 	)
 	require.NoError(t, err)
-	require.Equal(t, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(), draft)
+	require.Equal(t, model.ProgramEventStatusDraft, draft)
 
 	published, err := programEventSeriesStatusStorageValue(
 		managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED,
 	)
 	require.NoError(t, err)
-	require.Equal(t, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(), published)
+	require.Equal(t, model.ProgramEventStatusPublished, published)
 
 	_, err = programEventSeriesStatusStorageValue(managev1.ProgramEventSeriesStatus(99))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-}
-
-func TestManageProgramEventSeriesStatusRejectsLegacyArchive(t *testing.T) {
-	require.Equal(
-		t,
-		managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED,
-		manageProgramEventSeriesStatus(managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()),
-	)
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 }
 
 func TestProgramEventAdminFilterSupportsExactSlugResolution(t *testing.T) {
@@ -66,5 +61,5 @@ func TestMapProgramEventSeriesFiltersUsesSeriesContractAndStorageValues(t *testi
 		Value: managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String(),
 	}})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 }

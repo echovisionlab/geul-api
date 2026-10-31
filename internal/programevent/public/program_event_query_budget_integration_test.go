@@ -42,11 +42,10 @@ func TestPublicProgramEventListQueryBudgetDoesNotGrowPerRowIntegration(t *testin
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewProgramEventService(
-		countedDB,
-		newPublicProgramEventAssets(countedDB, "https://cdn.example.com"),
-		&publicProgramEventQueryBudgetCredits{},
-	)
+	service := NewConnectHandler(publicServiceForTest(t, Deps{
+		DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com"),
+		CreditMembers: &publicProgramEventQueryBudgetCredits{},
+	}))
 	eventCounts := make(map[int]int64, 3)
 	for _, limit := range []int32{1, 6, 20} {
 		queryCount.Store(0)
@@ -91,7 +90,7 @@ func TestPublicProgramEventTypeListQueryBudgetDoesNotGrowPerRowIntegration(t *te
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewProgramEventTypeService(countedDB)
+	service := NewTypeConnectHandler(publicServiceForTest(t, Deps{DB: countedDB}))
 	typeCounts := make(map[int]int64, 3)
 	for _, limit := range []int32{1, 6, 20} {
 		queryCount.Store(0)
@@ -137,7 +136,7 @@ func seedPublicProgramEventListQueryFixtures(t *testing.T, db *gorm.DB, count in
 		typeSlug := fmt.Sprintf("query-budget-type-%s-%02d", suffix, index)
 		require.NoError(t, db.Create(&model.ProgramEventType{
 			ID: typeID, Slug: typeSlug,
-			Status:    openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String(),
+			Status:    model.ProgramEventTypeStatusActive,
 			SortOrder: int32(index), CreatedAt: base, UpdatedAt: base,
 		}).Error)
 		for _, locale := range []string{"de", "en", "fr"} {

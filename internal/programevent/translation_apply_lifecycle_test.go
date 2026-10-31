@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -46,7 +48,7 @@ func TestProgramEventTranslationApplyFenceRejectsDeletedRoot(t *testing.T) {
 	require.NoError(t, db.Exec(`DELETE FROM program_event WHERE id = ?`, eventID).Error)
 
 	_, err := runProgramEventTranslationApplyFence(t.Context(), db, eventID, documentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.Wrap(err).Code())
 }
 
 func openProgramEventTranslationApplyLifecycleDB(t *testing.T) *gorm.DB {

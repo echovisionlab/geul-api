@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -28,10 +29,10 @@ var programEventMediaTools = []mcpserver.Tool{
 // ProgramEventMediaApplication is the exact native owning service boundary.
 // Authorization, File attachment validation and transactional ordering stay there.
 type ProgramEventMediaApplication interface {
-	GetProgramEvent(context.Context, *connect.Request[managev1.GetProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error)
-	AddProgramEventMedia(context.Context, *connect.Request[managev1.AddProgramEventMediaRequest]) (*connect.Response[managev1.AddProgramEventMediaResponse], error)
-	DeleteProgramEventMedia(context.Context, *connect.Request[managev1.DeleteProgramEventMediaRequest]) (*connect.Response[managev1.DeleteProgramEventMediaResponse], error)
-	ReorderProgramEventMedia(context.Context, *connect.Request[managev1.ReorderProgramEventMediaRequest]) (*connect.Response[managev1.ReorderProgramEventMediaResponse], error)
+	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error)
+	AddProgramEventMedia(context.Context, programevent.AddProgramEventMediaCommand) (programevent.MediaChange, error)
+	DeleteProgramEventMedia(context.Context, programevent.DeleteProgramEventMediaCommand) (programevent.MediaChange, error)
+	ReorderProgramEventMedia(context.Context, programevent.ReorderProgramEventMediaCommand) (programevent.MediaOrder, error)
 }
 
 type ProgramEventMediaTools struct{ application ProgramEventMediaApplication }
@@ -59,17 +60,17 @@ func (tools *ProgramEventMediaTools) CallTool(ctx context.Context, _ mcpserver.P
 		if err := validateUUID("document_id", input.DocumentID); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.GetProgramEvent(ctx, connect.NewRequest(&managev1.GetProgramEventRequest{Id: input.DocumentID}))
+		event, err := tools.application.GetProgramEvent(ctx, programevent.GetProgramEventQuery{ID: input.DocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		media := make([]map[string]any, 0, len(response.Msg.Media))
-		for _, item := range response.Msg.Media {
+		media := make([]map[string]any, 0, len(event.Media))
+		for _, item := range event.Media {
 			if item != nil {
 				media = append(media, programEventMediaOutput(item))
 			}
 		}
-		return contentResult(map[string]any{"document_type": "program_event", "document_id": response.Msg.Id, "source_locale": response.Msg.SourceLocale, "updated_at": timestampString(response.Msg.UpdatedAt), "media": media})
+		return contentResult(map[string]any{"document_type": "program_event", "document_id": event.Id, "source_locale": event.SourceLocale, "updated_at": timestampString(event.UpdatedAt), "media": media})
 	case ToolProgramEventMediaAdd:
 		var input struct {
 			DocumentID  string  `json:"document_id"`
@@ -95,12 +96,12 @@ func (tools *ProgramEventMediaTools) CallTool(ctx context.Context, _ mcpserver.P
 		if err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.AddProgramEventMedia(ctx, connect.NewRequest(&managev1.AddProgramEventMediaRequest{EventId: input.DocumentID, FileId: input.FileID, Role: role, Alt: input.Alt, Caption: input.Caption, MakePrimary: input.MakePrimary}))
+		change, err := tools.application.AddProgramEventMedia(ctx, programevent.AddProgramEventMediaCommand{EventID: input.DocumentID, FileID: input.FileID, Role: role, Alt: input.Alt, Caption: input.Caption, MakePrimary: input.MakePrimary})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output := programEventMediaMutationOutput(response.Msg.EventId, response.Msg.Changed, response.Msg.UpdatedAt)
-		output["media"] = programEventMediaOutput(response.Msg.Media)
+		output := programEventMediaMutationOutput(input.DocumentID, change.Changed, change.UpdatedAt)
+		output["media"] = programEventMediaOutput(change.Media)
 		return contentResult(output)
 	case ToolProgramEventMediaRemove:
 		var input struct {
@@ -116,12 +117,12 @@ func (tools *ProgramEventMediaTools) CallTool(ctx context.Context, _ mcpserver.P
 		if err := validateUUID("media_id", input.MediaID); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.DeleteProgramEventMedia(ctx, connect.NewRequest(&managev1.DeleteProgramEventMediaRequest{EventId: input.DocumentID, MediaId: input.MediaID}))
+		change, err := tools.application.DeleteProgramEventMedia(ctx, programevent.DeleteProgramEventMediaCommand{EventID: input.DocumentID, MediaID: input.MediaID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output := programEventMediaMutationOutput(response.Msg.EventId, response.Msg.Changed, response.Msg.UpdatedAt)
-		output["media_id"] = response.Msg.MediaId
+		output := programEventMediaMutationOutput(input.DocumentID, change.Changed, change.UpdatedAt)
+		output["media_id"] = input.MediaID
 		return contentResult(output)
 	case ToolProgramEventMediaReorder:
 		var input struct {
@@ -155,13 +156,13 @@ func (tools *ProgramEventMediaTools) CallTool(ctx context.Context, _ mcpserver.P
 			}
 			seen[id] = struct{}{}
 		}
-		response, err := tools.application.ReorderProgramEventMedia(ctx, connect.NewRequest(&managev1.ReorderProgramEventMediaRequest{EventId: input.DocumentID, Role: role, MediaIds: input.MediaIDs}))
+		order, err := tools.application.ReorderProgramEventMedia(ctx, programevent.ReorderProgramEventMediaCommand{EventID: input.DocumentID, Role: role, MediaIDs: input.MediaIDs})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output := programEventMediaMutationOutput(response.Msg.EventId, response.Msg.Changed, response.Msg.UpdatedAt)
-		output["role"] = response.Msg.Role
-		output["media_ids"] = append([]string{}, response.Msg.MediaIds...)
+		output := programEventMediaMutationOutput(input.DocumentID, order.Changed, order.UpdatedAt)
+		output["role"] = order.Role
+		output["media_ids"] = append([]string{}, input.MediaIDs...)
 		return contentResult(output)
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
@@ -196,8 +197,8 @@ func programEventMediaOutput(media *managev1.ProgramEventMedia) map[string]any {
 	return output
 }
 
-func programEventMediaMutationOutput(eventID string, changed bool, updatedAt *timestamppb.Timestamp) map[string]any {
-	return map[string]any{"document_type": "program_event", "document_id": eventID, "changed": changed, "updated_at": timestampString(updatedAt), "next_read": map[string]any{"tool": ToolProgramEventMediaList, "arguments": map[string]any{"document_id": eventID}}}
+func programEventMediaMutationOutput(eventID string, changed bool, updatedAt time.Time) map[string]any {
+	return map[string]any{"document_type": "program_event", "document_id": eventID, "changed": changed, "updated_at": timestampString(timestamppb.New(updatedAt)), "next_read": map[string]any{"tool": ToolProgramEventMediaList, "arguments": map[string]any{"document_id": eventID}}}
 }
 
 var _ ToolProvider = (*ProgramEventMediaTools)(nil)

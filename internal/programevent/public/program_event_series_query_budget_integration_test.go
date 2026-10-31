@@ -57,7 +57,7 @@ func TestPublicProgramEventSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewProgramEventSeriesService(countedDB, newPublicProgramEventAssets(countedDB, "https://cdn.example.com"))
+	service := NewSeriesConnectHandler(publicServiceForTest(t, Deps{DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com")}))
 	listCount := func(limit int32) int64 {
 		queryCount.Store(0)
 		response, err := service.List(context.Background(), connect.NewRequest(&openv1.ListProgramEventSeriesRequest{

@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,7 +21,7 @@ import (
 func loadPublicProgramEventType(ctx context.Context, db *gorm.DB, typeID string, acceptLanguage string) (*openv1.ProgramEventType, error) {
 	var eventType model.ProgramEventType
 	if err := db.WithContext(ctx).First(&eventType, "id = ?", typeID).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	localesByType, err := loadPublicProgramEventTypeLocales(ctx, db, []string{eventType.ID})
 	if err != nil {
@@ -38,7 +38,7 @@ func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []str
 	}
 	var rows []model.ProgramEventType
 	if err := db.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for i := range rows {
 		result[rows[i].ID] = rows[i]
@@ -59,7 +59,7 @@ func loadPublicProgramEventTypeLocales(ctx context.Context, db *gorm.DB, typeIDs
 		Where("type_id IN ?", ids).
 		Order("type_id ASC, locale ASC").
 		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		result[row.TypeID] = append(result[row.TypeID], row)
@@ -97,7 +97,7 @@ type publicProgramEventTypeLocaleRow struct {
 
 func selectPublicProgramEventTypeLocaleRows(rows []publicProgramEventTypeLocaleRow, typeID string, acceptLanguage string) (publicProgramEventTypeLocaleRow, error) {
 	if len(rows) == 0 {
-		return publicProgramEventTypeLocaleRow{}, errs.NotFound("program event type locale", typeID)
+		return publicProgramEventTypeLocaleRow{}, domainerr.ResourceNotFound("program event type locale", typeID)
 	}
 	requested := resolveRequestedLocale(acceptLanguage)
 	if matched, ok := findProgramEventTypeLocale(rows, requested); ok {
@@ -193,7 +193,7 @@ func loadProgramEventFileAsset(ctx context.Context, assets Assets, fileID *strin
 func loadPublicProgramEventMapPlace(ctx context.Context, db *gorm.DB, mapPlaceID string) (*openv1.MapPlaceBasic, error) {
 	var place model.MapPlace
 	if err := db.WithContext(ctx).First(&place, "id = ?", mapPlaceID).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	protoPlace := &openv1.MapPlaceBasic{
 		Id:      place.ID,
@@ -277,7 +277,7 @@ func loadPublicProgramEventParticipants(
 		Where(query.Where, eventID, query.Status).
 		Order(query.Order).
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return rows, nil
 }
@@ -324,7 +324,7 @@ func loadPublicProgramEventClients(ctx context.Context, db *gorm.DB, eventID str
 		Where("pec.event_id = ?", eventID).
 		Order("pec.sort_order ASC, c.name ASC").
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	result := make([]*openv1.ProgramEventClient, 0, len(rows))
 	for _, row := range rows {
@@ -352,7 +352,7 @@ type publicProgramEventCreditRow struct {
 	MemberID          *string `gorm:"column:member_id"`
 }
 
-func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context, eventID string) ([]*openv1.ProgramEventCredit, error) {
+func (s *Service) loadPublicProgramEventCredits(ctx context.Context, eventID string) ([]*openv1.ProgramEventCredit, error) {
 	var rows []publicProgramEventCreditRow
 	if err := s.db.WithContext(ctx).
 		Table("program_event_credit AS pec").
@@ -373,7 +373,7 @@ func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context,
 		Where("pec.event_id = ?", eventID).
 		Order("pec.sort_order ASC, pec.id ASC").
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	memberIDs := make([]string, 0, len(rows))
 	imageFileIDs := make([]string, 0, len(rows))
@@ -387,11 +387,11 @@ func (s *ProgramEventService) loadPublicProgramEventCredits(ctx context.Context,
 	}
 	members, err := s.creditMembers.LoadPublicCreditMemberSummaries(ctx, memberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	images, err := s.assets.ResolveReadyAssetsForSourceFiles(ctx, imageFileIDs, "image")
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	result := make([]*openv1.ProgramEventCredit, 0, len(rows))
 	for _, row := range rows {

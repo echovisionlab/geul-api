@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/stretchr/testify/require"
 
 	"connectrpc.com/connect"
@@ -150,7 +151,7 @@ func TestNewDocumentDiscoveryToolsRejectsNil(t *testing.T) {
 func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	updatedAt := time.Date(2026, time.August, 28, 1, 2, 3, 0, time.UTC)
 	slug := "live-set"
-	programEvents := &recordingProgramEventDocumentDiscovery{response: &managev1.ListProgramEventsAdminResponse{
+	programEvents := &recordingProgramEventDocumentDiscovery{list: programevent.EventList{
 		Events: []*managev1.ProgramEventSummary{{
 			Id: discoveryDocumentID, Title: "Live Set", Slug: &slug, SourceLocale: "ko",
 			Status:    managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED,
@@ -166,7 +167,7 @@ func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if programEvents.request == nil || len(programEvents.request.Msg.Filters) != 1 || programEvents.request.Msg.Filters[0].Value != "Live" {
+	if programEvents.request == nil || len(programEvents.request.Filters) != 1 || programEvents.request.Filters[0].Value != "Live" || programEvents.request.Limit != 10 {
 		t.Fatalf("Program Event request = %+v", programEvents.request)
 	}
 	documents := result.StructuredContent["documents"].([]any)
@@ -206,20 +207,16 @@ type recordingPageDocumentDiscovery struct {
 }
 
 type recordingProgramEventDocumentDiscovery struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
-	request  *connect.Request[managev1.ListProgramEventsAdminRequest]
-	response *managev1.ListProgramEventsAdminResponse
+	request *programevent.ListProgramEventsQuery
+	list    programevent.EventList
 }
 
 func (discovery *recordingProgramEventDocumentDiscovery) ListProgramEventsAdmin(
 	_ context.Context,
-	request *connect.Request[managev1.ListProgramEventsAdminRequest],
-) (*connect.Response[managev1.ListProgramEventsAdminResponse], error) {
-	discovery.request = request
-	if discovery.response == nil {
-		discovery.response = &managev1.ListProgramEventsAdminResponse{}
-	}
-	return connect.NewResponse(discovery.response), nil
+	query programevent.ListProgramEventsQuery,
+) (programevent.EventList, error) {
+	discovery.request = &query
+	return discovery.list, nil
 }
 
 func (*recordingPageDocumentDiscovery) ListPagesAdmin(

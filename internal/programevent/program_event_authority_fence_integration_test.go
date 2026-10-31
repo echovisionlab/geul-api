@@ -28,7 +28,7 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
-	typeResponse, err := NewProgramEventTypeService(db, spiceDB).CreateProgramEventType(
+	typeResponse, err := typeHandlerForTest(t, db, spiceDB).CreateProgramEventType(
 		ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 			Slug:              "program-event-fence-type-" + suffix,
@@ -40,9 +40,8 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 	)
 	require.NoError(t, err)
 
-	eventService := NewProgramEventService(db, newProgramEventRuntime(""), spiceDB, newProgramEventCreditMemberSummaries(db, ""))
-	eventService.contentBlocks = store
-	seriesService := NewProgramEventSeriesService(db, newProgramEventRuntime(""), spiceDB)
+	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
+	seriesService := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")}))
 	series, err := seriesService.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title: "Program Event Series authority fence",
 		Slug:  "program-event-series-fence-" + suffix,
@@ -108,15 +107,7 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 	t.Run("collaboration bootstrap", func(t *testing.T) {
 		sessionID := insertProgramEventIntegrationSession(t, db, auth.GetUser(ctx).IdentityID.String())
 		lockTx := lockAdminMutationRoot(t, db, "program_event", "id = '"+event.Msg.Id+"'::uuid")
-		internalService := NewAuditedInternalProgramEventService(
-			db,
-			&capturingAsyncPublisher{},
-			apitelemetry.NewDurableWriter(db),
-			WithInternalProgramEventSpiceDB(spiceDB),
-			WithInternalProgramEventCheckpoints(programEventIntegrationCheckpoints(db, spiceDB)),
-			WithInternalProgramEventContentBlockStore(store),
-			WithInternalProgramEventMediaHydrator(files),
-		)
+		internalService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 		result := make(chan error, 1)
 		go func() {
 			_, err := internalService.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
