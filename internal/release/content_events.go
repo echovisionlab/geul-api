@@ -108,6 +108,7 @@ func releaseUpdatedFields(command UpdateReleaseCommand) []string {
 		{"bandcampUrl", command.BandcampURL != nil},
 		{"youtubeMusicUrl", command.YoutubeMusicURL != nil},
 		{"catalogNumber", command.CatalogNumber != nil},
+		{"releaseDate", command.ReleaseDateChange != ReleaseDateUnchanged},
 	} {
 		if field.supplied {
 			fields = append(fields, field.name)
