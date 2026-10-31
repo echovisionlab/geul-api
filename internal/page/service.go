@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -406,8 +407,7 @@ func (s *PageService) CreatePage(
 			return nil, err
 		}
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "page", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("page", "slug")
+			return nil, errs.WithCause(errs.SlugAlreadyExists("page", "slug"), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -481,8 +481,7 @@ func (s *PageService) DeletePage(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.DeletePage", "outcome", "failed", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		deleteRelationships, restoreRelationships, err := pageAuthorizationDeletionBatches(page.ID, snapshots)
 		if err != nil {
@@ -590,10 +589,13 @@ func (s *PageService) PublishPage(
 			return errs.FailedPrecondition("page content document has not been populated")
 		}
 		documentID, err := uuid.Parse(*page.ContentDocumentID)
-		if err != nil || documentID == uuid.Nil {
-			if err != nil {
-				slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "parse_content_document_id", "outcome", "failed", failurecause.Attr(err))
-			}
+		if err != nil {
+			return errs.WithCause(
+				errs.FailedPrecondition("page content document has not been populated"),
+				fmt.Errorf("parse Page content document ID: %w", err),
+			)
+		}
+		if documentID == uuid.Nil {
 			return errs.FailedPrecondition("page content document has not been populated")
 		}
 		attachments, err := s.contentBlocks.LoadPublicationAttachments(ctx, tx, documentID)

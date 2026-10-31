@@ -30,8 +30,7 @@ func (s *PostService) SchedulePost(
 		return nil, errs.Required("scheduled_at")
 	}
 	if err := req.Msg.ScheduledAt.CheckValid(); err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.InvalidArgument("scheduled_at", "must be a valid timestamp")
+		return nil, errs.WithCause(errs.InvalidArgument("scheduled_at", "must be a valid timestamp"), err)
 	}
 	scheduledAt := req.Msg.ScheduledAt.AsTime().UTC()
 	if scheduledAt.Second() != 0 || scheduledAt.Nanosecond() != 0 {
@@ -42,8 +41,7 @@ func (s *PostService) SchedulePost(
 		return nil, errs.Required("scheduled_time_zone")
 	}
 	if _, err := time.LoadLocation(timeZone); err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.InvalidArgument("scheduled_time_zone", "must be a valid IANA time zone")
+		return nil, errs.WithCause(errs.InvalidArgument("scheduled_time_zone", "must be a valid IANA time zone"), err)
 	}
 
 	var post model.Post

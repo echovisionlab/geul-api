@@ -123,7 +123,7 @@ func resolvePageLocalizedMetadataSelection(
 	); availableErr == nil {
 		selection.AvailableLocales = filterPageAvailableLocales(available, selection.SourceLocale, documentLocales)
 	} else {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "page_id", pageID)
+		slog.ErrorContext(ctx, "Available locale lookup failed; serving Page without its locale list", "domain", "page", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "page_id", pageID)
 	}
 	return selection, nil
 }
@@ -268,7 +268,7 @@ func (s *PageService) buildPageResponse(
 	}
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, s.db)
 	if settingsErr != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
+		slog.ErrorContext(ctx, "Localization settings lookup failed; serving Page with default settings", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
 		settings = translation.DefaultRuntimeSettings()
 	}
 

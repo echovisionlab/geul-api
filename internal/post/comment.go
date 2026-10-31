@@ -295,7 +295,7 @@ func (s *CommentService) ReadCommentReplies(
 			query = query.Where("c.created_at > ? OR (c.created_at = ? AND c.id > ?)",
 				cursorComment.CreatedAt, cursorComment.CreatedAt, *req.Msg.Cursor)
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", req.Msg.CommentId, "cursor_id", *req.Msg.Cursor)
+			slog.ErrorContext(ctx, "Reply cursor lookup failed; listing replies from the start", "domain", "post", "operation", "load_reply_cursor", "outcome", "failed", failurecause.Attr(err), "comment_id", req.Msg.CommentId, "cursor_id", *req.Msg.Cursor)
 		}
 	}
 

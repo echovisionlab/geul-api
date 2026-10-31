@@ -28,7 +28,7 @@ func resolveInitialSourceLocale(
 				return *locale
 			}
 		} else if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_preferred_locale", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Preferred locale lookup failed; inferring the Page source locale", "domain", "page", "operation", "load_preferred_locale", "outcome", "failed", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -37,7 +37,7 @@ func resolveInitialSourceLocale(
 	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
 		return settings.DefaultLocale
 	} else {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Localization settings lookup failed; using the default Page source locale", "domain", "page", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }

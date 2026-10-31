@@ -46,9 +46,6 @@ func (s *PostService) GetPostEditorDocument(ctx context.Context, req *connect.Re
 			if editErr != nil && connect.CodeOf(editErr) != connect.CodePermissionDenied {
 				return editErr
 			}
-			if editErr != nil {
-				slog.WarnContext(ctx, "archived Post editor is read-only", "domain", "post", "operation", "check_editor_permission", "outcome", "failed", "post_id", req.Msg.PostId, failurecause.Attr(editErr))
-			}
 			editable = editErr == nil
 		}
 		body := loaded.Msg

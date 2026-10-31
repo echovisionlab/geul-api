@@ -4,8 +4,9 @@ package post_test
 
 import (
 	"context"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"

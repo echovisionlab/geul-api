@@ -7,11 +7,12 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"slices"
 	"testing"
 	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"

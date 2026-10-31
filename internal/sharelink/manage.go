@@ -118,7 +118,6 @@ func validateTarget(entityType managev1.ShareLinkEntityType, entityID string) er
 		return errs.InvalidEntityType(entityType.String())
 	}
 	if _, err := uuid.Parse(entityID); err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "sharelink", "operation", "sharelink.validateTarget", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidEntityID()
 	}
 	return nil

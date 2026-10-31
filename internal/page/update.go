@@ -2,7 +2,6 @@ package page
 
 import (
 	"context"
-	"log/slog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -11,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
@@ -216,8 +214,7 @@ func (s *PageService) updatePageMenuTargetAfterSlugChange(
 
 func normalizePageUpdateError(err error) error {
 	if dberrors.IsUniqueViolation(err) {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-		return errs.SlugAlreadyExists("page", "slug")
+		return errs.WithCause(errs.SlugAlreadyExists("page", "slug"), err)
 	}
 	return errs.Internal(err)
 }

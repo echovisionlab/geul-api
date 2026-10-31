@@ -144,8 +144,7 @@ func check(ctx context.Context, checker PermissionChecker, can policyv1.Can) (bo
 func Require(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageID string, raw json.RawMessage) error {
 	reason, err := Evaluate(ctx, db, checker, pageID, raw)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "pageaccess", "operation", "require_page_access", "outcome", "failed", failurecause.Attr(err), "page_id", pageID)
-		return errs.Internal(err)
+		return failurecause.WithAttrs(errs.Internal(err), slog.String("page_id", pageID))
 	}
 	switch reason {
 	case commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED:

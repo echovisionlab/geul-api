@@ -58,9 +58,6 @@ type postAction = auth.ResourceAction
 
 func (a PostAuthority) allowsAction(postID string, action postAction) bool {
 	can, err := action(postID)
-	if err != nil {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "check_authority_action", "outcome", "failed", failurecause.Attr(err))
-	}
 	return err == nil && a.allows(can)
 }
 
@@ -80,13 +77,11 @@ func requirePostList(ctx context.Context, checker CollaborationPermissionChecker
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostList", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostList", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.AdminRequired()
@@ -126,8 +121,7 @@ func requirePostContributorsExist(ctx context.Context, db *gorm.DB, memberIDs []
 			return errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
 		}
 		if _, err := uuidutil.ParseCanonical(memberID, "contributor_member_ids"); err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostContributorsExist", "outcome", "failed", failurecause.Attr(err))
-			return errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
+			return errs.WithCause(errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs"), err)
 		}
 		if len(unique) > 0 && unique[len(unique)-1] >= memberID {
 			return errs.InvalidArgument(
@@ -201,19 +195,16 @@ func requirePostContributorsPermission(
 	action := postActionForStatus(status, policyv1.Post.Edit, policyv1.Post.EditArchived)
 	can, err := action(postID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostContributorsPermission", "outcome", "failed", failurecause.Attr(err))
-		return postContributorPermissionDenied(status)
+		return errs.WithCause(postContributorPermissionDenied(status), err)
 	}
 	for _, memberID := range memberIDs {
 		actor, err := policyv1.NewAccountIdentityActor(identities[memberID])
 		if err != nil {
-			slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostContributorsPermission", "outcome", "failed", failurecause.Attr(err))
-			return postContributorPermissionDenied(status)
+			return errs.WithCause(postContributorPermissionDenied(status), err)
 		}
 		allowed, err := spiceDB.CheckActorCan(ctx, actor, can)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostContributorsPermission", "outcome", "failed", failurecause.Attr(err), "post_id", postID)
-			return errs.DependencyUnavailable("SpiceDB")
+			return failurecause.WithAttrs(errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err), slog.String("post_id", postID))
 		}
 		if !allowed {
 			return postContributorPermissionDenied(status)
@@ -222,7 +213,7 @@ func requirePostContributorsPermission(
 	return nil
 }
 
-func postContributorPermissionDenied(status model.PostStatus) error {
+func postContributorPermissionDenied(status model.PostStatus) *connect.Error {
 	if status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
 		return errs.FailedPrecondition(archivedPostAdminEditMessage)
 	}
@@ -256,13 +247,11 @@ func requirePostPermissionForPrincipal(
 	}
 	can, canErr := action(postID)
 	if canErr != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostPermissionForPrincipal", "outcome", "failed", failurecause.Attr(canErr))
-		return PostAuthority{}, errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return PostAuthority{}, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), canErr)
 	}
 	allowed, err := checkPostPermissionForPrincipal(ctx, spiceDB, postID, principal, action)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.requirePostPermissionForPrincipal", "outcome", "failed", failurecause.Attr(err), "post_id", postID)
-		return PostAuthority{}, errs.DependencyUnavailable("SpiceDB")
+		return PostAuthority{}, failurecause.WithAttrs(errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err), slog.String("post_id", postID))
 	}
 	if !allowed {
 		if maskNotFound {
@@ -339,8 +328,7 @@ func requireLockedPostPermission(
 ) (PostAuthority, error) {
 	can, err := action(postID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.requireLockedPostPermission", "outcome", "failed", failurecause.Attr(err))
-		return PostAuthority{}, errs.InvalidArgument("post_id", "must be a canonical UUID")
+		return PostAuthority{}, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), err)
 	}
 	if err := identitystate.RequireFreshCan(ctx, tx, spiceDB, can); err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
@@ -412,8 +400,7 @@ func RequireLockedView(
 	if _, err := requireLockedPostPermission(ctx, tx, spiceDB, postID, action); err != nil {
 		switch connect.CodeOf(err) {
 		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-			slog.WarnContext(ctx, "Post view permission rejected", "domain", "post", "operation", "require_locked_view", "outcome", "failed", "post_id", postID, failurecause.Attr(err))
-			return errs.NotFound("post", postID)
+			return errs.WithCause(errs.NotFound("post", postID), err)
 		default:
 			return err
 		}
@@ -527,8 +514,7 @@ func mapPostParticipantMutationError(err error) error {
 		return err
 	}
 	if isPostLastAuthorConstraint(err) {
-		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "map_participant_mutation_error", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("a post must retain at least one durable author")
+		return errs.WithCause(errs.FailedPrecondition("a post must retain at least one durable author"), err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("post participant not found")

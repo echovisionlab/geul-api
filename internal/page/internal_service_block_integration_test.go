@@ -4,10 +4,11 @@ package page
 
 import (
 	"context"
-	"google.golang.org/protobuf/proto"
 	"slices"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"

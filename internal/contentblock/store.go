@@ -506,7 +506,10 @@ func (s *Store) applyBatchAfterFenceWithMetadata(
 		if err != nil {
 			return Result{}, err
 		}
-		localesChanged = changedMutationLocales(before, after, mutation)
+		localesChanged, err = changedMutationLocales(before, after, mutation)
+		if err != nil {
+			return Result{}, err
+		}
 		if err := s.validateFileChanges(ctx, tx, before, after, mutation); err != nil {
 			return Result{}, err
 		}

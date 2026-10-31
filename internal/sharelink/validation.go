@@ -31,7 +31,9 @@ func ValidateForEntity(
 		Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", token, entityType.String(), entityID, time.Now()).
 		Take(&link).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "failed to load share link", "domain", "sharelink", "operation", "validate_for_entity", "outcome", "failed", "entity_type", entityType.String(), "entity_id", entityID, failurecause.Attr(err, token, password))
+			// Callers answer every failure as not found, so the request
+			// record keeps a server fault only at Warn; this is its Error.
+			slog.ErrorContext(ctx, "failed to load share link", "domain", "sharelink", "operation", "load_share_link", "outcome", "failed", "entity_type", entityType.String(), "entity_id", entityID, failurecause.Attr(err, token, password))
 		}
 		return nil, err
 	}
@@ -43,7 +45,8 @@ func ValidateForEntity(
 	}
 	match, err := crypto.NewPasswordHasher(nil).Verify(password, *link.PasswordHash)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to verify share link password", "domain", "sharelink", "operation", "validate_for_entity", "outcome", "failed", "entity_type", entityType.String(), "entity_id", entityID, failurecause.Attr(err, token, password, *link.PasswordHash))
+		// Hidden behind not found like a load failure.
+		slog.ErrorContext(ctx, "failed to verify share link password", "domain", "sharelink", "operation", "verify_share_link_password", "outcome", "failed", "entity_type", entityType.String(), "entity_id", entityID, failurecause.Attr(err, token, password, *link.PasswordHash))
 		return nil, fmt.Errorf("verify share link password: %w", err)
 	}
 	if !match {

@@ -88,7 +88,7 @@ func Resolve(
 ) (Selection, error) {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
+		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	return ResolveWithPolicy(ctx, db, spec, entityID, acceptLanguage, settings)
@@ -125,7 +125,7 @@ func ResolveWithPolicy(
 	if availableErr == nil {
 		selection.AvailableLocales = available
 	} else {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "entity_type", spec.EntityType, "entity_id", entityID)
+		slog.ErrorContext(ctx, "Available locale lookup failed; serving without the locale list", "domain", "publiccontent", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "entity_type", spec.EntityType, "entity_id", entityID)
 	}
 	if selection.Summary != nil {
 		resolved, err := sitevariable.ResolvePublicText(ctx, db, *selection.Summary)
@@ -148,7 +148,7 @@ func ResolveBatch(
 ) (map[string]Selection, error) {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
+		slog.ErrorContext(ctx, "Localization settings lookup failed; serving with default settings", "domain", "publiccontent", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(err), "entity_type", spec.EntityType)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	return ResolveBatchWithPolicy(ctx, db, spec, entityIDs, acceptLanguage, settings)

@@ -322,7 +322,14 @@ func verifyPersistedMutation(
 		for _, blockID := range blockIDs {
 			expected, shouldExist := after.blocks[blockID]
 			persisted, exists := persistedBlocks[blockID]
-			if exists != shouldExist || (exists && !samePersistedBlockFields(expected, persisted)) {
+			same := exists == shouldExist
+			if same && exists {
+				var err error
+				if same, err = samePersistedBlockFields(expected, persisted); err != nil {
+					return fmt.Errorf("verify persisted Block %s: %w", blockID, err)
+				}
+			}
+			if !same {
 				return fmt.Errorf("%w: persisted affected Block %s differs", ErrInvalidMutation, blockID)
 			}
 		}
@@ -397,7 +404,14 @@ func verifyPersistedMutationLocales(
 		}
 		for locale, expected := range expectedLocales {
 			persisted, exists := persistedLocales[locale]
-			if !exists || !sameCanonicalJSON(expected, persisted) {
+			if !exists {
+				return fmt.Errorf("%w: persisted affected Block %s locale %s differs", ErrInvalidMutation, blockID, locale)
+			}
+			same, err := sameCanonicalJSON(expected, persisted)
+			if err != nil {
+				return fmt.Errorf("verify persisted Block %s locale %s: %w", blockID, locale, err)
+			}
+			if !same {
 				return fmt.Errorf("%w: persisted affected Block %s locale %s differs", ErrInvalidMutation, blockID, locale)
 			}
 		}
@@ -408,7 +422,14 @@ func verifyPersistedMutationLocales(
 		}
 		expected, shouldExist := after.locales[key.blockID][key.locale]
 		persisted, exists := persistedLocalesByBlock[key.blockID][key.locale]
-		if exists != shouldExist || (exists && !sameCanonicalJSON(expected, persisted)) {
+		same := exists == shouldExist
+		if same && exists {
+			var err error
+			if same, err = sameCanonicalJSON(expected, persisted); err != nil {
+				return fmt.Errorf("verify persisted Block %s locale %s: %w", key.blockID, key.locale, err)
+			}
+		}
+		if !same {
 			return fmt.Errorf("%w: persisted affected Block %s locale %s differs", ErrInvalidMutation, key.blockID, key.locale)
 		}
 	}
@@ -857,13 +878,15 @@ WHERE block.id = moved.id
 	return nil
 }
 
-func samePersistedBlockFields(expected, persisted FullBlock) bool {
-	return expected.ID == persisted.ID &&
-		equalUUIDPointers(expected.ParentID, persisted.ParentID) &&
-		expected.ContainerSlot == persisted.ContainerSlot &&
-		expected.Position == persisted.Position &&
-		expected.Kind == persisted.Kind &&
-		sameCanonicalJSON(expected.SharedData, persisted.SharedData)
+func samePersistedBlockFields(expected, persisted FullBlock) (bool, error) {
+	if expected.ID != persisted.ID ||
+		!equalUUIDPointers(expected.ParentID, persisted.ParentID) ||
+		expected.ContainerSlot != persisted.ContainerSlot ||
+		expected.Position != persisted.Position ||
+		expected.Kind != persisted.Kind {
+		return false, nil
+	}
+	return sameCanonicalJSON(expected.SharedData, persisted.SharedData)
 }
 
 func (repository) updateDocument(

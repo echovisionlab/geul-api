@@ -491,8 +491,7 @@ func (s *PostService) updatePostWithDB(ctx context.Context, tx *gorm.DB, post *m
 	}
 	expectedRevision, err := uuidutil.ParseCanonical(update.expectedConfigurationRevision, "expected_configuration_revision")
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "post", "operation", "post.updatePostWithDB", "outcome", "failed", failurecause.Attr(err))
-		return false, errs.InvalidArgumentMsg("expected_configuration_revision must be a canonical UUID")
+		return false, errs.WithCause(errs.InvalidArgumentMsg("expected_configuration_revision must be a canonical UUID"), err)
 	}
 	if expectedRevision.String() != post.ConfigurationRevision {
 		return false, connect.NewError(connect.CodeAborted, errors.New("Post configuration changed; reload before saving"))
@@ -594,8 +593,7 @@ func (s *PostService) DeletePost(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.DeletePost", "outcome", "failed", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		deleteRelationships, restoreRelationships, err := postAuthorizationDeletionBatches(post.ID, snapshots)
 		if err != nil {

@@ -126,8 +126,10 @@ func (s *PostService) ListPostVersions(
 	for i := range versions {
 		result[i], err = s.toProtoPostVersion(&versions[i], contributorNames)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.ListPostVersions", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.FailedPrecondition("Post Version typed snapshot is invalid")
+			return nil, failurecause.WithAttrs(
+				errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), err),
+				slog.String("post_version_id", versions[i].ID),
+			)
 		}
 	}
 	return connect.NewResponse(&managev1.ListPostVersionsResponse{
@@ -163,8 +165,10 @@ func (s *PostService) RestorePostVersion(
 	}
 	versionEnvelope, versionDocument, err := unmarshalPostVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.RestorePostVersion", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Post Version typed snapshot is invalid")
+		return nil, failurecause.WithAttrs(
+			errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), err),
+			slog.String("post_version_id", version.ID),
+		)
 	}
 
 	now := time.Now().UTC()

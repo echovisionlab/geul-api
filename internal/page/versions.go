@@ -119,8 +119,10 @@ func (s *PageService) RestorePageVersion(
 	}
 	versionSnapshot, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "page.RestorePageVersion", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Page version typed snapshot is invalid")
+		return nil, failurecause.WithAttrs(
+			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), err),
+			slog.String("page_version_id", version.ID),
+		)
 	}
 
 	var contributorMemberIDs []string
@@ -353,8 +355,10 @@ func (s *PageService) toProtoPageVersion(
 ) (*managev1.PageVersion, error) {
 	snapshot, err := DecodeVersionContentSnapshot(v.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "content operation failed", "domain", "page", "operation", "page.toProtoPageVersion", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Page version typed snapshot is invalid")
+		return nil, failurecause.WithAttrs(
+			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), err),
+			slog.String("page_version_id", v.ID),
+		)
 	}
 	contributors, err := toProtoVersionContributors(v.ContributorMemberIDs, contributorNames)
 	if err != nil {

@@ -126,8 +126,7 @@ func (s *PostService) ListPostParticipants(
 			}
 			ok, checkErr := s.spiceDB.CheckActorCan(ctx, actor, can)
 			if checkErr != nil {
-				slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.ListPostParticipants", "outcome", "failed", failurecause.Attr(checkErr))
-				return nil, errs.DependencyUnavailable("SpiceDB")
+				return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 			}
 			effective = ok
 		}
@@ -176,8 +175,7 @@ func (s *PostService) AddPostAuthor(
 		}
 		canAuthor, checkErr := s.spiceDB.CheckActorCan(ctx, targetActor, can)
 		if checkErr != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "post", "operation", "post.AddPostAuthor", "outcome", "failed", failurecause.Attr(checkErr))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 		}
 		if !canAuthor {
 			return errs.InvalidArgument("member_id", "post authors must have the site Author or Admin role")

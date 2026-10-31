@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
