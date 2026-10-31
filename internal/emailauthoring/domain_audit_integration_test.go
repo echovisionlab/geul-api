@@ -181,3 +181,43 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 	}
 	require.Equal(t, 3, localeContentRows, "Template body, Template subject, and Layout source each own one mutation Audit")
 }
+
+func TestEmailTemplateMetadataUpdateRecordsNoLayoutChangeItDidNotMakeIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
+	writer := apitelemetry.NewDurableWriter(db)
+	references := integrationCampaignDeliveryReferences{}
+	store := testutil.NewEmailContentBlockStore(t, spiceDB)
+	authoring := newTestService(t, Deps{DB: db, Audit: writer, SpiceDB: spiceDB, ContentBlocks: store, References: references})
+	layouts, templates := NewLayoutConnectHandler(authoring), NewTemplateConnectHandler(authoring)
+
+	layout, err := layouts.CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
+		Key: "kept_layout", Name: "Kept layout", HtmlContent: "<main>{{content}}</main>", SourceLocale: "en",
+	}))
+	require.NoError(t, err)
+	template, err := templates.CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
+		Key: "kept_layout_template", Name: "Before rename", Subject: "Subject", SourceLocale: "en",
+	}))
+	require.NoError(t, err)
+	_, err = templates.UpdateEmailTemplate(ctx, connect.NewRequest(&managev1.UpdateEmailTemplateRequest{Id: template.Msg.Id, LayoutId: &layout.Msg.Id}))
+	require.NoError(t, err)
+	name := "After rename"
+	renamed, err := templates.UpdateEmailTemplate(ctx, connect.NewRequest(&managev1.UpdateEmailTemplateRequest{Id: template.Msg.Id, Name: &name}))
+	require.NoError(t, err)
+	require.Equal(t, layout.Msg.Id, renamed.Msg.GetLayoutId())
+
+	var layoutChanges []struct {
+		PreviousItemID string `gorm:"column:previous_item_id"`
+		ItemID         string `gorm:"column:item_id"`
+	}
+	require.NoError(t, db.Raw(`
+		SELECT COALESCE(attributes->>'previous_item_id', '') AS previous_item_id, COALESCE(attributes->>'item_id', '') AS item_id
+		FROM public.domain_audit
+		WHERE target_type = 'email_template' AND target_id = ? AND attributes @> '{"changed_fields":["layout"]}'::jsonb
+		ORDER BY occurred_at, audit_id
+	`, template.Msg.Id).Scan(&layoutChanges).Error)
+	require.Len(t, layoutChanges, 1, "only the assignment changed the layout")
+	require.Empty(t, layoutChanges[0].PreviousItemID)
+	require.Equal(t, layout.Msg.Id, layoutChanges[0].ItemID)
+}

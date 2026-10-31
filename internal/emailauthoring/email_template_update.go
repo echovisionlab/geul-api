@@ -178,9 +178,12 @@ func applyEmailTemplateUpdate(ctx context.Context, tx *gorm.DB, template model.E
 	update := emailTemplateUpdate{
 		metadataFields:   emailTemplateMetadataChangedFields(template, plan),
 		previousLayoutID: strings.TrimSpace(ptrStringValue(template.LayoutID)),
-		nextLayoutID:     plan.requestedLayoutID,
 	}
-	layoutChanged := plan.layoutMutation && update.previousLayoutID != plan.requestedLayoutID
+	update.nextLayoutID = update.previousLayoutID
+	if plan.layoutMutation {
+		update.nextLayoutID = plan.requestedLayoutID
+	}
+	layoutChanged := update.previousLayoutID != update.nextLayoutID
 	if len(update.metadataFields) > 0 || layoutChanged {
 		update.changed = true
 		plan.updates["updated_at"] = plan.now
