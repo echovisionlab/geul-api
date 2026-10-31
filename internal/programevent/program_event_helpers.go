@@ -27,7 +27,7 @@ func toProtoProgramEventSummary(event *model.ProgramEvent, posterFileID *string)
 	slug := event.Slug
 	return &managev1.ProgramEventSummary{
 		Id:           event.ID,
-		Status:       manageProgramEventStatus(event.Status),
+		Status:       programEventStatusToProto(event.Status),
 		SourceLocale: event.SourceLocale,
 		Title:        event.Title,
 		Slug:         &slug,
@@ -36,7 +36,7 @@ func toProtoProgramEventSummary(event *model.ProgramEvent, posterFileID *string)
 		StartsAt:     timestamppb.New(event.StartsAt),
 		EndsAt:       timestampProtoPtr(event.EndsAt),
 		Timezone:     event.Timezone,
-		LocationMode: manageProgramEventLocationMode(event.LocationMode),
+		LocationMode: locationModeToProto(event.LocationMode),
 		MapPlaceId:   event.MapPlaceID,
 		PosterFileId: posterFileID,
 		PublishedAt:  timestampProtoPtr(event.PublishedAt),
@@ -79,27 +79,13 @@ func normalizeRequiredProgramEventLocale(field, locale string) (string, error) {
 	return *normalized, nil
 }
 
-func programEventLocationModeString(mode managev1.ProgramEventLocationMode) string {
-	if mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_UNSPECIFIED {
-		return managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String()
-	}
-	return mode.String()
-}
-
-func programEventLocationModeUsesMapPlace(mode string) bool {
-	return mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String() ||
-		mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String()
-}
-
-func validateProgramEventLocation(mode string, mapPlaceID *string) error {
+func validateProgramEventLocation(mode model.ProgramEventLocationMode, mapPlaceID *string) error {
 	switch mode {
-	case managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String(),
-		managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String():
+	case model.ProgramEventLocationModeMapPlace, model.ProgramEventLocationModeHybrid:
 		if mapPlaceID == nil || strings.TrimSpace(*mapPlaceID) == "" {
 			return errs.Required("map_place_id")
 		}
-	case managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
-		managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String():
+	case model.ProgramEventLocationModeOnline, model.ProgramEventLocationModeTBA:
 	default:
 		return errs.InvalidArgument("location_mode", "unsupported location mode")
 	}
@@ -113,33 +99,12 @@ func validateProgramEventTimeRange(startsAt time.Time, endsAt *time.Time) error 
 	return nil
 }
 
-func manageProgramEventStatus(status string) managev1.ProgramEventStatus {
-	if value, ok := managev1.ProgramEventStatus_value[status]; ok {
-		return managev1.ProgramEventStatus(value)
-	}
-	return managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_UNSPECIFIED
-}
-
-func manageProgramEventSeriesStatus(status string) managev1.ProgramEventSeriesStatus {
-	switch status {
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String():
-		return managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String():
-		return managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_DRAFT
-	default:
-		return managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED
-	}
-}
-
-func programEventSeriesStatusStorageValue(status managev1.ProgramEventSeriesStatus) (string, error) {
-	switch status {
-	case managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_DRAFT:
-		return managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(), nil
-	case managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED:
-		return managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(), nil
-	default:
+func programEventSeriesStatusStorageValue(status managev1.ProgramEventSeriesStatus) (model.ProgramEventStatus, error) {
+	stored, ok := programEventSeriesStatusFromProto(status)
+	if !ok {
 		return "", errs.InvalidArgument("status", "must be draft or published")
 	}
+	return stored, nil
 }
 
 func mapProgramEventSeriesFilters(filters []*commonv1.FilterSpec) ([]*commonv1.FilterSpec, error) {
@@ -157,40 +122,26 @@ func mapProgramEventSeriesFilters(filters []*commonv1.FilterSpec) ([]*commonv1.F
 				if err != nil {
 					return nil, err
 				}
-				mappedFilter.Values = append(mappedFilter.Values, storageValue)
+				mappedFilter.Values = append(mappedFilter.Values, string(storageValue))
 			}
 		} else {
 			storageValue, err := programEventSeriesFilterStorageValue(filter.GetValue())
 			if err != nil {
 				return nil, err
 			}
-			mappedFilter.Value = storageValue
+			mappedFilter.Value = string(storageValue)
 		}
 		mapped = append(mapped, mappedFilter)
 	}
 	return mapped, nil
 }
 
-func programEventSeriesFilterStorageValue(value string) (string, error) {
-	statusValue, ok := managev1.ProgramEventSeriesStatus_value[value]
+func programEventSeriesFilterStorageValue(value string) (model.ProgramEventStatus, error) {
+	stored, ok := programEventSeriesStatusFilterValues[value]
 	if !ok {
 		return "", errs.InvalidArgument("status", "must be draft or published")
 	}
-	return programEventSeriesStatusStorageValue(managev1.ProgramEventSeriesStatus(statusValue))
-}
-
-func manageProgramEventLocationMode(mode string) managev1.ProgramEventLocationMode {
-	if value, ok := managev1.ProgramEventLocationMode_value[mode]; ok {
-		return managev1.ProgramEventLocationMode(value)
-	}
-	return managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_UNSPECIFIED
-}
-
-func manageProgramEventTypeStatus(status string) managev1.ProgramEventTypeStatus {
-	if value, ok := managev1.ProgramEventTypeStatus_value[status]; ok {
-		return managev1.ProgramEventTypeStatus(value)
-	}
-	return managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_UNSPECIFIED
+	return stored, nil
 }
 
 func paginationLimitOffset(p *commonv1.PaginationRequest, defaultLimit int32) (int32, int32) {
@@ -281,7 +232,7 @@ func requireProgramEventMutationPermissionWithDB(
 	normal programEventAction,
 ) error {
 	var event struct {
-		Status string `gorm:"column:status"`
+		Status model.ProgramEventStatus `gorm:"column:status"`
 	}
 	if err := db.WithContext(ctx).Table("program_event").
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
@@ -342,7 +293,7 @@ func RequireLockedView(
 	eventID string,
 ) error {
 	var event struct {
-		Status string `gorm:"column:status"`
+		Status model.ProgramEventStatus `gorm:"column:status"`
 	}
 	if err := tx.WithContext(ctx).Table("program_event").
 		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).

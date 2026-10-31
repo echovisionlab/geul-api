@@ -26,7 +26,7 @@ type programEventSeriesUpdate struct {
 	title         *string
 	summary       *string
 	description   *string
-	status        *string
+	status        *model.ProgramEventStatus
 	slug          *string
 	posterFileID  *string
 	posterChanged bool
@@ -40,12 +40,14 @@ func (u programEventSeriesUpdate) columns(updatedAt time.Time) structured.Fields
 		"title":       u.title,
 		"summary":     u.summary,
 		"description": u.description,
-		"status":      u.status,
 		"slug":        u.slug,
 	} {
 		if value != nil {
 			columns[column] = *value
 		}
+	}
+	if u.status != nil {
+		columns["status"] = *u.status
 	}
 	if u.posterChanged {
 		columns["poster_file_id"] = nil
@@ -166,7 +168,7 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 				return err
 			}
 		}
-		var nextStatus *string
+		var nextStatus *model.ProgramEventStatus
 		if statusChanged {
 			nextStatus = update.status
 		}
@@ -181,8 +183,8 @@ func (s *ProgramEventSeriesService) appendProgramEventSeriesUpdateAudit(
 	tx *gorm.DB,
 	seriesID string,
 	changedFields []string,
-	previousStatus string,
-	nextStatus *string,
+	previousStatus model.ProgramEventStatus,
+	nextStatus *model.ProgramEventStatus,
 ) error {
 	if len(changedFields) > 0 {
 		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -275,13 +277,6 @@ func sameNullableString(left, right *string) bool {
 		return left == nil && right == nil
 	}
 	return *left == *right
-}
-
-func programEventSeriesAuditState(status string) sharedtelemetry.AuditState {
-	if status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String() {
-		return sharedtelemetry.AuditStatePublished
-	}
-	return sharedtelemetry.AuditStateDraft
 }
 
 func (s *ProgramEventSeriesService) syncProgramEventSeriesPoster(

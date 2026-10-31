@@ -11,58 +11,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
-
-func TestProgramEventPublicEnumMappings(t *testing.T) {
-	require.Equal(
-		t,
-		openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED,
-		openProgramEventStatus(openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String()),
-	)
-	require.Equal(
-		t,
-		openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_UNSPECIFIED,
-		openProgramEventStatus("PROGRAM_EVENT_STATUS_DELETED"),
-	)
-	require.Equal(
-		t,
-		openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED,
-		openProgramEventStatus(openv1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()),
-	)
-	require.Equal(
-		t,
-		openv1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED,
-		openProgramEventSeriesStatus(managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String()),
-	)
-
-	require.Equal(
-		t,
-		openv1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID,
-		openProgramEventLocationMode(managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String()),
-	)
-	require.Equal(
-		t,
-		openv1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_UNSPECIFIED,
-		openProgramEventLocationMode("PROGRAM_EVENT_LOCATION_MODE_BACKSTAGE"),
-	)
-	require.True(t, publicProgramEventLocationModeUsesMapPlace(managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String()))
-	require.True(t, publicProgramEventLocationModeUsesMapPlace(managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String()))
-	require.False(t, publicProgramEventLocationModeUsesMapPlace(managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String()))
-	require.False(t, publicProgramEventLocationModeUsesMapPlace(managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String()))
-
-	require.Equal(
-		t,
-		openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE,
-		openProgramEventTypeStatus(openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String()),
-	)
-	require.Equal(
-		t,
-		openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_UNSPECIFIED,
-		openProgramEventTypeStatus("PROGRAM_EVENT_TYPE_STATUS_DELETED"),
-	)
-}
 
 func TestProgramEventTimestampProtoHandlesNilAndValues(t *testing.T) {
 	require.Nil(t, timestampProto(nil))

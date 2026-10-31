@@ -12,7 +12,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
@@ -41,7 +40,7 @@ func (s *ProgramEventSeriesService) Get(
 	var series model.ProgramEventSeries
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventSeries{}).
-		Where("status = ?", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String())
+		Where("status = ?", model.ProgramEventStatusPublished)
 	if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
 		query = query.Where("id = ?", slugOrID)
 	} else {
@@ -66,7 +65,7 @@ func (s *ProgramEventSeriesService) List(
 ) (*connect.Response[openv1.ListProgramEventSeriesResponse], error) {
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventSeries{}).
-		Where("status = ?", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String())
+		Where("status = ?", model.ProgramEventStatusPublished)
 	var err error
 	query, err = applySimpleProgramEventSeriesFilters(query, req.Msg.Filters)
 	if err != nil {

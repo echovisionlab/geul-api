@@ -5,7 +5,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -67,15 +67,15 @@ func requireProgramEventPermission(
 	return nil
 }
 
-func programEventViewAction(status string) programEventAction {
-	if status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String() {
+func programEventViewAction(status model.ProgramEventStatus) programEventAction {
+	if status == model.ProgramEventStatusArchived {
 		return policyv1.ProgramEvent.ViewArchived
 	}
 	return policyv1.ProgramEvent.View
 }
 
-func programEventMutationAction(status string, normal programEventAction) programEventAction {
-	if status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String() {
+func programEventMutationAction(status model.ProgramEventStatus, normal programEventAction) programEventAction {
+	if status == model.ProgramEventStatusArchived {
 		return policyv1.ProgramEvent.EditArchived
 	}
 	return normal

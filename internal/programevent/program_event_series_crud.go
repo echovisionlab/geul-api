@@ -47,7 +47,7 @@ func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 	posterFileID := nullableString(req.Msg.PosterFileId)
 	series := &model.ProgramEventSeries{
 		Slug:         slug,
-		Status:       managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(),
+		Status:       model.ProgramEventStatusDraft,
 		Title:        title,
 		Summary:      req.Msg.Summary,
 		Description:  req.Msg.Description,

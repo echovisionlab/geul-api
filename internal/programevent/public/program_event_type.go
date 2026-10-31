@@ -27,7 +27,7 @@ func (s *ProgramEventTypeService) List(
 ) (*connect.Response[openv1.ListProgramEventTypesResponse], error) {
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventType{}).
-		Where("status = ?", openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String())
+		Where("status = ?", model.ProgramEventTypeStatusActive)
 	var err error
 	query, err = applySimpleProgramEventTypeFilters(query, req.Msg.Filters)
 	if err != nil {

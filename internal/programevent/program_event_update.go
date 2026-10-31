@@ -38,7 +38,7 @@ type programEventUpdate struct {
 	externalURL  nullableColumn[string]
 	startsAt     *time.Time
 	endsAt       nullableColumn[time.Time]
-	locationMode *string
+	locationMode *model.ProgramEventLocationMode
 	mapPlaceID   nullableColumn[string]
 	now          time.Time
 }
@@ -210,14 +210,14 @@ func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.Pr
 	}
 	locationMode := event.LocationMode
 	if r.LocationMode != nil {
-		locationMode = programEventLocationModeString(r.GetLocationMode())
+		locationMode = locationModeFromProto(r.GetLocationMode())
 	}
 	mapPlaceID := event.MapPlaceID
 	switch {
-	case r.LocationMode != nil && !programEventLocationModeUsesMapPlace(locationMode):
+	case r.LocationMode != nil && !locationMode.UsesMapPlace():
 		mapPlaceID = nil
 	case r.MapPlaceId != nil:
-		if programEventLocationModeUsesMapPlace(locationMode) {
+		if locationMode.UsesMapPlace() {
 			mapPlaceID = nullableString(r.MapPlaceId)
 		} else {
 			mapPlaceID = nil
@@ -228,13 +228,13 @@ func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.Pr
 	}
 	if r.LocationMode != nil {
 		update.locationMode = &locationMode
-		if !programEventLocationModeUsesMapPlace(locationMode) {
+		if !locationMode.UsesMapPlace() {
 			update.mapPlaceID = setNullableColumn[string](nil)
 		}
 	}
 	if r.MapPlaceId != nil {
 		update.mapPlaceID = setNullableColumn[string](nil)
-		if programEventLocationModeUsesMapPlace(locationMode) {
+		if locationMode.UsesMapPlace() {
 			update.mapPlaceID = setNullableColumn(nullableString(r.MapPlaceId))
 		}
 	}

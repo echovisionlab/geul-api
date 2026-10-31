@@ -82,9 +82,9 @@ var ProgramEventFilterConfig = &queryutil.FilterConfig{
 			Type:       queryutil.TypeEnum,
 			AllowedOps: queryutil.EnumOps,
 			EnumValues: []string{
-				managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(),
-				managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
-				managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String(),
+				string(model.ProgramEventStatusDraft),
+				string(model.ProgramEventStatusPublished),
+				string(model.ProgramEventStatusArchived),
 			},
 		},
 		"type_id": {
@@ -139,8 +139,8 @@ var ProgramEventSeriesFilterConfig = &queryutil.FilterConfig{
 			Type:       queryutil.TypeEnum,
 			AllowedOps: queryutil.EnumOps,
 			EnumValues: []string{
-				managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(),
-				managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
+				string(model.ProgramEventStatusDraft),
+				string(model.ProgramEventStatusPublished),
 			},
 		},
 	},
@@ -158,8 +158,8 @@ var ProgramEventTypeFilterConfig = &queryutil.FilterConfig{
 			Type:       queryutil.TypeEnum,
 			AllowedOps: queryutil.EnumOps,
 			EnumValues: []string{
-				managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String(),
-				managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_INACTIVE.String(),
+				string(model.ProgramEventTypeStatusActive),
+				string(model.ProgramEventTypeStatusInactive),
 			},
 		},
 	},
@@ -367,9 +367,9 @@ func (s *ProgramEventService) newProgramEvent(
 	if timezone == "" {
 		return nil, errs.Required("timezone")
 	}
-	locationMode := programEventLocationModeString(request.LocationMode)
+	locationMode := locationModeFromProto(request.LocationMode)
 	mapPlaceID := request.MapPlaceId
-	if !programEventLocationModeUsesMapPlace(locationMode) {
+	if !locationMode.UsesMapPlace() {
 		mapPlaceID = nil
 	}
 	if err := validateProgramEventLocation(locationMode, mapPlaceID); err != nil {
@@ -389,7 +389,7 @@ func (s *ProgramEventService) newProgramEvent(
 	return &model.ProgramEvent{
 		Title:        title,
 		Slug:         slug,
-		Status:       managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(),
+		Status:       model.ProgramEventStatusDraft,
 		SourceLocale: sourceLocale,
 		TypeID:       request.TypeId,
 		SeriesID:     request.SeriesId,
@@ -594,20 +594,20 @@ func (s *ProgramEventService) PublishProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishProgramEventRequest],
 ) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
-	return s.setProgramEventStatus(ctx, req.Msg.Id, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(), true)
+	return s.setProgramEventStatus(ctx, req.Msg.Id, model.ProgramEventStatusPublished, true)
 }
 
 func (s *ProgramEventService) ArchiveProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.ArchiveProgramEventRequest],
 ) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
-	return s.setProgramEventStatus(ctx, req.Msg.Id, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String(), false)
+	return s.setProgramEventStatus(ctx, req.Msg.Id, model.ProgramEventStatusArchived, false)
 }
 
 func (s *ProgramEventService) setProgramEventStatus(
 	ctx context.Context,
 	id string,
-	status string,
+	status model.ProgramEventStatus,
 	publish bool,
 ) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
 	var current model.ProgramEvent
@@ -630,15 +630,15 @@ func (s *ProgramEventService) setProgramEventStatus(
 		); err != nil {
 			return err
 		}
-		if publish && current.Status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String() {
+		if publish && current.Status == model.ProgramEventStatusPublished {
 			return errs.FailedPrecondition("program event is already published")
 		}
-		if !publish && current.Status != managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String() {
+		if !publish && current.Status != model.ProgramEventStatusPublished {
 			return errs.FailedPrecondition("only published program events can be archived")
 		}
 		updates := structured.Fields{"status": status, "updated_at": now}
 		previousStatus := current.Status
-		if publish && current.Status != managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String() {
+		if publish && current.Status != model.ProgramEventStatusArchived {
 			updates["published_at"] = now
 		}
 		if err := tx.Model(&current).Clauses(clause.Returning{Columns: []clause.Column{
@@ -655,24 +655,11 @@ func (s *ProgramEventService) setProgramEventStatus(
 	response := &managev1.ProgramEventLifecycleMutationResponse{
 		Id:        current.ID,
 		Changed:   true,
-		Status:    manageProgramEventStatus(current.Status),
+		Status:    programEventStatusToProto(current.Status),
 		UpdatedAt: timestamppb.New(current.UpdatedAt),
 	}
 	if current.PublishedAt != nil {
 		response.PublishedAt = timestamppb.New(*current.PublishedAt)
 	}
 	return connect.NewResponse(response), nil
-}
-
-func programEventAuditState(status string) sharedtelemetry.AuditState {
-	switch status {
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String():
-		return sharedtelemetry.AuditStateDraft
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String():
-		return sharedtelemetry.AuditStatePublished
-	case managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String():
-		return sharedtelemetry.AuditStateArchived
-	default:
-		return sharedtelemetry.AuditStateNone
-	}
 }

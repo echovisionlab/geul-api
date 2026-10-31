@@ -26,7 +26,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
@@ -118,7 +117,7 @@ func (s *ProgramEventService) Get(
 		query := tx.
 			Model(&model.ProgramEvent{}).
 			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-			Where("status IN ?", publicProgramEventStatuses())
+			Where("status IN ?", publicProgramEventStatuses)
 		if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
 			query = query.Where("id = ?", slugOrID)
 		} else {
@@ -154,7 +153,7 @@ func (s *ProgramEventService) Get(
 		}
 		media, err = contentblock.LoadMediaReferences(ctx, tx, blockRead.DocumentID)
 		mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
-			ResourceType: "program_event", ResourceID: event.ID, Status: event.Status,
+			ResourceType: "program_event", ResourceID: event.ID, Status: string(event.Status),
 			DocumentID: blockRead.DocumentID.String(), Mode: mediaasset.ContentDownloadOwnerAccessPublic,
 		}
 		return err
@@ -180,7 +179,7 @@ func (s *ProgramEventService) List(
 ) (*connect.Response[openv1.ListProgramEventsResponse], error) {
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEvent{}).
-		Where("status IN ?", publicProgramEventStatuses())
+		Where("status IN ?", publicProgramEventStatuses)
 
 	var err error
 	query, err = applyPublicProgramEventFilters(query, req.Msg.Filters)
@@ -309,7 +308,7 @@ func applyProgramEventPublicSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*g
 }
 
 func programEventTBAFirstOrder() string {
-	return "location_mode = '" + managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String() + "' DESC"
+	return "location_mode = '" + string(model.ProgramEventLocationModeTBA) + "' DESC"
 }
 
 func (s *ProgramEventService) toProtoProgramEvent(
@@ -344,7 +343,7 @@ func (s *ProgramEventService) toProtoProgramEvent(
 		return nil, errs.Internal(fmt.Errorf("render Program Event typed document: %w", err))
 	}
 	mapPlaceID := event.MapPlaceID
-	if !publicProgramEventLocationModeUsesMapPlace(event.LocationMode) {
+	if !event.LocationMode.UsesMapPlace() {
 		mapPlaceID = nil
 	}
 	protoEvent := &openv1.ProgramEvent{
@@ -508,7 +507,7 @@ func (s *ProgramEventService) loadPublishedProgramEventSeries(
 			&series,
 			"id = ? AND status = ?",
 			*seriesID,
-			managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
+			model.ProgramEventStatusPublished,
 		).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -527,7 +526,7 @@ func (s *ProgramEventService) toProtoProgramEventSummary(
 	eventType *openv1.ProgramEventType,
 ) *openv1.ProgramEventSummary {
 	mapPlaceID := event.MapPlaceID
-	if !publicProgramEventLocationModeUsesMapPlace(event.LocationMode) {
+	if !event.LocationMode.UsesMapPlace() {
 		mapPlaceID = nil
 	}
 	summary := &openv1.ProgramEventSummary{

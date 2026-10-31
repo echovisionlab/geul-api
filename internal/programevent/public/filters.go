@@ -7,9 +7,9 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var programEventPublicFilterConfig = &queryutil.FilterConfig{
@@ -33,10 +33,10 @@ var programEventPublicFilterConfig = &queryutil.FilterConfig{
 			Type:       queryutil.TypeEnum,
 			AllowedOps: []commonv1.FilterOp{commonv1.FilterOp_FILTER_OP_EQ, commonv1.FilterOp_FILTER_OP_IN},
 			EnumValues: []string{
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String(),
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_HYBRID.String(),
-				managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String(),
+				string(model.ProgramEventLocationModeMapPlace),
+				string(model.ProgramEventLocationModeOnline),
+				string(model.ProgramEventLocationModeHybrid),
+				string(model.ProgramEventLocationModeTBA),
 			},
 		},
 		"series_id": {

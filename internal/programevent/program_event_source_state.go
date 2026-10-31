@@ -163,7 +163,7 @@ func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *mo
 	}
 	proto := &managev1.ProgramEvent{
 		Id:               event.ID,
-		Status:           manageProgramEventStatus(event.Status),
+		Status:           programEventStatusToProto(event.Status),
 		SourceLocale:     event.SourceLocale,
 		TypeId:           event.TypeID,
 		SeriesId:         event.SeriesID,
@@ -172,7 +172,7 @@ func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *mo
 		EndsAt:           timestampProtoPtr(event.EndsAt),
 		Timezone:         event.Timezone,
 		AllDay:           event.AllDay,
-		LocationMode:     manageProgramEventLocationMode(event.LocationMode),
+		LocationMode:     locationModeToProto(event.LocationMode),
 		MapPlaceId:       event.MapPlaceID,
 		PosterFileId:     primaryPosterFileID,
 		TicketUrl:        event.TicketURL,
@@ -225,7 +225,7 @@ func (s *ProgramEventSeriesService) loadProgramEventSeries(ctx context.Context, 
 func (s *ProgramEventSeriesService) toProtoProgramEventSeries(series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
 	return &managev1.ProgramEventSeries{
 		Id:           series.ID,
-		Status:       manageProgramEventSeriesStatus(series.Status),
+		Status:       programEventSeriesStatusToProto(series.Status),
 		PosterFileId: series.PosterFileID,
 		Slug:         series.Slug,
 		Title:        series.Title,
@@ -263,7 +263,7 @@ func (s *ProgramEventTypeService) toProtoProgramEventType(ctx context.Context, e
 	return &managev1.ProgramEventType{
 		Id:                eventType.ID,
 		Slug:              eventType.Slug,
-		Status:            manageProgramEventTypeStatus(eventType.Status),
+		Status:            programEventTypeStatusToProto(eventType.Status),
 		SortOrder:         eventType.SortOrder,
 		RequiresPlace:     eventType.RequiresPlace,
 		RequiresStreamUrl: eventType.RequiresStreamURL,

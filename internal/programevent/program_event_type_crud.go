@@ -50,7 +50,7 @@ func (s *ProgramEventTypeService) CreateProgramEventType(
 	now := time.Now().UTC()
 	eventType := &model.ProgramEventType{
 		Slug:              slug,
-		Status:            managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String(),
+		Status:            model.ProgramEventTypeStatusActive,
 		SortOrder:         req.Msg.GetSortOrder(),
 		RequiresPlace:     req.Msg.GetRequiresPlace(),
 		RequiresStreamURL: req.Msg.GetRequiresStreamUrl(),

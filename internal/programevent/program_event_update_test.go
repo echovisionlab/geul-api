@@ -16,7 +16,7 @@ func TestApplyProgramEventTimeAndLocationUpdatesRevalidatesLockedTimeRange(t *te
 	initial := model.ProgramEvent{
 		StartsAt:     base,
 		EndsAt:       timestampPtr(timestamppb.New(base.Add(10 * time.Hour))),
-		LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
+		LocationMode: model.ProgramEventLocationModeOnline,
 	}
 	newStart := timestamppb.New(base.Add(8 * time.Hour))
 	request := &managev1.UpdateProgramEventRequest{StartsAt: newStart}
@@ -63,14 +63,14 @@ func TestProgramEventObservedOnlyRelationBaselinesDoNotStartWrites(t *testing.T)
 }
 
 func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeChange(t *testing.T) {
-	mapPlaceMode := managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_MAP_PLACE.String()
+	mapPlaceMode := model.ProgramEventLocationModeMapPlace
 	initialPlace := "place-before"
 	requestedPlace := "place-requested"
-	for _, lockedMode := range []string{
-		managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(),
-		managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_TBA.String(),
+	for _, lockedMode := range []model.ProgramEventLocationMode{
+		model.ProgramEventLocationModeOnline,
+		model.ProgramEventLocationModeTBA,
 	} {
-		t.Run(lockedMode, func(t *testing.T) {
+		t.Run(string(lockedMode), func(t *testing.T) {
 			initial := model.ProgramEvent{
 				StartsAt:     time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC),
 				LocationMode: mapPlaceMode,
@@ -107,7 +107,7 @@ func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeC
 		require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, &managev1.UpdateProgramEventRequest{
 			LocationMode: &requestMode,
 		}))
-		require.Equal(t, requestMode.String(), *update.locationMode)
+		require.Equal(t, model.ProgramEventLocationModeTBA, *update.locationMode)
 		require.True(t, update.mapPlaceID.set)
 		require.Nil(t, update.mapPlaceID.value)
 	})

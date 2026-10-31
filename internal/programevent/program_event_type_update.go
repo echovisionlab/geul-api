@@ -74,7 +74,7 @@ func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventTy
 // fields are left alone.
 type programEventTypeUpdate struct {
 	slug              *string
-	status            *string
+	status            *model.ProgramEventTypeStatus
 	sortOrder         *int32
 	requiresPlace     *bool
 	requiresStreamURL *bool
@@ -145,14 +145,12 @@ func (u programEventTypeUpdate) columns(updatedAt time.Time) structured.Fields {
 	return columns
 }
 
-func validateProgramEventTypeStatus(status managev1.ProgramEventTypeStatus) (string, error) {
-	switch status {
-	case managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE,
-		managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_INACTIVE:
-		return status.String(), nil
-	default:
+func validateProgramEventTypeStatus(status managev1.ProgramEventTypeStatus) (model.ProgramEventTypeStatus, error) {
+	stored, ok := programEventTypeStatusFromProto(status)
+	if !ok {
 		return "", errs.InvalidArgument("status", "must be active or inactive")
 	}
+	return stored, nil
 }
 
 func updateProgramEventTypeLocale(tx *gorm.DB, request *managev1.UpdateProgramEventTypeRequest, now time.Time) (bool, error) {

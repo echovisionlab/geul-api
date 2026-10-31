@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -46,8 +46,8 @@ func TestProgramEventActionSelectionUsesArchivedCapabilitiesExclusively(t *testi
 	t.Parallel()
 
 	const eventID = "22222222-2222-4222-8222-222222222222"
-	archived := managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()
-	draft := managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String()
+	archived := model.ProgramEventStatusArchived
+	draft := model.ProgramEventStatusDraft
 	viewArchived, err := programEventViewAction(archived)(eventID)
 	require.NoError(t, err)
 	wantViewArchived, err := policyv1.ProgramEvent.ViewArchived(eventID)

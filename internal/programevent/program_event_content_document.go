@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
@@ -142,7 +143,7 @@ func requireProgramEventBlockBootstrap(
 		return uuid.Nil, nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	var root struct {
-		Status string `gorm:"column:status"`
+		Status model.ProgramEventStatus `gorm:"column:status"`
 	}
 	if err := tx.WithContext(ctx).Table("program_event").Select("status").Where("id = ?", eventID).Take(&root).Error; err != nil {
 		return uuid.Nil, nil, errs.Internal(fmt.Errorf("load Program Event collaboration status: %w", err))

@@ -124,7 +124,7 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 
 		var after model.ProgramEvent
 		require.NoError(t, db.First(&after, "id = ?", event.Msg.Id).Error)
-		require.Equal(t, managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE.String(), after.LocationMode)
+		require.Equal(t, model.ProgramEventLocationModeOnline, after.LocationMode)
 		require.Nil(t, after.MapPlaceID)
 	})
 
