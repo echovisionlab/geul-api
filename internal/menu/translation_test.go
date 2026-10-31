@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -223,7 +224,7 @@ func TestLoadTranslationSourceDocumentRejectsMissingRootSourceValues(t *testing.
 
 	_, err := LoadTranslationSourceDocument(t.Context(), db, "menu-1")
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	var count int64
 	require.NoError(t, db.Table("menu_translation").Where("entity_id = ?", "menu-1").Count(&count).Error)

@@ -538,19 +538,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(pagePath, pageHandler)
 	slog.Info("Registered service", "path", pagePath)
 
-	menuService := menu.NewAuditedMenuService(
-		db,
-		telemetryWriter,
-		menuadapter.NewSiteSettingsReferences(telemetryWriter),
-		menuadapter.NewTargetReferences(),
-		spicedbClient,
-	)
-	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menuService, handlerOpts...)
+	menuService, err := menu.NewService(menu.Deps{
+		DB: db, SpiceDB: spicedbClient,
+		SiteSettings: menuadapter.NewSiteSettingsReferences(telemetryWriter),
+		Targets:      menuadapter.NewTargetReferences(),
+		Checkpoints:  collaborationRuntime.Checkpoints,
+		Audit:        telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, err
+	}
+	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menu.NewConnectHandler(menuService), handlerOpts...)
 	mux.Handle(menuPath, menuHandler)
 	slog.Info("Registered service", "path", menuPath)
-	internalMenuService := menu.NewInternalMenuService(menuService, collaborationRuntime.Checkpoints)
 	internalMenuPath, internalMenuHandler := intrav1connect.NewInternalMenuServiceHandler(
-		internalMenuService, internalHandlerOpts...,
+		menu.NewInternalConnectHandler(menuService), internalHandlerOpts...,
 	)
 	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
 	slog.Info("Registered internal service", "path", internalMenuPath)

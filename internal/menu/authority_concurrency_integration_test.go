@@ -3,7 +3,6 @@
 package menu
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -23,13 +23,8 @@ func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(t.Context(), actor.AuthUserInfo())
-	service := NewMenuService(
-		stack.DB,
-		noopMenuSiteSettingsReferences{},
-		noopMenuTargetReferences{},
-		stack.SpiceDBClient,
-	)
+	ctx := testutil.NewAuditContext(t, actor.IdentityID, actor.MemberID)
+	service := newTestHandler(t, Deps{DB: stack.DB, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(stack.DB)})
 	url := "/before"
 	menu, err := service.CreateMenu(ctx, connect.NewRequest(&managev1.CreateMenuRequest{
 		Name: "authority-fence-menu",
@@ -61,18 +56,6 @@ func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T
 	var persistedName string
 	require.NoError(t, stack.DB.Table("menu").Select("name").Where("id = ?", menu.Msg.Id).Scan(&persistedName).Error)
 	require.Equal(t, "authority-fence-menu", persistedName)
-}
-
-type noopMenuSiteSettingsReferences struct{}
-
-func (noopMenuSiteSettingsReferences) ClearMenuReferences(context.Context, *gorm.DB, string) error {
-	return nil
-}
-
-type noopMenuTargetReferences struct{}
-
-func (noopMenuTargetReferences) ValidateAndLock(context.Context, *gorm.DB, []TargetReference) error {
-	return nil
 }
 
 func demoteIntegrationIdentity(t *testing.T, stack *testutil.OryStack, identityID string) {

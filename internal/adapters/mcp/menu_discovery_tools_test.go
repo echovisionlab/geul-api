@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/menu"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -135,7 +136,7 @@ func TestMenuDiscoveryReturnsOwnerDenialsAndKeepsInternalErrorsPrivate(t *testin
 type recordingMenuDiscovery struct {
 	menus             []*managev1.Menu
 	pagination        *commonv1.PaginationResponse
-	paginationRequest *commonv1.PaginationRequest
+	paginationRequest menu.ListMenusQuery
 	values            map[string]*structpb.Value
 	keys              []string
 	actor             *auth.UserInfo
@@ -143,11 +144,11 @@ type recordingMenuDiscovery struct {
 	err               error
 }
 
-func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, req *connect.Request[managev1.ListMenusRequest]) (*connect.Response[managev1.ListMenusResponse], error) {
+func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, query menu.ListMenusQuery) (*managev1.ListMenusResponse, error) {
 	r.calls++
 	r.actor = auth.GetUser(ctx)
-	r.paginationRequest = req.Msg.Pagination
-	return connect.NewResponse(&managev1.ListMenusResponse{Menus: r.menus, Pagination: r.pagination}), r.err
+	r.paginationRequest = query
+	return &managev1.ListMenusResponse{Menus: r.menus, Pagination: r.pagination}, r.err
 }
 
 func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, req *connect.Request[managev1.GetSettingRequest]) (*connect.Response[managev1.GetSettingResponse], error) {

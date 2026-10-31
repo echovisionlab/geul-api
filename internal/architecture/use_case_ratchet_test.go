@@ -19,6 +19,7 @@ const (
 // migration lands.
 var pipelineDomains = []string{
 	"internal/member",
+	"internal/menu",
 	"internal/sharelink",
 }
 

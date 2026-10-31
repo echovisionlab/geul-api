@@ -28,7 +28,7 @@ type translationServiceRegistration struct {
 	handlerOptions           []connect.HandlerOption
 	domainRegistry           *translationadapter.DomainRegistry
 	emailAuthoringReferences emailauthoring.CampaignDeliveryReferences
-	menuService              *menu.MenuService
+	menuService              *menu.Service
 	legalDocuments           *legal.AIDocumentService
 	internalFormService      *formdomain.InternalFormService
 	programEventService      *programevent.ProgramEventService

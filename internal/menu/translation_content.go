@@ -10,7 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -69,7 +69,7 @@ func LoadTranslationSourceDocument(
 
 	root.SourceLocale = strings.TrimSpace(root.SourceLocale)
 	if root.SourceLocale == "" {
-		return nil, errs.FailedPrecondition("Menu source locale is not initialized")
+		return nil, domainerr.Precondition("Menu source locale is not initialized")
 	}
 
 	var localeRow struct {
@@ -79,7 +79,7 @@ func LoadTranslationSourceDocument(
 		Where("entity_id = ? AND locale = ?", menuID, root.SourceLocale).Take(&localeRow)
 	if localeResult.Error != nil {
 		if errors.Is(localeResult.Error, gorm.ErrRecordNotFound) {
-			return nil, errs.FailedPrecondition("Menu source locale values are not initialized")
+			return nil, domainerr.Precondition("Menu source locale values are not initialized")
 		}
 		return nil, localeResult.Error
 	}
@@ -89,12 +89,12 @@ func LoadTranslationSourceDocument(
 	}
 	labels, err := DecodeTranslationLabelValues(localeRow.ItemsJSON)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	applyMenuLocaleLabels(items, root.SourceLocale, labels)
 	body, err := json.Marshal(items)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &translation.SourceDocument{ContentJSON: body}, nil
 }
