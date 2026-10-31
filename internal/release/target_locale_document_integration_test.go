@@ -195,3 +195,40 @@ func releaseTargetIntegrationBatch(t *testing.T, documentID, revision, blockID u
 	require.NoError(t, err)
 	return batch
 }
+
+func TestReleaseSourceAIDocumentMetadataEmptyCreditNoteRemovesNoteIntegration(t *testing.T) {
+	t.Parallel()
+	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	releaseID, keptCredit, clearedCredit := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	store, err := contentblock.NewGeneratedStore(releaseTargetIntegrationFileAuthorizer{})
+	require.NoError(t, err)
+	documentID := uuid.New()
+	require.NoError(t, postgres.DB.Transaction(func(tx *gorm.DB) error {
+		_, createErr := store.CreateDocument(ctx, tx, contentblock.CreateInput{ID: documentID, Profile: releaseContentProfile, SourceLocale: "en"})
+		return createErr
+	}))
+	documentIDString := documentID.String()
+	require.NoError(t, postgres.DB.Create(&model.Release{ID: releaseID, ContentDocumentID: &documentIDString, SourceLocale: "en"}).Error)
+	require.NoError(t, postgres.DB.Exec("INSERT INTO release_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, 'en', 'Source title', ?, ?)", releaseID, now, now).Error)
+	creditedName := "Source credit"
+	for _, creditID := range []string{keptCredit, clearedCredit} {
+		require.NoError(t, postgres.DB.Create(&model.ReleaseCredit{ID: creditID, ReleaseID: releaseID, CreditedName: &creditedName, CreatedAt: now}).Error)
+		require.NoError(t, postgres.DB.Exec("INSERT INTO release_credit_locale (credit_id, locale, note, updated_at) VALUES (?::uuid, 'en', 'Source note', ?)", creditID, now).Error)
+	}
+
+	var changed bool
+	require.NoError(t, postgres.DB.Transaction(func(tx *gorm.DB) error {
+		var applyErr error
+		changed, applyErr = applyReleaseSourceAIDocumentMetadata(ctx, tx, AIDocumentMutation{
+			ReleaseID: releaseID, Locale: "en", ExpectedSource: "en",
+			CreditNotePatch: map[string]string{clearedCredit: " "},
+		}, now.Add(time.Second))
+		return applyErr
+	}))
+	require.True(t, changed)
+	notes, err := loadReleaseCreditLocaleNotes(ctx, postgres.DB, releaseID, "en")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{keptCredit: "Source note"}, notes)
+}

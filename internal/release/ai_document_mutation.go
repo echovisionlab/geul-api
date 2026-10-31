@@ -246,6 +246,11 @@ func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, inpu
 	for creditID, note := range input.CreditNotePatch {
 		nextNotes[creditID] = note
 	}
+	// A patch can only remove one note by emptying it, as the target writer
+	// treats an empty target note.
+	maps.DeleteFunc(nextNotes, func(_ string, note string) bool {
+		return strings.TrimSpace(note) == ""
+	})
 	if err := validateReleaseCreditNoteIdentityMap(ctx, tx, input.ReleaseID, nextNotes); err != nil {
 		return false, err
 	}
