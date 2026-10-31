@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -143,6 +144,13 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 		return Target{}, errs.NotFound("member", memberID)
 	}
 	return current, nil
+}
+
+// FailedToDecide reports whether err from RequireLocked is a failure to
+// decide rather than an answer about the target. A caller that hides the
+// target's state behind its own denial still propagates such a failure.
+func FailedToDecide(err error) bool {
+	return connect.CodeOf(err) == connect.CodeInternal
 }
 
 // RequireLockedLinked keeps a linked, non-deleted target stable while an
