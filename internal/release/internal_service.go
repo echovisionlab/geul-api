@@ -277,13 +277,17 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 			return batchErr
 		}
 		result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, internalReleaseContentFence(req.Msg.ReleaseId))
-		if err != nil {
+		if err != nil || !result.Changed {
 			return err
 		}
 		if result.TranslationSourceChanged {
-			err = s.ogRefresher.RequestCurrent(ctx, tx, req.Msg.ReleaseId, "release_source_document_saved")
+			if err := s.ogRefresher.RequestCurrent(ctx, tx, req.Msg.ReleaseId, "release_source_document_saved"); err != nil {
+				return err
+			}
 		}
-		return err
+		return appendReleaseRequestTargetLocaleAudit(
+			ctx, tx, s.auditWriter, req.Msg.ReleaseId, source.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
+		)
 	})
 	if err != nil {
 		return nil, normalizeReleaseContentBlockError(err)

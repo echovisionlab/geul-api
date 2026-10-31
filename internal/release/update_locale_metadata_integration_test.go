@@ -669,3 +669,39 @@ func TestUpdateReleaseLocaleMetadataTargetLocaleIntegration(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyReleaseBlockBatchSourceAuditIntegration(t *testing.T) {
+	t.Parallel()
+	fixture := newReleaseLocaleMetadataFixture(t)
+	before := fixture.state(t)
+	apply := func(text string) *intrav1.ApplyReleaseBlockBatchResponse {
+		t.Helper()
+		var blockID string
+		require.NoError(t, fixture.db.Raw(
+			`SELECT id::text FROM content_block WHERE document_id = ?::uuid ORDER BY id LIMIT 1`, fixture.documentID,
+		).Scan(&blockID).Error)
+		response, err := fixture.service.ApplyReleaseBlockBatch(fixture.ctx, connect.NewRequest(&intrav1.ApplyReleaseBlockBatchRequest{
+			ReleaseId: fixture.releaseID, Locale: "en",
+			Batch: testutil.NewParagraphBlockBatch(
+				creativeContentIntegrationDocument("en", ""), fixture.documentRevision(t), "en", blockID, text,
+				[]string{fixture.contributor},
+			),
+		}))
+		require.NoError(t, err)
+		return response.Msg
+	}
+
+	changed := apply("Edited release body")
+	require.True(t, changed.GetChanged())
+	sourceAudit := releaseAuditRow{
+		Action: string(sharedtelemetry.AuditReleaseUpdated), ChangedFields: pq.StringArray{"locale_content"},
+		Locale: proto.String("en"), ItemOperation: proto.String(string(sharedtelemetry.AuditItemOperationUpdated)),
+		ActorKind: "member", ActorMemberID: proto.String(fixture.contributor),
+	}
+	require.Equal(t, append(before.Audits, sourceAudit), fixture.state(t).Audits)
+	require.Equal(t, []string{"release_source_document_saved"}, fixture.og.reasons)
+
+	unchanged := apply("Edited release body")
+	require.False(t, unchanged.GetChanged())
+	require.Equal(t, append(before.Audits, sourceAudit), fixture.state(t).Audits, "an unchanged batch appends no record")
+}
