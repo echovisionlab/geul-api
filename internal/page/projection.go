@@ -129,13 +129,14 @@ func (s *PageService) loadPageContentProjection(
 				ctx, tx, s.spiceDB, page.ID, policyv1.Page.View,
 			)
 			if err != nil {
+				cause := failurecause.WithAttrs(err, slog.String("page_id", page.ID))
 				if code := connect.CodeOf(err); code != connect.CodeUnauthenticated &&
 					code != connect.CodePermissionDenied && code != connect.CodeNotFound {
-					// Every failure answers not found, so the request record keeps
-					// a server fault only at Warn; this is its Error.
-					slog.ErrorContext(ctx, "Page view authorization failed; answering not found", "domain", "page", "operation", "authorize_page_view", "outcome", "failed", "page_id", page.ID, failurecause.Attr(err))
+					// Every failure answers not found; a dependency failure is
+					// still a server fault.
+					cause = failurecause.ServerFault(cause)
 				}
-				return errs.WithCause(errs.NotFound("page", value), err)
+				return errs.WithCause(errs.NotFound("page", value), cause)
 			}
 			if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
 				return err

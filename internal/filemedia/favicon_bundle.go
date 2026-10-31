@@ -128,7 +128,8 @@ func (s *FileService) generateFaviconOutputs(
 		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing failed: %v", err))
 	}
 	if err := favicon.ValidateOutputs(outputs, sourceMime); err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err))
+		// The processor generated the bundle; an invalid one is a server fault.
+		return nil, errs.WithCause(errs.FailedPrecondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err)), failurecause.ServerFault(err))
 	}
 	return outputs, nil
 }
