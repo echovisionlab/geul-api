@@ -24,6 +24,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // AIDocumentMetadataPatch is the Post-owned metadata portion of one DCDP
@@ -100,6 +101,9 @@ func (e *postAIDocumentCompilerError) Unwrap() error { return e.cause }
 type postAIDocumentMutationEffects struct {
 	changedFields []string
 	titleChanged  bool
+	// operation is what the edit did to its locale's content: a target
+	// translation it created or deleted, otherwise an update.
+	operation sharedtelemetry.AuditItemOperation
 }
 
 func (e *postAIDocumentMutationEffects) addField(field string) {
@@ -164,7 +168,7 @@ func (s *Service) ExecuteAIDocumentMutation(
 			if err != nil {
 				return AIDocumentMutationResult{}, err
 			}
-			aiEffects := &postAIDocumentMutationEffects{}
+			aiEffects := &postAIDocumentMutationEffects{operation: sharedtelemetry.AuditItemOperationUpdated}
 			result, err := s.applyAIDocumentMutationInTransaction(
 				ctx, tx, compiled, aiEffects, effects,
 				postAuthorizedAIDocumentFence(root, documentID, contentblock.DomainContext{SourceLocale: state.SourceLocale}),
@@ -175,6 +179,11 @@ func (s *Service) ExecuteAIDocumentMutation(
 			if mode == AIDocumentExecutionValidate {
 				validated = result
 				return result, errRollbackPostAIDocumentValidation
+			}
+			if result.Result.Changed {
+				effects.audits = append(effects.audits, postLocaleContentAudit(
+					compiled.ContributorMemberID.String(), compiled.PostID, compiled.Locale, aiEffects.operation,
+				))
 			}
 			if event := postAIDocumentUpdatedEvent(compiled, result.Result, aiEffects); event != nil {
 				effects.signal(event)
@@ -369,6 +378,7 @@ func (s *Service) applyPostAIDocumentTarget(
 			Now:                      now,
 			Fence:                    fence,
 		})
+		aiEffects.operation = sharedtelemetry.AuditItemOperationDeleted
 		return AIDocumentMutationResult{Result: result}, err
 	}
 	target, err := applyPostTargetLocaleMutation(ctx, tx, s.contentBlocks, postTargetLocaleMutationInput{
@@ -388,6 +398,9 @@ func (s *Service) applyPostAIDocumentTarget(
 	})
 	if err != nil {
 		return AIDocumentMutationResult{}, err
+	}
+	if target.LocaleCreated {
+		aiEffects.operation = sharedtelemetry.AuditItemOperationCreated
 	}
 	if compiled.Metadata.SetTitle && target.MetadataChanged {
 		aiEffects.addField("title")
