@@ -146,15 +146,21 @@ type Spec[R any] struct {
 func FreshCan(can policyv1.Can, err error) Access      // identitystate.RequireFreshCan
 func FreshAdminCan(can policyv1.Can, err error) Access // identitystate.RequireFreshAdminCan
 func PrincipalFence(principal *auth.UserInfo) Access   // lock the principal's Identity only
-func Checked(check func(context.Context, *gorm.DB) error) Access // authority that is not the principal
+func Locked(check func(context.Context, *gorm.DB, Require) error) Access // FreshCan of an action the locked state picks
+func Checked(check func(context.Context, *gorm.DB) error) Access         // the domain's own check in the transaction
+
+type Require func(can policyv1.Can) error
+func IsDenied(err error) bool          // a fresh check's permission denial
+func IsUnauthenticated(err error) bool // a missing or stale session
+func IsNotFound(err error) bool        // a shared helper's not-found answer
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
-func Audits(records ...Audit) Audit                     // several records; skips Unchanged entries
+func Audits(records ...Audit) Audit // several records, in order; skips Unchanged entries
 func Unchanged() Audit
 
-func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // one read-only snapshot
-func ReadLocked(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // a snapshot that may lock rows
+func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error        // one read-only snapshot
+func ReadLocked(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error  // a snapshot that may lock rows
 func ReadCurrent(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // read committed, locking what it reads
 ```
 
@@ -179,9 +185,17 @@ Rules for a spec:
   for an administrator-only mutation. `PrincipalFence` is for a principal's
   own lifecycle step that `Change` guards by state, such as onboarding, where
   the principal is not yet active.
+- **Locked.** When the action depends on the locked target's state (Edit,
+  or EditArchived while archived), `Locked` reads that state in `tx` and
+  calls `require` with the action, which runs `FreshCan`'s check. A domain
+  that answers a denial differently (a masked target answers not found)
+  recognizes it with `IsDenied`, `IsUnauthenticated` or `IsNotFound`.
 - **Checked.** An internal caller whose authority is not the request
   principal, such as a collaboration save attributed to its contributors,
-  re-resolves that authority with `Checked` inside the transaction.
+  re-resolves that authority with `Checked` inside the transaction. A domain
+  whose fresh check answers differently from `FreshCan` in more than the
+  denial (its own unauthenticated, banned or not-found answers, a checker
+  other than the SpiceDB client) runs that check through `Checked` too.
 - **Subjects.** List the Identity of each Member whose state the mutation
   changes, resolved before `Run` (`authorizationtarget.RequireLinkedMember`).
   Re-read the target inside `Change`; `recheckTarget` in
@@ -226,6 +240,7 @@ type Error struct {
 	Kind    Kind
 	Field   string
 	Message string
+	Detail  proto.Message // machine-readable reason, such as a collaboration conflict
 }
 func (e *Error) WithCause(cause error) *Error
 
@@ -239,7 +254,30 @@ func Denied(message string) *Error
 func InvalidSession() *Error
 func Retry(message string) *Error
 func DependencyUnavailable(dependency string) *Error   // "dependency unavailable"
+func AuthenticationRequired() *Error
+func AccountBanned() *Error
+func NoPermission(action, resource string) *Error     // "no permission to action this resource"
+func AdminRequired() *Error
+func AuthorRequired() *Error
+func InvalidEntityType(entityType string) *Error
+func InvalidEntityID() *Error
+
+type CollaborationRevisions struct {
+	Document     string
+	Target       string
+	TargetExists *bool
+}
+func CollaborationRevisionsOf(err error) CollaborationRevisions // the revisions a cause in err carries
+func CollaborationConflict(reason intrav1.CollaborationConflictReason, message string, current CollaborationRevisions) *Error
+func CollaborationRejection(reason intrav1.CollaborationMutationRejectionReason, message string) *Error
 ```
+
+A collaboration save that lost a revision race answers `CollaborationConflict`
+(failed precondition with a `CollaborationConflictDetail`); one the room may
+not make answers `CollaborationRejection` (invalid argument with a
+`CollaborationMutationRejectionDetail`). A conflict found while storing
+reports the revisions its cause carries through `CollaborationRevisionsOf`
+and keeps the cause in the chain when the domain branches on it.
 
 Each constructor produces the same message as its `errs` counterpart, so a
 use case can switch without changing a response;
