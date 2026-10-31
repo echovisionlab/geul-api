@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/mail"
 	"reflect"
@@ -531,6 +532,7 @@ func (s *MailAdapterService) TestConfig(
 			Error:   &errStr,
 		}), nil
 	}
+	defer closeTransientMailAdapter(ctx, adapter)
 
 	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
 }
@@ -586,6 +588,7 @@ func (s *MailAdapterService) Test(
 			Error:   &errStr,
 		}), nil
 	}
+	defer closeTransientMailAdapter(ctx, adapter)
 
 	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
 }
@@ -622,6 +625,7 @@ func (s *MailAdapterService) verifyAdapterBeforeSave(
 	if err != nil {
 		return fmt.Errorf("failed to initialize adapter: %w", err)
 	}
+	defer closeTransientMailAdapter(ctx, sender)
 
 	probeEmail, err := probeEmailForConfig(adapterType, config)
 	if err != nil {
@@ -639,6 +643,18 @@ func (s *MailAdapterService) verifyAdapterBeforeSave(
 	}
 
 	return nil
+}
+
+// closeTransientMailAdapter releases the provider connections that an
+// adapter built for one verification or test send keeps pooled.
+func closeTransientMailAdapter(ctx context.Context, adapter email.Adapter) {
+	closer, ok := adapter.(io.Closer)
+	if !ok {
+		return
+	}
+	if err := closer.Close(); err != nil {
+		slog.WarnContext(ctx, "Failed to close transient mail adapter", "domain", "mail", failurecause.Attr(err))
+	}
 }
 
 func probeEmailForConfig(adapterType model.MailAdapterType, config structured.Value) (string, error) {

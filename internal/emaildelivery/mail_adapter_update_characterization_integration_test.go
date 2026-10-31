@@ -99,6 +99,7 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		require.Equal(t, []string{"replaced-sender@example.test"}, server.recipients())
+		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
 		// The admin RPC replaces the whole provider config: an omitted
 		// password and unknown stored keys are not carried over.
@@ -144,6 +145,7 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		require.Equal(t, []string{"switched@example.test"}, server.recipients())
+		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
 		require.Equal(t, model.MailAdapterType("MAIL_ADAPTER_TYPE_SMTP"), stored.Type)
 		require.JSONEq(t, `{
@@ -165,6 +167,7 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, []string{"renamed-sender@example.test"}, server.recipients())
+		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
 		require.JSONEq(t, `{
 			"host":"127.0.0.1","port":`+strconv.Itoa(int(server.port()))+`,"secure":false,
@@ -471,6 +474,7 @@ type fakeSMTPServer struct {
 	mu       sync.Mutex
 	rcpts    []string
 	conns    []net.Conn
+	open     int
 	wg       sync.WaitGroup
 }
 
@@ -503,6 +507,17 @@ func (s *fakeSMTPServer) recipients() []string {
 	return append([]string{}, s.rcpts...)
 }
 
+// requireClientsDisconnected waits for every client connection to end. A
+// verification adapter that is never closed keeps its pooled connection open.
+func (s *fakeSMTPServer) requireClientsDisconnected(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.open == 0
+	}, 10*time.Second, 10*time.Millisecond, "a verification connection is still open")
+}
+
 func (s *fakeSMTPServer) serve() {
 	defer s.wg.Done()
 	for {
@@ -512,11 +527,15 @@ func (s *fakeSMTPServer) serve() {
 		}
 		s.mu.Lock()
 		s.conns = append(s.conns, conn)
+		s.open++
 		s.mu.Unlock()
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
 			s.handle(conn)
+			s.mu.Lock()
+			s.open--
+			s.mu.Unlock()
 		}()
 	}
 }
