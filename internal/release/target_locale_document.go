@@ -273,8 +273,13 @@ func applyReleaseTargetLocaleMutation(
 			}
 			nextTitle := currentMetadata.Title
 			if input.SetTitle {
-				result.TitleChanged = !releaseOptionalStringsEqual(currentMetadata.Title, input.Title)
-				nextTitle = input.Title
+				requestedTitle := input.Title
+				if requestedTitle != nil {
+					trimmed := strings.TrimSpace(*requestedTitle)
+					requestedTitle = &trimmed
+				}
+				result.TitleChanged = !releaseOptionalStringsEqual(currentMetadata.Title, requestedTitle)
+				nextTitle = requestedTitle
 			}
 			nextNotes := maps.Clone(currentNotes)
 			if input.ReplaceCreditNotes != nil {

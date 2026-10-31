@@ -539,10 +539,18 @@ func TestUpdateReleaseLocaleMetadataTargetLocaleIntegration(t *testing.T) {
 		wantShown func(f releaseLocaleMetadataFixture) map[string]string
 	}{
 		{
-			name:      "title is stored untrimmed",
+			name:      "title is trimmed",
 			title:     proto.String("  Nouveau titre "),
 			changed:   true,
-			wantTitle: "  Nouveau titre ",
+			wantTitle: "Nouveau titre",
+			wantNotes: func(f releaseLocaleMetadataFixture) map[string]string {
+				return map[string]string{f.notedCredit: "Note francaise"}
+			},
+		},
+		{
+			name:      "padded unchanged title is a no-op",
+			title:     proto.String(" " + releaseMetadataTargetTitle + " "),
+			wantTitle: releaseMetadataTargetTitle,
 			wantNotes: func(f releaseLocaleMetadataFixture) map[string]string {
 				return map[string]string{f.notedCredit: "Note francaise"}
 			},
