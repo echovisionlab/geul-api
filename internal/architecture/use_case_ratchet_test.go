@@ -34,6 +34,7 @@ var pipelineDomains = []string{
 	"internal/release",
 	"internal/series",
 	"internal/sharelink",
+	"internal/sitesettings",
 	"internal/work",
 }
 

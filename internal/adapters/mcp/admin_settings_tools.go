@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -32,9 +32,9 @@ var adminSettingsTools = []mcpserver.Tool{
 
 // These ports retain the same application services and request context as RPC.
 type SiteSettingsAdminApplication interface {
-	GetSettings(context.Context, *connect.Request[managev1.GetSettingsRequest]) (*connect.Response[managev1.GetSettingsResponse], error)
-	GetSetting(context.Context, *connect.Request[managev1.GetSettingRequest]) (*connect.Response[managev1.GetSettingResponse], error)
-	SetManySettings(context.Context, *connect.Request[managev1.SetManySettingsRequest]) (*connect.Response[managev1.SetManySettingsResponse], error)
+	GetSettings(context.Context) (*managev1.AllSettings, error)
+	GetSetting(context.Context, sitesettings.GetSettingQuery) (*managev1.SiteSetting, error)
+	SetManySettings(context.Context, sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error)
 }
 
 type MailAdapterAdminApplication interface {
@@ -73,19 +73,19 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		if err := decodeArguments(arguments, &struct{}{}); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.settings.GetSettings(ctx, connect.NewRequest(&managev1.GetSettingsRequest{}))
+		all, err := tools.settings.GetSettings(ctx)
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		settings := projectSiteSettings(response.Msg.GetSettings())
+		settings := projectSiteSettings(all)
 		// Rendered Asset IDs are not source File IDs. Fetch the original bindings
 		// via the existing authorized single-setting API used by the admin UI.
 		for _, key := range siteSettingsFileKeys {
-			binding, err := tools.settings.GetSetting(ctx, connect.NewRequest(&managev1.GetSettingRequest{Key: key}))
+			binding, err := tools.settings.GetSetting(ctx, sitesettings.GetSettingQuery{Key: key})
 			if err != nil {
 				return mcpserver.ToolResult{}, err
 			}
-			settings[key] = binding.Msg.GetSetting().GetValue().AsInterface()
+			settings[key] = binding.GetValue().AsInterface()
 		}
 		return adminSettingsResult(map[string]any{"settings": settings})
 	case ToolSiteSettingsUpdate:
@@ -106,19 +106,19 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		settings := make([]*managev1.SiteSetting, 0, len(keys))
+		settings := make([]sitesettings.Setting, 0, len(keys))
 		for _, key := range keys {
 			value := &structpb.Value{}
 			if err := value.UnmarshalJSON(input.Settings[key]); err != nil {
 				return executionError(fmt.Errorf("invalid value for setting %s", key))
 			}
-			settings = append(settings, &managev1.SiteSetting{Key: key, Value: value})
+			settings = append(settings, sitesettings.Setting{Key: key, Value: value.AsInterface()})
 		}
-		response, err := tools.settings.SetManySettings(ctx, connect.NewRequest(&managev1.SetManySettingsRequest{Settings: settings}))
+		update, err := tools.settings.SetManySettings(ctx, sitesettings.SetManySettingsCommand{Settings: settings})
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		return adminSettingsResult(map[string]any{"success": response.Msg.GetSuccess(), "og_generation_run_id": response.Msg.OgGenerationRunId})
+		return adminSettingsResult(map[string]any{"success": true, "og_generation_run_id": update.OGGenerationRunID})
 	case ToolMailAdapterList:
 		if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
 			return executionError(err)

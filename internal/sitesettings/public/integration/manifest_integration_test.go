@@ -70,17 +70,19 @@ func TestManifestProjectsCurrentSiteAssetsOnCanonicalStaticRoutesIntegration(t *
 	require.Equal(t, cdnDomain+"/asset/"+loaderAssetID+"/loader.webp", response.Msg.GetSettings().GetLoaderAssets()[0].GetUrl())
 }
 
-func newManifestIntegrationService(t *testing.T, db *gorm.DB, cdnDomain, siteOrigin string) *publicsitesettings.ManifestService {
+func newManifestIntegrationService(t *testing.T, db *gorm.DB, cdnDomain, siteOrigin string) *publicsitesettings.ConnectHandler {
 	t.Helper()
-	return publicsitesettings.NewManifestService(
-		siteOrigin,
-		sitesettingsadapter.NewPublicProjection(
+	service, err := publicsitesettings.NewService(publicsitesettings.Deps{
+		Projection: sitesettingsadapter.NewPublicProjection(
 			db,
 			sitesettingsadapter.NewAssets(cdnDomain),
 			sitesettingsadapter.ManifestMenus{},
 		),
-		testutil.IntegrationSpiceDB(t),
-	)
+		SpiceDB:    testutil.IntegrationSpiceDB(t),
+		SiteOrigin: siteOrigin,
+	})
+	require.NoError(t, err)
+	return publicsitesettings.NewConnectHandler(service)
 }
 
 func seedCanonicalPublicFileFixture(

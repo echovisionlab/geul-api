@@ -729,16 +729,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 
-	siteSettingService := sitesettings.NewAuditedSiteSettingService(
-		db,
-		cfg.SiteOrigin,
-		sitesettingsadapter.NewAssets(cfg.CDNURL),
-		sitesettingsadapter.NewReferences(),
-		ogDeps.siteInvalidator(),
-		telemetryWriter,
-		spicedbClient,
-	)
-	siteSettingPath, siteSettingHandler := managev1connect.NewSiteSettingServiceHandler(siteSettingService, handlerOpts...)
+	siteSettingService, err := sitesettings.NewService(sitesettings.Deps{
+		DB: db, SpiceDB: spicedbClient, Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(),
+		OG: ogDeps.siteInvalidator(), Audit: telemetryWriter, SiteOrigin: cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize site settings service: %w", err)
+	}
+	siteSettingPath, siteSettingHandler := managev1connect.NewSiteSettingServiceHandler(sitesettings.NewConnectHandler(siteSettingService), handlerOpts...)
 	mux.Handle(siteSettingPath, siteSettingHandler)
 	slog.Info("Registered service", "path", siteSettingPath)
 

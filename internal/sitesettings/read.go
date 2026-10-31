@@ -5,34 +5,54 @@ import (
 	"fmt"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// GetSettings returns all settings including sensitive ones (admin only)
-func (s *SiteSettingService) GetSettings(
-	ctx context.Context,
-	req *connect.Request[managev1.GetSettingsRequest],
-) (*connect.Response[managev1.GetSettingsResponse], error) {
+// GetSettingQuery reads one setting by key.
+type GetSettingQuery struct {
+	Key string
+}
+
+func (s *Service) requireView(ctx context.Context) error {
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
+}
+
+// GetSettings returns all settings including sensitive ones (admin only).
+func (s *Service) GetSettings(ctx context.Context) (*managev1.AllSettings, error) {
+	if err := s.requireView(ctx); err != nil {
 		return nil, err
 	}
-
-	settings, err := s.loadSettingsRow(s.db.WithContext(ctx))
+	settings, err := loadSettingsRow(s.db.WithContext(ctx))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
+	public, err := s.publicSettings(ctx, settings)
+	if err != nil {
+		return nil, err
+	}
+	all := &managev1.AllSettings{
+		Public:  public,
+		Runtime: &managev1.RuntimeSettings{SiteOrigin: s.siteOrigin},
+	}
+	all.OgImageConfig, err = jsonColumnToStruct(settings.OGImageConfig)
+	if err != nil {
+		logInvalidStoredSetting(ctx, "og_image_config", err)
+	}
+	return all, nil
+}
 
+func (s *Service) publicSettings(ctx context.Context, settings *model.SiteSettings) (*managev1.PublicSettings, error) {
 	public := &managev1.PublicSettings{
 		SiteTitle:              settings.SiteTitle,
 		CompanyName:            settings.CompanyName,
@@ -44,54 +64,28 @@ func (s *SiteSettingService) GetSettings(
 		DefaultCommentsEnabled: settings.DefaultCommentsEnabled,
 		DefaultMapThemeId:      settings.DefaultMapThemeID,
 		MetaDescription:        settings.MetaDescription,
+		HomepagePageId:         nonEmpty(settings.HomepagePageID),
+		MenuHeaderId:           nonEmpty(settings.MenuHeaderID),
+		MenuSecondaryId:        nonEmpty(settings.MenuSecondaryID),
+		MenuFooterId:           nonEmpty(settings.MenuFooterID),
+		MenuAvatarDropdownId:   nonEmpty(settings.MenuAvatarDropdownID),
+		GoogleAnalyticsId:      nonEmpty(settings.GoogleAnalyticsID),
+		LogoFullLightAsset:     s.optionalFileAsset(ctx, settings.LogoFullLightFileID, "logo"),
+		LogoFullDarkAsset:      s.optionalFileAsset(ctx, settings.LogoFullDarkFileID, "logo"),
+		LogoSymbolLightAsset:   s.optionalFileAsset(ctx, settings.LogoSymbolLightFileID, "logo"),
+		LogoSymbolDarkAsset:    s.optionalFileAsset(ctx, settings.LogoSymbolDarkFileID, "logo"),
+		LogoEmailLightAsset:    s.optionalFileAsset(ctx, settings.LogoEmailLightFileID, "email_image"),
+		LogoEmailDarkAsset:     s.optionalFileAsset(ctx, settings.LogoEmailDarkFileID, "email_image"),
 	}
-
-	if v := optionalString(settings.HomepagePageID); v != nil {
-		value := v.(string)
-		public.HomepagePageId = &value
-	}
-	if v := optionalString(settings.MenuHeaderID); v != nil {
-		value := v.(string)
-		public.MenuHeaderId = &value
-	}
-	if v := optionalString(settings.MenuSecondaryID); v != nil {
-		value := v.(string)
-		public.MenuSecondaryId = &value
-	}
-	if v := optionalString(settings.MenuFooterID); v != nil {
-		value := v.(string)
-		public.MenuFooterId = &value
-	}
-	if v := optionalString(settings.MenuAvatarDropdownID); v != nil {
-		value := v.(string)
-		public.MenuAvatarDropdownId = &value
-	}
-	if v := optionalString(settings.GoogleAnalyticsID); v != nil {
-		value := v.(string)
-		public.GoogleAnalyticsId = &value
-	}
-
-	public.LogoFullLightAsset = s.optionalFileAsset(ctx, settings.LogoFullLightFileID, "logo")
-	public.LogoFullDarkAsset = s.optionalFileAsset(ctx, settings.LogoFullDarkFileID, "logo")
-	public.LogoSymbolLightAsset = s.optionalFileAsset(ctx, settings.LogoSymbolLightFileID, "logo")
-	public.LogoSymbolDarkAsset = s.optionalFileAsset(ctx, settings.LogoSymbolDarkFileID, "logo")
-	public.LogoEmailLightAsset = s.optionalFileAsset(ctx, settings.LogoEmailLightFileID, "email_image")
-	public.LogoEmailDarkAsset = s.optionalFileAsset(ctx, settings.LogoEmailDarkFileID, "email_image")
 	if settings.FaviconFileID != nil {
 		public.FaviconAsset, public.FaviconAssetSet = s.assets.ProjectFavicon(ctx, s.db, *settings.FaviconFileID)
 	}
-	if settings.SiteOgBackgroundFileID != nil {
-		public.SiteOgBackgroundAsset = s.getFileAsset(ctx, *settings.SiteOgBackgroundFileID, "image")
-	}
-	if settings.PrivacyOgBackgroundFileID != nil {
-		public.PrivacyOgBackgroundAsset = s.getFileAsset(ctx, *settings.PrivacyOgBackgroundFileID, "image")
-	}
-	if settings.TermsOgBackgroundFileID != nil {
-		public.TermsOgBackgroundAsset = s.getFileAsset(ctx, *settings.TermsOgBackgroundFileID, "image")
-	}
+	public.SiteOgBackgroundAsset = s.optionalFileAsset(ctx, settings.SiteOgBackgroundFileID, "image")
+	public.PrivacyOgBackgroundAsset = s.optionalFileAsset(ctx, settings.PrivacyOgBackgroundFileID, "image")
+	public.TermsOgBackgroundAsset = s.optionalFileAsset(ctx, settings.TermsOgBackgroundFileID, "image")
 	loaderAssets, err := s.loadSiteLoaderAssets(ctx, s.db)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	applyLoaderAssetsToPublicSettings(public, loaderAssets)
 
@@ -107,49 +101,39 @@ func (s *SiteSettingService) GetSettings(
 			public.SocialLinks = value
 		}
 	}
+	return public, nil
+}
 
-	all := &managev1.AllSettings{
-		Public:  public,
-		Runtime: &managev1.RuntimeSettings{SiteOrigin: s.siteOrigin},
+// nonEmpty returns a copy of a set, non-empty value.
+func nonEmpty(value *string) *string {
+	if value == nil || *value == "" {
+		return nil
 	}
-	all.OgImageConfig, err = jsonColumnToStruct(settings.OGImageConfig)
-	if err != nil {
-		logInvalidStoredSetting(ctx, "og_image_config", err)
-	}
-
-	return connect.NewResponse(&managev1.GetSettingsResponse{Settings: all}), nil
+	copied := *value
+	return &copied
 }
 
 // GetSetting retrieves a single setting by key.
-func (s *SiteSettingService) GetSetting(
-	ctx context.Context,
-	req *connect.Request[managev1.GetSettingRequest],
-) (*connect.Response[managev1.GetSettingResponse], error) {
-	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
+func (s *Service) GetSetting(ctx context.Context, query GetSettingQuery) (*managev1.SiteSetting, error) {
+	if err := s.requireView(ctx); err != nil {
 		return nil, err
 	}
-	settings, err := s.loadSettingsRow(s.db.WithContext(ctx))
+	settings, err := loadSettingsRow(s.db.WithContext(ctx))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	value, ok, decodeErr := decodedSettingValue(settings, req.Msg.Key)
+	value, ok, decodeErr := decodedSettingValue(settings, query.Key)
 	if !ok {
-		return nil, errs.InvalidArgument("key", fmt.Sprintf("invalid setting key: %s", req.Msg.Key))
+		return nil, domainerr.InvalidField("key", fmt.Sprintf("invalid setting key: %s", query.Key))
 	}
 	if decodeErr != nil {
-		logInvalidStoredSetting(ctx, req.Msg.Key, decodeErr)
+		logInvalidStoredSetting(ctx, query.Key, decodeErr)
 	}
 	protoValue, err := structpb.NewValue(value)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{
-		Key: req.Msg.Key, Value: protoValue,
-	}}), nil
+	return &managev1.SiteSetting{Key: query.Key, Value: protoValue}, nil
 }
 
 // logInvalidStoredSetting records a stored setting that a read replaced by its

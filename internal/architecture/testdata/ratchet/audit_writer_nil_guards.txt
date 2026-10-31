@@ -11,6 +11,5 @@
 2 internal/member/public
 2 internal/menu
 2 internal/series
-1 internal/sitesettings
 5 internal/translation/application
 2 internal/worker

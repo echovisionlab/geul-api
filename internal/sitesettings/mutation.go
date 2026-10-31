@@ -7,213 +7,236 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-// SetSetting stores a single setting in the singleton settings row.
-func (s *SiteSettingService) SetSetting(
-	ctx context.Context,
-	req *connect.Request[managev1.SetSettingRequest],
-) (*connect.Response[managev1.SetSettingResponse], error) {
-	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
-	}
-	if _, ok := defaultSettings[req.Msg.Key]; !ok {
-		return nil, errs.InvalidArgument("key", fmt.Sprintf("invalid setting key: %s", req.Msg.Key))
-	}
-	var value siteSettingValue
-	if req.Msg.Value != nil {
-		value = req.Msg.Value.AsInterface()
-	}
+// Setting is one requested setting value.
+type Setting struct {
+	Key   string
+	Value structured.Value
+}
 
-	var ogGenerationRunID *string
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		settings, err := s.loadSettingsRowForUpdate(tx)
-		if err != nil {
-			return err
-		}
-		before := cloneSiteSettingsForComparison(settings)
-		if err := s.applySettingValue(settings, req.Msg.Key, value); err != nil {
-			return errs.InvalidArgument("value", err.Error())
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		changedKeys := s.changedSiteSettingKeys(&before, settings, []string{req.Msg.Key})
-		if len(changedKeys) == 0 {
-			return nil
-		}
-		if req.Msg.Key == "homepage_page_id" {
-			if err := s.references.Validate(ctx, tx, req.Msg.Key, settings.HomepagePageID); err != nil {
-				return err
-			}
-		} else if isSiteSettingMenuReference(req.Msg.Key) {
-			if err := s.references.Validate(ctx, tx, req.Msg.Key, siteSettingReferenceValue(settings, req.Msg.Key)); err != nil {
-				return err
-			}
-		}
-		if fileID, _, _, managed := siteSettingAssetBinding(settings, req.Msg.Key); managed && fileID != nil {
-			if err := s.assets.LockForAttachment(ctx, tx, []string{*fileID}); err != nil {
-				return err
-			}
-			if err := s.assets.ValidateAttachment(ctx, tx, req.Msg.Key, *fileID); err != nil {
-				return err
-			}
-		}
-		settings.UpdatedAt = time.Now()
-		if err := tx.Save(settings).Error; err != nil {
-			return err
-		}
-		if err := s.syncSiteSettingAssetBinding(ctx, tx, settings, req.Msg.Key); err != nil {
-			return err
-		}
-		ogGenerationRunID, err = s.og.Request(ctx, tx, &before, settings, []string{req.Msg.Key})
-		if err != nil {
-			return err
-		}
-		return s.appendSettingsAudit(ctx, tx, changedKeys)
-	})
-	if err != nil {
-		return nil, errs.Internal(failurecause.WithAttrs(err, slog.String("key", req.Msg.Key)))
+// SetSettingCommand stores one setting in the singleton settings row.
+type SetSettingCommand struct {
+	Key   string
+	Value structured.Value
+}
+
+// SetManySettingsCommand stores Settings atomically.
+type SetManySettingsCommand struct {
+	Settings []Setting
+}
+
+// AddSiteLoaderAssetCommand appends a File to the site loader assets.
+type AddSiteLoaderAssetCommand struct {
+	FileID string
+}
+
+// RemoveSiteLoaderAssetCommand removes a File from the site loader assets.
+type RemoveSiteLoaderAssetCommand struct {
+	FileID string
+}
+
+// SettingsUpdate is a committed settings change: the OG regeneration run it
+// requested, if any.
+type SettingsUpdate struct {
+	OGGenerationRunID *string
+}
+
+// settingsChange is what a settings mutation stored.
+type settingsChange struct {
+	changedKeys []string
+	ogRunID     *string
+}
+
+// SetSetting stores a single setting in the singleton settings row.
+func (s *Service) SetSetting(ctx context.Context, command SetSettingCommand) (_ SettingsUpdate, returnErr error) {
+	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
+		return SettingsUpdate{}, err
 	}
-	return connect.NewResponse(&managev1.SetSettingResponse{Success: true, OgGenerationRunId: ogGenerationRunID}), nil
+	if _, ok := defaultSettings[command.Key]; !ok {
+		return SettingsUpdate{}, domainerr.InvalidField("key", fmt.Sprintf("invalid setting key: %s", command.Key))
+	}
+	defer failurecause.Annotate(&returnErr, slog.String("key", command.Key))
+	return s.updateSettings(ctx, []string{command.Key}, func(settings *model.SiteSettings) error {
+		if err := applySettingValue(settings, command.Key, command.Value); err != nil {
+			return domainerr.InvalidField("value", err.Error())
+		}
+		return nil
+	})
 }
 
 // SetManySettings stores multiple settings atomically.
-func (s *SiteSettingService) SetManySettings(
-	ctx context.Context,
-	req *connect.Request[managev1.SetManySettingsRequest],
-) (*connect.Response[managev1.SetManySettingsResponse], error) {
-	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+func (s *Service) SetManySettings(ctx context.Context, command SetManySettingsCommand) (SettingsUpdate, error) {
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
+		return SettingsUpdate{}, err
 	}
-	if err := validateSiteSettingKeys(req.Msg.Settings); err != nil {
-		return nil, err
+	if err := validateSiteSettingKeys(command.Settings); err != nil {
+		return SettingsUpdate{}, err
 	}
-	runID, err := s.applySiteSettingBatch(ctx, req.Msg.Settings, can)
-	if err != nil {
-		return nil, errs.Internal(err)
+	keys := make([]string, 0, len(command.Settings))
+	for _, setting := range command.Settings {
+		keys = append(keys, setting.Key)
 	}
-	return connect.NewResponse(&managev1.SetManySettingsResponse{Success: true, OgGenerationRunId: runID}), nil
+	return s.updateSettings(ctx, keys, func(settings *model.SiteSettings) error {
+		return applyRequestedSiteSettings(settings, command.Settings)
+	})
 }
 
-func (s *SiteSettingService) AddSiteLoaderAsset(
-	ctx context.Context,
-	req *connect.Request[managev1.AddSiteLoaderAssetRequest],
-) (*connect.Response[managev1.AddSiteLoaderAssetResponse], error) {
-	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
-	}
-	fileID := strings.TrimSpace(req.Msg.FileId)
-	if fileID == "" {
-		return nil, errs.InvalidArgument("file_id", "file_id is required")
-	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := s.loadSettingsRowForUpdate(tx); err != nil {
-			return err
-		}
-		if err := s.assets.LockForAttachment(ctx, tx, []string{fileID}); err != nil {
-			return err
-		}
-		if err := s.assets.ValidateAttachment(ctx, tx, "loader", fileID); err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		var nextPosition int32
-		if err := tx.Table("site_setting_loader_file").
-			Select("COALESCE(MAX(position) + 1, 0)").
-			Where("site_setting_id = ?", 1).
-			Scan(&nextPosition).Error; err != nil {
-			return err
-		}
-		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.SiteSettingLoaderFile{
-			SiteSettingID: 1, FileID: fileID, Position: nextPosition,
-		})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return nil
-		}
-		if _, err := s.assets.BindReady(ctx, tx, AssetBinding{
-			SourceFileID: fileID, Key: "loader_" + fileID, Kind: "loader",
-		}); err != nil {
-			return err
-		}
-		if err := tx.Model(&model.SiteSettings{}).Where("id = ?", 1).Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-		return s.appendSettingsAudit(ctx, tx, []string{"loader_file_ids"})
+// updateSettings applies the requested keys to the locked settings row and
+// stores the ones that changed with their bindings, OG regeneration and
+// audit record.
+func (s *Service) updateSettings(ctx context.Context, keys []string, apply func(*model.SiteSettings) error) (SettingsUpdate, error) {
+	var settings *model.SiteSettings
+	var before model.SiteSettings
+	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[settingsChange]{
+		// A value the row rejects answers before authority, as it always has.
+		Lock: func(_ context.Context, tx *gorm.DB) error {
+			var err error
+			if settings, err = loadSettingsRowForUpdate(tx); err != nil {
+				return err
+			}
+			before = cloneSiteSettingsForComparison(settings)
+			return apply(settings)
+		},
+		Access: freshEdit(),
+		Change: func(ctx context.Context, tx *gorm.DB) (settingsChange, error) {
+			return s.storeSettings(ctx, tx, &before, settings, keys)
+		},
+		Audit: func(change settingsChange) mutation.Audit { return settingsAudit(change.changedKeys) },
 	})
-	if err != nil {
-		return nil, errs.Internal(failurecause.WithAttrs(err, slog.String("file_id", fileID)))
-	}
-	return connect.NewResponse(&managev1.AddSiteLoaderAssetResponse{Success: true}), nil
+	return SettingsUpdate{OGGenerationRunID: change.ogRunID}, err
 }
 
-func (s *SiteSettingService) RemoveSiteLoaderAsset(
+func (s *Service) storeSettings(
 	ctx context.Context,
-	req *connect.Request[managev1.RemoveSiteLoaderAssetRequest],
-) (*connect.Response[managev1.RemoveSiteLoaderAssetResponse], error) {
-	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
-	if err != nil {
-		return nil, errs.Internal(err)
+	tx *gorm.DB,
+	before *model.SiteSettings,
+	settings *model.SiteSettings,
+	keys []string,
+) (settingsChange, error) {
+	changedKeys := changedSiteSettingKeys(before, settings, keys)
+	if len(changedKeys) == 0 {
+		return settingsChange{}, nil
 	}
+	if err := s.validateSiteSettingReferences(ctx, tx, settings, keys); err != nil {
+		return settingsChange{}, err
+	}
+	if err := s.lockAndValidateSiteSettingAssets(ctx, tx, settings, keys); err != nil {
+		return settingsChange{}, err
+	}
+	settings.UpdatedAt = time.Now()
+	if err := tx.Save(settings).Error; err != nil {
+		return settingsChange{}, err
+	}
+	for _, key := range changedKeys {
+		if err := s.syncSiteSettingAssetBinding(ctx, tx, settings, key); err != nil {
+			return settingsChange{}, err
+		}
+	}
+	runID, err := s.og.Request(ctx, tx, before, settings, changedKeys)
+	if err != nil {
+		return settingsChange{}, err
+	}
+	return settingsChange{changedKeys: changedKeys, ogRunID: runID}, nil
+}
+
+// AddSiteLoaderAsset appends a ready loader File to the site loader assets.
+func (s *Service) AddSiteLoaderAsset(ctx context.Context, command AddSiteLoaderAssetCommand) (returnErr error) {
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
+		return err
 	}
-	fileID := strings.TrimSpace(req.Msg.FileId)
+	fileID := strings.TrimSpace(command.FileID)
 	if fileID == "" {
-		return nil, errs.InvalidArgument("file_id", "file_id is required")
+		return domainerr.InvalidField("file_id", "file_id is required")
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := s.loadSettingsRowForUpdate(tx); err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		result := tx.Where("site_setting_id = ? AND file_id = ?", 1, fileID).Delete(&model.SiteSettingLoaderFile{})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return nil
-		}
-		if err := s.assets.Release(ctx, tx, "loader_"+fileID); err != nil {
-			return err
-		}
-		if err := tx.Model(&model.SiteSettings{}).Where("id = ?", 1).Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-		return s.appendSettingsAudit(ctx, tx, []string{"loader_file_ids"})
+	defer failurecause.Annotate(&returnErr, slog.String("file_id", fileID))
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+		// The File is checked before authority, as it always has been.
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			if _, err := loadSettingsRowForUpdate(tx); err != nil {
+				return err
+			}
+			if err := s.assets.LockForAttachment(ctx, tx, []string{fileID}); err != nil {
+				return err
+			}
+			return s.assets.ValidateAttachment(ctx, tx, "loader", fileID)
+		},
+		Access: freshEdit(),
+		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) { return s.addLoaderFile(ctx, tx, fileID) },
+		Audit:  loaderAudit,
 	})
-	if err != nil {
-		return nil, errs.Internal(failurecause.WithAttrs(err, slog.String("file_id", fileID)))
+	return err
+}
+
+func (s *Service) addLoaderFile(ctx context.Context, tx *gorm.DB, fileID string) (bool, error) {
+	var nextPosition int32
+	if err := tx.Table("site_setting_loader_file").
+		Select("COALESCE(MAX(position) + 1, 0)").
+		Where("site_setting_id = ?", 1).
+		Scan(&nextPosition).Error; err != nil {
+		return false, err
 	}
-	return connect.NewResponse(&managev1.RemoveSiteLoaderAssetResponse{Success: true}), nil
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.SiteSettingLoaderFile{
+		SiteSettingID: 1, FileID: fileID, Position: nextPosition,
+	})
+	if result.Error != nil || result.RowsAffected == 0 {
+		return false, result.Error
+	}
+	if _, err := s.assets.BindReady(ctx, tx, AssetBinding{
+		SourceFileID: fileID, Key: "loader_" + fileID, Kind: "loader",
+	}); err != nil {
+		return false, err
+	}
+	return true, touchSettings(tx)
+}
+
+// RemoveSiteLoaderAsset removes a File from the site loader assets.
+func (s *Service) RemoveSiteLoaderAsset(ctx context.Context, command RemoveSiteLoaderAssetCommand) (returnErr error) {
+	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
+		return err
+	}
+	fileID := strings.TrimSpace(command.FileID)
+	if fileID == "" {
+		return domainerr.InvalidField("file_id", "file_id is required")
+	}
+	defer failurecause.Annotate(&returnErr, slog.String("file_id", fileID))
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+		Lock: func(_ context.Context, tx *gorm.DB) error {
+			_, err := loadSettingsRowForUpdate(tx)
+			return err
+		},
+		Access: freshEdit(),
+		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
+			result := tx.Where("site_setting_id = ? AND file_id = ?", 1, fileID).Delete(&model.SiteSettingLoaderFile{})
+			if result.Error != nil || result.RowsAffected == 0 {
+				return false, result.Error
+			}
+			if err := s.assets.Release(ctx, tx, "loader_"+fileID); err != nil {
+				return false, err
+			}
+			return true, touchSettings(tx)
+		},
+		Audit: loaderAudit,
+	})
+	return err
+}
+
+func loaderAudit(changed bool) mutation.Audit {
+	if !changed {
+		return mutation.Unchanged()
+	}
+	return settingsAudit([]string{"loader_file_ids"})
+}
+
+func touchSettings(tx *gorm.DB) error {
+	return tx.Model(&model.SiteSettings{}).Where("id = ?", 1).Update("updated_at", time.Now()).Error
 }

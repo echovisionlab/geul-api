@@ -109,8 +109,8 @@ func TestSiteSettingsUpdateForwardsOnlySuppliedValuesAtomically(t *testing.T) {
 	require.Equal(t, 1, owner.calls)
 	require.Equal(t, t.Context(), owner.ctx)
 	settingsByKey := map[string]any{}
-	for _, setting := range owner.setRequest.Settings {
-		settingsByKey[setting.Key] = setting.Value.AsInterface()
+	for _, setting := range owner.setCommand.Settings {
+		settingsByKey[setting.Key] = setting.Value
 	}
 	require.Equal(t, map[string]any{"site_title": "New title", "favicon_file_id": nil, "default_comments_enabled": false, "social_links": map[string]any{}, "og_image_config.home": map[string]any{"title": "New home"}}, settingsByKey)
 	require.Equal(t, true, result.StructuredContent["success"])
@@ -293,7 +293,7 @@ func TestAdminSettingsPreservesServiceDenialsAndValidation(t *testing.T) {
 }
 
 func TestAdminSettingsUsesNativeAuthenticationBoundary(t *testing.T) {
-	tools, err := NewAdminSettingsTools(&sitesettings.SiteSettingService{}, &emaildelivery.Service{})
+	tools, err := NewAdminSettingsTools(&sitesettings.Service{}, &emaildelivery.Service{})
 	require.NoError(t, err)
 	for _, name := range tools.ToolNames() {
 		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, adminSettingsArguments(t, name))
@@ -387,32 +387,32 @@ type recordingAdminSettingsApplication struct {
 	ctx        context.Context
 	calls      int
 	getKeys    []string
-	setRequest *managev1.SetManySettingsRequest
+	setCommand sitesettings.SetManySettingsCommand
 	listQuery  emaildelivery.ListMailAdaptersQuery
 	sender     emaildelivery.MailAdapterSenderUpdate
 }
 
-func (owner *recordingAdminSettingsApplication) GetSettings(ctx context.Context, _ *connect.Request[managev1.GetSettingsRequest]) (*connect.Response[managev1.GetSettingsResponse], error) {
+func (owner *recordingAdminSettingsApplication) GetSettings(ctx context.Context) (*managev1.AllSettings, error) {
 	owner.ctx = ctx
 	owner.calls++
-	return connect.NewResponse(&managev1.GetSettingsResponse{Settings: owner.settings}), owner.err
+	return owner.settings, owner.err
 }
 
-func (owner *recordingAdminSettingsApplication) GetSetting(ctx context.Context, request *connect.Request[managev1.GetSettingRequest]) (*connect.Response[managev1.GetSettingResponse], error) {
+func (owner *recordingAdminSettingsApplication) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (*managev1.SiteSetting, error) {
 	owner.ctx = ctx
 	owner.calls++
-	owner.getKeys = append(owner.getKeys, request.Msg.Key)
+	owner.getKeys = append(owner.getKeys, query.Key)
 	value := structpb.NewNullValue()
-	if request.Msg.Key == "logo_full_light_file_id" {
+	if query.Key == "logo_full_light_file_id" {
 		value = structpb.NewStringValue(adminSettingsTestID)
 	}
-	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{Key: request.Msg.Key, Value: value}}), owner.bindingErr
+	return &managev1.SiteSetting{Key: query.Key, Value: value}, owner.bindingErr
 }
 
-func (owner *recordingAdminSettingsApplication) SetManySettings(ctx context.Context, request *connect.Request[managev1.SetManySettingsRequest]) (*connect.Response[managev1.SetManySettingsResponse], error) {
-	owner.ctx, owner.setRequest = ctx, request.Msg
+func (owner *recordingAdminSettingsApplication) SetManySettings(ctx context.Context, command sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error) {
+	owner.ctx, owner.setCommand = ctx, command
 	owner.calls++
-	return connect.NewResponse(&managev1.SetManySettingsResponse{Success: true}), owner.err
+	return sitesettings.SettingsUpdate{}, owner.err
 }
 
 func (owner *recordingAdminSettingsApplication) ListMailAdapters(ctx context.Context, query emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error) {

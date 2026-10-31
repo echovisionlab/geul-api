@@ -12,6 +12,7 @@ import (
 	"time"
 
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
@@ -510,8 +511,8 @@ func compositionContentApplications() contentMCPApplications {
 		tracks:        &releasepkg.Service{},
 		mapThemes:     &maptheme.Service{},
 		menus:         &menu.Service{},
-		menuSettings:  managev1connect.UnimplementedSiteSettingServiceHandler{},
-		siteSettings:  managev1connect.UnimplementedSiteSettingServiceHandler{},
+		menuSettings:  &sitesettings.Service{},
+		siteSettings:  &sitesettings.Service{},
 		mailAdapters:  &emaildelivery.Service{},
 	}
 }
