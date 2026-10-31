@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
@@ -486,10 +488,6 @@ type compositionFormReferences struct {
 	managev1connect.UnimplementedFormServiceHandler
 }
 
-type compositionTrackReferences struct {
-	managev1connect.UnimplementedTrackServiceHandler
-}
-
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
 		legalPolicies: &legal.Service{},
@@ -508,7 +506,7 @@ func compositionContentApplications() contentMCPApplications {
 		formats:       &referencecatalog.Service{},
 		forms:         &compositionFormReferences{},
 		postSeries:    &series.Service{},
-		tracks:        &compositionTrackReferences{},
+		tracks:        &releasepkg.Service{},
 		mapThemes:     &maptheme.Service{},
 		menus:         &menu.Service{},
 		menuSettings:  managev1connect.UnimplementedSiteSettingServiceHandler{},
@@ -737,15 +735,15 @@ var _ aidocument.DomainPort = (*compositionDomainPort)(nil)
 var _ filemediaadapter.MCPFileRuntime = (*compositionFileRuntime)(nil)
 
 type compositionReleaseApplication struct {
-	managev1connect.UnimplementedReleaseServiceHandler
+	*releasepkg.Service
 	principal *auth.UserInfo
 }
 
-func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.Context, _ *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
+func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.Context, _ releasepkg.ListReleasesQuery) (releasepkg.ReleasePage, error) {
 	application.principal = auth.GetUser(ctx)
-	return connect.NewResponse(&managev1.ListReleasesAdminResponse{Releases: []*managev1.ReleaseWithStats{{Release: &managev1.Release{
+	return releasepkg.ReleasePage{Releases: []*managev1.ReleaseWithStats{{Release: &managev1.Release{
 		Id: "44444444-4444-4444-8444-444444444444", Title: "Release A", Status: "draft", SourceLocale: "ko", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
-	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}), nil
+	}}}, Total: 1, Limit: 20}, nil
 }
 
 type compositionArtistApplication struct {

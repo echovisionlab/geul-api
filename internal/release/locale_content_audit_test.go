@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -27,8 +28,9 @@ func TestReleaseTargetLocaleAuditIsMemberOwnedAndMinimal(t *testing.T) {
 	memberID := uuid.NewString()
 	releaseID := uuid.NewString()
 	capture := &releaseLocaleAuditCapture{}
-	require.NoError(t, appendReleaseMemberTargetLocaleAudit(
-		t.Context(), nil, capture, memberID, releaseID, "ja", sharedtelemetry.AuditItemOperationUpdated,
+	require.NoError(t, domainaudit.AppendMember(
+		t.Context(), nil, capture, memberID, sharedtelemetry.AuditReleaseUpdated,
+		releaseLocaleContentRecord(releaseID, "ja", sharedtelemetry.AuditItemOperationUpdated),
 	))
 	require.NoError(t, capture.record.Validate())
 	require.Equal(t, sharedtelemetry.AuditReleaseUpdated, capture.record.Action)

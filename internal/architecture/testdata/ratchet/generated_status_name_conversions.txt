@@ -4,7 +4,6 @@
 5 internal/adapters/collaboration
 4 internal/adapters/legal
 10 internal/adapters/mcp
-1 internal/adapters/release
 4 internal/adapters/series/public
 12 internal/adapters/sharelink
 9 internal/adapters/sitemap
@@ -23,8 +22,6 @@
 28 internal/programevent
 15 internal/programevent/public
 2 internal/referencecatalog/public
-15 internal/release
-4 internal/release/public
 5 internal/series
 3 internal/series/public
 3 internal/transcode/application

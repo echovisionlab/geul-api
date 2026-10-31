@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +15,7 @@ func TestValidateReleaseCascadeAuthorizationBatchSize(t *testing.T) {
 	require.Equal(
 		t,
 		connect.CodeFailedPrecondition,
-		connect.CodeOf(err),
+		errs.Wrap(err).Code(),
 	)
 	require.Contains(t, err.Error(), "at most 999")
 }

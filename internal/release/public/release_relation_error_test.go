@@ -11,12 +11,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestReleaseRelationLoadersReturnDatabaseErrors(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:release-relation-errors-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	service := &ReleaseService{db: db, spiceDB: &auth.SpiceDBClient{}}
+	service := &Service{db: db, spiceDB: &auth.SpiceDBClient{}}
 	releaseID := uuid.NewString()
 
 	tests := []struct {
@@ -75,8 +76,8 @@ func TestReleaseRelationLoadersReturnDatabaseErrors(t *testing.T) {
 		{
 			name: "tracks",
 			load: func() error {
-				_, loadErr := service.getReleaseTracks(context.Background(), releaseID, ReleaseStatusPublished, mediaasset.ContentDownloadOwnerAuthorization{
-					ResourceType: "release", ResourceID: releaseID, Status: ReleaseStatusPublished,
+				_, loadErr := service.getReleaseTracks(context.Background(), releaseID, string(model.ReleaseStatusPublished), mediaasset.ContentDownloadOwnerAuthorization{
+					ResourceType: "release", ResourceID: releaseID, Status: string(model.ReleaseStatusPublished),
 					Mode: mediaasset.ContentDownloadOwnerAccessPublic,
 				})
 				return loadErr

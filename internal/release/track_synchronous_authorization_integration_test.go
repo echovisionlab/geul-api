@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -33,18 +32,7 @@ func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) 
 	releasesBeforeFailure, err := spiceDB.LookupResources(ctx, policyv1.Release.LookupManage(), actor)
 	require.NoError(t, err)
 
-	failing := releasepkg.NewAuditedReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(&recordingArtistFileDeleter{}),
-		releaseadapter.NewAssets(""),
-		releaseadapter.NewOG(""),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopAsyncPublisher{},
-		releaseFailingAuditAppender{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
+	failing := releasepkg.NewConnectHandler(newReleaseIntegrationUseCases(t, db, spiceDB, &recordingArtistFileDeleter{}, releaseFailingAuditAppender{}))
 	_, err = failing.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "authorization rollback",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
@@ -55,29 +43,9 @@ func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) 
 	require.NoError(t, err)
 	require.ElementsMatch(t, releasesBeforeFailure, releasesAfterFailure, "known DB rollback must compensate the policy touch")
 
-	writer := apitelemetry.NewDurableWriter(db)
-	releases := releasepkg.NewAuditedReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(&recordingArtistFileDeleter{}),
-		releaseadapter.NewAssets(""),
-		releaseadapter.NewOG(""),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopAsyncPublisher{},
-		writer,
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
-	tracks := releasepkg.NewAuditedTrackService(
-		db,
-		releaseadapter.NewTrackTranscodes(releaseIntegrationTranscoderPublisher{}),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		spiceDB,
-		releaseadapter.NewTrackFiles(&recordingTrackFileDeleter{}),
-		releaseadapter.NewMemberSummaries(db, ""),
-		releaseadapter.NewArtistSummaries(db),
-		writer,
-	)
+	service := newReleaseIntegrationUseCases(t, db, spiceDB, &recordingTrackFileDeleter{}, apitelemetry.NewDurableWriter(db))
+	releases := releasepkg.NewConnectHandler(service)
+	tracks := releasepkg.NewTrackConnectHandler(service)
 
 	release, err := releases.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Authorization lifecycle",

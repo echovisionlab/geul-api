@@ -155,6 +155,8 @@ func Unchanged() Audit
 func Each(audits ...Audit) Audit // several records of one change, in order
 
 func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // one read-only snapshot
+func ReadLocked(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // a snapshot that may lock rows
+func ReadCurrent(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // read committed, locking what it reads
 ```
 
 `FreshCan` and `FreshAdminCan` take a generated descriptor's two results
@@ -209,7 +211,11 @@ Rules for a spec:
 
 Work that must happen after the commit, such as a metric or a confirmation
 log, follows `Run` in the use case. A read that needs one snapshot of several
-rows uses `mutation.Read` instead of opening a transaction.
+rows uses `mutation.Read` instead of opening a transaction. PostgreSQL
+refuses row locks in a read-only transaction, so a projection that
+share-locks its root uses `mutation.ReadLocked`, and a check that locks rows
+`FOR UPDATE` to agree with the next mutation of them, such as whether upload
+cleanup is still needed, uses `mutation.ReadCurrent`. Neither writes.
 
 ## Errors
 

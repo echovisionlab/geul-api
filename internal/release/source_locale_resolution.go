@@ -15,7 +15,6 @@ import (
 func resolveInitialSourceLocale(
 	ctx context.Context,
 	db *gorm.DB,
-	_ auth.IdentityManager,
 	acceptLanguage string,
 ) string {
 	if locale := memberPreferredSourceLocale(ctx, db); locale != nil {

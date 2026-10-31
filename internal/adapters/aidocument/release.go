@@ -21,14 +21,8 @@ type releasePort struct {
 }
 
 type releaseDocumentAPI interface {
-	LoadAIDocumentState(context.Context, string, string) (releasedomain.AIDocumentState, error)
-	ExecuteAIDocumentMutation(
-		context.Context,
-		string,
-		string,
-		releasedomain.AIDocumentExecutionMode,
-		releasedomain.AIDocumentMutationCompiler,
-	) (releasedomain.AIDocumentMutationResult, error)
+	LoadAIDocumentState(context.Context, releasedomain.AIDocumentStateQuery) (releasedomain.AIDocumentState, error)
+	ExecuteAIDocumentMutation(context.Context, releasedomain.ExecuteAIDocumentMutationCommand) (releasedomain.AIDocumentMutationResult, error)
 }
 
 const (
@@ -39,7 +33,7 @@ const (
 	releaseCreditNoteField core.FieldID   = "note"
 )
 
-func NewReleaseRegistration(service *releasedomain.InternalReleaseService) (DomainRegistration, error) {
+func NewReleaseRegistration(service *releasedomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("release AI document service is required")
 	}
@@ -67,7 +61,7 @@ func (p *releasePort) Load(ctx context.Context, identity core.DocumentIdentity, 
 	if err := validateReleaseDocumentIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.service.LoadAIDocumentState(ctx, string(identity.Reference), string(locale))
+	state, err := p.service.LoadAIDocumentState(ctx, releasedomain.AIDocumentStateQuery{ReleaseID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -101,12 +95,11 @@ func (p *releasePort) executeMutation(
 	}
 
 	run := newExactMutationRun("Release")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state releasedomain.AIDocumentState) (releasedomain.AIDocumentMutation, error) {
+	domainResult, err := p.service.ExecuteAIDocumentMutation(ctx, releasedomain.ExecuteAIDocumentMutationCommand{
+		ReleaseID: string(identity.Reference),
+		Locale:    string(request.Locale),
+		Mode:      mode,
+		Compiler: func(state releasedomain.AIDocumentState) (releasedomain.AIDocumentMutation, error) {
 			current, err := p.document(identity, request.Locale, state)
 			if err != nil {
 				return releasedomain.AIDocumentMutation{}, err
@@ -127,7 +120,7 @@ func (p *releasePort) executeMutation(
 			}
 			return mutation, nil
 		},
-	)
+	})
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
 			err, mode == releasedomain.AIDocumentExecutionValidate,

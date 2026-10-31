@@ -11,10 +11,11 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/model"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -73,19 +74,20 @@ func TestReleaseManagementCreateExactFieldsAndCompactSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &managev1.CreateReleaseRequest{
-		Title: "Album", SourceLocale: "ko", Type: managev1.ReleaseType_RELEASE_TYPE_EP, Slug: proto.String("album"), CatalogNumber: proto.String("CAT-1"),
-		ReleaseDate: timestamppb.New(time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC)),
-		SpotifyUrl:  proto.String("https://example.test/spotify"), AppleMusicUrl: proto.String("https://example.test/apple"), BandcampUrl: proto.String("https://example.test/bandcamp"), YoutubeMusicUrl: proto.String("https://example.test/youtube"),
+	releaseDate := time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC)
+	want := releasedomain.CreateReleaseCommand{
+		Title: "Album", SourceLocale: "ko", AcceptLanguage: "ko", Type: model.ReleaseTypeEP, Slug: proto.String("album"), CatalogNumber: proto.String("CAT-1"),
+		ReleaseDate: &releaseDate,
+		SpotifyURL:  proto.String("https://example.test/spotify"), AppleMusicURL: proto.String("https://example.test/apple"), BandcampURL: proto.String("https://example.test/bandcamp"), YoutubeMusicURL: proto.String("https://example.test/youtube"),
 	}
-	if !proto.Equal(owner.create.Msg, want) || owner.create.Header().Get("Accept-Language") != "ko" || owner.create.Msg.Document != nil {
-		t.Fatalf("native create = %v; want %v", owner.create.Msg, want)
+	if !reflect.DeepEqual(owner.create, want) {
+		t.Fatalf("native create = %+v; want %+v", owner.create, want)
 	}
 	if result.StructuredContent["changed"] != true || result.StructuredContent["status"] != "draft" || result.StructuredContent["document_revision"] != releaseManagementRevision || result.StructuredContent["artwork_asset_id"] != releaseManagementAssetID {
 		t.Fatalf("created result = %#v", result.StructuredContent)
 	}
 	settings, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSettingsGet, toolArguments(t, `{"document_id":"`+releaseManagementID+`"}`))
-	if err != nil || owner.get.Msg.Id != releaseManagementID {
+	if err != nil || owner.get.ID != releaseManagementID {
 		t.Fatalf("settings result = %#v, err=%v", settings, err)
 	}
 	encoded, _ := json.Marshal(settings.StructuredContent)
@@ -104,24 +106,26 @@ func TestReleaseManagementSettingsNativePointersAndDateOneof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &managev1.UpdateReleaseRequest{
-		Id: releaseManagementID, Slug: proto.String(""), Type: managev1.ReleaseType_RELEASE_TYPE_SINGLE.Enum(), CatalogNumber: proto.String(""),
-		ReleaseDateChange: &managev1.UpdateReleaseRequest_SetReleaseDate{SetReleaseDate: timestamppb.New(time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC))},
-		SpotifyUrl:        proto.String(""), AppleMusicUrl: proto.String(""), BandcampUrl: proto.String(""), YoutubeMusicUrl: proto.String(""),
+	single := model.ReleaseTypeSingle
+	releaseDate := time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC)
+	want := releasedomain.UpdateReleaseCommand{
+		ID: releaseManagementID, Slug: proto.String(""), Type: &single, CatalogNumber: proto.String(""),
+		ReleaseDateChange: releasedomain.ReleaseDateSet, ReleaseDate: &releaseDate,
+		SpotifyURL: proto.String(""), AppleMusicURL: proto.String(""), BandcampURL: proto.String(""), YoutubeMusicURL: proto.String(""),
 	}
-	if !proto.Equal(owner.update.Msg, want) {
-		t.Fatalf("native settings = %v; want %v", owner.update.Msg, want)
+	if !reflect.DeepEqual(owner.update, want) {
+		t.Fatalf("native settings = %+v; want %+v", owner.update, want)
 	}
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSettingsUpdate, toolArguments(t, `{"document_id":"`+releaseManagementID+`","clear_release_date":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clear, ok := owner.update.Msg.ReleaseDateChange.(*managev1.UpdateReleaseRequest_ClearReleaseDate); !ok || clear.ClearReleaseDate == nil || owner.update.Msg.Slug != nil || owner.update.Msg.Type != nil {
-		t.Fatalf("clear date oneof/presence = %v", owner.update.Msg)
+	if owner.update.ReleaseDateChange != releasedomain.ReleaseDateCleared || owner.update.ReleaseDate != nil || owner.update.Slug != nil || owner.update.Type != nil {
+		t.Fatalf("clear date/presence = %+v", owner.update)
 	}
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSettingsUpdate, toolArguments(t, `{"document_id":"`+releaseManagementID+`","catalog_number":"new"}`))
-	if err != nil || owner.update.Msg.ReleaseDateChange != nil {
-		t.Fatalf("omitted date acquired mutation: %v, err=%v", owner.update.Msg, err)
+	if err != nil || owner.update.ReleaseDateChange != releasedomain.ReleaseDateUnchanged {
+		t.Fatalf("omitted date acquired mutation: %+v, err=%v", owner.update, err)
 	}
 }
 
@@ -129,16 +133,16 @@ func TestReleaseManagementArtworkNativeResponsesAndSlugRequest(t *testing.T) {
 	owner := newRecordingReleaseManagement()
 	tools, _ := NewReleaseManagementTools(owner)
 	arguments := toolArguments(t, `{"document_id":"`+releaseManagementID+`","file_id":"`+releaseManagementFileID+`"}`)
-	for _, response := range []*managev1.SetReleaseArtworkResponse{
-		{ArtworkAsset: &commonv1.AssetRef{AssetId: releaseManagementAssetID, Url: "private media delivery"}, OgGenerationRunId: proto.String("run-1")},
-		{}, // An existing attachment is a successful native no-op with no AssetRef.
+	for _, asset := range []*commonv1.AssetRef{
+		{AssetId: releaseManagementAssetID, Url: "private media delivery"},
+		nil, // An existing attachment is a successful native no-op with no AssetRef.
 	} {
-		owner.artworkResponse = response
+		owner.artworkAsset = asset
 		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseArtworkSet, arguments)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if owner.artwork.Msg.ReleaseId != releaseManagementID || owner.artwork.Msg.FileId != releaseManagementFileID || result.StructuredContent["success"] != true || result.StructuredContent["changed"] != nil || result.StructuredContent["file_id"] != releaseManagementFileID {
+		if owner.artwork.ReleaseID != releaseManagementID || owner.artwork.FileID != releaseManagementFileID || result.StructuredContent["success"] != true || result.StructuredContent["changed"] != nil || result.StructuredContent["file_id"] != releaseManagementFileID || result.StructuredContent["og_generation_run_id"] != nil {
 			t.Fatalf("artwork result invented mutation or lost request: %#v", result.StructuredContent)
 		}
 		encoded, _ := json.Marshal(result.StructuredContent)
@@ -146,18 +150,17 @@ func TestReleaseManagementArtworkNativeResponsesAndSlugRequest(t *testing.T) {
 			t.Fatalf("artwork delivery data exposed: %s", encoded)
 		}
 	}
-	owner.artworkRemoval = &managev1.OgAssetDeleteResponse{Success: false, OgGenerationRunId: proto.String("remove-run")}
 	removed, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseArtworkRemove, toolArguments(t, `{"document_id":"`+releaseManagementID+`"}`))
-	if err != nil || owner.removeArtwork.Msg.ReleaseId != releaseManagementID || removed.StructuredContent["success"] != false || removed.StructuredContent["og_generation_run_id"] != "remove-run" || removed.StructuredContent["changed"] != nil {
+	if err != nil || owner.removeArtwork.ReleaseID != releaseManagementID || removed.StructuredContent["success"] != true || removed.StructuredContent["og_generation_run_id"] != nil || removed.StructuredContent["changed"] != nil {
 		t.Fatalf("artwork removal = %#v, err=%v", removed.StructuredContent, err)
 	}
 	checked, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSlugCheck, toolArguments(t, `{"slug":"album","exclude_document_id":"`+releaseManagementID+`"}`))
-	if err != nil || owner.slug.Msg.Slug != "album" || owner.slug.Msg.GetExcludeReleaseId() != releaseManagementID || checked.StructuredContent["available"] != true {
+	if err != nil || owner.slug.Slug != "album" || owner.slug.ExcludeReleaseID == nil || *owner.slug.ExcludeReleaseID != releaseManagementID || checked.StructuredContent["available"] != true {
 		t.Fatalf("slug result = %#v, err=%v", checked.StructuredContent, err)
 	}
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseSlugCheck, toolArguments(t, `{"slug":""}`))
-	if err != nil || owner.slug.Msg.Slug != "" || owner.slug.Msg.ExcludeReleaseId != nil {
-		t.Fatalf("explicit empty slug did not preserve native request: %v, err=%v", owner.slug.Msg, err)
+	if err != nil || owner.slug.Slug != "" || owner.slug.ExcludeReleaseID != nil {
+		t.Fatalf("explicit empty slug did not preserve native request: %+v, err=%v", owner.slug, err)
 	}
 }
 
@@ -178,7 +181,7 @@ func TestReleaseManagementLifecyclePreservesNativeChangesAndStatuses(t *testing.
 		}
 	}
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseDelete, arguments)
-	if err != nil || owner.deleted.Msg.Id != releaseManagementID || result.StructuredContent["deleted"] != true {
+	if err != nil || owner.deleted.ID != releaseManagementID || result.StructuredContent["deleted"] != true {
 		t.Fatalf("delete = %#v, err=%v", result.StructuredContent, err)
 	}
 	if _, err := tools.CallTool(t.Context(), mcpserver.Principal{}, "release_archive", arguments); !errors.Is(err, mcpserver.ErrUnknownTool) {
@@ -262,27 +265,26 @@ func TestReleaseManagementPreservesAuthorityErrorsAndActorContext(t *testing.T) 
 type releaseManagementContextKey struct{}
 
 type recordingReleaseManagement struct {
-	managev1connect.UnimplementedReleaseServiceHandler
-	release         *managev1.Release
-	err             error
-	ctx             context.Context
-	calls           []string
-	create          *connect.Request[managev1.CreateReleaseRequest]
-	get             *connect.Request[managev1.GetReleaseRequest]
-	update          *connect.Request[managev1.UpdateReleaseRequest]
-	deleted         *connect.Request[managev1.DeleteReleaseRequest]
-	artwork         *connect.Request[managev1.SetReleaseArtworkRequest]
-	removeArtwork   *connect.Request[managev1.DeleteReleaseArtworkRequest]
-	slug            *connect.Request[managev1.CheckReleaseSlugAvailableRequest]
-	artworkResponse *managev1.SetReleaseArtworkResponse
-	artworkRemoval  *managev1.OgAssetDeleteResponse
+	release       *managev1.Release
+	err           error
+	ctx           context.Context
+	calls         []string
+	create        releasedomain.CreateReleaseCommand
+	get           releasedomain.GetReleaseQuery
+	update        releasedomain.UpdateReleaseCommand
+	deleted       releasedomain.DeleteReleaseCommand
+	artwork       releasedomain.SetReleaseArtworkCommand
+	removeArtwork releasedomain.DeleteReleaseArtworkCommand
+	slug          releasedomain.CheckReleaseSlugQuery
+	artworkAsset  *commonv1.AssetRef
+	status        model.ReleaseStatus
 }
 
 func newRecordingReleaseManagement() *recordingReleaseManagement {
 	return &recordingReleaseManagement{
 		release: &managev1.Release{Id: releaseManagementID, Title: "Album", SourceLocale: "ko", Type: managev1.ReleaseType_RELEASE_TYPE_ALBUM,
 			Status: "RELEASE_STATUS_DRAFT", Revision: releaseManagementRevision, UpdatedAt: timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))},
-		artworkResponse: &managev1.SetReleaseArtworkResponse{}, artworkRemoval: &managev1.OgAssetDeleteResponse{Success: true},
+		status: model.ReleaseStatusDraft,
 	}
 }
 
@@ -291,76 +293,69 @@ func (owner *recordingReleaseManagement) record(ctx context.Context, call string
 	return owner.err
 }
 
-func (owner *recordingReleaseManagement) CreateRelease(ctx context.Context, request *connect.Request[managev1.CreateReleaseRequest]) (*connect.Response[managev1.Release], error) {
-	owner.create = request
+func (owner *recordingReleaseManagement) CreateRelease(ctx context.Context, command releasedomain.CreateReleaseCommand) (*managev1.Release, error) {
+	owner.create = command
 	if err := owner.record(ctx, "create"); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(owner.release), nil
+	return owner.release, nil
 }
 
-func (owner *recordingReleaseManagement) GetRelease(ctx context.Context, request *connect.Request[managev1.GetReleaseRequest]) (*connect.Response[managev1.Release], error) {
-	owner.get = request
+func (owner *recordingReleaseManagement) GetRelease(ctx context.Context, query releasedomain.GetReleaseQuery) (*managev1.Release, error) {
+	owner.get = query
 	if err := owner.record(ctx, "get"); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(owner.release), nil
+	return owner.release, nil
 }
 
-func (owner *recordingReleaseManagement) UpdateRelease(ctx context.Context, request *connect.Request[managev1.UpdateReleaseRequest]) (*connect.Response[managev1.UpdateReleaseResponse], error) {
-	owner.update = request
+func (owner *recordingReleaseManagement) UpdateRelease(ctx context.Context, command releasedomain.UpdateReleaseCommand) (releasedomain.ReleaseUpdate, error) {
+	owner.update = command
 	if err := owner.record(ctx, "update"); err != nil {
-		return nil, err
+		return releasedomain.ReleaseUpdate{}, err
 	}
-	return connect.NewResponse(&managev1.UpdateReleaseResponse{Id: request.Msg.Id, Changed: true, UpdatedAt: owner.release.UpdatedAt}), nil
+	return releasedomain.ReleaseUpdate{ID: command.ID, Changed: true, UpdatedAt: owner.release.UpdatedAt.AsTime()}, nil
 }
 
-func (owner *recordingReleaseManagement) PublishRelease(ctx context.Context, request *connect.Request[managev1.PublishReleaseRequest]) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
-	if err := owner.record(ctx, "publish"); err != nil {
-		return nil, err
+func (owner *recordingReleaseManagement) transition(ctx context.Context, call string, id string, next model.ReleaseStatus) (releasedomain.LifecycleChange, error) {
+	if err := owner.record(ctx, call); err != nil {
+		return releasedomain.LifecycleChange{}, err
 	}
-	changed := owner.release.Status != "RELEASE_STATUS_PUBLISHED"
-	owner.release.Status = "RELEASE_STATUS_PUBLISHED"
-	return connect.NewResponse(&managev1.ReleaseLifecycleMutationResponse{Id: request.Msg.Id, Changed: changed, Status: managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED, UpdatedAt: owner.release.UpdatedAt}), nil
+	changed := owner.status != next
+	owner.status = next
+	return releasedomain.LifecycleChange{ID: id, Changed: changed, Status: next, UpdatedAt: owner.release.UpdatedAt.AsTime()}, nil
 }
 
-func (owner *recordingReleaseManagement) UnpublishRelease(ctx context.Context, request *connect.Request[managev1.UnpublishReleaseRequest]) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
-	if err := owner.record(ctx, "unpublish"); err != nil {
-		return nil, err
-	}
-	changed := owner.release.Status != "RELEASE_STATUS_DRAFT"
-	owner.release.Status = "RELEASE_STATUS_DRAFT"
-	return connect.NewResponse(&managev1.ReleaseLifecycleMutationResponse{Id: request.Msg.Id, Changed: changed, Status: managev1.ReleaseStatus_RELEASE_STATUS_DRAFT, UpdatedAt: owner.release.UpdatedAt}), nil
+func (owner *recordingReleaseManagement) PublishRelease(ctx context.Context, command releasedomain.PublishReleaseCommand) (releasedomain.LifecycleChange, error) {
+	return owner.transition(ctx, "publish", command.ID, model.ReleaseStatusPublished)
 }
 
-func (owner *recordingReleaseManagement) DeleteRelease(ctx context.Context, request *connect.Request[managev1.DeleteReleaseRequest]) (*connect.Response[managev1.DeleteResponse], error) {
-	owner.deleted = request
-	if err := owner.record(ctx, "delete"); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+func (owner *recordingReleaseManagement) UnpublishRelease(ctx context.Context, command releasedomain.UnpublishReleaseCommand) (releasedomain.LifecycleChange, error) {
+	return owner.transition(ctx, "unpublish", command.ID, model.ReleaseStatusDraft)
 }
 
-func (owner *recordingReleaseManagement) SetReleaseArtwork(ctx context.Context, request *connect.Request[managev1.SetReleaseArtworkRequest]) (*connect.Response[managev1.SetReleaseArtworkResponse], error) {
-	owner.artwork = request
+func (owner *recordingReleaseManagement) DeleteRelease(ctx context.Context, command releasedomain.DeleteReleaseCommand) error {
+	owner.deleted = command
+	return owner.record(ctx, "delete")
+}
+
+func (owner *recordingReleaseManagement) SetReleaseArtwork(ctx context.Context, command releasedomain.SetReleaseArtworkCommand) (*commonv1.AssetRef, error) {
+	owner.artwork = command
 	if err := owner.record(ctx, "artwork_set"); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(owner.artworkResponse), nil
+	return owner.artworkAsset, nil
 }
 
-func (owner *recordingReleaseManagement) DeleteReleaseArtwork(ctx context.Context, request *connect.Request[managev1.DeleteReleaseArtworkRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
-	owner.removeArtwork = request
-	if err := owner.record(ctx, "artwork_remove"); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(owner.artworkRemoval), nil
+func (owner *recordingReleaseManagement) DeleteReleaseArtwork(ctx context.Context, command releasedomain.DeleteReleaseArtworkCommand) error {
+	owner.removeArtwork = command
+	return owner.record(ctx, "artwork_remove")
 }
 
-func (owner *recordingReleaseManagement) CheckReleaseSlugAvailable(ctx context.Context, request *connect.Request[managev1.CheckReleaseSlugAvailableRequest]) (*connect.Response[managev1.CheckReleaseSlugAvailableResponse], error) {
-	owner.slug = request
+func (owner *recordingReleaseManagement) CheckReleaseSlugAvailable(ctx context.Context, query releasedomain.CheckReleaseSlugQuery) (bool, error) {
+	owner.slug = query
 	if err := owner.record(ctx, "slug_check"); err != nil {
-		return nil, err
+		return false, err
 	}
-	return connect.NewResponse(&managev1.CheckReleaseSlugAvailableResponse{Available: true}), nil
+	return true, nil
 }

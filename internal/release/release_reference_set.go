@@ -2,79 +2,106 @@ package release
 
 import (
 	"context"
-	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func setReleaseReferenceSet[T interface{}](
+// SetReleaseCategoriesCommand applies the desired Category IDs against the
+// observed ones.
+type SetReleaseCategoriesCommand struct {
+	ReleaseID   string
+	CategoryIDs []string
+	Observed    *Snapshot[string]
+}
+
+// SetReleaseGenresCommand applies the desired Genre IDs against the observed
+// ones.
+type SetReleaseGenresCommand struct {
+	ReleaseID string
+	GenreIDs  []string
+	Observed  *Snapshot[string]
+}
+
+// SetReleaseStylesCommand applies the desired Style IDs against the observed
+// ones.
+type SetReleaseStylesCommand struct {
+	ReleaseID string
+	StyleIDs  []string
+	Observed  *Snapshot[string]
+}
+
+// SetReleaseCategories applies a Category set edit.
+func (s *Service) SetReleaseCategories(ctx context.Context, command SetReleaseCategoriesCommand) error {
+	return setReleaseReferenceSet(ctx, s, command.ReleaseID, releaseCategories, command.CategoryIDs, command.Observed,
+		func(releaseID, categoryID string) *model.ReleaseCategory {
+			return &model.ReleaseCategory{ReleaseID: releaseID, CategoryID: categoryID}
+		})
+}
+
+// SetReleaseGenres applies a Genre set edit.
+func (s *Service) SetReleaseGenres(ctx context.Context, command SetReleaseGenresCommand) error {
+	return setReleaseReferenceSet(ctx, s, command.ReleaseID, releaseGenres, command.GenreIDs, command.Observed,
+		func(releaseID, genreID string) *model.ReleaseGenre {
+			return &model.ReleaseGenre{ReleaseID: releaseID, GenreID: genreID}
+		})
+}
+
+// SetReleaseStyles applies a Style set edit.
+func (s *Service) SetReleaseStyles(ctx context.Context, command SetReleaseStylesCommand) error {
+	return setReleaseReferenceSet(ctx, s, command.ReleaseID, releaseStyles, command.StyleIDs, command.Observed,
+		func(releaseID, styleID string) *model.ReleaseStyle {
+			return &model.ReleaseStyle{ReleaseID: releaseID, StyleID: styleID}
+		})
+}
+
+// releaseReferenceRelation is a Release relation to a catalog reference by
+// ID: its name in audit records and signals, its table and its column.
+type releaseReferenceRelation struct {
+	name, table, column string
+}
+
+var (
+	releaseCategories = releaseReferenceRelation{name: "categories", table: "release_category", column: "category_id"}
+	releaseGenres     = releaseReferenceRelation{name: "genres", table: "release_genre", column: "genre_id"}
+	releaseStyles     = releaseReferenceRelation{name: "styles", table: "release_style", column: "style_id"}
+)
+
+func setReleaseReferenceSet[T any](
 	ctx context.Context,
-	service *ReleaseService,
+	service *Service,
 	releaseID string,
-	relation string,
+	relation releaseReferenceRelation,
 	ids []string,
-	observed *managev1.StringIdSnapshot,
+	observed *Snapshot[string],
 	newReference func(releaseID, referenceID string) *T,
-) (*connect.Response[managev1.SuccessResponse], error) {
-	err := service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, service.spiceDB, releaseID, releaseActionManage); err != nil {
-			return err
-		}
+) error {
+	return service.setReleaseRelation(ctx, releaseID, relation.name, func(_ context.Context, tx *gorm.DB) (bool, error) {
 		if err := requireObservedRelationSnapshot(observed); err != nil {
-			return err
+			return false, err
 		}
-		table, column := releaseReferenceAuditTable(relation)
 		var existing []string
-		if err := tx.Table(table).Where("release_id = ?", releaseID).Pluck(column, &existing).Error; err != nil {
-			return err
+		if err := tx.Table(relation.table).Where("release_id = ?", releaseID).Pluck(relation.column, &existing).Error; err != nil {
+			return false, err
 		}
-		removed, added := mergeObservedIDs(existing, observed.Ids, ids)
+		removed, added := mergeObservedIDs(existing, observed.Items, ids)
 		if len(removed) == 0 && len(added) == 0 {
-			return nil
+			return false, nil
 		}
 		if len(removed) > 0 {
-			query := "DELETE FROM " + table + " WHERE release_id = ? AND " + column + " IN ?"
+			query := "DELETE FROM " + relation.table + " WHERE release_id = ? AND " + relation.column + " IN ?"
 			if err := tx.Exec(query, releaseID, removed).Error; err != nil {
-				return err
+				return false, err
 			}
 		}
 		for _, id := range added {
 			if err := tx.Create(newReference(releaseID, id)).Error; err != nil {
-				return err
+				return false, err
 			}
 		}
-		if err := tx.Model(&model.Release{}).
-			Where("id = ?", releaseID).
-			Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-		if err := service.appendReleaseMetadataAudit(ctx, tx, releaseID, []string{relation}); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, service.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
-			releaseID,
-			[]string{"relations." + relation},
-		))
+		return true, nil
 	})
-	if err != nil {
-		return nil, classifyReleaseMutationError(err, releaseID)
-	}
-	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
-}
-
-func requireObservedRelationSnapshot[T any](observed *T) error {
-	if observed == nil {
-		return errs.InvalidArgument("observed", "is required")
-	}
-	return nil
 }
 
 func mergeObservedIDs(current, observed, desired []string) (removed, added []string) {
@@ -105,17 +132,4 @@ func mergeObservedIDs(current, observed, desired []string) (removed, added []str
 		}
 	}
 	return removed, added
-}
-
-func releaseReferenceAuditTable(relation string) (string, string) {
-	switch relation {
-	case "categories":
-		return "release_category", "category_id"
-	case "genres":
-		return "release_genre", "genre_id"
-	case "styles":
-		return "release_style", "style_id"
-	default:
-		panic("unsupported release reference relation")
-	}
 }

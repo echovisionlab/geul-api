@@ -11,10 +11,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -51,7 +50,12 @@ func (*PolicyAuthority) RequireLockedEdit(
 	return err
 }
 
+// NewTrackAuthority returns the Track authority of File ingest; audit is
+// required.
 func NewTrackAuthority(audit domainaudit.Appender) *TrackAuthority {
+	if audit == nil {
+		panic("release track authority audit appender is required")
+	}
 	return &TrackAuthority{audit: audit}
 }
 
@@ -74,14 +78,14 @@ type TrackOriginalAudioAttachment struct {
 func (a *TrackAuthority) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
 	trackID = strings.TrimSpace(trackID)
 	if _, err := uuid.Parse(trackID); err != nil {
-		return errs.InvalidArgument("track_id", "must be a UUID")
+		return domainerr.InvalidField("track_id", "must be a UUID")
 	}
 	if err := lockTrackDownloadAudienceSegments(ctx, tx, trackID); err != nil {
 		return err
 	}
 	if err := lockTrackForUploadMutation(tx.WithContext(ctx), trackID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("track", trackID)
+			return domainerr.ResourceNotFound("track", trackID)
 		}
 		return err
 	}
@@ -113,15 +117,15 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 	input.TrackID = strings.TrimSpace(input.TrackID)
 	input.VerifiedFileID = strings.TrimSpace(input.VerifiedFileID)
 	if _, err := uuid.Parse(input.TrackID); err != nil {
-		return TrackOriginalAudioAttachment{}, errs.InvalidArgument("track_id", "must be a UUID")
+		return TrackOriginalAudioAttachment{}, domainerr.InvalidField("track_id", "must be a UUID")
 	}
 	if _, err := uuid.Parse(input.VerifiedFileID); err != nil {
-		return TrackOriginalAudioAttachment{}, errs.InvalidArgument("verified_file_id", "must be a UUID")
+		return TrackOriginalAudioAttachment{}, domainerr.InvalidField("verified_file_id", "must be a UUID")
 	}
 	if input.ExpectedCurrentFileID != nil {
 		expected := strings.TrimSpace(*input.ExpectedCurrentFileID)
 		if _, err := uuid.Parse(expected); err != nil {
-			return TrackOriginalAudioAttachment{}, errs.InvalidArgument("expected_current_file_id", "must be a UUID when present")
+			return TrackOriginalAudioAttachment{}, domainerr.InvalidField("expected_current_file_id", "must be a UUID when present")
 		}
 		input.ExpectedCurrentFileID = &expected
 	}
@@ -129,7 +133,7 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 	var track model.Track
 	if err := tx.WithContext(ctx).Where("id = ?", input.TrackID).Take(&track).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return TrackOriginalAudioAttachment{}, errs.NotFound("track", input.TrackID)
+			return TrackOriginalAudioAttachment{}, domainerr.ResourceNotFound("track", input.TrackID)
 		}
 		return TrackOriginalAudioAttachment{}, err
 	}
@@ -142,11 +146,11 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 		return output, nil
 	}
 	if !sameOptionalString(track.AudioOriginalFileID, input.ExpectedCurrentFileID) {
-		return TrackOriginalAudioAttachment{}, errs.FailedPrecondition("Track original audio changed before attachment")
+		return TrackOriginalAudioAttachment{}, domainerr.Precondition("Track original audio changed before attachment")
 	}
-	updates := structured.Fields{"audio_original_file_id": input.VerifiedFileID, "processing_status": managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String(), "download_audience": "disabled"}
+	updates := structured.Fields{"audio_original_file_id": input.VerifiedFileID, "processing_status": string(model.TrackProcessingStatusProcessing), "download_audience": "disabled"}
 	if input.ClientMediaReady {
-		updates["processing_status"] = managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_COMPLETED.String()
+		updates["processing_status"] = string(model.TrackProcessingStatusCompleted)
 		updates["duration_seconds"] = input.DurationSeconds
 	}
 	if err := tx.WithContext(ctx).Model(&track).Updates(updates).Error; err != nil {
@@ -156,12 +160,10 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 		Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
 		return TrackOriginalAudioAttachment{}, err
 	}
-	if a.audit != nil {
-		if err := domainaudit.AppendSystem(ctx, tx, a.audit, sharedtelemetry.ServiceEditorCollab, sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewReleaseTrackAudioAuditRecord(m, track.ReleaseID, track.ID, input.VerifiedFileID, sharedtelemetry.AuditCollectionOperationAdded)
-		}); err != nil {
-			return TrackOriginalAudioAttachment{}, err
-		}
+	if err := domainaudit.AppendSystem(ctx, tx, a.audit, sharedtelemetry.ServiceEditorCollab, sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewReleaseTrackAudioAuditRecord(m, track.ReleaseID, track.ID, input.VerifiedFileID, sharedtelemetry.AuditCollectionOperationAdded)
+	}); err != nil {
+		return TrackOriginalAudioAttachment{}, err
 	}
 	output.CurrentFileID = input.VerifiedFileID
 	return output, nil

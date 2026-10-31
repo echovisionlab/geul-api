@@ -285,6 +285,7 @@ type Audit struct {
 	unchanged bool
 	all       []Audit
 	each      []Audit
+	records   []Audit
 }
 
 // RequestAudit attributes the record to the request's member actor.
@@ -320,7 +321,24 @@ func Unchanged() Audit {
 	return Audit{unchanged: true}
 }
 
+// All appends records in order, for one change that updates several audited
+// entities. Each record follows the rules of a single Audit.
+func All(records ...Audit) Audit {
+	if len(records) == 0 {
+		return Audit{}
+	}
+	return Audit{records: records}
+}
+
 func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) error {
+	if audit.records != nil {
+		for _, record := range audit.records {
+			if err := r.appendAudit(ctx, tx, record); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	switch {
 	case len(audit.all) != 0:
 		for _, each := range audit.all {

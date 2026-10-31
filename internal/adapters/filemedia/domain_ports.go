@@ -195,7 +195,7 @@ func NewTrackAttachment(audit domainaudit.Appender) *TrackAttachment {
 }
 
 func (a *TrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+	return releaseConnectError(a.authority.LockExistsWithDB(ctx, tx, trackID))
 }
 
 func (a *TrackAttachment) AttachOriginalWithDB(
@@ -214,7 +214,16 @@ func (a *TrackAttachment) AttachOriginalWithDB(
 		AlreadyApplied: attachment.AlreadyApplied,
 		CurrentFileID:  attachment.CurrentFileID,
 		ReleaseID:      attachment.ReleaseID,
-	}, err
+	}, releaseConnectError(err)
+}
+
+// releaseConnectError gives a Release use-case answer the Connect form the
+// File domain branches on; an unclassified error passes through.
+func releaseConnectError(err error) error {
+	if classified, ok := errs.Classified(err); ok {
+		return classified
+	}
+	return err
 }
 
 // TrackFileManager adapts FileMedia's deletion fence error to the Release-owned

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -29,12 +29,12 @@ var trackManagementTools = []mcpserver.Tool{
 }
 
 type TrackManagementApplication interface {
-	ListTracksByRelease(context.Context, *connect.Request[managev1.ListTracksByReleaseRequest]) (*connect.Response[managev1.ListTracksByReleaseResponse], error)
-	CreateTrack(context.Context, *connect.Request[managev1.CreateTrackRequest]) (*connect.Response[managev1.Track], error)
-	UpdateTrack(context.Context, *connect.Request[managev1.UpdateTrackRequest]) (*connect.Response[managev1.Track], error)
-	DeleteTrack(context.Context, *connect.Request[managev1.DeleteTrackRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	SetTrackCredits(context.Context, *connect.Request[managev1.SetTrackCreditsRequest]) (*connect.Response[managev1.TrackWithCredits], error)
-	ReorderTracks(context.Context, *connect.Request[managev1.ReorderTracksRequest]) (*connect.Response[managev1.ListTracksByReleaseResponse], error)
+	ListTracksByRelease(context.Context, releasedomain.ListTracksQuery) ([]*managev1.TrackWithCredits, error)
+	CreateTrack(context.Context, releasedomain.CreateTrackCommand) (*managev1.Track, error)
+	UpdateTrack(context.Context, releasedomain.UpdateTrackCommand) (*managev1.Track, error)
+	DeleteTrack(context.Context, releasedomain.DeleteTrackCommand) error
+	SetTrackCredits(context.Context, releasedomain.SetTrackCreditsCommand) (*managev1.TrackWithCredits, error)
+	ReorderTracks(context.Context, releasedomain.ReorderTracksCommand) ([]*managev1.TrackWithCredits, error)
 }
 
 type TrackManagementTools struct{ application TrackManagementApplication }
@@ -64,11 +64,11 @@ func (tools *TrackManagementTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err := validateUUID("release_id", input.ReleaseID); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.ListTracksByRelease(ctx, connect.NewRequest(&managev1.ListTracksByReleaseRequest{ReleaseId: input.ReleaseID}))
+		tracks, err := tools.application.ListTracksByRelease(ctx, releasedomain.ListTracksQuery{ReleaseID: input.ReleaseID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(trackListOutput(response.Msg))
+		return contentResult(trackListOutput(tracks))
 	case ToolTrackCreate:
 		return tools.create(ctx, arguments)
 	case ToolTrackSettingsUpdate:
@@ -83,11 +83,10 @@ func (tools *TrackManagementTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err := validateUUID("track_id", input.TrackID); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: input.TrackID}))
-		if err != nil {
+		if err := tools.application.DeleteTrack(ctx, releasedomain.DeleteTrackCommand{ID: input.TrackID}); err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"success": response.Msg.Success})
+		return contentResult(map[string]any{"success": true})
 	case ToolTrackCreditsSet:
 		return tools.setCredits(ctx, arguments)
 	case ToolTrackReorder:
@@ -118,13 +117,13 @@ func (tools *TrackManagementTools) create(ctx context.Context, arguments mcpserv
 	if input.Title == "" {
 		return executionError(errors.New("title is required"))
 	}
-	response, err := tools.application.CreateTrack(ctx, connect.NewRequest(&managev1.CreateTrackRequest{
-		ReleaseId: input.ReleaseID, Title: input.Title, DurationSeconds: input.DurationSeconds, Lyrics: input.Lyrics,
-	}))
+	track, err := tools.application.CreateTrack(ctx, releasedomain.CreateTrackCommand{
+		ReleaseID: input.ReleaseID, Title: input.Title, DurationSeconds: input.DurationSeconds, Lyrics: input.Lyrics,
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackSettingsOutput(response.Msg))
+	return contentResult(trackSettingsOutput(track))
 }
 
 type trackSettingsArguments struct {
@@ -153,15 +152,15 @@ func (tools *TrackManagementTools) update(ctx context.Context, arguments mcpserv
 	if input.TrackNumber == nil && input.Title == nil && input.DurationSeconds == nil && input.ProcessingStatus == nil && input.Lyrics == nil && !input.ClearDuration && !input.ClearAudioOriginal && !input.ClearLyrics {
 		return executionError(errors.New("at least one Track setting is required"))
 	}
-	response, err := tools.application.UpdateTrack(ctx, connect.NewRequest(&managev1.UpdateTrackRequest{
-		Id: input.TrackID, TrackNumber: input.TrackNumber, Title: input.Title, DurationSeconds: input.DurationSeconds,
+	track, err := tools.application.UpdateTrack(ctx, releasedomain.UpdateTrackCommand{
+		ID: input.TrackID, TrackNumber: input.TrackNumber, Title: input.Title, DurationSeconds: input.DurationSeconds,
 		ProcessingStatus: input.ProcessingStatus, Lyrics: input.Lyrics, ClearDuration: input.ClearDuration,
 		ClearAudioOriginal: input.ClearAudioOriginal, ClearLyrics: input.ClearLyrics,
-	}))
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackSettingsOutput(response.Msg))
+	return contentResult(trackSettingsOutput(track))
 }
 
 type trackCreditsSnapshotArguments struct {
@@ -197,13 +196,14 @@ func (tools *TrackManagementTools) setCredits(ctx context.Context, arguments mcp
 			}
 		}
 	}
-	response, err := tools.application.SetTrackCredits(ctx, connect.NewRequest(&managev1.SetTrackCreditsRequest{
-		TrackId: input.TrackID, Credits: *input.Credits, Observed: &managev1.TrackCreditsSnapshot{Credits: *input.Observed.Credits},
-	}))
+	track, err := tools.application.SetTrackCredits(ctx, releasedomain.SetTrackCreditsCommand{
+		TrackID: input.TrackID, Credits: releasedomain.TrackCreditInputsFromProto(*input.Credits),
+		Observed: &releasedomain.Snapshot[*releasedomain.CreditInput]{Items: releasedomain.TrackCreditInputsFromProto(*input.Observed.Credits)},
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackWithCreditsOutput(response.Msg))
+	return contentResult(trackWithCreditsOutput(track))
 }
 
 func (tools *TrackManagementTools) reorder(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -226,11 +226,11 @@ func (tools *TrackManagementTools) reorder(ctx context.Context, arguments mcpser
 		}
 		seen[id] = true
 	}
-	response, err := tools.application.ReorderTracks(ctx, connect.NewRequest(&managev1.ReorderTracksRequest{TrackIds: input.TrackIDs}))
+	tracks, err := tools.application.ReorderTracks(ctx, releasedomain.ReorderTracksCommand{TrackIDs: input.TrackIDs})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackListOutput(response.Msg))
+	return contentResult(trackListOutput(tracks))
 }
 
 func trackSettingsOutput(track *managev1.Track) map[string]any {
@@ -255,9 +255,9 @@ func trackWithCreditsOutput(value *managev1.TrackWithCredits) map[string]any {
 	return output
 }
 
-func trackListOutput(response *managev1.ListTracksByReleaseResponse) map[string]any {
-	tracks := make([]map[string]any, 0, len(response.Tracks))
-	for _, value := range response.Tracks {
+func trackListOutput(values []*managev1.TrackWithCredits) map[string]any {
+	tracks := make([]map[string]any, 0, len(values))
+	for _, value := range values {
 		tracks = append(tracks, trackWithCreditsOutput(value))
 	}
 	return map[string]any{"tracks": tracks}

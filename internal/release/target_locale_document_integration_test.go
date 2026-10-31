@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -113,7 +114,7 @@ func TestReleaseTargetLocaleCASIsIndependentAndDeletePreservesSharedRevisionInte
 		})
 		return applyErr
 	})
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	frAfterRejectedDelete, err := loadReleaseTargetLocaleState(ctx, postgres.DB, store, releaseID, documentID, "fr", false)
 	require.NoError(t, err)
 	require.Equal(t, fr.TargetRevision, frAfterRejectedDelete.TargetRevision)

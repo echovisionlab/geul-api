@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"log/slog"
 	"time"
+
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/account"

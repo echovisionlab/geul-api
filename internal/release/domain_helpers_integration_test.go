@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -24,6 +25,6 @@ func TestRequireDocumentContributorsLocksExistingMembersIntegration(t *testing.T
 	err := db.Transaction(func(tx *gorm.DB) error {
 		return requireDocumentContributors(t.Context(), tx, []string{memberID, "ffffffff-ffff-4fff-bfff-ffffffffffff"})
 	})
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	require.EqualError(t, err, "invalid_argument: contributor_member_ids: contains a Member that does not exist")
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	require.EqualError(t, errs.Wrap(err), "invalid_argument: contributor_member_ids: contains a Member that does not exist")
 }

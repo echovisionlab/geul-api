@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -363,12 +364,19 @@ type recordingReleaseDocumentDiscovery struct {
 	err      error
 }
 
-func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx context.Context, request *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
-	discovery.ctx, discovery.request = ctx, request
+// ListReleasesAdmin records the query as the Connect request it stands for.
+func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx context.Context, query releasedomain.ListReleasesQuery) (releasedomain.ReleasePage, error) {
+	discovery.ctx, discovery.request = ctx, connect.NewRequest(&managev1.ListReleasesAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset},
+		Filters:    query.Filters, Sorts: query.Sorts,
+	})
 	if discovery.response == nil {
 		discovery.response = &managev1.ListReleasesAdminResponse{}
 	}
-	return connect.NewResponse(discovery.response), discovery.err
+	return releasedomain.ReleasePage{
+		Releases: discovery.response.Releases,
+		Total:    int64(discovery.response.Pagination.GetTotal()), Limit: discovery.response.Pagination.GetLimit(),
+	}, discovery.err
 }
 
 type recordingArtistDocumentDiscovery struct {

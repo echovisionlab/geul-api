@@ -31,6 +31,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -211,7 +212,8 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 		stack.SpiceDBClient,
 		directTrackAttachmentOption(stack.DB),
 	)
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	// The Track deletion records an audit entry for its request actor.
+	ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
 	initiated, err := fileService.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
@@ -226,15 +228,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 		Where("upload_id = ?", initiated.Msg.GetUploadId()).
 		Update("status", model.UploadSessionStatusFinalizing).Error)
 
-	trackService := releasepkg.NewTrackService(
-		stack.DB,
-		releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
-		releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
-		stack.SpiceDBClient,
-		releaseadapter.NewTrackFiles(fileService),
-		releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
-		releaseadapter.NewArtistSummaries(stack.DB),
-	)
+	trackService := newDirectTrackService(t, stack, fileService)
 	response, err := trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.Error(t, err)
 	require.Nil(t, response)
@@ -293,16 +287,9 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 				stack.SpiceDBClient,
 				directTrackAttachmentOption(stack.DB),
 			)
-			trackService := releasepkg.NewTrackService(
-				stack.DB,
-				releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
-				releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
-				stack.SpiceDBClient,
-				releaseadapter.NewTrackFiles(fileService),
-				releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
-				releaseadapter.NewArtistSummaries(stack.DB),
-			)
-			ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+			trackService := newDirectTrackService(t, stack, fileService)
+			// The Track deletion records an audit entry for its request actor.
+			ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 
 			paused := make(chan model.UploadSession, 1)
 			resume := make(chan struct{})
@@ -941,4 +928,17 @@ func requireDirectMultipartPrefixRejected(
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+// newDirectTrackService wires the Track RPCs to fileService as in
+// production.
+func newDirectTrackService(t *testing.T, stack *testutil.RuntimeStack, fileService *FileService) *releasepkg.TrackConnectHandler {
+	t.Helper()
+	return releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasepkg.Deps{
+		DB: stack.DB, SpiceDB: stack.SpiceDBClient,
+		Transcodes:   releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
+		WaveformJobs: releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
+		TrackFiles:   releaseadapter.NewTrackFiles(fileService),
+		Members:      releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
+	}))
 }

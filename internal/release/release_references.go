@@ -3,278 +3,210 @@ package release
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-// ReleaseService implements the ReleaseService Connect handler
-func (s *ReleaseService) SetReleaseArtists(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseArtistsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
-			return err
-		}
-		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
-			return err
+// SetReleaseArtistsCommand applies the desired Artists against the observed
+// ones.
+type SetReleaseArtistsCommand struct {
+	ReleaseID   string
+	Artists     []*ReleaseArtistInput
+	Observed    *Snapshot[*ReleaseArtistInput]
+	OrderIntent *RelationOrderIntent
+}
+
+// SetReleaseLabelsCommand applies the desired Labels against the observed
+// ones.
+type SetReleaseLabelsCommand struct {
+	ReleaseID   string
+	Labels      []*ReleaseLabelInput
+	Observed    *Snapshot[*ReleaseLabelInput]
+	OrderIntent *RelationOrderIntent
+}
+
+// SetReleaseFormatsCommand applies the desired Formats against the observed
+// ones.
+type SetReleaseFormatsCommand struct {
+	ReleaseID string
+	Formats   []*ReleaseFormatInput
+	Observed  *Snapshot[*ReleaseFormatInput]
+}
+
+// SetReleaseCreditsCommand applies the desired credits against the observed
+// ones.
+type SetReleaseCreditsCommand struct {
+	ReleaseID   string
+	Credits     []*CreditInput
+	Observed    *Snapshot[*CreditInput]
+	OrderIntent *RelationOrderIntent
+}
+
+// SetReleaseArtists applies an Artist set edit.
+func (s *Service) SetReleaseArtists(ctx context.Context, command SetReleaseArtistsCommand) error {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "artists", func(_ context.Context, tx *gorm.DB) (bool, error) {
+		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
+			return false, err
 		}
 		var existing []model.ReleaseArtist
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("sort_order ASC, artist_id ASC").Find(&existing).Error; err != nil {
-			return err
+		if err := tx.Where("release_id = ?", command.ReleaseID).Order("sort_order ASC, artist_id ASC").Find(&existing).Error; err != nil {
+			return false, err
 		}
-		for _, artist := range req.Msg.Artists {
-			if artist == nil {
-				return errs.InvalidArgument("artists", "must not contain null")
-			}
+		if err := requireNoNullEntries("artists", command.Artists); err != nil {
+			return false, err
 		}
-		next := mergeReleaseArtists(existing, req.Msg.Observed.Artists, req.Msg.Artists, req.Msg.OrderIntent)
+		next := mergeReleaseArtists(existing, command.Observed.Items, command.Artists, command.OrderIntent)
 		if sameReleaseArtistRows(existing, next) {
-			return nil
+			return false, nil
 		}
-		if err := persistReleaseArtists(tx, req.Msg.ReleaseId, existing, next); err != nil {
-			return err
-		}
-
-		if err := tx.Model(&model.Release{}).Where("id = ?", req.Msg.ReleaseId).
-			Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-
-		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"artists"}); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.artists"},
-		))
+		return true, persistReleaseArtists(tx, command.ReleaseID, existing, next)
 	})
-	if err != nil {
-		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
-	}
-
-	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
 
-// SetReleaseLabels replaces all labels for a release
-func (s *ReleaseService) SetReleaseLabels(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseLabelsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
-			return err
-		}
-		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
-			return err
+// SetReleaseLabels applies a Label set edit.
+func (s *Service) SetReleaseLabels(ctx context.Context, command SetReleaseLabelsCommand) error {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "labels", func(_ context.Context, tx *gorm.DB) (bool, error) {
+		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
+			return false, err
 		}
 		var existing []model.ReleaseLabel
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("sort_order ASC, label_id ASC").Find(&existing).Error; err != nil {
-			return err
+		if err := tx.Where("release_id = ?", command.ReleaseID).Order("sort_order ASC, label_id ASC").Find(&existing).Error; err != nil {
+			return false, err
 		}
-		for _, label := range req.Msg.Labels {
-			if label == nil {
-				return errs.InvalidArgument("labels", "must not contain null")
-			}
+		if err := requireNoNullEntries("labels", command.Labels); err != nil {
+			return false, err
 		}
-		next := mergeReleaseLabels(existing, req.Msg.Observed.Labels, req.Msg.Labels, req.Msg.OrderIntent)
+		next := mergeReleaseLabels(existing, command.Observed.Items, command.Labels, command.OrderIntent)
 		if sameReleaseLabelRows(existing, next) {
-			return nil
+			return false, nil
 		}
-		if err := persistReleaseLabels(tx, req.Msg.ReleaseId, existing, next); err != nil {
-			return err
-		}
-
-		// Update release updated_at
-		if err := tx.Model(&model.Release{}).Where("id = ?", req.Msg.ReleaseId).
-			Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-
-		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"labels"}); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.labels"},
-		))
+		return true, persistReleaseLabels(tx, command.ReleaseID, existing, next)
 	})
-
-	if err != nil {
-		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
-	}
-
-	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
 
-// SetReleaseCategories replaces all categories for a release
-func (s *ReleaseService) SetReleaseCategories(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseCategoriesRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "categories", req.Msg.CategoryIds, req.Msg.Observed,
-		func(releaseID, categoryID string) *model.ReleaseCategory {
-			return &model.ReleaseCategory{ReleaseID: releaseID, CategoryID: categoryID}
-		})
-}
-
-// SetReleaseGenres replaces all genres for a release
-func (s *ReleaseService) SetReleaseGenres(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseGenresRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "genres", req.Msg.GenreIds, req.Msg.Observed,
-		func(releaseID, genreID string) *model.ReleaseGenre {
-			return &model.ReleaseGenre{ReleaseID: releaseID, GenreID: genreID}
-		})
-}
-
-// SetReleaseStyles replaces all styles for a release
-func (s *ReleaseService) SetReleaseStyles(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseStylesRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	return setReleaseReferenceSet(ctx, s, req.Msg.ReleaseId, "styles", req.Msg.StyleIds, req.Msg.Observed,
-		func(releaseID, styleID string) *model.ReleaseStyle {
-			return &model.ReleaseStyle{ReleaseID: releaseID, StyleID: styleID}
-		})
-}
-
-// SetReleaseFormats replaces all formats for a release
-func (s *ReleaseService) SetReleaseFormats(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseFormatsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
-			return err
-		}
-		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
-			return err
+// SetReleaseFormats applies a Format set edit.
+func (s *Service) SetReleaseFormats(ctx context.Context, command SetReleaseFormatsCommand) error {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "formats", func(_ context.Context, tx *gorm.DB) (bool, error) {
+		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
+			return false, err
 		}
 		var existing []model.ReleaseFormat
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("format_id ASC").Find(&existing).Error; err != nil {
-			return err
+		if err := tx.Where("release_id = ?", command.ReleaseID).Order("format_id ASC").Find(&existing).Error; err != nil {
+			return false, err
 		}
-		for _, format := range req.Msg.Formats {
-			if format == nil {
-				return errs.InvalidArgument("formats", "must not contain null")
-			}
+		if err := requireNoNullEntries("formats", command.Formats); err != nil {
+			return false, err
 		}
-		next := mergeReleaseFormats(existing, req.Msg.Observed.Formats, req.Msg.Formats)
+		next := mergeReleaseFormats(existing, command.Observed.Items, command.Formats)
 		if sameReleaseFormatRows(existing, next) {
-			return nil
+			return false, nil
 		}
-		if err := persistReleaseFormats(tx, req.Msg.ReleaseId, existing, next); err != nil {
-			return err
-		}
-
-		// Update release updated_at
-		if err := tx.Model(&model.Release{}).Where("id = ?", req.Msg.ReleaseId).
-			Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-
-		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"formats"}); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.formats"},
-		))
+		return true, persistReleaseFormats(tx, command.ReleaseID, existing, next)
 	})
-
-	if err != nil {
-		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
-	}
-
-	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
 }
 
-// SetReleaseCredits replaces all credits for a release
-func (s *ReleaseService) SetReleaseCredits(
-	ctx context.Context,
-	req *connect.Request[managev1.SetReleaseCreditsRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.ReleaseId); err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, req.Msg.ReleaseId, releaseActionManage); err != nil {
-			return err
-		}
-		if err := requireObservedRelationSnapshot(req.Msg.Observed); err != nil {
-			return err
+// SetReleaseCredits applies a credit set edit. A desired credit without an
+// ID is new and gets one here.
+func (s *Service) SetReleaseCredits(ctx context.Context, command SetReleaseCreditsCommand) error {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "credits", func(ctx context.Context, tx *gorm.DB) (bool, error) {
+		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
+			return false, err
 		}
 		var existing []model.ReleaseCredit
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).Order("sort_order ASC, id ASC").Find(&existing).Error; err != nil {
-			return err
+		if err := tx.Where("release_id = ?", command.ReleaseID).Order("sort_order ASC, id ASC").Find(&existing).Error; err != nil {
+			return false, err
 		}
-		for _, credit := range req.Msg.Credits {
-			if credit == nil {
-				return errs.InvalidArgument("credits", "must not contain null")
-			}
-			if credit.GetId() == "" {
+		if err := requireNoNullEntries("credits", command.Credits); err != nil {
+			return false, err
+		}
+		for _, credit := range command.Credits {
+			if credit.id() == "" {
 				id := uuid.NewString()
-				credit.Id = &id
+				credit.ID = &id
 			}
 		}
-		next := mergeReleaseCredits(existing, req.Msg.Observed.Credits, req.Msg.Credits, req.Msg.OrderIntent)
+		next := mergeReleaseCredits(existing, command.Observed.Items, command.Credits, command.OrderIntent)
 		if sameReleaseCreditRows(existing, next) {
-			return nil
+			return false, nil
 		}
-		references := make([]authorizationtarget.Reference, 0, len(req.Msg.Credits))
-		for i, credit := range req.Msg.Credits {
-			if credit.MemberId == nil {
-				continue
-			}
-			references = append(references, authorizationtarget.Reference{
-				MemberID: *credit.MemberId,
-				Field:    fmt.Sprintf("credit[%d].member_id", i),
-			})
+		if err := authorizationtarget.LockReferences(ctx, tx, releaseCreditMemberReferences(command.Credits)); err != nil {
+			return false, err
 		}
-		if err := authorizationtarget.LockReferences(ctx, tx, references); err != nil {
-			return err
-		}
-		if err := persistReleaseCredits(tx, req.Msg.ReleaseId, existing, next); err != nil {
-			return err
-		}
-
-		// Update release updated_at
-		if err := tx.Model(&model.Release{}).Where("id = ?", req.Msg.ReleaseId).
-			Update("updated_at", time.Now()).Error; err != nil {
-			return err
-		}
-
-		if err := s.appendReleaseMetadataAudit(ctx, tx, req.Msg.ReleaseId, []string{"credits"}); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseRelationMutationContentUpdatedEvent(
-			req.Msg.ReleaseId,
-			[]string{"relations.credits"},
-		))
+		return true, persistReleaseCredits(tx, command.ReleaseID, existing, next)
 	})
+}
 
-	if err != nil {
-		return nil, classifyReleaseMutationError(err, req.Msg.ReleaseId)
+// releaseCreditMemberReferences names each credited Member, which must stay
+// a live Member while the credit is written.
+func releaseCreditMemberReferences(credits []*CreditInput) []authorizationtarget.Reference {
+	references := make([]authorizationtarget.Reference, 0, len(credits))
+	for i, credit := range credits {
+		if credit.MemberID == nil {
+			continue
+		}
+		references = append(references, authorizationtarget.Reference{
+			MemberID: *credit.MemberID,
+			Field:    fmt.Sprintf("credit[%d].member_id", i),
+		})
 	}
+	return references
+}
 
-	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
+// setReleaseRelation runs one Release relation edit. change reports whether
+// the relation changed; relation names it in the audit record and in the
+// content.updated path.
+func (s *Service) setReleaseRelation(
+	ctx context.Context,
+	releaseID string,
+	relation string,
+	change func(context.Context, *gorm.DB) (bool, error),
+) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+		Lock:   lockReleaseRow(releaseID, nil),
+		Access: s.releaseAccess(releaseID, releaseActionManage),
+		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
+			changed, err := change(ctx, tx)
+			if err != nil || !changed {
+				return false, err
+			}
+			return true, touchRelease(tx, releaseID)
+		},
+		Audit: func(changed bool) mutation.Audit {
+			if !changed {
+				return mutation.Unchanged()
+			}
+			return releaseMetadataAudit(releaseID, []string{relation})
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, changed bool) error {
+			if !changed {
+				return nil
+			}
+			return s.publishContentUpdated(ctx, tx, buildReleaseRelationMutationContentUpdatedEvent(
+				releaseID, []string{"relations." + relation},
+			))
+		},
+	})
+	return missingAs(err, releaseNotFound(releaseID))
+}
+
+func requireObservedRelationSnapshot[T any](observed *Snapshot[T]) error {
+	if observed == nil {
+		return domainerr.InvalidField("observed", "is required")
+	}
+	return nil
+}
+
+func requireNoNullEntries[T any](field string, entries []*T) error {
+	for _, entry := range entries {
+		if entry == nil {
+			return domainerr.InvalidField(field, "must not contain null")
+		}
+	}
+	return nil
 }

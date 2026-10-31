@@ -9,8 +9,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -23,116 +23,158 @@ import (
 
 var errRollbackReleaseAIDocumentValidation = errors.New("rollback Release AI document validation")
 
-func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, releaseID, locale string, mode AIDocumentExecutionMode, compiler AIDocumentMutationCompiler) (AIDocumentMutationResult, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil || s.ogRefresher == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Release AI document")
+// ExecuteAIDocumentMutationCommand compiles and applies one AI document
+// mutation of a Release locale.
+type ExecuteAIDocumentMutationCommand struct {
+	ReleaseID string
+	Locale    string
+	Mode      AIDocumentExecutionMode
+	Compiler  AIDocumentMutationCompiler
+}
+
+// aiDocumentApplied is an applied AI document mutation and the facts its
+// audit record and signals need.
+type aiDocumentApplied struct {
+	output        AIDocumentMutationResult
+	input         AIDocumentMutation
+	sourceChanged bool
+	locale        string
+	sourceLocale  string
+	memberID      string
+}
+
+// ExecuteAIDocumentMutation runs the compiled mutation behind the Release
+// root lock and the exact Edit decision. Validation runs the same path,
+// audit and signals included, and rolls it back.
+func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command ExecuteAIDocumentMutationCommand) (AIDocumentMutationResult, error) {
+	if command.Compiler == nil {
+		return AIDocumentMutationResult{}, domainerr.DependencyUnavailable("Release AI document compiler")
 	}
-	if compiler == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Release AI document compiler")
+	if command.Mode != AIDocumentExecutionValidate && command.Mode != AIDocumentExecutionApply {
+		return AIDocumentMutationResult{}, domainerr.InvalidField("mode", "is not supported")
 	}
-	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("mode", "is not supported")
-	}
-	canonicalReleaseID, err := uuidFromCanonicalString(releaseID)
+	canonicalReleaseID, err := uuidFromCanonicalString(command.ReleaseID)
 	if err != nil {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
+		return AIDocumentMutationResult{}, domainerr.InvalidField("release_id", "must be a canonical UUID")
 	}
-	locale, err = normalizeReleaseDocumentLocale(locale)
+	locale, err := normalizeReleaseDocumentLocale(command.Locale)
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var output AIDocumentMutationResult
-	var input AIDocumentMutation
-	var sourceResult contentblock.Result
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadReleaseAIDocumentRoot(ctx, tx, canonicalReleaseID.String(), clause.LockingStrengthUpdate)
-		if err != nil {
+	var root releaseAIDocumentRoot
+	var applied aiDocumentApplied
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[aiDocumentApplied]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			root, err = loadReleaseAIDocumentRoot(ctx, tx, canonicalReleaseID.String(), clause.LockingStrengthUpdate)
 			return err
-		}
-		if _, valid := releaseAIDocumentLifecycle(root.Status); !valid {
-			return errs.InternalMsg("Release has an unsupported lifecycle status")
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, root.ID, releaseActionEdit); err != nil {
-			return err
-		}
-		principal := auth.GetUser(ctx)
-		if principal == nil || principal.MemberID == "" {
-			return errs.NotFound("release", root.ID)
-		}
-		memberID, err := uuidFromCanonicalString(principal.MemberID.String())
-		if err != nil {
-			return errs.WithCause(errs.NotFound("release", root.ID), err)
-		}
-		state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, memberID.String())
-		if err != nil {
-			return err
-		}
-		input, err = compiler(state)
-		if err != nil {
-			return &releaseAIDocumentCompilerError{cause: err}
-		}
-		expected, err := validateCompiledReleaseAIDocumentMutation(state, input, memberID)
-		if err != nil {
-			return err
-		}
-		if err := requireDocumentContributors(ctx, tx, []string{memberID.String()}); err != nil {
-			return err
-		}
-		fence := releaseAuthorizedAIDocumentFence(root, state.SourceLocale)
-		output, sourceResult, err = s.applyAIDocumentMode(ctx, tx, input, expected, memberID, *root.DocumentID, fence)
-		if err != nil {
-			return err
-		}
-		if sourceResult.Changed && sourceResult.TranslationSourceChanged {
-			if err := s.ogRefresher.RequestCurrent(ctx, tx, root.ID, "release_ai_document_saved"); err != nil {
-				return err
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return requireActiveReleaseAction(ctx, tx, s.spiceDB, root.ID, releaseActionEdit)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (aiDocumentApplied, error) {
+			var err error
+			applied, err = s.applyAIDocumentMutation(ctx, tx, root, locale, command.Compiler)
+			return applied, err
+		},
+		Audit: func(applied aiDocumentApplied) mutation.Audit {
+			switch {
+			case applied.sourceChanged:
+				return releaseMemberLocaleAudit(applied.memberID, root.ID, applied.locale, sharedtelemetry.AuditItemOperationUpdated)
+			case applied.output.Changed && applied.input.Locale != applied.sourceLocale:
+				return releaseMemberLocaleAudit(applied.memberID, root.ID, applied.input.Locale, releaseTargetLocaleAuditOperation(
+					applied.input.CreateTranslation, applied.input.DeleteTranslation, applied.input.ExpectedPresence,
+				))
+			default:
+				return mutation.Unchanged()
 			}
-			if err := s.appendAIDocumentAudit(ctx, tx, root.ID, state.Locale, memberID.String()); err != nil {
-				return err
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, applied aiDocumentApplied) error {
+			if applied.sourceChanged {
+				if err := s.contentOG.RequestCurrent(ctx, tx, root.ID, "release_ai_document_saved"); err != nil {
+					return err
+				}
 			}
-		} else if output.Changed && input.Locale != state.SourceLocale {
-			if err := appendReleaseMemberTargetLocaleAudit(
-				ctx,
-				tx,
-				s.auditWriter,
-				memberID.String(),
-				root.ID,
-				input.Locale,
-				releaseTargetLocaleAuditOperation(input.CreateTranslation, input.DeleteTranslation, input.ExpectedPresence),
-			); err != nil {
-				return err
+			if command.Mode == AIDocumentExecutionValidate {
+				return errRollbackReleaseAIDocumentValidation
 			}
-		}
-		if mode == AIDocumentExecutionValidate {
-			return errRollbackReleaseAIDocumentValidation
-		}
-		if !output.Changed {
-			return nil
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, releaseAIDocumentContentUpdatedEvent(input, output, input.ContributorMemberID.String()))
+			if !applied.output.Changed {
+				return nil
+			}
+			return s.publishContentUpdated(ctx, tx, releaseAIDocumentContentUpdatedEvent(applied.input, applied.output, applied.input.ContributorMemberID.String()))
+		},
 	})
 	if errors.Is(err, errRollbackReleaseAIDocumentValidation) {
-		return output, nil
+		return applied.output, nil
 	}
 	if err != nil {
-		var compilerErr *releaseAIDocumentCompilerError
-		var conflict *AIDocumentRevisionConflictError
-		var stale *contentblock.StaleRevisionError
-		var targetConflict *translation.TargetRevisionConflict
-		switch {
-		case errors.As(err, &compilerErr):
-			return AIDocumentMutationResult{}, compilerErr.cause
-		case errors.As(err, &conflict):
-			return AIDocumentMutationResult{}, conflict
-		case errors.As(err, &stale):
-			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String()}
-		case errors.As(err, &targetConflict):
-			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: input.ExpectedDocumentRevision, CurrentTargetRevision: releaseTargetConflictRevision(targetConflict)}
-		default:
-			return AIDocumentMutationResult{}, mapReleaseAIDocumentMutationError(err)
-		}
+		return AIDocumentMutationResult{}, mapReleaseAIDocumentExecutionError(err, applied.input)
 	}
-	return output, nil
+	return applied.output, nil
+}
+
+// applyAIDocumentMutation compiles the mutation against the locked state of
+// the caller's Member and applies it.
+func (s *Service) applyAIDocumentMutation(
+	ctx context.Context,
+	tx *gorm.DB,
+	root releaseAIDocumentRoot,
+	locale string,
+	compiler AIDocumentMutationCompiler,
+) (aiDocumentApplied, error) {
+	principal := auth.GetUser(ctx)
+	if principal == nil || principal.MemberID == "" {
+		return aiDocumentApplied{}, releaseNotFound(root.ID)
+	}
+	memberID, err := uuidFromCanonicalString(principal.MemberID.String())
+	if err != nil {
+		return aiDocumentApplied{}, releaseNotFound(root.ID).WithCause(err)
+	}
+	state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, memberID.String())
+	if err != nil {
+		return aiDocumentApplied{}, err
+	}
+	input, err := compiler(state)
+	if err != nil {
+		return aiDocumentApplied{}, &releaseAIDocumentCompilerError{cause: err}
+	}
+	applied := aiDocumentApplied{input: input, locale: state.Locale, sourceLocale: state.SourceLocale, memberID: memberID.String()}
+	expected, err := validateCompiledReleaseAIDocumentMutation(state, input, memberID)
+	if err != nil {
+		return applied, err
+	}
+	if err := requireDocumentContributors(ctx, tx, []string{memberID.String()}); err != nil {
+		return applied, err
+	}
+	fence := releaseAuthorizedAIDocumentFence(root, state.SourceLocale)
+	output, sourceResult, err := s.applyAIDocumentMode(ctx, tx, input, expected, memberID, *root.DocumentID, fence)
+	if err != nil {
+		return applied, err
+	}
+	applied.output = output
+	applied.sourceChanged = sourceResult.Changed && sourceResult.TranslationSourceChanged
+	return applied, nil
+}
+
+// mapReleaseAIDocumentExecutionError answers a compiler failure with its own
+// cause and a revision race with the conflict the AI document port reports.
+func mapReleaseAIDocumentExecutionError(err error, input AIDocumentMutation) error {
+	var compilerErr *releaseAIDocumentCompilerError
+	var conflict *AIDocumentRevisionConflictError
+	var stale *contentblock.StaleRevisionError
+	var targetConflict *translation.TargetRevisionConflict
+	switch {
+	case errors.As(err, &compilerErr):
+		return compilerErr.cause
+	case errors.As(err, &conflict):
+		return conflict
+	case errors.As(err, &stale):
+		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String()}
+	case errors.As(err, &targetConflict):
+		return &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: input.ExpectedDocumentRevision, CurrentTargetRevision: releaseTargetConflictRevision(targetConflict)}
+	default:
+		return mapReleaseAIDocumentMutationError(err)
+	}
 }
 
 func validateCompiledReleaseAIDocumentMutation(state AIDocumentState, input AIDocumentMutation, memberID uuid.UUID) (uuid.UUID, error) {
@@ -141,7 +183,7 @@ func validateCompiledReleaseAIDocumentMutation(state AIDocumentState, input AIDo
 		return uuid.Nil, err
 	}
 	if input.ReleaseID != state.ReleaseID || input.Locale != state.Locale || input.ExpectedSource != state.SourceLocale || input.ExpectedPresence != state.LocaleExists || input.ContributorMemberID != memberID || state.ViewerMemberID != memberID.String() {
-		return uuid.Nil, errs.InvalidArgument("mutation", "compiled Release identity, locale, contributor, source observation, and locale presence must match the locked state")
+		return uuid.Nil, domainerr.InvalidField("mutation", "compiled Release identity, locale, contributor, source observation, and locale presence must match the locked state")
 	}
 	if input.ExpectedDocumentRevision != state.DocumentRevision {
 		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision}
@@ -150,12 +192,12 @@ func validateCompiledReleaseAIDocumentMutation(state AIDocumentState, input AIDo
 		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision, CurrentTargetRevision: optional.Clone(state.TargetRevision)}
 	}
 	if input.Batch != nil && (input.Batch.DocumentID != state.DocumentID || input.Batch.ExpectedRevision != expected || len(input.Batch.ContributorMemberIDs) != 1 || input.Batch.ContributorMemberIDs[0] != memberID) {
-		return uuid.Nil, errs.InvalidArgument("mutation", "compiled Release document, revision, and attribution must match the locked state")
+		return uuid.Nil, domainerr.InvalidField("mutation", "compiled Release document, revision, and attribution must match the locked state")
 	}
 	return expected, nil
 }
 
-func (s *InternalReleaseService) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence contentblock.DomainFence) (AIDocumentMutationResult, contentblock.Result, error) {
+func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence contentblock.DomainFence) (AIDocumentMutationResult, contentblock.Result, error) {
 	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}}
 	if input.Batch != nil {
 		batch = contentblock.CloneBatch(*input.Batch)
@@ -187,10 +229,10 @@ func (s *InternalReleaseService) applyAIDocumentMode(ctx context.Context, tx *go
 		return AIDocumentMutationResult{DocumentRevision: target.Content.DocumentRevision.String(), TargetRevision: &targetRevision, Changed: target.Content.Changed}, contentblock.Result{}, nil
 	}
 	if input.ExpectedTargetRevision != nil {
-		return AIDocumentMutationResult{}, contentblock.Result{}, errs.InvalidArgument("expected_target_revision", "source Release mutation cannot carry a target revision")
+		return AIDocumentMutationResult{}, contentblock.Result{}, domainerr.InvalidField("expected_target_revision", "source Release mutation cannot carry a target revision")
 	}
 	if input.CreateTranslation || input.DeleteTranslation {
-		return AIDocumentMutationResult{}, contentblock.Result{}, errs.InvalidArgument("locale", "Release source translation lifecycle cannot be changed")
+		return AIDocumentMutationResult{}, contentblock.Result{}, domainerr.InvalidField("locale", "Release source translation lifecycle cannot be changed")
 	}
 	result, err := s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, batch, fence, func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 		changed, err := applyReleaseSourceAIDocumentMetadata(ctx, tx, input, time.Now().UTC())
@@ -208,16 +250,16 @@ func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, inpu
 		return false, err
 	}
 	if !exists {
-		return false, errs.FailedPrecondition("Release source locale metadata is missing")
+		return false, domainerr.Precondition("Release source locale metadata is missing")
 	}
 	currentNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, input.ReleaseID, input.ExpectedSource)
 	if err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	nextTitle := row.Title
 	if input.SetTitle {
 		if input.Title == nil || strings.TrimSpace(*input.Title) == "" {
-			return false, errs.InvalidArgument("title", "must not be empty")
+			return false, domainerr.InvalidField("title", "must not be empty")
 		}
 		normalized := strings.TrimSpace(*input.Title)
 		nextTitle = &normalized
@@ -241,12 +283,12 @@ func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, inpu
 	}
 	if titleChanged {
 		if err := tx.WithContext(ctx).Table("release_translation").Where("entity_id = ?::uuid AND locale = ?", input.ReleaseID, input.ExpectedSource).Updates(map[string]any{"title": nextTitle, "updated_at": now}).Error; err != nil {
-			return false, errs.Internal(err)
+			return false, err
 		}
 	}
 	if notesChanged {
 		if err := replaceReleaseCreditLocaleNotes(ctx, tx, input.ReleaseID, input.ExpectedSource, nextNotes, now); err != nil {
-			return false, errs.Internal(err)
+			return false, err
 		}
 	}
 	if err := touchReleaseSourceLocaleState(ctx, tx, input.ReleaseID, now); err != nil {
@@ -255,28 +297,17 @@ func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, inpu
 	return true, nil
 }
 
-func (s *InternalReleaseService) appendAIDocumentAudit(ctx context.Context, tx *gorm.DB, releaseID, locale, contributor string) error {
-	if s.auditWriter == nil {
-		return errs.InternalMsg("Release AI document audit writer is not configured")
-	}
-	return domainaudit.AppendMember(ctx, tx, s.auditWriter, contributor, sharedtelemetry.AuditReleaseUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		return sharedtelemetry.NewReleaseLocaleContentAuditRecord(
-			metadata, releaseID, locale, sharedtelemetry.AuditItemOperationUpdated,
-		)
-	})
-}
-
 func releaseAuthorizedAIDocumentFence(root releaseAIDocumentRoot, expectedSource string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.DocumentID == nil || documentID != *root.DocumentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Release content document changed; reload before saving")
+			return contentblock.DomainContext{}, domainerr.Precondition("Release content document changed; reload before saving")
 		}
 		domain, err := lockReleaseTranslationSourceContext(ctx, tx, root.ID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if domain.SourceLocale != expectedSource {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Release source locale changed; reload before saving")
+			return contentblock.DomainContext{}, domainerr.Precondition("Release source locale changed; reload before saving")
 		}
 		return domain, nil
 	}

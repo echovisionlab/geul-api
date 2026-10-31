@@ -16,7 +16,7 @@ func TestReleaseSummaryUsesArtworkAsOgAndIgnoresLegacyGeneratedAsset(t *testing.
 		Url:     "https://cdn.example.test/asset/release-artwork/artwork.webp",
 	}
 
-	result := (&ReleaseService{}).toReleaseSummary(&model.Release{
+	result := toReleaseSummary(&model.Release{
 		ID:        "release-1",
 		Title:     "Release",
 		Type:      "RELEASE_TYPE_ALBUM",
@@ -30,7 +30,7 @@ func TestReleaseSummaryUsesArtworkAsOgAndIgnoresLegacyGeneratedAsset(t *testing.
 func TestReleaseSummaryHasNoOgWithoutArtwork(t *testing.T) {
 	legacyOgAssetID := "legacy-generated-og"
 
-	result := (&ReleaseService{}).toReleaseSummary(&model.Release{
+	result := toReleaseSummary(&model.Release{
 		ID:        "release-1",
 		Title:     "Release",
 		Type:      "RELEASE_TYPE_ALBUM",

@@ -4,61 +4,95 @@ import (
 	"context"
 	"time"
 
-	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// ReleaseService implements the ReleaseService Connect handler
-func (s *ReleaseService) UpdateRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateReleaseRequest],
-) (*connect.Response[managev1.UpdateReleaseResponse], error) {
-	updates, err := s.buildReleaseUpdates(ctx, req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	changed := false
-	var release *model.Release
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		changed, release, err = s.updateReleaseWithDB(ctx, tx, req.Msg, updates)
-		if err != nil || !changed {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManageReleaseContentUpdatedEvent(req.Msg))
-	}); err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			return nil, errs.WithCause(errs.SlugAlreadyExists("release", "slug"), err)
-		}
-		return nil, classifyReleaseMutationError(err, req.Msg.Id)
-	}
+// ReleaseDateChange is what an update does to the release date.
+type ReleaseDateChange uint8
 
-	response := &managev1.UpdateReleaseResponse{
-		Id:        release.ID,
-		Changed:   changed,
-		UpdatedAt: timestamppb.New(release.UpdatedAt),
+const (
+	ReleaseDateUnchanged ReleaseDateChange = iota
+	// ReleaseDateSet sets the date to UpdateReleaseCommand.ReleaseDate; a
+	// missing date is rejected.
+	ReleaseDateSet
+	ReleaseDateCleared
+)
+
+// UpdateReleaseCommand updates Release settings. Nil fields are left alone.
+type UpdateReleaseCommand struct {
+	ID                string
+	Slug              *string
+	Type              *model.ReleaseType
+	ReleaseDateChange ReleaseDateChange
+	ReleaseDate       *time.Time
+	SpotifyURL        *string
+	AppleMusicURL     *string
+	BandcampURL       *string
+	YoutubeMusicURL   *string
+	CatalogNumber     *string
+}
+
+// ReleaseUpdate is the outcome of UpdateRelease.
+type ReleaseUpdate struct {
+	ID          string
+	Changed     bool
+	UpdatedAt   time.Time
+	ReleaseDate *time.Time
+}
+
+// UpdateRelease updates Release settings (Release editors).
+func (s *Service) UpdateRelease(ctx context.Context, command UpdateReleaseCommand) (ReleaseUpdate, error) {
+	update, err := s.buildReleaseUpdates(ctx, command)
+	if err != nil {
+		return ReleaseUpdate{}, err
 	}
-	if release.ReleaseDate != nil {
-		response.ReleaseDate = timestamppb.New(*release.ReleaseDate)
+	var locked model.Release
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[releaseMetadataChange]{
+		Lock:   lockReleaseRow(command.ID, &locked),
+		Access: s.releaseAccess(command.ID, releaseActionEdit),
+		Change: func(ctx context.Context, tx *gorm.DB) (releaseMetadataChange, error) {
+			return updateReleaseWithDB(ctx, tx, &locked, update)
+		},
+		Audit: func(change releaseMetadataChange) mutation.Audit {
+			if len(change.fields) == 0 {
+				return mutation.Unchanged()
+			}
+			return releaseMetadataAudit(change.release.ID, change.fields)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, change releaseMetadataChange) error {
+			if len(change.fields) == 0 {
+				return nil
+			}
+			return s.publishContentUpdated(ctx, tx, buildReleaseContentUpdatedEvent(command.ID, releaseUpdatedFields(command)))
+		},
+	})
+	if err != nil {
+		if dberrors.IsUniqueViolation(err) {
+			return ReleaseUpdate{}, slugTaken(err)
+		}
+		return ReleaseUpdate{}, missingAs(err, releaseNotFound(command.ID))
 	}
-	return connect.NewResponse(response), nil
+	return ReleaseUpdate{
+		ID: result.release.ID, Changed: len(result.fields) != 0,
+		UpdatedAt: result.release.UpdatedAt, ReleaseDate: result.release.ReleaseDate,
+	}, nil
 }
 
 // releaseUpdate is a validated Release metadata update. Nil fields are left
 // alone; releaseDateSet with a nil releaseDate clears the date.
 type releaseUpdate struct {
 	slug            *string
-	releaseType     *string
+	releaseType     *model.ReleaseType
 	releaseDateSet  bool
 	releaseDate     *time.Time
 	spotifyURL      *string
@@ -68,39 +102,40 @@ type releaseUpdate struct {
 	catalogNumber   *string
 }
 
-func (s *ReleaseService) buildReleaseUpdates(
-	ctx context.Context,
-	request *managev1.UpdateReleaseRequest,
-) (releaseUpdate, error) {
+// releaseMetadataChange is the Release after an update and the audit fields
+// that changed.
+type releaseMetadataChange struct {
+	release *model.Release
+	fields  []string
+}
+
+func (s *Service) buildReleaseUpdates(ctx context.Context, command UpdateReleaseCommand) (releaseUpdate, error) {
 	update := releaseUpdate{
-		spotifyURL:      request.SpotifyUrl,
-		appleMusicURL:   request.AppleMusicUrl,
-		bandcampURL:     request.BandcampUrl,
-		youtubeMusicURL: request.YoutubeMusicUrl,
-		catalogNumber:   request.CatalogNumber,
+		releaseType:     command.Type,
+		spotifyURL:      command.SpotifyURL,
+		appleMusicURL:   command.AppleMusicURL,
+		bandcampURL:     command.BandcampURL,
+		youtubeMusicURL: command.YoutubeMusicURL,
+		catalogNumber:   command.CatalogNumber,
 	}
-	if request.Slug != nil {
-		if err := pathslug.Validate(*request.Slug); err != nil {
+	if command.Slug != nil {
+		if err := pathslug.Validate(*command.Slug); err != nil {
 			return releaseUpdate{}, err
 		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "release", "releases", *request.Slug); err != nil {
+		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "release", "releases", *command.Slug); err != nil {
 			return releaseUpdate{}, err
 		}
-		update.slug = request.Slug
+		update.slug = command.Slug
 	}
-	if request.Type != nil {
-		releaseType := releaseTypeToString(*request.Type)
-		update.releaseType = &releaseType
-	}
-	switch change := request.ReleaseDateChange.(type) {
-	case *managev1.UpdateReleaseRequest_SetReleaseDate:
-		if change.SetReleaseDate == nil || !change.SetReleaseDate.IsValid() {
-			return releaseUpdate{}, errs.InvalidArgument("release_date", "must be a valid timestamp")
+	switch command.ReleaseDateChange {
+	case ReleaseDateSet:
+		if command.ReleaseDate == nil {
+			return releaseUpdate{}, domainerr.InvalidField("release_date", "must be a valid timestamp")
 		}
-		releaseDate := change.SetReleaseDate.AsTime()
-		update.releaseDateSet, update.releaseDate = true, &releaseDate
-	case *managev1.UpdateReleaseRequest_ClearReleaseDate:
+		update.releaseDateSet, update.releaseDate = true, command.ReleaseDate
+	case ReleaseDateCleared:
 		update.releaseDateSet = true
+	case ReleaseDateUnchanged:
 	}
 	return update, nil
 }
@@ -112,7 +147,7 @@ func (u releaseUpdate) columns(updatedAt time.Time) structured.Fields {
 		columns["slug"] = *u.slug
 	}
 	if u.releaseType != nil {
-		columns["type"] = *u.releaseType
+		columns["type"] = string(*u.releaseType)
 	}
 	if u.releaseDateSet {
 		columns["release_date"] = nil
@@ -166,44 +201,39 @@ func sameOptionalTime(left, right *time.Time) bool {
 	return left == nil && right == nil || left != nil && right != nil && left.Equal(*right)
 }
 
-func (s *ReleaseService) updateReleaseWithDB(
+func updateReleaseWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
-	request *managev1.UpdateReleaseRequest,
+	release *model.Release,
 	update releaseUpdate,
-) (bool, *model.Release, error) {
-	release, err := lockReleaseForUpdate(ctx, tx, request.Id)
-	if err != nil {
-		return false, nil, err
-	}
-	if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, request.Id, releaseActionEdit); err != nil {
-		return false, nil, err
-	}
-	if request.Slug != nil {
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "release", "releases", *request.Slug); err != nil {
-			return false, nil, err
+) (releaseMetadataChange, error) {
+	if update.slug != nil {
+		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "release", "releases", *update.slug); err != nil {
+			return releaseMetadataChange{}, err
 		}
 	}
 	changed := update.changedFields(release)
 	if len(changed) == 0 {
-		return false, release, nil
+		return releaseMetadataChange{release: release}, nil
 	}
 	mutationNow := dbtime.Now()
 	result := tx.Model(&model.Release{}).Where("id = ?", release.ID).Updates(update.columns(mutationNow))
 	if result.Error != nil {
-		return false, nil, result.Error
+		return releaseMetadataChange{}, result.Error
 	}
 	if result.RowsAffected == 0 {
-		return false, nil, gorm.ErrRecordNotFound
-	}
-	if err := s.appendReleaseMetadataAudit(ctx, tx, release.ID, changed); err != nil {
-		return false, nil, err
+		return releaseMetadataChange{}, gorm.ErrRecordNotFound
 	}
 	release.UpdatedAt = mutationNow
 	if update.releaseDateSet {
 		release.ReleaseDate = update.releaseDate
 	}
-	return true, release, nil
+	return releaseMetadataChange{release: release, fields: changed}, nil
 }
 
-// DeleteRelease deletes a release (admin only)
+// releaseMetadataAudit records which Release settings or relations changed.
+func releaseMetadataAudit(releaseID string, fields []string) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewReleaseMetadataAuditRecord(m, releaseID, fields)
+	})
+}

@@ -15,7 +15,6 @@ import (
 
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -25,12 +24,15 @@ import (
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -73,12 +75,23 @@ func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	return testutil.IntegrationSpiceDB(t)
 }
 
+// releaseIntegrationAdminCtx is a request of identityID's onboarded Member,
+// with the request actor every audited Release mutation records.
 func releaseIntegrationAdminCtx(identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	memberID := testutil.PostIntegrationMemberID(identityID)
+	sessionID := testutil.IntegrationUUID()
+	request, err := sharedtelemetry.NewPropagatedRequestContext(testutil.IntegrationUUID(), sharedtelemetry.MemberActor{
+		IdentityID: identityID, MemberID: memberID, SessionID: sessionID,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), request), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
-		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(sessionID),
 		Authenticated: true,
+		Onboarded:     true,
 	})
 }
 
@@ -187,26 +200,35 @@ func (*recordingTrackFileDeleter) RequireNoTrackUploadSessionsWithDB(context.Con
 	return nil
 }
 
+// newReleaseIntegrationService returns the Release RPCs of a Service whose
+// audit records stay in memory, with adminID a global administrator.
 func newReleaseIntegrationService(
 	t *testing.T,
 	db *gorm.DB,
 	adminID string,
 	files releasepkg.TrackFileManager,
-) *releasepkg.ReleaseService {
+) *releasepkg.ConnectHandler {
 	t.Helper()
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	return releasepkg.NewReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(files),
-		releaseadapter.NewAssets(""),
-		releaseadapter.NewOG(""),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopAsyncPublisher{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
+	return releasepkg.NewConnectHandler(newReleaseIntegrationUseCases(t, db, spiceDB, files, &audittest.Recorder{}))
+}
+
+// newReleaseIntegrationUseCases returns the Release use cases with test Track
+// files and audit.
+func newReleaseIntegrationUseCases(
+	t *testing.T,
+	db *gorm.DB,
+	spiceDB *auth.SpiceDBClient,
+	files releasepkg.TrackFileManager,
+	audit domainaudit.Appender,
+) *releasepkg.Service {
+	t.Helper()
+	return releasetest.NewService(t, releasepkg.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: audit, ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB),
+		ContentSignals: noopAsyncPublisher{}, TrackFiles: releaseadapter.NewTrackFiles(files),
+		WaveformJobs: releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
+	})
 }
 
 // newReferenceCatalog builds the Reference Catalog use cases that seed
