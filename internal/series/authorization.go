@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"strings"
@@ -235,7 +236,7 @@ func lockSeriesRoot(ctx context.Context, tx *gorm.DB, seriesID string) error {
 		Select("id").
 		Where("id = ?", seriesID).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("series", seriesID)
 		}
 		return errs.Internal(err)
@@ -252,7 +253,7 @@ func lockPostSeriesRelation(ctx context.Context, tx *gorm.DB, postID string) (*s
 		Select("series_id").
 		Where("id = ?", postID).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", postID)
 		}
 		return nil, errs.Internal(err)

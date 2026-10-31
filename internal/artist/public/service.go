@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -242,7 +243,7 @@ func (s *ArtistService) Get(
 	}
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("artist not found")
 		}
 		return nil, errs.Internal(err)
@@ -561,7 +562,7 @@ func (s *ArtistService) buildArtistResponseInTransaction(
 		Clauses(clause.Locking{Strength: "SHARE"}).
 		Where("id = ?", artistID).
 		Take(&current).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("artist not found")
 		}
 		return nil, errs.Internal(err)

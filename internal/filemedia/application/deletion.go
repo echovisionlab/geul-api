@@ -57,7 +57,7 @@ func (h *Deletion) ValidatePending(
 			Select("id", "extension", "mime_type", "delete_requested_at").
 			Where("id = ?", event.GetFileId()).
 			First(&file).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
 			return fmt.Errorf("load pending file deletion: %w", err)
@@ -187,7 +187,7 @@ func (h *Deletion) Finalize(ctx context.Context, event *managev1.FileDeleteEvent
 			Select("id", "extension", "mime_type", "delete_requested_at").
 			Where("id = ?", event.GetFileId()).
 			First(&file).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
 			return fmt.Errorf("reload pending file deletion: %w", err)

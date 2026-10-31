@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -101,7 +102,7 @@ func (s *FileService) attachTrackOriginalAudio(
 		}
 		var file model.File
 		if err := tx.Where("id = ?", fileID).Take(&file).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("file", fileID)
 			}
 			return err
@@ -118,7 +119,7 @@ func (s *FileService) attachTrackOriginalAudio(
 		}
 		var binding model.FileIngestBinding
 		if err := tx.Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.FailedPrecondition("File ingest binding is missing")
 			}
 			return err

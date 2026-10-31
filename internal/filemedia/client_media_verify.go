@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/png"
 	"io"
@@ -278,7 +279,7 @@ func CleanupClientMediaStaging(ctx context.Context, client *s3.Client, bucket, b
 func (s *FileService) clientMediaRegistrationReady(ctx context.Context, session model.UploadSession) (bool, error) {
 	var file model.File
 	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
 	if err != nil {

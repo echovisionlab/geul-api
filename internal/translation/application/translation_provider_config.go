@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"log/slog"
 	"reflect"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz"
@@ -331,10 +332,10 @@ func (s *TranslationService) UpdateTranslationProvider(
 		})
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if _, ok := errors.AsType[*connect.Error](err); ok {
+			return nil, errs.Internal(err)
 		}
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("translation_provider", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -394,7 +395,7 @@ func (s *TranslationService) DeleteTranslationProvider(
 			return sharedtelemetry.NewTranslationProviderDeletedAuditRecord(metadata, provider.ID)
 		})
 	}); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("translation_provider", req.Msg.Id)
 		}
 		return nil, errs.Wrap(err)

@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -82,7 +83,7 @@ func (a *TrackAuthority) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trac
 		return err
 	}
 	if err := lockTrackForUploadMutation(tx.WithContext(ctx), trackID); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("track", trackID)
 		}
 		return err
@@ -133,7 +134,7 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 
 	var track model.Track
 	if err := tx.WithContext(ctx).Where("id = ?", input.TrackID).Take(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return TrackOriginalAudioAttachment{}, errs.NotFound("track", input.TrackID)
 		}
 		return TrackOriginalAudioAttachment{}, err

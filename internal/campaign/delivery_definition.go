@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -123,7 +124,7 @@ func deriveCampaignDeliveryTarget(
 	}
 	segment, err := audienceTargets.LockTarget(ctx, tx, segmentID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return CampaignDeliveryTarget{}, errs.FailedPrecondition(errs.MsgCampaignSegmentNotFound)
 		}
 		return CampaignDeliveryTarget{}, err

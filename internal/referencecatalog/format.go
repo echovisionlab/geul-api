@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -248,7 +249,7 @@ func (s *FormatService) UpdateFormat(
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("format", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -335,7 +336,7 @@ func (s *FormatService) DeleteFormat(
 	var format model.Format
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("format", req.Msg.Id)
 			}
 			return errs.Internal(err)

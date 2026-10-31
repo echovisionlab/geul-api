@@ -136,7 +136,7 @@ func (s *AccountLifecycleService) RequestDeletion(
 			alreadyScheduled = true
 			return nil
 		}
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		if err == nil {

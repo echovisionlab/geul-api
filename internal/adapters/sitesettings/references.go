@@ -2,6 +2,7 @@ package sitesettings
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -30,7 +31,7 @@ func (References) Validate(ctx context.Context, db *gorm.DB, key string, value *
 		var page model.Page
 		if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
 			Select("id", "status").Where("id = ?", id).Take(&page).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.InvalidArgument(key, "must reference a published page")
 			}
 			return errs.Internal(err)
@@ -43,7 +44,7 @@ func (References) Validate(ctx context.Context, db *gorm.DB, key string, value *
 		var menu model.Menu
 		if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
 			Select("id").Where("id = ?", id).Take(&menu).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.InvalidArgument(key, "must reference an existing menu")
 			}
 			return errs.Internal(err)

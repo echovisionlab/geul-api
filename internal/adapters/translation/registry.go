@@ -2,6 +2,7 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -285,7 +286,7 @@ func (*DomainRegistry) LockRoot(ctx context.Context, tx *gorm.DB, entityType str
 	result := tx.WithContext(ctx).Table(definition.RootTable).
 		Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ?", entityID).Take(&row)
-	if result.Error == gorm.ErrRecordNotFound {
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return errs.NotFound(entityType, entityID)
 	}
 	if result.Error != nil {

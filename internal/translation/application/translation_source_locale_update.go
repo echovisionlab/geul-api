@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func validateRequestedSourceLocale(ctx context.Context, db *gorm.DB, locale stri
 		return errs.InvalidArgument("source_locale", "source locale is required")
 	}
 	if _, err := localization.NewCatalog(db).Find(ctx, locale); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.InvalidArgument("source_locale", "unsupported locale")
 		}
 		return errs.Internal(err)

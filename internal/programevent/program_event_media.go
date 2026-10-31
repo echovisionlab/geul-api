@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ func (s *ProgramEventService) AddProgramEventMedia(
 		}
 		var before model.ProgramEventMedia
 		beforeResult := tx.Where("event_id = ? AND role = ? AND file_id = ?", req.Msg.EventId, role, req.Msg.FileId).First(&before)
-		if beforeResult.Error != nil && beforeResult.Error != gorm.ErrRecordNotFound {
+		if beforeResult.Error != nil && !errors.Is(beforeResult.Error, gorm.ErrRecordNotFound) {
 			return errs.Internal(beforeResult.Error)
 		}
 		primaryBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, req.Msg.EventId, role)
@@ -77,7 +78,7 @@ func (s *ProgramEventService) AddProgramEventMedia(
 			return err
 		}
 		media = after
-		changed = beforeResult.Error == gorm.ErrRecordNotFound || !sameProgramEventMedia(before, after)
+		changed = errors.Is(beforeResult.Error, gorm.ErrRecordNotFound) || !sameProgramEventMedia(before, after)
 		eventUpdatedAt, err = programEventRelationMutationUpdatedAt(ctx, tx, req.Msg.EventId, changed)
 		if err != nil {
 			return err
@@ -88,7 +89,7 @@ func (s *ProgramEventService) AddProgramEventMedia(
 			}
 			return s.appendProgramEventPosterAudit(ctx, tx, req.Msg.EventId, primaryBefore, sharedtelemetry.AuditCollectionOperationRemoved)
 		}
-		if beforeResult.Error == gorm.ErrRecordNotFound {
+		if errors.Is(beforeResult.Error, gorm.ErrRecordNotFound) {
 			return s.appendProgramEventChildAudit(ctx, tx, req.Msg.EventId, "media", after.ID, sharedtelemetry.AuditItemOperationCreated)
 		}
 		if !sameProgramEventMedia(before, after) {
@@ -127,7 +128,7 @@ func (s *ProgramEventService) DeleteProgramEventMedia(
 		}
 		var before model.ProgramEventMedia
 		if err := tx.First(&before, "event_id = ? AND id = ?", req.Msg.EventId, req.Msg.MediaId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event media", req.Msg.MediaId)
 			}
 			return errs.Internal(err)
@@ -284,7 +285,7 @@ func addProgramEventMedia(
 	result := db.WithContext(ctx).
 		Where("event_id = ? AND role = ? AND file_id = ?", eventID, normalizedRole, fileID).
 		First(&existing)
-	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return errs.Internal(result.Error)
 	}
 
@@ -382,7 +383,7 @@ func deleteProgramEventMedia(ctx context.Context, db *gorm.DB, mediaAssets Media
 
 	var media model.ProgramEventMedia
 	if err := db.WithContext(ctx).First(&media, "id = ? AND event_id = ?", mediaID, eventID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", errs.NotFound("program event media", mediaID)
 		}
 		return "", errs.Internal(err)
@@ -664,7 +665,7 @@ func promoteProgramEventMediaPrimary(ctx context.Context, db *gorm.DB, eventID s
 	query := db.WithContext(ctx).Where("event_id = ? AND role = ?", eventID, role)
 	var replacement model.ProgramEventMedia
 	if err := query.Order("sort_order ASC, created_at ASC").First(&replacement).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return errs.Internal(err)

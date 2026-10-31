@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -66,7 +67,7 @@ func RenderTemplateForLocale(
 		Where("event_key = ?", eventKey).
 		Where("is_active = ?", true).
 		First(&tmpl).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.Info("Email template render skipped",
 				"domain", "mail",
 				"event", "mail.delivery.render_skipped",
@@ -91,7 +92,7 @@ func renderTemplateByID(
 ) (*RenderedEmail, error) {
 	var tmpl model.EmailTemplate
 	if err := db.WithContext(ctx).First(&tmpl, "id = ?", templateID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.Info("Email template render skipped",
 				"domain", "mail",
 				"event", "mail.delivery.render_skipped",

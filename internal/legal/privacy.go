@@ -123,7 +123,7 @@ func (s *PrivacyService) GetPrivacyVersion(
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var privacy model.Privacy
 		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -346,7 +346,7 @@ func (s *PrivacyService) SchedulePrivacy(
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return err
@@ -443,7 +443,7 @@ func (s *PrivacyService) CancelPrivacySchedule(
 			return err
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return err
@@ -662,7 +662,7 @@ func (s *PrivacyService) DeletePrivacy(
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
 			return err

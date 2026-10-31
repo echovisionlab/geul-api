@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -265,7 +266,7 @@ func lockProgramEventForMutation(ctx context.Context, db *gorm.DB, eventID strin
 		Select("id").
 		Where("id = ?", eventID).
 		Take(&event).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)
@@ -286,7 +287,7 @@ func requireProgramEventMutationPermissionWithDB(
 	if err := db.WithContext(ctx).Table("program_event").
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("status").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)
@@ -348,7 +349,7 @@ func RequireLockedView(
 	if err := tx.WithContext(ctx).Table("program_event").
 		Clauses(clause.Locking{Strength: "SHARE"}).
 		Select("status").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)

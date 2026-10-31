@@ -2,6 +2,7 @@ package page
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -40,7 +41,7 @@ func (s *PageService) SetPageFeaturedImage(
 		var page model.Page
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&page, "id = ?", req.Msg.PageId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.PageId)
 			}
 			return errs.Internal(err)
@@ -57,7 +58,7 @@ func (s *PageService) SetPageFeaturedImage(
 		// 2. Verify file exists
 		var file model.File
 		if err := tx.First(&file, "id = ?", req.Msg.FileId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("file", req.Msg.FileId)
 			}
 			return errs.Internal(err)
@@ -138,7 +139,7 @@ func (s *PageService) DeletePageFeaturedImage(
 		var page model.Page
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&page, "id = ?", req.Msg.PageId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.PageId)
 			}
 			return errs.Internal(err)

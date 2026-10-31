@@ -2,14 +2,16 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -166,7 +168,7 @@ func (s *CampaignService) GetCampaign(
 
 	var campaign model.Campaign
 	if err := s.db.WithContext(ctx).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("campaign not found")
 		}
 		return nil, errs.Internal(err)
@@ -318,7 +320,7 @@ func (s *CampaignService) CreateCampaign(
 		if targetMode == model.CampaignTargetModeSegment {
 			var segment model.AudienceSegment
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "archived_at").First(&segment, "id = ?", *segmentID).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound("audience_segment", *segmentID)
 				}
 				return errs.Internal(err)
@@ -438,7 +440,7 @@ func (s *CampaignService) UpdateCampaignName(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
@@ -514,7 +516,7 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 			return errs.Internal(err)
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
@@ -567,7 +569,7 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 		if targetMode == model.CampaignTargetModeSegment {
 			var segment model.AudienceSegment
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "archived_at").First(&segment, "id = ?", *segmentID).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound("audience_segment", *segmentID)
 				}
 				return errs.Internal(err)
@@ -645,7 +647,7 @@ func observeAndLockCampaignLayouts(
 		Model(&model.Campaign{}).
 		Select("layout_id").
 		First(&observed, "id = ?", campaignID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", nil, errs.NotFoundMsg("campaign not found")
 		}
 		return "", nil, err
@@ -687,7 +689,7 @@ func (s *CampaignService) DeleteCampaign(
 		var campaign model.Campaign
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
@@ -795,7 +797,7 @@ func (s *CampaignService) ScheduleCampaign(
 		// Lock the row for update to prevent concurrent modifications
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
@@ -896,7 +898,7 @@ func (s *CampaignService) CancelCampaign(
 		// Lock the row for update to prevent concurrent modifications
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
@@ -1067,7 +1069,7 @@ func prepareCampaignSendNowWithDB(
 func lockCampaignForSendNow(ctx context.Context, tx *gorm.DB, campaignID string) (model.Campaign, error) {
 	var campaign model.Campaign
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&campaign, "id = ?", campaignID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.Campaign{}, errs.NotFoundMsg("campaign not found")
 		}
 		return model.Campaign{}, errs.Internal(err)
@@ -1179,7 +1181,7 @@ func (s *CampaignService) PreviewCampaign(
 
 	var campaign model.Campaign
 	if err := s.db.WithContext(ctx).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("campaign not found")
 		}
 		return nil, errs.Internal(err)
@@ -1299,7 +1301,7 @@ func (s *CampaignService) SendTestCampaign(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var campaign model.Campaign
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("campaign not found")
 			}
 			return errs.Internal(err)
@@ -1387,7 +1389,7 @@ func (s *CampaignService) GetCampaignStats(
 
 	var campaign model.Campaign
 	if err := s.db.WithContext(ctx).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("campaign not found")
 		}
 		return nil, errs.Internal(err)

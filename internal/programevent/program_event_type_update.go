@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -65,7 +66,7 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventType, error) {
 	var eventType model.ProgramEventType
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&eventType, "id = ?", id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return eventType, errs.NotFound("program event type", id)
 		}
 		return eventType, errs.Internal(err)
@@ -144,10 +145,10 @@ func updateProgramEventTypeLocale(tx *gorm.DB, request *managev1.UpdateProgramEv
 	}
 	var localeRow model.ProgramEventTypeLocale
 	err = tx.First(&localeRow, "type_id = ? AND locale = ?", request.Id, locale).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, errs.Internal(err)
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return true, createProgramEventTypeLocale(tx, request, locale, now)
 	}
 	changed, err := applyProgramEventTypeLocaleUpdate(tx, &localeRow, request, now)

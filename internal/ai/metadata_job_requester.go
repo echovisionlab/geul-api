@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -165,7 +166,7 @@ func (m *MetadataJobManager) loadJobForRequester(
 
 	var job metadataJobRecord
 	if err := m.db.WithContext(ctx).First(&job, "id = ?", jobID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("metadata_ai_job", jobID)
 		}
 		return nil, errs.Internal(fmt.Errorf("failed to load metadata AI job: %w", err))

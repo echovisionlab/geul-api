@@ -123,7 +123,7 @@ func (s *TermsService) GetTermsVersion(
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var terms model.Terms
 		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -345,7 +345,7 @@ func (s *TermsService) ScheduleTerms(
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return err
@@ -442,7 +442,7 @@ func (s *TermsService) CancelTermsSchedule(
 			return err
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return err
@@ -661,7 +661,7 @@ func (s *TermsService) DeleteTerms(
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
 			return err

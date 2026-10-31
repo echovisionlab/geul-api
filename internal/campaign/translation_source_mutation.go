@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -24,7 +25,7 @@ func RequireTranslationSourceMutable(
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("id", "status").
 		First(&campaign, "id = ?", campaignID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("campaign", campaignID)
 		}
 		return err

@@ -2,6 +2,7 @@ package og
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -222,7 +223,7 @@ func (r *LocalizedRequests) translation(
 		return nil, err
 	}
 	err = query.Where("translation.locale = ?", locale).Take(&row).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {

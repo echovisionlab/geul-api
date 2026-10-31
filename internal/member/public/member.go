@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -65,7 +66,7 @@ func (s *MemberService) GetPublicMember(
 		Select("m.*, FALSE AS can_expose_extended_profile").
 		Where("m.id = ? AND m.onboarded = TRUE", memberID.String()).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return connect.NewResponse(&openv1.GetPublicMemberResponse{}), nil
 		}
 		slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))

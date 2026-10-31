@@ -285,7 +285,7 @@ func lockSegmentForUpdate(ctx context.Context, tx *gorm.DB, segmentID string, se
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		First(segment, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")
 		}
 		return errs.Internal(err)

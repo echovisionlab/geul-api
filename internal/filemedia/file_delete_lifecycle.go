@@ -93,7 +93,7 @@ func (s *FileService) DeleteFile(
 		ID string `gorm:"column:id"`
 	}
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ?", fileID).First(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("file", fileID)
 		}
 		return nil, errs.Internal(err)
@@ -374,7 +374,7 @@ func markFileDeletionRequestedWithDB(
 		Select("id", "delete_requested_at").
 		Where("id = ?", fileID).
 		First(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err

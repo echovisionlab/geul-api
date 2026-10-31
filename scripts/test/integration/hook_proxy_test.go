@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -183,7 +184,7 @@ func TestHookProxyURLsAndDirectLifecycle(t *testing.T) {
 	if err := proxy.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.Register(upstream.URL); err != ErrHookProxyClosed {
+	if err := proxy.Register(upstream.URL); !errors.Is(err, ErrHookProxyClosed) {
 		t.Fatalf("expected closed error from register, got %v", err)
 	}
 }

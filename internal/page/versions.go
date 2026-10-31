@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -117,7 +118,7 @@ func (s *PageService) RestorePageVersion(
 
 	var version model.PageVersion
 	if err := s.db.WithContext(ctx).First(&version, "id = ?", req.Msg.VersionId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("page_version", req.Msg.VersionId)
 		}
 		return nil, errs.Internal(err)

@@ -358,7 +358,7 @@ func OperationLogLevel(err error) slog.Level {
 func Wrap(err error) *connect.Error {
 	var connectErr *connect.Error
 	if stderrors.As(err, &connectErr) && connectErr != nil {
-		if err == connectErr {
+		if err == connectErr { //nolint:errorlint // identity: an unwrapped Connect error needs no added context
 			return connectErr
 		}
 		return withOperationContext(connectErr, err)
@@ -445,7 +445,7 @@ func operationCause(err error) string {
 	if !stderrors.As(err, &connectErr) || connectErr == nil {
 		return text
 	}
-	classified, ok := connectErr.Unwrap().(*classifiedCause)
+	classified, ok := connectErr.Unwrap().(*classifiedCause) //nolint:errorlint // only a cause Wrap attached directly carries operation context
 	if !ok {
 		return text
 	}

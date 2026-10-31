@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 
 	"gorm.io/gorm"
 
@@ -17,7 +18,7 @@ import (
 func RequireExists(ctx context.Context, db *gorm.DB, workID string) error {
 	var work model.Work
 	if err := db.WithContext(ctx).Select("id").Take(&work, "id = ?", workID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("work", workID)
 		}
 		return errs.Internal(err)

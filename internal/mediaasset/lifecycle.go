@@ -241,7 +241,7 @@ func (s *Lifecycle) CompletePublicAsset(
 			}).Error
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("public_asset", assetID)
 		}
 		return nil, errs.FailedPrecondition(err.Error())
@@ -424,7 +424,7 @@ func (s *Lifecycle) ReadyAssetRefForSourceFile(
 		).
 		Order("created_at DESC").
 		Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("public_asset_for_source_file", sourceFileID)
 		}
 		return nil, errs.Internal(err)
@@ -512,7 +512,7 @@ func (s *Lifecycle) RequestPublicAssetDeletion(ctx context.Context, assetID stri
 			Select("id", "status").
 			Where("id = ?", assetID).
 			Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("public_asset", assetID)
 			}
 			return errs.Internal(err)
@@ -865,7 +865,7 @@ func (s *Lifecycle) CompleteMediaGeneration(
 			}).Error
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("media_generation", generationID)
 		}
 		return nil, errs.FailedPrecondition(err.Error())
@@ -880,7 +880,7 @@ func (s *Lifecycle) CompleteMediaGeneration(
 func (s *Lifecycle) loadPublicAsset(ctx context.Context, assetID string) (*model.PublicAsset, error) {
 	var asset model.PublicAsset
 	if err := s.db.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("public_asset", assetID)
 		}
 		return nil, errs.Internal(err)

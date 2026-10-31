@@ -832,7 +832,7 @@ func (p *fakePort) ExecuteMutation(_ context.Context, request ApplyRequest) (App
 	}
 	p.applied = append(p.applied, command)
 	if p.applyErr != nil {
-		if validationError, ok := p.applyErr.(*ValidationError); ok && validationError.Result.Normalized == nil {
+		if validationError, ok := errors.AsType[*ValidationError](p.applyErr); ok && validationError.Result.Normalized == nil {
 			completed := validationError.Result
 			completed.Normalized = append([]Operation(nil), validation.Normalized...)
 			return ApplyResult{}, &ValidationError{Result: completed}

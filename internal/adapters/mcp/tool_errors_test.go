@@ -31,7 +31,7 @@ func TestExpectedToolErrorPreservesActionableFailuresWithoutPrivateContext(t *te
 			if !errors.As(err, &toolError) || toolError.Message != tc.message {
 				t.Fatalf("error=%v, want %q", err, tc.message)
 			}
-			if toolError.Cause != original {
+			if toolError.Cause != original { //nolint:errorlint // asserts the original wrapper is kept
 				t.Fatal("original cause was dropped")
 			}
 		})

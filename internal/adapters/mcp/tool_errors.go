@@ -14,7 +14,7 @@ import (
 // so implementation details and credentials cannot leak to clients.
 func expectedToolError(err error) (result mcpserver.ToolResult, resultErr error) {
 	defer func() {
-		if executionErr, ok := resultErr.(*mcpserver.ToolExecutionError); ok && executionErr != nil {
+		if executionErr, ok := errors.AsType[*mcpserver.ToolExecutionError](resultErr); ok && executionErr != nil {
 			executionErr.Cause = err
 		}
 	}()

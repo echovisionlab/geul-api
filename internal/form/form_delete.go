@@ -1,8 +1,11 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
+	"errors"
+	"log/slog"
+
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -11,7 +14,6 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"log/slog"
 )
 
 func (s *FormService) DeleteForm(
@@ -28,7 +30,7 @@ func (s *FormService) DeleteForm(
 
 	var form model.Form
 	if err := s.db.WithContext(ctx).First(&form, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("form", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

@@ -3,6 +3,7 @@ package form
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -66,7 +67,7 @@ func (s *FormService) UpdateForm(
 		return s.applyFormUpdate(ctx, tx, &form, plan)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("form", req.Msg.Id)
 		}
 		return nil, errs.Wrap(err)

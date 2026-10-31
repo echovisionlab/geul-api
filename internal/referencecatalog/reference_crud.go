@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"gorm.io/gorm"
@@ -86,7 +87,7 @@ func (c referenceCRUD[T]) lockForMutation(
 ) (*T, error) {
 	record := new(T)
 	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(record, "id = ?", id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound(c.resource, id)
 		}
 		return nil, errs.Internal(err)

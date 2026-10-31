@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -301,7 +302,7 @@ func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 		)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("program event series", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

@@ -3,6 +3,7 @@ package filemedia
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -379,7 +380,7 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 			query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "attachment"}})
 		}
 		if err := query.Take(&row).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fileDownloadPolicyRelation{}, errs.NotFound("File Block attachment", *selector.BlockID)
 			}
 			return fileDownloadPolicyRelation{}, errs.Internal(err)
@@ -397,7 +398,7 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 		query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "track"}})
 	}
 	if err := query.Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fileDownloadPolicyRelation{}, errs.NotFound("Track original audio", selector.EntityID)
 		}
 		return fileDownloadPolicyRelation{}, errs.Internal(err)

@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -264,7 +265,7 @@ func (s *EmailTemplateService) GetEmailTemplate(
 
 	var template model.EmailTemplate
 	if err := s.db.WithContext(ctx).First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email template", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -525,7 +526,7 @@ func (s *EmailTemplateService) DeleteEmailTemplate(
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&template, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("email template", req.Msg.Id)
 			}
 			return err

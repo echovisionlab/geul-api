@@ -196,7 +196,7 @@ func TestInvalidTransportAndApplicationAuthorizationErrorBoundaries(t *testing.T
 	authorizationError := connect.NewError(connect.CodePermissionDenied, errors.New("domain denied"))
 	application.openErr = authorizationError
 	_, err = service.OpenAIDocument(context.Background(), connect.NewRequest(&managev1.OpenAIDocumentRequest{Document: protoDocument(), Locale: protoLocale("en")}))
-	if err != authorizationError {
+	if err != authorizationError { //nolint:errorlint // asserts the error is returned unchanged
 		t.Fatalf("injected application authorization error was altered: %v", err)
 	}
 }

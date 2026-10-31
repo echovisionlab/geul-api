@@ -2,6 +2,7 @@ package formog
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
@@ -101,7 +102,7 @@ func ReadyAsset(
 		err := db.WithContext(ctx).
 			Where("id = ? AND status = ?", strings.TrimSpace(*candidateID), model.PublicAssetStatusReady).
 			Take(&asset).Error
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
 		if err != nil {

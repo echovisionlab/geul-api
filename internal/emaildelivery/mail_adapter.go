@@ -3,6 +3,7 @@ package emaildelivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/mail"
@@ -326,10 +327,15 @@ func (s *MailAdapterService) update(
 		if sender != nil {
 			slog.ErrorContext(ctx, "mail adapter sender update failed", "adapter_id", req.Msg.Id, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
 		}
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
+		if connectErr, ok := errors.AsType[*connect.Error](err); ok {
+			if sender != nil {
+				// The outer context can carry provider credentials and was logged
+				// redacted above; the classified error alone is client-safe.
+				return nil, connectErr
+			}
+			return nil, errs.Internal(err)
 		}
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("mail adapter", req.Msg.Id)
 		}
 		if sender != nil {
@@ -390,7 +396,7 @@ func (s *MailAdapterService) Delete(
 			return sharedtelemetry.NewMailAdapterDeletedAuditRecord(metadata, adapter.ID)
 		})
 	}); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("mail adapter", req.Msg.Id)
 		}
 		return nil, errs.Wrap(err)
@@ -556,7 +562,7 @@ func (s *MailAdapterService) Test(
 	// Get adapter from DB
 	var dbAdapter model.MailAdapter
 	if err := s.db.WithContext(ctx).First(&dbAdapter, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("mail adapter", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

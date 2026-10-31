@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -120,7 +121,7 @@ func loadTranslationJobForCommand(
 	}
 	var job model.TranslationJob
 	if err := query.First(&job, "id = ?", jobID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.TranslationJob{}, errs.NotFound("translation_job", jobID)
 		}
 		return model.TranslationJob{}, errs.Internal(err)

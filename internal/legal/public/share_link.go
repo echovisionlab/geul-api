@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -83,7 +84,7 @@ func resolveLegalShareLinkAccess(
 	if err := db.WithContext(ctx).
 		Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", token, entityType.String(), entityID, now).
 		Take(&link).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return legalShareLinkAccess{}, false, nil
 		}
 		return legalShareLinkAccess{}, false, err
@@ -132,7 +133,7 @@ func resolveLegalShareLinkAccess(
 		Select("status", "effective_from").
 		Where("id = ?", entityID).
 		Take(&target).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return legalShareLinkAccess{}, false, nil
 		}
 		return legalShareLinkAccess{}, false, err

@@ -3,8 +3,9 @@ package campaign
 import (
 	"context"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
 
@@ -39,7 +40,7 @@ func ResolveLocalizedCampaign(
 		Select("source_locale").
 		Where("id = ?", campaign.ID).
 		Take(&sourceState).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return campaign, "", errs.NotFound("campaign source translation", campaign.ID)
 		}
 		return campaign, "", err

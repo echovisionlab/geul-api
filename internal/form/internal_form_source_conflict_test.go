@@ -39,7 +39,7 @@ func TestFormDocumentRevisionErrorsCarryTypedCollaborationConflicts(t *testing.T
 			if got := connect.CodeOf(testCase.err); got != connect.CodeFailedPrecondition {
 				t.Fatalf("code = %v, want %v", got, connect.CodeFailedPrecondition)
 			}
-			connectErr, ok := testCase.err.(*connect.Error)
+			connectErr, ok := testCase.err.(*connect.Error) //nolint:errorlint // asserts the classified error is returned directly
 			if !ok {
 				t.Fatalf("error type = %T, want *connect.Error", testCase.err)
 			}
@@ -63,12 +63,12 @@ func TestFormDocumentRevisionErrorsCarryTypedCollaborationConflicts(t *testing.T
 
 func TestNormalizeFormDocumentSaveErrorPreservesUnrelatedErrors(t *testing.T) {
 	want := errors.New("storage unavailable")
-	if got := normalizeFormDocumentSaveError(want); got != want {
+	if got := normalizeFormDocumentSaveError(want); got != want { //nolint:errorlint // asserts the error is returned unchanged
 		t.Fatalf("normalized error = %v, want original error", got)
 	}
 
 	want = fmt.Errorf("save form document: %w", &pgconn.PgError{Code: "40P01"})
-	if got := normalizeFormDocumentSaveError(want); got != want {
+	if got := normalizeFormDocumentSaveError(want); got != want { //nolint:errorlint // asserts the error is returned unchanged
 		t.Fatalf("deadlock error = %v, want original error", got)
 	}
 }

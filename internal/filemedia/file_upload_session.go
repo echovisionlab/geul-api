@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -227,7 +228,7 @@ func claimLockedMultipartCompletion(
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("upload_id = ? AND file_id = ?", session.UploadID, session.FileID).
 		Take(&locked).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.UploadSession{}, nil, false, nil
 		}
 		return model.UploadSession{}, nil, false, err

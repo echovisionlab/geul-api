@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -100,7 +101,7 @@ func (s *PostService) ListPostVersions(
 		}
 		if err := tx.WithContext(ctx).Table("post").Clauses(clause.Locking{Strength: "KEY SHARE"}).
 			Select("status").Where("id = ?::uuid", req.Msg.PostId).Take(&root).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.PostId)
 			}
 			return errs.Internal(err)
@@ -164,7 +165,7 @@ func (s *PostService) RestorePostVersion(
 	}
 	var version model.PostVersion
 	if err := s.db.WithContext(ctx).First(&version, "id = ?", req.Msg.VersionId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post_version", req.Msg.VersionId)
 		}
 		return nil, errs.Internal(err)

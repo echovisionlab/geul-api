@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func (s *ProgramEventSeriesService) loadProgramEventSeriesForUpdate(
 ) (model.ProgramEventSeries, error) {
 	var series model.ProgramEventSeries
 	if err := s.db.WithContext(ctx).First(&series, "id = ?", seriesID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return series, errs.NotFound("program event series", seriesID)
 		}
 		return series, errs.Internal(err)
@@ -185,7 +186,7 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 func lockProgramEventSeriesForUpdate(tx *gorm.DB, seriesID string) (model.ProgramEventSeries, error) {
 	var series model.ProgramEventSeries
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&series, "id = ?", seriesID).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return series, errs.NotFound("program event series", seriesID)
 	}
 	if err != nil {

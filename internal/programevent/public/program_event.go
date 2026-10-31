@@ -2,12 +2,14 @@ package public
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -210,7 +212,7 @@ func (s *ProgramEventService) Get(
 			query = query.Where("slug = ?", slugOrID)
 		}
 		if err := query.First(&event).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("program event not found")
 			}
 			return errs.Internal(err)
@@ -432,7 +434,7 @@ func (s *ProgramEventSeriesService) Get(
 		query = query.Where("slug = ?", slugOrID)
 	}
 	if err := query.First(&series).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("program event series not found")
 		}
 		return nil, errs.Internal(err)
@@ -738,7 +740,7 @@ func (s *ProgramEventService) loadPublishedProgramEventSeries(
 			*seriesID,
 			managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String(),
 		).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {

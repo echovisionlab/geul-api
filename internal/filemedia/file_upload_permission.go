@@ -171,7 +171,7 @@ func (s *FileService) resolvePartUploadPermissionTarget(
 		return target, entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, session.EntityID)
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return target, "", fmt.Errorf("track not found")
 	}
 	if err != nil {

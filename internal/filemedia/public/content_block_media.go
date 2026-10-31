@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -343,7 +344,7 @@ func validateContentDownloadShareLinkWitness(
 		query = query.Clauses(clause.Locking{Strength: "SHARE"})
 	}
 	if err := query.Take(&link).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
 		}
 		return false, err
@@ -459,7 +460,7 @@ func lockContentBlockDownloadOwners(
 			Where("id = ?", target.ResourceID).
 			Clauses(clause.Locking{Strength: "SHARE"}).Take(&current)
 		if query.Error != nil {
-			if query.Error == gorm.ErrRecordNotFound {
+			if errors.Is(query.Error, gorm.ErrRecordNotFound) {
 				continue
 			}
 			return nil, query.Error

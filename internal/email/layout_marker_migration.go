@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -98,7 +99,7 @@ func layoutMigrationShape(content string) string {
 	for {
 		kind := tokenizer.Next()
 		if kind == html.ErrorToken {
-			if tokenizer.Err() != io.EOF {
+			if !errors.Is(tokenizer.Err(), io.EOF) {
 				return "invalid:" + tokenizer.Err().Error()
 			}
 			return shape.String()

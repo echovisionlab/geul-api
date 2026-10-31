@@ -189,7 +189,7 @@ func TestBoundaryLogsClassifiedOperationContextWithRequestContext(t *testing.T) 
 		return nil, Wrap(fmt.Errorf("resolve share link %s: %w", boundaryPrivateToken, NotFoundMsg("page not found")))
 	})
 
-	if connect.CodeOf(err) != connect.CodeNotFound || err.(*connect.Error).Message() != "page not found" {
+	if connect.CodeOf(err) != connect.CodeNotFound || err.(*connect.Error).Message() != "page not found" { //nolint:errorlint // the boundary returns *connect.Error directly
 		t.Fatalf("client error = %v", err)
 	}
 	record := logs.only(t)
@@ -208,7 +208,7 @@ func TestBoundaryRedactsPrivateRequestValuesFromClientMessages(t *testing.T) {
 	})
 
 	// request.completed records this message; it must not carry the token.
-	if got := err.(*connect.Error).Message(); got != "share link [redacted] not found" || connect.CodeOf(err) != connect.CodeNotFound {
+	if got := err.(*connect.Error).Message(); got != "share link [redacted] not found" || connect.CodeOf(err) != connect.CodeNotFound { //nolint:errorlint // the boundary returns *connect.Error directly
 		t.Fatalf("client error = %v", err)
 	}
 }
@@ -335,7 +335,7 @@ func TestBoundaryRedactsPrivateValuesReceivedOnStreams(t *testing.T) {
 		}
 		return NotFoundMsg("subscription " + message.GetToken() + " not found")
 	})(t.Context(), conn)
-	if got := err.(*connect.Error).Message(); got != "subscription [redacted] not found" {
+	if got := err.(*connect.Error).Message(); got != "subscription [redacted] not found" { //nolint:errorlint // the boundary returns *connect.Error directly
 		t.Fatalf("client message = %q", got)
 	}
 }

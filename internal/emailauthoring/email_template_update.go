@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -193,7 +194,7 @@ func observeAndLockEmailTemplateLayouts(
 		Model(&model.EmailTemplate{}).
 		Select("layout_id").
 		First(&observed, "id = ?", templateID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", nil, errs.NotFound("email template", templateID)
 		}
 		return "", nil, err
@@ -217,7 +218,7 @@ func lockEmailTemplateForUpdate(
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		First(template, "id = ?", templateID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("email template", templateID)
 		}
 		return err
@@ -255,10 +256,10 @@ func validateEmailTemplateUpdate(
 }
 
 func mapEmailTemplateUpdateError(err error, templateID string) error {
-	if connectErr, ok := err.(*connect.Error); ok {
-		return connectErr
+	if _, ok := errors.AsType[*connect.Error](err); ok {
+		return errs.Internal(err)
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFound("email template", templateID)
 	}
 	return errs.Internal(err)

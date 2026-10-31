@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -37,7 +38,7 @@ func (h *Handlers) upsertWaveformJob(ctx context.Context, event *managev1.Wavefo
 func (h *Handlers) getWaveformJob(ctx context.Context, eventID string) (*model.WaveformJob, error) {
 	var job model.WaveformJob
 	if err := h.db.WithContext(ctx).Where("event_id = ?", eventID).First(&job).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err

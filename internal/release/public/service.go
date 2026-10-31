@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -112,7 +113,7 @@ func (s *ReleaseService) Get(
 	}
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("release not found")
 		}
 		return nil, errs.Internal(err)
@@ -306,7 +307,7 @@ func (s *ReleaseService) buildReleaseResponseInTransaction(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", releaseID).
 		Take(&current).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("release not found")
 		}
 		return nil, errs.Internal(err)

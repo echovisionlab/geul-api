@@ -46,7 +46,7 @@ func (s *AccountEmailChangeLifecycle) Reconcile(ctx context.Context) error {
 		Order("created_at DESC, id DESC").
 		First(&upper)
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return result.Error

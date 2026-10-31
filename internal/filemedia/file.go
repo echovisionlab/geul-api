@@ -788,7 +788,7 @@ func (s *FileService) resolveUploadPermissionEntityID(
 		return entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, entityID)
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", errs.NotFoundMsg("track not found")
 	}
 	if err != nil {
@@ -956,7 +956,7 @@ func (s *FileService) AbortMultipartUpload(
 	if err := s.db.WithContext(ctx).
 		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
 		First(&session).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("upload session not found")
 		}
 		return nil, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))

@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -255,7 +256,7 @@ func lockFileFolderSubtree(ctx context.Context, tx *gorm.DB, folderID string) ([
 	}
 	var folder model.FileFolder
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", folderID).First(&folder).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("folder", folderID)
 		}
 		return nil, err

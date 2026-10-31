@@ -2,6 +2,7 @@ package artist
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ func (s *ArtistService) GetArtistEditorData(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
 		First(&artist).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("artist", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

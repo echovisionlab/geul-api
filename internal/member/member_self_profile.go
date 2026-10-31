@@ -45,7 +45,7 @@ func (s *MemberService) GetMySettings(
 	}
 	var consent model.UserCookieConsent
 	consentErr := s.db.WithContext(ctx).Where("member_id = ?", memberID).Order("recorded_at DESC").First(&consent).Error
-	if consentErr != nil && consentErr != gorm.ErrRecordNotFound {
+	if consentErr != nil && !errors.Is(consentErr, gorm.ErrRecordNotFound) {
 		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(consentErr))
 		return nil, errs.Internal(consentErr)
 	}

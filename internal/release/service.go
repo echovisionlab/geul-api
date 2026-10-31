@@ -172,7 +172,7 @@ func (s *ReleaseService) GetRelease(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
 		First(&release).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -706,7 +706,7 @@ func (s *ReleaseService) PublishRelease(
 
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -766,7 +766,7 @@ func (s *ReleaseService) UnpublishRelease(
 
 	var release model.Release
 	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

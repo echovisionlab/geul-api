@@ -2,7 +2,6 @@ package dberrors
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -40,7 +39,7 @@ func TestRetrySerializationFailureRetriesOnlySerializationFailures(t *testing.T)
 			if tc.wantErr == nil {
 				require.NoError(t, err)
 			} else {
-				require.True(t, errors.Is(err, tc.wantErr) || err == tc.wantErr)
+				require.ErrorIs(t, err, tc.wantErr)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -61,7 +62,7 @@ func (s *ProgramEventService) UpdateProgramEvent(
 func (s *ProgramEventService) loadProgramEventForUpdate(ctx context.Context, eventID string) (model.ProgramEvent, error) {
 	var event model.ProgramEvent
 	if err := s.db.WithContext(ctx).First(&event, "id = ?", eventID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return event, errs.NotFound("program event", eventID)
 		}
 		return event, errs.Internal(err)
@@ -215,7 +216,7 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.ProgramEvent
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", event.ID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", event.ID)
 			}
 			return errs.Internal(err)
@@ -432,7 +433,7 @@ func validateProgramEventSeriesRelation(ctx context.Context, tx *gorm.DB, eventI
 	}
 	var series model.ProgramEventSeries
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&series, "id = ?", *seriesID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.InvalidArgument("series_id", "program event series does not exist")
 		}
 		return errs.Internal(err)
@@ -446,7 +447,7 @@ func validateProgramEventSeriesRelation(ctx context.Context, tx *gorm.DB, eventI
 	if err == nil {
 		return errs.InvalidArgument("series_order", "must be unique within the program event series")
 	}
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.Internal(err)
 	}
 	return nil

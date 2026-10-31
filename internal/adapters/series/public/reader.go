@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"errors"
 
 	"gorm.io/gorm"
 
@@ -87,7 +88,7 @@ func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string)
 		query = query.Where("s.slug = ?", idOrSlug)
 	}
 	if err := query.Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("series", idOrSlug)
 		}
 		return nil, errs.Internal(err)

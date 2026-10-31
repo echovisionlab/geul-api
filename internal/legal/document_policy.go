@@ -2,6 +2,7 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -149,7 +150,7 @@ func RequireEditableTranslationMutationWithDB(
 	if err := db.WithContext(ctx).Table(policy.table).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound(entityType, entityID)
 		}
 		return errs.Internal(err)
@@ -220,7 +221,7 @@ func RequireLockedSourceLocaleEdit(
 	if err := tx.WithContext(ctx).Table(policy.table).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound(entityType, entityID)
 		}
 		return errs.Internal(err)

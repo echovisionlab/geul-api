@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -151,7 +152,7 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 ) (*email.RenderedEmail, error) {
 	var root model.Campaign
 	if err := db.WithContext(ctx).First(&root, "id = ?", campaignID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("campaign not found: %s", campaignID)
 		}
 		return nil, fmt.Errorf("load Campaign email root: %w", err)

@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -219,7 +220,7 @@ func (s *LabelService) Get(
 	}
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("label not found")
 		}
 		return nil, errs.Internal(err)
@@ -276,7 +277,7 @@ func (s *LabelService) buildLabelResponseInTransaction(
 		Clauses(clause.Locking{Strength: "SHARE"}).
 		Where("id = ?", labelID).
 		Take(&current).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("label not found")
 		}
 		return nil, errs.Internal(err)

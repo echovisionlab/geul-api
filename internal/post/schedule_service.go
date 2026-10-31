@@ -2,6 +2,7 @@ package post
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -62,7 +63,7 @@ func (s *PostService) SchedulePost(
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -114,7 +115,7 @@ func (s *PostService) CancelPostSchedule(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -171,7 +172,7 @@ func (s *PostService) RepublishPost(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)

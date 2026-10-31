@@ -2,6 +2,7 @@ package emailauthoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -273,7 +274,7 @@ func (s *EmailLayoutService) GetEmailLayout(
 
 	var layout model.EmailLayout
 	if err := s.db.WithContext(ctx).First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email layout", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -623,7 +624,7 @@ func lockMutableEmailLayout(
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		First(&layout, "id = ?", layoutID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.EmailLayout{}, errs.NotFound("email layout", layoutID)
 		}
 		return model.EmailLayout{}, err
@@ -695,7 +696,7 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("email layout", req.Msg.Id)
 			}
 			return err
@@ -782,7 +783,7 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 
 	var layout model.EmailLayout
 	if err := s.db.WithContext(ctx).First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("email layout", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

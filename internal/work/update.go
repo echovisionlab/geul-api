@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -80,7 +81,7 @@ func (s *WorkService) UpdateWork(
 func loadWorkForUpdate(ctx context.Context, db *gorm.DB, workID string) (model.Work, error) {
 	var work model.Work
 	err := db.WithContext(ctx).First(&work, "id = ?", workID).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.Work{}, errs.NotFound("work", workID)
 	}
 	if err != nil {

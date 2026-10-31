@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -122,7 +123,7 @@ func lockPageMenuTargetStateForUpdate(
 		Select("slug", "show_title", "content_document_id", "updated_at", "access_policy").
 		Where("id = ?", pageID).
 		Take(&state).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("page", pageID)
 		}
 		return nil, errs.Internal(err)
@@ -499,7 +500,7 @@ func (s *PageService) DeletePage(
 	// First get the page so its domain relations can be removed atomically.
 	var page model.Page
 	if err := s.db.WithContext(ctx).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("page", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -621,7 +622,7 @@ func (s *PageService) PublishPage(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&page, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -716,7 +717,7 @@ func (s *PageService) UnpublishPage(
 	lifecycleChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.Id)
 			}
 			return errs.Internal(err)

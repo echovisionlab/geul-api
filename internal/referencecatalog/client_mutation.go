@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -118,7 +119,7 @@ func (s *ClientService) UpdateClient(
 	var client model.Client
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("client", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -201,7 +202,7 @@ func (s *ClientService) DeleteClient(
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		var client model.Client
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("client", req.Msg.Id)
 			}
 			return errs.Internal(err)

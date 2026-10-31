@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -257,7 +258,7 @@ func (s *WorkService) GetWork(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
 		First(&work).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -677,7 +678,7 @@ func (s *WorkService) DeleteWork(
 	// First get the work to check featured image
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -779,7 +780,7 @@ func (s *WorkService) PublishWork(
 
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -860,7 +861,7 @@ func (s *WorkService) UnpublishWork(
 
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -935,7 +936,7 @@ func (s *WorkService) SetWorkFeaturedImage(
 	// Verify work exists.
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.WorkId)
 		}
 		return nil, errs.Internal(err)
@@ -1002,7 +1003,7 @@ func (s *WorkService) SetWorkFeaturedImage(
 		)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("file", req.Msg.FileId)
 		}
 		return nil, err
@@ -1087,7 +1088,7 @@ func (s *WorkService) DeleteWorkFeaturedImage(
 		)
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("work", req.Msg.WorkId)
 		}
 		return nil, err

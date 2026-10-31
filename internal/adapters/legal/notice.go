@@ -2,6 +2,7 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -87,7 +88,7 @@ func (r *NoticeRuntime) CreateRun(
 	var template model.EmailTemplate
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("event_key = ? AND is_active = ?", eventKey, true).First(&template).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.FailedPrecondition("active legal notice email template is unavailable")
 		}
 		return nil, err
@@ -104,7 +105,7 @@ func (r *NoticeRuntime) CreateRun(
 		var layout model.EmailLayout
 		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
 			Select("id", "updated_at").First(&layout, "id = ?", trimmedID).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.FailedPrecondition("legal notice email layout no longer exists")
 			}
 			return nil, err

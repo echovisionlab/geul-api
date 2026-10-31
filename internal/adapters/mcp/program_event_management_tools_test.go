@@ -269,7 +269,7 @@ func TestProgramEventManagementPreservesOwningAuthorityAndSafeErrors(t *testing.
 					t.Fatalf("authority bypass or leaked result: calls=%v, result=%#v, err=%v", owner.calls, result, err)
 				}
 				if code == connect.CodeInternal {
-					if err != owner.err {
+					if err != owner.err { //nolint:errorlint // asserts the error is returned unchanged
 						t.Fatalf("internal error changed before generic handler: %v", err)
 					}
 					return

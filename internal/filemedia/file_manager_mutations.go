@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -53,7 +54,7 @@ func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[manag
 			s.testAfterFileMutationPrincipal([]string{*fileID})
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "file_name", "extension", "delete_requested_at").Where("id = ?", *fileID).First(&file).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("file", *fileID)
 			}
 			return errs.Internal(err)

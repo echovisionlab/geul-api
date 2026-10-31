@@ -2,6 +2,7 @@ package og
 
 import (
 	"context"
+	"errors"
 
 	"gorm.io/gorm"
 
@@ -33,7 +34,7 @@ func ResolveExactLocalizedGeneration(
 		Joins("JOIN og_generation AS generation ON generation.id = target.latest_generation_id").
 		Where("target.entity_type = ? AND target.entity_id = ? AND target.target_kind = 'locale' AND target.locale = ?", entityType, entityID, locale).
 		Take(&row).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return LocalizedGenerationMissing, nil
 	}
 	if err != nil {

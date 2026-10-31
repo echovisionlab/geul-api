@@ -2,6 +2,7 @@ package public
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -69,7 +70,7 @@ func (s *ShareLinkService) Validate(
 	}
 
 	if err := s.db.WithContext(ctx).First(&link, "token = ?", token).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "sharelink", "operation", "validate_share_link", "outcome", "failed", failurecause.Attr(err), "reason", "not_found")
 			return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
 		}

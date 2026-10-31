@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -113,7 +114,7 @@ func lockPostRootForLocaleWrite(
 		Select("id").
 		Where("id = ?", postID).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("post", postID)
 		}
 		return errs.Internal(err)

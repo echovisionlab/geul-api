@@ -9,6 +9,7 @@ linters:
     - bodyclose
     - durationcheck
     - errcheck
+    - errorlint
     - govet
     - ineffassign
     - makezero
@@ -20,6 +21,10 @@ linters:
     - unused
     - wastedassign
   settings:
+    errorlint:
+      errorf: false
+      asserts: true
+      comparison: true
     errcheck:
       exclude-functions:
         # Read-side closes: response bodies report nothing useful on Close, and

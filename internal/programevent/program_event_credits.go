@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -117,7 +118,7 @@ func (s *ProgramEventService) UpdateProgramEventCredit(
 		}
 		if err := tx.WithContext(ctx).
 			First(&credit, "event_id = ? AND id = ?", req.Msg.EventId, req.Msg.CreditId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event credit", req.Msg.CreditId)
 			}
 			return errs.Internal(err)
@@ -181,7 +182,7 @@ func (s *ProgramEventService) DeleteProgramEventCredit(
 		}
 		var credit model.ProgramEventCredit
 		if err := tx.WithContext(ctx).First(&credit, "event_id = ? AND id = ?", req.Msg.EventId, req.Msg.CreditId).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event credit", req.Msg.CreditId)
 			}
 			return errs.Internal(err)

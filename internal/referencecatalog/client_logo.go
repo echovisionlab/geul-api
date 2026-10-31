@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -126,7 +127,7 @@ func (s *ClientService) SetClientLogo(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("client", req.Msg.ClientId)
 		}
 		return nil, errs.Internal(err)
@@ -231,7 +232,7 @@ func (s *ClientService) DeleteClientLogo(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("client", req.Msg.ClientId)
 		}
 		return nil, errs.Internal(err)

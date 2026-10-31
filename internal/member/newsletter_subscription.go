@@ -2,6 +2,7 @@ package member
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -49,7 +50,7 @@ func newsletterSubscriptionState(
 	err := db.WithContext(ctx).
 		Where("identity_id = ?", identityID).
 		Take(&row).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &managev1.NewsletterSubscriptionState{}, nil
 	}
 	if err != nil {

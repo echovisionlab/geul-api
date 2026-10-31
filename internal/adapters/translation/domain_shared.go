@@ -2,6 +2,7 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -71,7 +72,7 @@ func legalSourceLocaleAudit(
 		if err := tx.WithContext(ctx).Table(table).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound(entityType, entityID)
 			}
 			return errs.Internal(err)
@@ -162,7 +163,7 @@ func genericInterchangeView(
 		if err := tx.WithContext(ctx).Table(definition.RootTable).
 			Clauses(clause.Locking{Strength: "SHARE"}).
 			Select(columns).Where("id = ?", entityID).Take(&root).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound(string(domain), entityID)
 			}
 			return errs.Internal(err)
@@ -198,7 +199,7 @@ func genericSourceLocaleEdit(
 			}
 			if err := tx.WithContext(ctx).Table(definition.RootTable).Select("status").
 				Where("id = ?::uuid", entityID).Take(&root).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return errs.NotFound(string(domain), entityID)
 				}
 				return errs.Internal(err)

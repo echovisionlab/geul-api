@@ -2,6 +2,7 @@ package referencecatalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -49,7 +50,7 @@ func (s *MapPlaceService) GetMapPlace(
 
 	var place model.MapPlace
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&place).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("map place", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

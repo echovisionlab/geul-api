@@ -2,6 +2,7 @@ package label
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -163,7 +164,7 @@ func (s *LabelService) SetLabelImage(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.LabelId)
 		}
 		return nil, errs.Internal(err)
@@ -252,7 +253,7 @@ func (s *LabelService) DeleteLabelImage(
 	})
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.LabelId)
 		}
 		return nil, errs.Internal(err)

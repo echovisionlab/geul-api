@@ -2,6 +2,7 @@ package og
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -77,7 +78,7 @@ func (s *AdminService) GetLatestOgGeneration(ctx context.Context, req *connect.R
 	}
 	var target model.OgGenerationTarget
 	if err := query.Take(&target).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("og_generation_target", entityID)
 		}
 		return nil, errs.Internal(err)
@@ -115,7 +116,7 @@ func (s *AdminService) GetOgGenerationRun(ctx context.Context, req *connect.Requ
 	}
 	var run model.OgGenerationRun
 	if err := s.db.WithContext(ctx).First(&run, "id = ?", runID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("og_generation_run", runID)
 		}
 		return nil, errs.Internal(err)
@@ -172,7 +173,7 @@ func loadOgGenerationView(ctx context.Context, db *gorm.DB, generationID string)
 	}
 	var generation model.OgGeneration
 	if err := db.WithContext(ctx).First(&generation, "id = ?", generationID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, errs.NotFound("og_generation", generationID)
 		}
 		return nil, nil, errs.Internal(err)
@@ -213,7 +214,7 @@ func (s *AdminService) ogGenerationToProto(ctx context.Context, generation *mode
 func (s *AdminService) loadReadyOgGenerationAsset(ctx context.Context, generationID string) (*commonv1.AssetRef, error) {
 	var storedAsset model.PublicAsset
 	if err := s.db.WithContext(ctx).First(&storedAsset, "id = ?", generationID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, errs.Internal(err)

@@ -145,7 +145,7 @@ func (s *FileService) loadCompletedRemoteImportFile(
 ) (model.File, bool, error) {
 	var file model.File
 	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.File{}, false, nil
 		}
 		return model.File{}, false, fmt.Errorf("load existing remote import file: %w", err)

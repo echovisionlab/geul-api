@@ -2,6 +2,7 @@ package emaildelivery
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -36,7 +37,7 @@ func GetActiveEmailSuppression(ctx context.Context, db *gorm.DB, email string) (
 	if err == nil {
 		return &suppression, nil
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return nil, err
@@ -131,7 +132,7 @@ func SuppressEmailAddress(
 				"suppressed_at": now,
 			}).Error
 		}
-		if err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 

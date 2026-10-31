@@ -159,7 +159,7 @@ func lockDueUnreferencedRetiredGeneration(tx *gorm.DB, generationID string, now 
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("id", "file_id", "status", "object_prefix", "delete_after").
 		Where("id = ?", generationID).Take(&generation).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if stderrors.Is(err, gorm.ErrRecordNotFound) {
 			return model.MediaGeneration{}, false, nil
 		}
 		return model.MediaGeneration{}, false, err

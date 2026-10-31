@@ -415,7 +415,7 @@ func (s *PostService) UpdatePost(
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -604,7 +604,7 @@ func (s *PostService) DeletePost(
 	}
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -708,7 +708,7 @@ func (s *PostService) PublishPost(
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -774,7 +774,7 @@ func (s *PostService) UnpublishPost(
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -829,7 +829,7 @@ func (s *PostService) ArchivePost(
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
 			}
 			return errs.Internal(err)
@@ -904,7 +904,7 @@ func (s *PostService) SetPostFeaturedImage(
 	// Verify post exists and check permission.
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.PostId)
 		}
 		return nil, errs.Internal(err)
@@ -952,7 +952,7 @@ func (s *PostService) SetPostFeaturedImage(
 		return nil
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("file", req.Msg.FileId)
 		}
 		return nil, err
@@ -987,7 +987,7 @@ func (s *PostService) DeletePostFeaturedImage(
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.PostId)
 		}
 		return nil, errs.Internal(err)

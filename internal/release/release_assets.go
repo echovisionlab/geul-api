@@ -2,6 +2,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -33,7 +34,7 @@ func (s *ReleaseService) SetReleaseArtwork(
 	if err := s.db.WithContext(ctx).
 		Select("id").
 		First(&release, "id = ?", req.Msg.ReleaseId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.ReleaseId)
 		}
 		return nil, errs.Internal(err)
@@ -45,7 +46,7 @@ func (s *ReleaseService) SetReleaseArtwork(
 	// Verify file exists
 	var file model.File
 	if err := s.db.WithContext(ctx).First(&file, "id = ?", req.Msg.FileId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("file", req.Msg.FileId)
 		}
 		return nil, errs.Internal(err)
@@ -70,7 +71,7 @@ func (s *ReleaseService) SetReleaseArtwork(
 		if err == nil && existing.FileID == req.Msg.FileId {
 			return nil
 		}
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		// Delete existing artwork (DB record)
@@ -138,7 +139,7 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 	if err := s.db.WithContext(ctx).
 		Select("id").
 		First(&release, "id = ?", req.Msg.ReleaseId).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("release", req.Msg.ReleaseId)
 		}
 		return nil, errs.Internal(err)
@@ -159,7 +160,7 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 			return err
 		}
 		var existing model.ReleaseFile
-		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).First(&existing).Error; err == gorm.ErrRecordNotFound {
+		if err := tx.Where("release_id = ?", req.Msg.ReleaseId).First(&existing).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		} else if err != nil {
 			return err

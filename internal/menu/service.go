@@ -3,6 +3,7 @@ package menu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -122,7 +123,7 @@ func (s *MenuService) GetMenuById(
 
 	var menu model.Menu
 	if err := s.db.WithContext(ctx).First(&menu, "id = ?", id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("menu", id)
 		}
 		return nil, errs.Internal(fmt.Errorf("failed to get menu: %w", err))
@@ -340,7 +341,7 @@ func (s *MenuService) UpdateMenu(
 	}
 	menu, _, err := s.applyMenuUpdate(ctx, id, req.Msg, update)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("menu", id)
 		}
 		return nil, errs.Internal(fmt.Errorf("failed to update menu: %w", err))
@@ -378,7 +379,7 @@ func (s *MenuService) DeleteMenu(
 		}
 		menu, err := lockMenuForUpdate(ctx, tx, menuID)
 		if err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("menu", menuID)
 			}
 			return errs.Internal(err)

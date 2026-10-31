@@ -2,6 +2,7 @@ package mediaruntime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -121,7 +122,7 @@ func (p *OGProcess) Shutdown(ctx context.Context) error {
 	}
 	if !p.stopping {
 		p.stopping = true
-		if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil && err != os.ErrProcessDone {
+		if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			slog.ErrorContext(ctx, "Failed to signal OG worker shutdown", failurecause.Attr(err))
 		}
 	}
@@ -130,7 +131,7 @@ func (p *OGProcess) Shutdown(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		if err := p.cmd.Process.Kill(); err != nil && err != os.ErrProcessDone {
+		if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			slog.ErrorContext(ctx, "Failed to kill OG worker", failurecause.Attr(err))
 		}
 		<-done

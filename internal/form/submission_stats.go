@@ -1,21 +1,23 @@
 package form
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
-	"log/slog"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
 )
 
 func (s *FormService) GetFormSubmissionStats(
@@ -37,7 +39,7 @@ func (s *FormService) GetFormSubmissionStats(
 
 	var form model.Form
 	if err := s.db.WithContext(ctx).Select("id").First(&form, "id = ?", formID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("form", formID)
 		}
 		return nil, errs.Internal(err)

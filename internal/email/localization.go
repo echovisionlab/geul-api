@@ -2,6 +2,7 @@ package email
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -143,7 +144,7 @@ func loadExactCanonicalEmailTemplateSourceRow(
 		Where("entity_id = ? AND locale = ?", templateID, locale).
 		Where("content_html IS NOT NULL").
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -261,7 +262,7 @@ func loadExactCanonicalEmailLayoutSourceRow(
 		Where("entity_id = ? AND locale = ?", layoutID, locale).
 		Where("html_content IS NOT NULL").
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -296,7 +297,7 @@ func loadEmailSourceLocale(ctx context.Context, db *gorm.DB, entityType, entityI
 		Select("source_locale").
 		Where("id = ?", entityID).
 		Take(&sourceState).Error; err != nil {
-		if err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			slog.Warn("failed to load email translation source locale", "entity_type", entityType, "entity_id", entityID, "error", err)
 		}
 		return ""

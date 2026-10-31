@@ -152,7 +152,7 @@ func (s *PublicAssetCleanup) deleteExpiredUnready(ctx context.Context, assetID s
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Select("id", "kind", "status", "object_key", "created_at").
 			Where("id = ?", assetID).Take(&asset).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if stderrors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
 			return fmt.Errorf("lock expired public asset %s: %w", assetID, err)

@@ -3,6 +3,7 @@ package post
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -316,7 +317,7 @@ func LoadLocalizedPostContentProjectionForPublic(
 	if err := db.WithContext(ctx).
 		Table("post").Select("source_locale").Where("id = ?::uuid", postID).
 		Take(&sourceState).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, "", errs.NotFound("post", postID)
 		}
 		return nil, "", errs.Internal(err)

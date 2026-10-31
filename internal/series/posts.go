@@ -2,6 +2,7 @@ package series
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"time"
@@ -32,7 +33,7 @@ func (s *SeriesService) AssignPostToSeries(
 	}
 	if err := s.db.WithContext(ctx).Table("post").
 		Select("series_id").Where("id = ?", req.Msg.PostId).Take(&observed).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.PostId)
 		}
 		return nil, errs.Internal(err)

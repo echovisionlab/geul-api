@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -147,7 +148,7 @@ func queryMultipartUploadCandidate(
 		Order("CASE WHEN status = 'finalizing' THEN 0 ELSE 1 END").
 		Order("last_activity_at DESC").
 		First(result).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
 	return err == nil, err

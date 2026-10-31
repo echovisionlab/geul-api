@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -661,7 +662,7 @@ func (s *ProgramEventService) setProgramEventStatus(
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Select("id", "status", "published_at", "updated_at").
 			First(&current, "id = ?", id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", id)
 			}
 			return errs.Internal(err)

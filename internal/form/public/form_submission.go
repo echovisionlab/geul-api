@@ -270,8 +270,8 @@ func enforceDuplicateFormSubmissionPolicy(tx *gorm.DB, form *model.Form, memberI
 }
 
 func normalizeFormSubmissionError(err error) error {
-	if connectErr, ok := err.(*connect.Error); ok {
-		return connectErr
+	if _, ok := errors.AsType[*connect.Error](err); ok {
+		return errs.Internal(err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("form not found")

@@ -2,6 +2,7 @@ package sharelinkadapter
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -38,7 +39,7 @@ func (r *PublicTargetResolver) Resolve(ctx context.Context, entityType managev1.
 		Slug *string `gorm:"column:slug"`
 	}
 	if err := r.db.WithContext(ctx).Table(table).Select("slug").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return sharelinkpublic.Target{}, nil
 		}
 		return sharelinkpublic.Target{}, err
@@ -52,7 +53,7 @@ func (r *PublicTargetResolver) resolveLegal(ctx context.Context, entityType mana
 		EffectiveFrom *time.Time `gorm:"column:effective_from"`
 	}
 	if err := r.db.WithContext(ctx).Table(table).Select("status", "effective_from").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return sharelinkpublic.Target{}, nil
 		}
 		return sharelinkpublic.Target{}, err

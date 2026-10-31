@@ -207,7 +207,7 @@ func (s *LabelService) GetLabelEditorData(
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
 		First(&label).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)
@@ -704,7 +704,7 @@ func (s *LabelService) DeleteLabel(
 	if err := s.db.WithContext(ctx).
 		Select("id").
 		First(&label, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("label", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

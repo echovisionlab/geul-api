@@ -90,7 +90,7 @@ func (s *AudienceService) RestoreSegment(
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&segment, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("segment not found")
 			}
 			return errs.Internal(err)
@@ -149,7 +149,7 @@ func archiveSegmentOnce(
 ) error {
 	var observed model.AudienceSegment
 	if err := tx.WithContext(ctx).Select("id", "archived_at").First(&observed, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")
 		}
 		return errs.Internal(err)
@@ -196,7 +196,7 @@ func archiveSegmentOnce(
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		First(&segment, "id = ?", segmentID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")
 		}
 		return errs.Internal(err)

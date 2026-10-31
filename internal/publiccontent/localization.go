@@ -2,6 +2,7 @@ package publiccontent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -345,7 +346,7 @@ func loadSourceLocale(ctx context.Context, db *gorm.DB, spec Spec, entityID, fal
 		Select("source_locale").
 		Where("id = ?", entityID).
 		Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return normalizedLocale(fallback, defaultLocale), nil
 		}
 		return "", err

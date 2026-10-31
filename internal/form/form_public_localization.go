@@ -2,6 +2,7 @@ package form
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 
@@ -44,7 +45,7 @@ func ResolvePublicLocalization(
 		Locale string `gorm:"column:source_locale"`
 	}
 	if err := db.WithContext(ctx).Table("form").Select("source_locale").Where("id = ?", formID).Take(&rootLocaleRow).Error; err != nil {
-		if err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return formSourceFallbackSelection(requestedLocale, sourceLocale), err
 		}
 		return formSourceFallbackSelection(requestedLocale, sourceLocale), errs.NotFound("form", formID)

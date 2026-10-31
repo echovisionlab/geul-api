@@ -2,6 +2,7 @@ package sharelink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -127,7 +128,7 @@ func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[mana
 	}()
 
 	if err := s.db.WithContext(ctx).First(&link, "id = ?", req.Msg.Id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("share link", req.Msg.Id)
 		}
 		return nil, errs.Internal(err)

@@ -2,6 +2,7 @@ package programevent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -212,7 +213,7 @@ func (s *ProgramEventTypeService) DeleteProgramEventType(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var eventType model.ProgramEventType
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&eventType, "id = ?", req.Msg.Id).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event type", req.Msg.Id)
 			}
 			return errs.Internal(err)

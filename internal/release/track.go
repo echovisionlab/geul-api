@@ -420,7 +420,7 @@ func (s *TrackService) UpdateTrack(
 
 	var track model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -548,7 +548,7 @@ func (s *TrackService) DeleteTrack(
 	// First fetch the track to get the release_id for permission check
 	var track model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.Id).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -626,7 +626,7 @@ func (s *TrackService) SetTrackCredits(
 	// Verify track exists
 	var track model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.TrackId).First(&track).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)
@@ -671,7 +671,7 @@ func (s *TrackService) ReorderTracks(
 	// Get release_id from first track
 	var firstTrack model.Track
 	if err := s.db.WithContext(ctx).Where("id = ?", req.Msg.TrackIds[0]).First(&firstTrack).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("track not found")
 		}
 		return nil, errs.Internal(err)

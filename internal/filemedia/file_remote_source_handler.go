@@ -3,8 +3,8 @@ package filemedia
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -78,8 +80,8 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	var excess [1]byte
 	n, err := reader.Read(excess[:])
-	if n != 0 || err != io.EOF || written < request.config.MinSize || (source.response.ContentLength >= 0 && written != source.response.ContentLength) {
-		if err == nil || err == io.EOF {
+	if n != 0 || !errors.Is(err, io.EOF) || written < request.config.MinSize || (source.response.ContentLength >= 0 && written != source.response.ContentLength) {
+		if err == nil || errors.Is(err, io.EOF) {
 			err = fmt.Errorf("remote source length does not match expected bounds")
 		}
 		slog.ErrorContext(r.Context(), "Remote upload source stream incomplete", failurecause.Attr(err), "bytes_written", written, "excess_bytes", n)
