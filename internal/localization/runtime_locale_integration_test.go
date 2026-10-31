@@ -10,6 +10,7 @@ import (
 )
 
 func TestRuntimeCatalogMatchesCanonicalLocalesIntegration(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
 		ApplyAppSchemaSQL: true,
 	})

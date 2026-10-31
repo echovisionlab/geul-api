@@ -20,6 +20,7 @@ import (
 )
 
 func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(t.Context(), actor.AuthUserInfo())

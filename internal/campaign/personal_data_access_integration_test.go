@@ -21,6 +21,7 @@ import (
 )
 
 func TestCampaignRecipientPersonalDataAccessPersistsExactScopeIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())

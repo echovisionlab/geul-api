@@ -31,6 +31,7 @@ func (l programEventSeriesQueryCounter) Trace(ctx context.Context, begin time.Ti
 }
 
 func TestPublicProgramEventSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	suffix := uuid.NewString()
 	for index := 0; index < 12; index++ {

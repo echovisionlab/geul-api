@@ -19,6 +19,7 @@ func mapThemeMemberContext(user *testutil.OryUser) context.Context {
 }
 
 func TestManageMapThemeRPCsRequireAdmin(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	member := stack.CreateUser(t, policyv1.Role.User().ID())

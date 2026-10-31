@@ -16,6 +16,7 @@ import (
 )
 
 func TestFormTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	now := time.Now().UTC()
 	formID := seedGuardedFormLocales(t, db, now)

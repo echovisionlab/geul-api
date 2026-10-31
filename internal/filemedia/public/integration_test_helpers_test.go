@@ -15,8 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-var publicIntegrationSpiceDB *auth.SpiceDBClient
-
 func TestMain(m *testing.M) {
 	flag.Parse()
 	suite, err := testutil.StartOryIntegrationSuite(context.Background())
@@ -38,15 +36,10 @@ func newPublicIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	require.NotNil(t, stack)
-	publicIntegrationSpiceDB = stack.SpiceDBClient
 	return stack.DB
 }
 
 func publicIntegrationSpiceDBClient(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
-	if publicIntegrationSpiceDB == nil {
-		stack := testutil.SetupOryStack(t)
-		publicIntegrationSpiceDB = stack.SpiceDBClient
-	}
-	return publicIntegrationSpiceDB
+	return testutil.SetupOryStack(t).SpiceDBClient
 }

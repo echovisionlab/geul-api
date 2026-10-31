@@ -22,6 +22,7 @@ import (
 )
 
 func TestSiteSettingsLoaderAndDefaultThemeAuditCommitOnlyActualChangesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings gap audit admin")
@@ -74,6 +75,7 @@ func TestSiteSettingsLoaderAndDefaultThemeAuditCommitOnlyActualChangesIntegratio
 }
 
 func TestSiteSettingsLoaderAndDefaultThemeAuditFailureRollsBackIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings gap rollback admin")

@@ -29,7 +29,7 @@ type suiteOptions struct {
 const integrationGoWorkOff = "off"
 
 func parseOptions(args []string) (suiteOptions, error) {
-	jobs := 2
+	jobs := 4
 
 	flags := flag.NewFlagSet("integration-suite", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -52,8 +52,8 @@ func parseOptions(args []string) (suiteOptions, error) {
 	if flags.NArg() != 0 {
 		return suiteOptions{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
-	if options.Jobs < 1 || options.Jobs > 4 {
-		return suiteOptions{}, fmt.Errorf("integration jobs must be between 1 and 4")
+	if options.Jobs < 1 || options.Jobs > 16 {
+		return suiteOptions{}, fmt.Errorf("integration jobs must be between 1 and 16")
 	}
 	if options.GoWork != integrationGoWorkOff && !filepath.IsAbs(options.GoWork) {
 		return suiteOptions{}, fmt.Errorf("integration go.work must be off or an absolute path")
@@ -139,9 +139,9 @@ func bandGoTestArguments(band integrationBand, jobs int) []string {
 }
 
 func packageGoTestArguments(packagePath, run string, resources integrationResourceMode, jobs int) []string {
-	parallelTests := 1
-	if resources == integrationPostgresOnly {
-		parallelTests = jobs
+	parallelTests := jobs
+	if resources == integrationRuntimeExclusive {
+		parallelTests = 1
 	}
 	arguments := []string{
 		"test",

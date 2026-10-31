@@ -46,6 +46,7 @@ func (l *releaseDownloadPhaseOneBlockingLogger) Trace(
 }
 
 func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name       string
 		status     string
@@ -133,6 +134,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 }
 
 func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name       string
 		status     string

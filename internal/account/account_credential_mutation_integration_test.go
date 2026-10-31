@@ -60,6 +60,7 @@ func (m *credentialMutationIdentityManager) DeleteIdentityCredentialIdentifier(
 }
 
 func TestOIDCUnlinkRevokesSessionsBeforeCredentialMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "unlink-revoke-" + identityID + "@example.test"
@@ -79,6 +80,7 @@ func TestOIDCUnlinkRevokesSessionsBeforeCredentialMutationIntegration(t *testing
 }
 
 func TestOIDCUnlinkRetryConvergesMemberEmailAfterCredentialDeletionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "unlink-retry-" + identityID + "@example.test"
@@ -111,6 +113,7 @@ func TestOIDCUnlinkRetryConvergesMemberEmailAfterCredentialDeletionIntegration(t
 }
 
 func TestOIDCUnlinkRejectsRemovingOnlySourceOfMemberPrimaryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	providerEmail := "unlink-primary-" + identityID + "@example.test"
@@ -138,6 +141,7 @@ func TestOIDCUnlinkRejectsRemovingOnlySourceOfMemberPrimaryIntegration(t *testin
 }
 
 func TestOIDCUnlinkAllowsPrimaryWhenEmailCodeSharesTheSameAddressIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	providerEmail := "shared-" + identityID + "@example.test"

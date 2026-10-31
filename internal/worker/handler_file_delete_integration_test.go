@@ -34,8 +34,8 @@ func (deletion signalingFileAuthorizationDeletion) DeleteAndVerify(
 }
 
 func TestFileDeleteConsumerFinalizesPendingPostgresRowAfterS3SuccessIntegration(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	db := pg.DB
 	now := time.Now().UTC()
 	file := model.File{
@@ -70,8 +70,8 @@ func TestFileDeleteConsumerFinalizesPendingPostgresRowAfterS3SuccessIntegration(
 }
 
 func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegration(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	db := pg.DB
 	now := time.Now().UTC()
 	file := model.File{
@@ -134,8 +134,8 @@ func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegr
 }
 
 func TestFileDeleteFinalizerUsesGlobalAuthorizationMutationFenceIntegration(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	db := pg.DB
 	now := time.Now().UTC()
 	file := model.File{

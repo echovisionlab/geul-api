@@ -62,33 +62,35 @@ func (m *concurrentProvisioningIdentity) UpdateIdentityExternalID(ctx context.Co
 }
 
 func TestProvisionRegistrationConcurrentHooksConvergeOnOneMember(t *testing.T) {
+	t.Parallel()
 	stack := newConcurrentServiceIntegrationPostgres(t)
 	oryStack := testutil.SetupOryStack(t)
 	spiceDB := oryStack.SpiceDBClient
 	admin := oryStack.CreateUser(t, policyv1.Role.Admin().ID())
 	identityID := uuid.NewString()
+	memberEmail := "member-" + identityID + "@example.test"
 	require.NoError(t, stack.DB.Exec(`
 		INSERT INTO kratos.identities (id, external_id, schema_id, traits, state, created_at, updated_at)
-		VALUES (?::uuid, NULL, 'user', jsonb_build_object('email', 'member@example.test'), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, identityID).Error)
+		VALUES (?::uuid, NULL, 'user', jsonb_build_object('email', ?::text), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, identityID, memberEmail).Error)
 
 	identity := &concurrentProvisioningIdentity{db: stack.DB, identity: auth.Identity{
 		ID:       identityID,
 		SchemaID: "user",
 		State:    auth.KratosStateActive,
-		Traits:   map[string]interface{}{"email": "member@example.test"},
+		Traits:   map[string]interface{}{"email": memberEmail},
 		VerifiableAddresses: []auth.VerifiableAddress{{
-			Via: "email", Value: "member@example.test", Verified: true,
+			Via: "email", Value: memberEmail, Verified: true,
 		}},
 		Credentials: map[string]auth.Credential{
-			"code": {Type: "code", Identifiers: []string{"member@example.test"}},
+			"code": {Type: "code", Identifiers: []string{memberEmail}},
 		},
 		ExternalID: "",
 	}}
 	provisioner := integrationMemberProvisioner(stack.DB, identity, spiceDB)
 	input := RegistrationMemberInput{
 		IdentityID:      identityID,
-		Email:           "member@example.test",
+		Email:           memberEmail,
 		PreferredLocale: "ko-KR",
 	}
 
@@ -149,6 +151,7 @@ func TestProvisionRegistrationConcurrentHooksConvergeOnOneMember(t *testing.T) {
 }
 
 func TestAllocateMemberUUIDSkipsExistingUUIDNickname(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	claimedUUIDNickname := uuid.NewString()
 	availableUUID := uuid.NewString()
@@ -170,10 +173,11 @@ func TestAllocateMemberUUIDSkipsExistingUUIDNickname(t *testing.T) {
 }
 
 func TestProvisionRegistrationIgnoresNonCanonicalEmailCodeIdentifiers(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
-	const currentEmail = "z-current@example.test"
-	const secondaryEmail = "a-secondary@example.test"
+	currentEmail := "z-current-" + identityID + "@example.test"
+	secondaryEmail := "a-secondary-" + identityID + "@example.test"
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.identities (id, external_id, schema_id, traits, state, created_at, updated_at)
 		VALUES (?::uuid, NULL, 'user', jsonb_build_object('email', ?::text), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -205,8 +209,9 @@ func TestProvisionRegistrationIgnoresNonCanonicalEmailCodeIdentifiers(t *testing
 }
 
 func TestProvisionRegistrationEnforcesDeletedMemberEmailReuseHold(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
-	const email = "returning@example.test"
+	email := "returning-" + uuid.NewString() + "@example.test"
 	now := time.Now().UTC()
 	deletedAt := now.Add(-6 * 24 * time.Hour)
 	deletedMemberID := uuid.NewString()
@@ -258,30 +263,32 @@ func TestProvisionRegistrationEnforcesDeletedMemberEmailReuseHold(t *testing.T) 
 }
 
 func TestProvisionRegistrationRejectsConflictingExternalIDBeforeMemberCreate(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
+	memberEmail := "member-" + identityID + "@example.test"
 	conflictingMemberID := uuid.NewString()
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.identities (id, external_id, schema_id, traits, state, created_at, updated_at)
-		VALUES (?::uuid, ?::text, 'user', jsonb_build_object('email', 'member@example.test'), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, identityID, conflictingMemberID).Error)
+		VALUES (?::uuid, ?::text, 'user', jsonb_build_object('email', ?::text), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, identityID, conflictingMemberID, memberEmail).Error)
 
 	identity := &concurrentProvisioningIdentity{db: db, identity: auth.Identity{
 		ID:       identityID,
 		SchemaID: "user",
 		State:    auth.KratosStateActive,
-		Traits:   map[string]interface{}{"email": "member@example.test"},
+		Traits:   map[string]interface{}{"email": memberEmail},
 		VerifiableAddresses: []auth.VerifiableAddress{{
-			Via: "email", Value: "member@example.test", Verified: true,
+			Via: "email", Value: memberEmail, Verified: true,
 		}},
 		Credentials: map[string]auth.Credential{
-			"code": {Type: "code", Identifiers: []string{"member@example.test"}},
+			"code": {Type: "code", Identifiers: []string{memberEmail}},
 		},
 		ExternalID: conflictingMemberID,
 	}}
 
 	_, err := integrationMemberProvisioner(db, identity, testutil.SetupOryStack(t).SpiceDBClient).ProvisionRegistration(t.Context(), RegistrationMemberInput{
-		IdentityID: identityID, Email: "member@example.test", PreferredLocale: "en",
+		IdentityID: identityID, Email: memberEmail, PreferredLocale: "en",
 	})
 	require.ErrorContains(t, err, "identity.external_id conflicts with the member reverse pointer")
 
@@ -293,28 +300,30 @@ func TestProvisionRegistrationRejectsConflictingExternalIDBeforeMemberCreate(t *
 }
 
 func TestProvisionRegistrationAllowsIdempotentSamePairRetry(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
+	memberEmail := "member-" + identityID + "@example.test"
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.identities (id, external_id, schema_id, traits, state, created_at, updated_at)
-		VALUES (?::uuid, NULL, 'user', jsonb_build_object('email', 'member@example.test'), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, identityID).Error)
+		VALUES (?::uuid, NULL, 'user', jsonb_build_object('email', ?::text), 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, identityID, memberEmail).Error)
 
 	identity := &concurrentProvisioningIdentity{db: db, identity: auth.Identity{
 		ID:       identityID,
 		SchemaID: "user",
 		State:    auth.KratosStateActive,
-		Traits:   map[string]interface{}{"email": "member@example.test"},
+		Traits:   map[string]interface{}{"email": memberEmail},
 		VerifiableAddresses: []auth.VerifiableAddress{{
-			Via: "email", Value: "member@example.test", Verified: true,
+			Via: "email", Value: memberEmail, Verified: true,
 		}},
 		Credentials: map[string]auth.Credential{
-			"code": {Type: "code", Identifiers: []string{"member@example.test"}},
+			"code": {Type: "code", Identifiers: []string{memberEmail}},
 		},
 	}}
 	provisioner := integrationMemberProvisioner(db, identity, testutil.SetupOryStack(t).SpiceDBClient)
 	input := RegistrationMemberInput{
-		IdentityID: identityID, Email: "member@example.test", PreferredLocale: "en",
+		IdentityID: identityID, Email: memberEmail, PreferredLocale: "en",
 	}
 
 	created, err := provisioner.ProvisionRegistration(t.Context(), input)

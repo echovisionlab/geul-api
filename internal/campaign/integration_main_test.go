@@ -41,6 +41,21 @@ func newCampaignConcurrentIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
 	require.NotNil(t, stack)
+	return openCampaignIntegrationDB(t, stack)
+}
+
+// newCampaignLocalKratosStack is for tests that write Campaign blocks or freeze
+// excluded Members. Those paths lock member JOIN kratos.identities FOR SHARE;
+// through postgres_fdw that becomes a REPEATABLE READ lock on every active
+// identity in the shared Kratos, so identity updates by concurrent tests fail
+// it with serialization errors.
+func newCampaignLocalKratosStack(t *testing.T) *testutil.OryStack {
+	t.Helper()
+	return testutil.SetupOryStackWithLocalKratos(t)
+}
+
+func openCampaignIntegrationDB(t *testing.T, stack *testutil.OryStack) *gorm.DB {
+	t.Helper()
 	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})

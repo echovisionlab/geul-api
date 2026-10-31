@@ -15,7 +15,7 @@ func TestIntegrationCatalogHasExactResourceSemantics(t *testing.T) {
 		parallelPackages bool
 	}{
 		{name: "db", resources: integrationPostgresOnly, parallelPackages: true},
-		{name: "ory", resources: integrationSharedBackend},
+		{name: "ory", resources: integrationSharedBackend, parallelPackages: true},
 		{name: "serial", resources: integrationRuntimeExclusive},
 	}
 	if len(integrationCatalog) != len(wantBands) {
@@ -52,11 +52,13 @@ func TestIntegrationResourceModesDriveBackendAndConcurrency(t *testing.T) {
 	if !ok || !db.ParallelPackages || integrationBandsNeedBackend([]integrationBand{db}) {
 		t.Fatalf("PostgreSQL-only band semantics = %#v", db)
 	}
-	for _, name := range []string{"ory", "serial"} {
-		band, ok := bandByName(name)
-		if !ok || band.ParallelPackages || !integrationBandsNeedBackend([]integrationBand{band}) {
-			t.Fatalf("backend band %s semantics = %#v", name, band)
-		}
+	ory, ok := bandByName("ory")
+	if !ok || !ory.ParallelPackages || !integrationBandsNeedBackend([]integrationBand{ory}) {
+		t.Fatalf("isolated backend band semantics = %#v", ory)
+	}
+	serial, ok := bandByName("serial")
+	if !ok || serial.ParallelPackages || !integrationBandsNeedBackend([]integrationBand{serial}) {
+		t.Fatalf("runtime-exclusive band semantics = %#v", serial)
 	}
 }
 

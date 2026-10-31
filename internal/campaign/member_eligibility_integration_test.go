@@ -7,14 +7,14 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUnonboardedMemberIsExcludedFromCampaignRecipientConsumersIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := stack.DB
 	user := stack.CreateUser(t, "user")
 	require.NoError(t, db.Exec(
 		`UPDATE member SET onboarded=FALSE WHERE id=?::uuid`, user.MemberID,

@@ -15,6 +15,7 @@ import (
 )
 
 func TestLoadMediaProcessingSnapshotIncludesOnlyReadyCanonicalOutputs(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	ctx := context.Background()
 	fileID := uuid.NewString()

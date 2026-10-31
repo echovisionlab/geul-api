@@ -19,6 +19,7 @@ import (
 )
 
 func TestWorkPublicListAndMapStatusFiltersNeverExposeDraftIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Public Work Status Admin"})

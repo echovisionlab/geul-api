@@ -15,6 +15,7 @@ import (
 )
 
 func TestCanUseAIRequiresAdminForWork(t *testing.T) {
+	t.Parallel()
 	target := &managev1.AIResourceTarget{
 		Type: managev1.AIResourceType_AI_RESOURCE_TYPE_WORK,
 		Id:   "00000000-0000-4000-8000-000000000001",

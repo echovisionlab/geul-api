@@ -19,6 +19,7 @@ import (
 // Exercise cmd/server's real registration, not a separately assembled test mux.
 // These contracts survived the split while their handlers disappeared.
 func TestMusicRoutesRegisteredInRunningAPIIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupRuntimeStack(t)
 	stack.StartBackend(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())

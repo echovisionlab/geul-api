@@ -13,6 +13,7 @@ import (
 )
 
 func TestEmailTemplateRenderSnapshotUsesExactSourceWithoutLegacySourceFlag(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 
 	var template model.EmailTemplate

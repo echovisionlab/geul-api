@@ -18,6 +18,7 @@ import (
 )
 
 func TestArtistAndLabelShareLinkAuditTargetsDoNotCrossIntegration(t *testing.T) {
+	t.Parallel()
 	fixture := artistlabelpublic.New(t)
 	ctx := testutil.NewAuditContext(t, fixture.AdminID, testutil.PostIntegrationMemberID(fixture.AdminID))
 	links := sharelinkdomain.NewService(

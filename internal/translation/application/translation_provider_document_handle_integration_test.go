@@ -12,6 +12,7 @@ import (
 )
 
 func TestTranslationProviderDocumentHandleLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx := context.Background()
 	now := time.Unix(1_700_001_000, 0).UTC()

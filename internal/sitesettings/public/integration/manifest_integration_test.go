@@ -21,6 +21,7 @@ import (
 )
 
 func TestManifestProjectsRuntimeSiteOriginIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	require.NoError(t, db.Exec(`
 		UPDATE site_settings
@@ -37,6 +38,7 @@ func TestManifestProjectsRuntimeSiteOriginIntegration(t *testing.T) {
 }
 
 func TestManifestProjectsCurrentSiteAssetsOnCanonicalStaticRoutesIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	const cdnDomain = "https://cdn.example.com"
 	service := newManifestIntegrationService(t, db, cdnDomain, "https://www.example.test")

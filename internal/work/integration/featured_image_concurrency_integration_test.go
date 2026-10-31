@@ -16,6 +16,7 @@ import (
 )
 
 func TestDeleteWorkFeaturedImageReloadsCurrentImageAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Featured Image Concurrency Admin")

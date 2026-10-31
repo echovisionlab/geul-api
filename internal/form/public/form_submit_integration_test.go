@@ -31,6 +31,7 @@ import (
 )
 
 func TestSubmitRevalidatesMutableAccessPolicyAfterFormLock(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 
 	tests := []struct {
@@ -172,6 +173,7 @@ func TestSubmitRevalidatesMutableAccessPolicyAfterFormLock(t *testing.T) {
 }
 
 func TestSubmitDomainAuditAnonymousAndMemberIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	formID := uuid.NewString()
 	documentID := uuid.NewString()
@@ -243,6 +245,7 @@ func (failingFormSubmissionAuditAppender) AppendDomainAuditInTransaction(context
 }
 
 func TestSubmitFailsClosedWhenDuplicateLookupFails(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 
 	allowDuplicate := false

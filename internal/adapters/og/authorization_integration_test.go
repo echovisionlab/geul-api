@@ -16,6 +16,7 @@ import (
 )
 
 func TestEntityAuthorizationIsScopedToManagedResourceIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	managedID, otherID := uuid.NewString(), uuid.NewString()
@@ -35,6 +36,7 @@ func TestEntityAuthorizationIsScopedToManagedResourceIntegration(t *testing.T) {
 }
 
 func TestStaticTargetsRemainAdminOnlyIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())

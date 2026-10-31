@@ -82,6 +82,16 @@ func newLegalIntegrationDB(t *testing.T) *gorm.DB {
 	return testutil.NewIntegrationDB(t)
 }
 
+// newLegalLocalKratosIntegrationDB is for tests that write legal or email
+// template blocks. The collaboration contributor fence locks member JOIN
+// kratos.identities FOR SHARE; through postgres_fdw that becomes a REPEATABLE
+// READ lock on every active identity in the shared Kratos, so identity updates
+// by concurrent tests fail it with serialization errors.
+func newLegalLocalKratosIntegrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	return testutil.SetupOryStackWithLocalKratos(t).DB
+}
+
 type legalTestRenderConfig struct{}
 
 func (legalTestRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte, string, error) {

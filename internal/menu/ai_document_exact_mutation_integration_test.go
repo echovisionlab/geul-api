@@ -17,6 +17,7 @@ import (
 )
 
 func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu AI admin "+identityID[:8])

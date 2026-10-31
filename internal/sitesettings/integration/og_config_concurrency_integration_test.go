@@ -17,6 +17,7 @@ import (
 )
 
 func TestSiteSettingOgConfigSectionUpdatesSerializeWithoutLostUpdateIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 

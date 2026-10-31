@@ -12,6 +12,7 @@ import (
 )
 
 func TestTranslationOverviewUsesCompleteCatalogIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service := &TranslationService{db: db}
 	_, err := service.getTranslationOverviewStats(t.Context())

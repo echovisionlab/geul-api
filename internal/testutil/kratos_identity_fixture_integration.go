@@ -56,37 +56,46 @@ func SeedKratosIdentityFixture(t *testing.T, db *gorm.DB, fixture KratosIdentity
 		createdAt,
 	)
 
-	require.NoError(t, db.Exec(
-		`INSERT INTO kratos.identities (
-			id,
-			schema_id,
-			traits,
-			metadata_public,
-			metadata_admin,
-			state,
-			created_at,
-			updated_at
-		)
-		VALUES (
-			?,
-			'user',
-			jsonb_build_object('email', ?::text, 'name', ?::text, 'preferred_locale', ?::text),
-			'{}'::jsonb,
-			jsonb_build_object('banned', ?::boolean),
-			?,
-			?,
-			?
-		)
-		ON CONFLICT (id) DO UPDATE SET
-			schema_id = EXCLUDED.schema_id,
-			traits = EXCLUDED.traits,
-			metadata_public = EXCLUDED.metadata_public,
-			metadata_admin = EXCLUDED.metadata_admin,
-			state = EXCLUDED.state,
-			created_at = EXCLUDED.created_at,
-			updated_at = EXCLUDED.updated_at`,
-		args...,
-	).Error)
+	// postgres_fdw rejects ON CONFLICT DO UPDATE on the shared Kratos tables,
+	// so re-seeding an identity updates it in place.
+	updated := db.Exec(
+		`UPDATE kratos.identities SET
+			schema_id = 'user',
+			traits = jsonb_build_object('email', ?::text, 'name', ?::text, 'preferred_locale', ?::text),
+			metadata_public = '{}'::jsonb,
+			metadata_admin = jsonb_build_object('banned', ?::boolean),
+			state = ?,
+			created_at = ?,
+			updated_at = ?
+		WHERE id = ?::uuid`,
+		append(args[1:], fixture.ID)...,
+	)
+	require.NoError(t, updated.Error)
+	if updated.RowsAffected == 0 {
+		require.NoError(t, db.Exec(
+			`INSERT INTO kratos.identities (
+				id,
+				schema_id,
+				traits,
+				metadata_public,
+				metadata_admin,
+				state,
+				created_at,
+				updated_at
+			)
+			VALUES (
+				?,
+				'user',
+				jsonb_build_object('email', ?::text, 'name', ?::text, 'preferred_locale', ?::text),
+				'{}'::jsonb,
+				jsonb_build_object('banned', ?::boolean),
+				?,
+				?,
+				?
+			)`,
+			args...,
+		).Error)
+	}
 
 	emailVerified := true
 	if fixture.EmailVerified != nil {
@@ -95,30 +104,24 @@ func SeedKratosIdentityFixture(t *testing.T, db *gorm.DB, fixture KratosIdentity
 	SeedKratosVerifiableEmailFixture(t, db, fixture.ID, email, emailVerified, createdAt)
 }
 
-// ConstrainKratosIdentityAggregateFixture makes pre-existing shared Ory stack
-// identities invisible to tests that assert exact global identity aggregates.
-// Callers must use a transactional DB handle so this precondition rolls back
-// with the test; regular tests should create unique identities instead.
-func ConstrainKratosIdentityAggregateFixture(t *testing.T, db *gorm.DB) {
-	t.Helper()
-	EnsureKratosIdentityFixtureColumns(t, db)
-
-	require.NoError(t, db.Exec(`
-		UPDATE kratos.identities
-		SET
-			state = ?,
-			metadata_admin = COALESCE(metadata_admin, '{}'::jsonb) || jsonb_build_object('banned', true),
-			updated_at = NOW()
-	`, auth.KratosStateInactive).Error)
-}
-
 func ResetFirstAdminBootstrapFixture(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	require.NoError(t, db.Exec(`DELETE FROM auth_bootstrap_state WHERE key = ?`, "first_admin").Error)
 }
 
+// EnsureKratosIdentityFixtureColumns completes the minimal kratos stub that
+// PostgreSQL-only tests bootstrap. Isolated Ory stacks already reach the real
+// Kratos tables through postgres_fdw and are left untouched.
 func EnsureKratosIdentityFixtureColumns(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	var shared bool
+	require.NoError(t, db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM information_schema.foreign_tables
+		WHERE foreign_table_schema = 'kratos' AND foreign_table_name = 'identities'
+	)`).Scan(&shared).Error)
+	if shared {
+		return
+	}
 	require.NoError(t, db.Exec(`ALTER TABLE kratos.identities ADD COLUMN IF NOT EXISTS schema_id TEXT NOT NULL DEFAULT 'user'`).Error)
 	require.NoError(t, db.Exec(`ALTER TABLE kratos.identities ADD COLUMN IF NOT EXISTS traits JSONB NOT NULL DEFAULT '{}'::jsonb`).Error)
 	require.NoError(t, db.Exec(`ALTER TABLE kratos.identities ADD COLUMN IF NOT EXISTS metadata_public JSONB DEFAULT '{}'::jsonb`).Error)

@@ -24,6 +24,7 @@ import (
 )
 
 func TestLabelPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *testing.T) {
+	t.Parallel()
 	fixture := artistlabelpublictest.New(t)
 	db := fixture.DB
 	adminID := fixture.AdminID

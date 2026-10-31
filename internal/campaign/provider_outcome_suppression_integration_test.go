@@ -18,6 +18,7 @@ import (
 )
 
 func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	campaignID := uuid.NewString()

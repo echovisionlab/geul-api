@@ -15,6 +15,7 @@ import (
 )
 
 func TestFormDeleteReleasesFeaturedImageBindingAndPreservesFileIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	principal := auth.GetUser(ctx)

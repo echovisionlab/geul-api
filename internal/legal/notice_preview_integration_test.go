@@ -61,7 +61,8 @@ func (p *failingLegalNoticeBulkPublisher) PublishSendBulkEmail(
 func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancelIntegration(
 	t *testing.T,
 ) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
 	seedLegalDeliveryTemplateIntegration(t, db, email.EventTermsUpdate.String())
 	now := time.Now().UTC()

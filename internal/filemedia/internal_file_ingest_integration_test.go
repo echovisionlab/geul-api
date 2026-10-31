@@ -67,7 +67,8 @@ func (p *fileIngestFinalizerRecordingTranscoder) RegisterTranscodeVideo(
 }
 
 func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
 	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Projection finalizer track")
 
@@ -143,7 +144,8 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 }
 
 func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
 	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Stale projection track")
 

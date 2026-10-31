@@ -18,8 +18,8 @@ import (
 )
 
 func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	now := time.Now().UTC()
 	cutoff := now.Add(-24 * time.Hour)
 	handlers := &Handlers{db: pg.DB}

@@ -18,6 +18,7 @@ import (
 // Form source collaboration is fenced by the root-owned Content Document
 // revision. There is no translation-source state or edit-hash side channel.
 func TestFormSourceSaveUsesContentDocumentRevisionCASIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	now := time.Unix(1_700_009_000, 0).UTC()
 	formID := seedFormSourceLocaleBaseRowAt(t, db, now)

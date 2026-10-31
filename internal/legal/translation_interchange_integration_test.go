@@ -22,6 +22,7 @@ import (
 )
 
 func TestLegalTranslationInterchangeCreateDeleteRecreateAndCASIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		create func(context.Context, *gorm.DB, *contentblock.Store, *auth.SpiceDBClient) (string, error)

@@ -18,11 +18,13 @@ import (
 )
 
 func TestAppIntegrationSchemaSQLFilesRequireReviewedAssetRoot(t *testing.T) {
+	t.Parallel()
 	_, err := appIntegrationSchemaSQLFiles("")
 	require.ErrorContains(t, err, "schema root")
 }
 
 func TestSplitRepoPathForLegacySuffix(t *testing.T) {
+	t.Parallel()
 	moduleRoot := filepath.Join(string(filepath.Separator), "workspace", "api")
 	tests := map[string]string{
 		"apps/collab":                        filepath.Join(string(filepath.Separator), "workspace", "geul-editor-collab"),
@@ -41,6 +43,7 @@ func TestSplitRepoPathForLegacySuffix(t *testing.T) {
 }
 
 func TestSplitRepoPathForLegacySuffixFindsSiblingRepoAboveWorktree(t *testing.T) {
+	t.Parallel()
 	workspaceRoot := t.TempDir()
 	moduleRoot := filepath.Join(workspaceRoot, ".worktrees", "api-account")
 	kratosConfig := filepath.Join(workspaceRoot, "geul-identity", "config", "kratos", "kratos.yml")
@@ -53,6 +56,7 @@ func TestSplitRepoPathForLegacySuffixFindsSiblingRepoAboveWorktree(t *testing.T)
 }
 
 func TestAppIntegrationSchemaSQLFilesUseSingleSchemaAuthority(t *testing.T) {
+	t.Parallel()
 	schemaRoot := t.TempDir()
 	schemaFile := filepath.Join(schemaRoot, filepath.FromSlash(appIntegrationSchemaSQLRelativePath))
 	require.NoError(t, os.WriteFile(schemaFile, nil, 0o644))
@@ -62,12 +66,14 @@ func TestAppIntegrationSchemaSQLFilesUseSingleSchemaAuthority(t *testing.T) {
 }
 
 func TestAppIntegrationPostgresInitScriptFileIsOptionalByDefault(t *testing.T) {
+	t.Parallel()
 	_, ok, err := appIntegrationPostgresInitScriptFile("")
 	require.NoError(t, err)
 	require.False(t, ok)
 }
 
 func TestAppIntegrationPostgresInitScriptFileUsesSeparateAssetRoot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	scriptPath := filepath.Join(root, "init", "02-extensions.sh")
 	require.NoError(t, os.MkdirAll(filepath.Dir(scriptPath), 0o755))
@@ -79,6 +85,7 @@ func TestAppIntegrationPostgresInitScriptFileUsesSeparateAssetRoot(t *testing.T)
 }
 
 func TestStartAppPostgresOrchestratedRequiresAdminLease(t *testing.T) {
+	t.Parallel()
 	previous := *appIntegrationLeaseFile
 	previousArgs := os.Args
 	*appIntegrationLeaseFile = ""
@@ -115,6 +122,7 @@ func withoutAppIntegrationLeaseArguments(args []string) []string {
 }
 
 func TestAppIntegrationCleanupContextIsBounded(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := appIntegrationCleanupContext()
 	defer cancel()
 
@@ -124,6 +132,7 @@ func TestAppIntegrationCleanupContextIsBounded(t *testing.T) {
 }
 
 func TestWaitForAppPostgresStopsOnCanceledContext(t *testing.T) {
+	t.Parallel()
 	database, err := sql.Open("postgres", "postgres://test:test@127.0.0.1:1/geul?sslmode=disable")
 	if database != nil {
 		t.Cleanup(func() { require.NoError(t, database.Close()) })
@@ -143,6 +152,7 @@ func TestWaitForAppPostgresStopsOnCanceledContext(t *testing.T) {
 }
 
 func TestWaitForAppPostgresRetriesTransientPingFailure(t *testing.T) {
+	t.Parallel()
 	database, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 	if database != nil {
 		t.Cleanup(func() { require.NoError(t, database.Close()) })
@@ -158,6 +168,7 @@ func TestWaitForAppPostgresRetriesTransientPingFailure(t *testing.T) {
 }
 
 func TestIntegrationProcessCleanupRegistryRunsOnceInLIFOOrder(t *testing.T) {
+	t.Parallel()
 	integrationCleanupMu.Lock()
 	registeredBefore := integrationRegisteredCleanups
 	suiteBefore := integrationSuiteCleanups
@@ -194,6 +205,7 @@ func TestIntegrationProcessCleanupRegistryRunsOnceInLIFOOrder(t *testing.T) {
 }
 
 func TestStartAppPostgresAdminLeasesAreDistinctAndDropped(t *testing.T) {
+	t.Parallel()
 	if strings.TrimSpace(*appIntegrationLeaseFile) == "" {
 		t.Skip("integration orchestrator admin DSN is required")
 	}
@@ -246,6 +258,7 @@ func TestStartAppPostgresAdminLeasesAreDistinctAndDropped(t *testing.T) {
 }
 
 func TestAppPostgresInternalDSNUsesLeasedDatabase(t *testing.T) {
+	t.Parallel()
 	postgres := &AppPostgres{DSN: "postgres://test:test@127.0.0.1:49152/geul_it_abc?sslmode=disable"}
 	dsn, err := postgres.InternalDSN("postgres")
 	require.NoError(t, err)
@@ -260,10 +273,12 @@ func currentIntegrationDatabaseName(t *testing.T, database *sql.DB) string {
 }
 
 func TestAppIntegrationRequiredSchemaRelationsCoverMeshOptimization(t *testing.T) {
+	t.Parallel()
 	require.Contains(t, appIntegrationRequiredSchemaRelations, "public.mesh_optimization_candidate")
 }
 
 func TestCurrentSchemaSQLAppliesAndExposesRequiredSchema(t *testing.T) {
+	t.Parallel()
 	pg := SetupAppPostgres(t, AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,

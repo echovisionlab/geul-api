@@ -16,6 +16,7 @@ import (
 )
 
 func TestHookProxyForwardsRegisteredUpstreamAndSerializesControl(t *testing.T) {
+	t.Parallel()
 	type receivedRequest struct {
 		method string
 		path   string
@@ -114,6 +115,7 @@ func TestHookProxyForwardsRegisteredUpstreamAndSerializesControl(t *testing.T) {
 }
 
 func TestHookProxyUnavailableAndControlProtection(t *testing.T) {
+	t.Parallel()
 	proxy := startTestHookProxy(t)
 
 	requireHookProxyUnavailable(t, proxy.LocalBaseURL()+"/hooks/after-login")
@@ -136,6 +138,7 @@ func TestHookProxyUnavailableAndControlProtection(t *testing.T) {
 }
 
 func TestHookProxyURLsAndDirectLifecycle(t *testing.T) {
+	t.Parallel()
 	proxy, err := StartHookProxy(t.Context(), "http://host.testcontainers.internal")
 	if err != nil {
 		t.Fatal(err)
@@ -186,6 +189,7 @@ func TestHookProxyURLsAndDirectLifecycle(t *testing.T) {
 }
 
 func TestHookProxyRejectsInvalidOrigins(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{
 		"https://host.testcontainers.internal",
 		"http://host.testcontainers.internal:8080",

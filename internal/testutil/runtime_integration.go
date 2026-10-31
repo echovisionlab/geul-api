@@ -151,6 +151,8 @@ func setupSuiteRuntimeStack(t *testing.T, backendURL, webURL, cdnURL, hookURL st
 	})
 
 	stack := newRuntimeStackFromBackendLease(ory, backend, backendURL, webURL, cdnURL)
+	stack.S3MediaBucket, stack.S3CacheBucket, err = openIsolatedS3Buckets(t.Context(), backend)
+	require.NoError(t, err)
 	stack.CollabURL = fmt.Sprintf("http://127.0.0.1:%d", reserveLocalPort(t))
 	stack.CollabHealth = fmt.Sprintf("http://127.0.0.1:%d/health", reserveLocalPort(t))
 	return stack
@@ -863,11 +865,7 @@ func startRuntimeProcess(t *testing.T, spec runtimeProcessSpec) *runtimeProcess 
 		if cmd.Process == nil {
 			return nil
 		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
-		return err
+		return signalRuntimeProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
 	}
 	cmd.WaitDelay = 10 * time.Second
 
@@ -1026,7 +1024,9 @@ func (process *runtimeProcess) stop(ctx context.Context) error {
 
 func signalRuntimeProcessGroup(pid int, signal syscall.Signal) error {
 	err := syscall.Kill(-pid, signal)
-	if errors.Is(err, syscall.ESRCH) {
+	// Darwin reports EPERM instead of ESRCH once the group holds only
+	// unreaped zombies; the group is our own child, so it is already exiting.
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.EPERM) {
 		return nil
 	}
 	return err

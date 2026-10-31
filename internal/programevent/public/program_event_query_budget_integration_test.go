@@ -32,6 +32,7 @@ func (l publicProgramEventQueryCounter) Trace(ctx context.Context, begin time.Ti
 }
 
 func TestPublicProgramEventListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	fixtures := seedPublicProgramEventListQueryFixtures(t, db, 20)
 
@@ -80,6 +81,7 @@ func TestPublicProgramEventListQueryBudgetDoesNotGrowPerRowIntegration(t *testin
 }
 
 func TestPublicProgramEventTypeListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	seedPublicProgramEventListQueryFixtures(t, db, 20)
 

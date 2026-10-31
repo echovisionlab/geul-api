@@ -19,6 +19,7 @@ import (
 )
 
 func TestWorkLateProviderTranslationCannotOverwritePromotedSourceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work source promotion admin")

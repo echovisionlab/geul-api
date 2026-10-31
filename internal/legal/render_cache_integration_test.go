@@ -17,6 +17,7 @@ import (
 )
 
 func TestLegalDerivedContentRegenerationUsesExactTypedDocumentIntegration(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"terms", "privacy"} {
 		t.Run(kind, func(t *testing.T) {
 			db := newLegalIntegrationDB(t)

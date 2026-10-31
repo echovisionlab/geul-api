@@ -20,10 +20,11 @@ import (
 )
 
 func TestLegalPolicyDeletionWithSentHistoryInEveryLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"terms", "privacy"} {
 		for _, lifecycle := range []string{"DRAFT", "SCHEDULED", "ACTIVE", "ARCHIVED"} {
 			t.Run(kind+"/"+lifecycle, func(t *testing.T) {
-				db := newLegalIntegrationDB(t)
+				db := newLegalLocalKratosIntegrationDB(t)
 				updateEvent, effectiveEvent := email.EventTermsUpdate.String(), email.EventTermsEffective.String()
 				if kind == "privacy" {
 					updateEvent, effectiveEvent = email.EventPrivacyUpdate.String(), email.EventPrivacyEffective.String()

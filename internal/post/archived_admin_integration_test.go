@@ -21,6 +21,7 @@ import (
 )
 
 func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminID := testutil.PostIntegrationUUID()
 	authorID := testutil.PostIntegrationUUID()

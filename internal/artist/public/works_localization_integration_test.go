@@ -15,6 +15,7 @@ import (
 )
 
 func TestArtistPublicWorksUseRequestedWorkTranslationIntegration(t *testing.T) {
+	t.Parallel()
 	fixture := artistlabelpublictest.New(t)
 	koreanTitle := "공개 아티스트 레이블 작업 " + fixture.Suffix
 	koreanSummary := "공개 아티스트 레이블 작업 요약"

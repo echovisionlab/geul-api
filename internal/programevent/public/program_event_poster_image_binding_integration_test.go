@@ -23,6 +23,7 @@ import (
 )
 
 func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	identityID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Name: "Poster admin"})
@@ -38,11 +39,11 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	files := publicProgramEventFileGateway{db: db}
 	runtime := newManageProgramEventRuntime("https://cdn.example.com")
 	service := eventdomain.NewAuditedProgramEventService(
-		db, runtime, files, apitelemetry.NewDurableWriter(db), publicIntegrationSpiceDB,
+		db, runtime, files, apitelemetry.NewDurableWriter(db), publicIntegrationSpiceDB(t),
 		programeventadapter.NewCreditMemberSummaries(db, "https://cdn.example.com"),
 		eventdomain.WithProgramEventContentBlockStore(store),
 	)
-	typeResponse, err := eventdomain.NewProgramEventTypeService(db, publicIntegrationSpiceDB).CreateProgramEventType(ctx,
+	typeResponse, err := eventdomain.NewProgramEventTypeService(db, publicIntegrationSpiceDB(t)).CreateProgramEventType(ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "poster-type-" + uuid.NewString(), Locale: "en", Name: "Poster type"}))
 	require.NoError(t, err)
 	event, err := service.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
@@ -137,7 +138,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 
 	t.Run("series reuses canonical image", func(t *testing.T) {
 		fileID, assetID := seedCanonicalPublicFileFixture(t, db, "series-image.webp", "image/webp", "image")
-		series, err := eventdomain.NewProgramEventSeriesService(db, runtime, publicIntegrationSpiceDB).CreateProgramEventSeries(ctx,
+		series, err := eventdomain.NewProgramEventSeriesService(db, runtime, publicIntegrationSpiceDB(t)).CreateProgramEventSeries(ctx,
 			connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{Title: "Image series", Slug: "image-series-" + uuid.NewString(), PosterFileId: &fileID}))
 		require.NoError(t, err)
 		var binding model.PublicAssetBinding

@@ -22,6 +22,7 @@ import (
 )
 
 func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	identityID := uuid.NewString()
@@ -79,6 +80,7 @@ func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *tes
 }
 
 func TestCollaborationSessionLockFencesRevocationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page collaboration session")
@@ -141,6 +143,7 @@ func TestCollaborationSessionLockFencesRevocationIntegration(t *testing.T) {
 }
 
 func TestPageCollaborationSignFirstDoesNotInvertAccountSessionDeletionIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	require.NotNil(t, stack)
 	user := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -225,7 +228,9 @@ func TestPageCollaborationSignFirstDoesNotInvertAccountSessionDeletionIntegratio
 }
 
 func TestPageCollaborationAccountSessionDeletionFirstDoesNotWaitOnSignerIntegration(t *testing.T) {
-	stack := testutil.PrepareOryIntegrationTest(t)
+	t.Parallel()
+	// Local kratos tables keep production READ COMMITTED fences on sessions.
+	stack := testutil.SetupOryStackWithLocalKratos(t)
 	require.NotNil(t, stack)
 	user := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	pageID, documentID := uuid.NewString(), uuid.NewString()
@@ -248,7 +253,11 @@ func TestPageCollaborationAccountSessionDeletionFirstDoesNotWaitOnSignerIntegrat
 		deletionDone <- identitystate.WithMutation(t.Context(), stack.DB, user.IdentityID, func(ctx context.Context, _ *gorm.DB) error {
 			close(identityMutationAcquired)
 			<-releaseDeletion
-			return stack.KratosClient.DeleteIdentitySessions(ctx, user.IdentityID)
+			// The Kratos API cannot see the local kratos copy, so delete the
+			// sessions on a separate connection as Kratos would.
+			return stack.DB.WithContext(ctx).Exec(
+				`DELETE FROM kratos.sessions WHERE identity_id = ?::uuid`, user.IdentityID,
+			).Error
 		})
 	}()
 	select {
@@ -313,7 +322,9 @@ func TestPageCollaborationAccountSessionDeletionFirstDoesNotWaitOnSignerIntegrat
 }
 
 func TestCollaborationSessionRevocationFirstDeniesFinalFenceIntegration(t *testing.T) {
-	db := newServiceIntegrationDB(t)
+	t.Parallel()
+	// Local kratos tables keep production READ COMMITTED fences on sessions.
+	db := testutil.SetupOryStackWithLocalKratos(t).DB
 	identityID := uuid.NewString()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page revoked collaboration session")
 	sessionID := insertPageIntegrationSession(t, db, identityID)

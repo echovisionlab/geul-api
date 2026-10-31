@@ -18,6 +18,7 @@ import (
 )
 
 func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Credit Order Admin")
@@ -188,6 +189,7 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 }
 
 func TestUpdateWorkCreditGroupPreservesRequestEqualToStaleNameIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Credit Group Update Admin")

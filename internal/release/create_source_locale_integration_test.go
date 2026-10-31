@@ -14,6 +14,7 @@ import (
 )
 
 func TestCreateReleaseExplicitSourceLocaleOverridesPreferencesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, adminID, "Release source locale Admin")

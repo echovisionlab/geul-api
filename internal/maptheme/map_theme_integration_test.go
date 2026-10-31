@@ -20,6 +20,7 @@ import (
 )
 
 func TestMapThemeCreateValidationLeavesDBUnchanged(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
@@ -35,6 +36,7 @@ func TestMapThemeCreateValidationLeavesDBUnchanged(t *testing.T) {
 }
 
 func TestManageMapThemeAdminCanReadAndMutate(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
@@ -88,6 +90,7 @@ func TestManageMapThemeAdminCanReadAndMutate(t *testing.T) {
 }
 
 func TestManageMapThemeAuthenticatedMemberCanListAndResolve(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	service := mapThemeServiceForTest(t, db, stack.SpiceDBClient)
@@ -104,6 +107,7 @@ func TestManageMapThemeAuthenticatedMemberCanListAndResolve(t *testing.T) {
 }
 
 func TestMapThemeDefaultSwitchBlocksCurrentDeleteAndAllowsFormerDelete(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
@@ -155,6 +159,7 @@ func seedSchemaMapThemePolicyFixture(
 }
 
 func TestMapThemeResolveUsesOneRepeatableReadSnapshotAcrossDefaultSwitchAndDelete(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
@@ -215,6 +220,7 @@ func TestMapThemeResolveUsesOneRepeatableReadSnapshotAcrossDefaultSwitchAndDelet
 }
 
 func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"detail", "copy", "internal_load"} {
 		t.Run(action, func(t *testing.T) {
 			db := newConcurrentServiceIntegrationDB(t)
@@ -353,6 +359,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 }
 
 func TestMapThemeUnknownResolveFallsBackToCurrentDefaultForBothSchemes(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service := mapThemeServiceForTest(t, db, durableAudienceSpiceDB(t))
 	list, err := service.ListMapThemes(adminCtx(), connect.NewRequest(&managev1.ListMapThemesRequest{}))

@@ -21,6 +21,7 @@ import (
 )
 
 func TestFileManagerDomainAuditIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	identityID := integrationTestUUID()
@@ -79,6 +80,7 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 }
 
 func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	identityID := integrationTestUUID()

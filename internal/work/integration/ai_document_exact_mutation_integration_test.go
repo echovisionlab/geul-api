@@ -25,6 +25,7 @@ import (
 )
 
 func TestWorkAIDocumentTargetCASIsolationAndDeleteNoBumpIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Work target locale CAS")
@@ -260,6 +261,7 @@ func workTargetCASIntegrationOverlay(blockID uuid.UUID, locale, text string) *co
 }
 
 func TestWorkAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Work AI document exact mutation")

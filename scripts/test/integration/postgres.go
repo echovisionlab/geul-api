@@ -17,6 +17,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+
+	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 type suitePostgres struct {
@@ -84,6 +86,9 @@ func startSuitePostgres(ctx context.Context, options suiteOptions) (*suitePostgr
 	if err := prepareSuitePostgresTemplate(ctx, templateURL.String(), options.SchemaRoot); err != nil {
 		return nil, fmt.Errorf("prepare suite PostgreSQL template: %w", err)
 	}
+	if err := testutil.LockAppIntegrationTemplate(ctx, suite.AdminDSN, templateName); err != nil {
+		return nil, err
+	}
 	failed = false
 	return suite, nil
 }
@@ -98,7 +103,9 @@ func suitePostgresDockerArguments(options suiteOptions, templateName, port strin
 		"--publish", fmt.Sprintf("127.0.0.1:%s:5432", port),
 		"--tmpfs", "/var/lib/postgresql:rw",
 	}
-	return append(arguments, options.PostgresImage)
+	// Concurrent tests each hold their own database pool plus postgres_fdw
+	// connections to the shared Kratos database.
+	return append(arguments, options.PostgresImage, "-c", "max_connections=1000")
 }
 
 func reserveSuitePostgresPort(ctx context.Context) (string, error) {

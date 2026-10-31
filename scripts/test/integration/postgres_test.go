@@ -20,8 +20,9 @@ func TestSuitePostgresUsesOneLocalContainerWithFixedLoopbackPort(t *testing.T) {
 	if !slices.Contains(arguments, "127.0.0.1:"+port+":5432") {
 		t.Fatalf("docker arguments do not publish the reserved loopback port %s: %q", port, arguments)
 	}
-	if got := arguments[len(arguments)-1]; got != "local-postgres@sha256:test" {
-		t.Fatalf("image argument = %q", got)
+	image := slices.Index(arguments, "local-postgres@sha256:test")
+	if image < 0 || !slices.Equal(arguments[image+1:], []string{"-c", "max_connections=1000"}) {
+		t.Fatalf("image and server arguments = %q", arguments)
 	}
 	if slices.Contains(arguments, "--platform") {
 		t.Fatalf("docker arguments must not override the local image platform: %q", arguments)

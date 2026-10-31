@@ -23,6 +23,7 @@ import (
 )
 
 func TestListCommentsQueryBudgetStaysConstant(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	identityID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Comment query member")
@@ -70,6 +71,7 @@ func TestListCommentsQueryBudgetStaysConstant(t *testing.T) {
 }
 
 func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		update structured.Fields
@@ -127,6 +129,7 @@ func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
 }
 
 func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
 	memberID := testutil.PostIntegrationMemberID(userID)
@@ -171,6 +174,7 @@ func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
 }
 
 func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
 	memberID := testutil.PostIntegrationMemberID(userID)
@@ -202,6 +206,7 @@ func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 }
 
 func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
 	memberID := testutil.PostIntegrationMemberID(userID)
@@ -237,6 +242,7 @@ func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T
 }
 
 func TestListCommentsIgnoresCursorFromAnotherPost(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	userID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, userID, "Comment cursor user")

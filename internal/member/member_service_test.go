@@ -15,6 +15,7 @@ import (
 )
 
 func TestSelfExtendedProfileMutationRequiresAuthorRole(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	bio := "biography"
 	website := "https://profile.example.test"
@@ -46,6 +47,7 @@ func TestSelfExtendedProfileMutationRequiresAuthorRole(t *testing.T) {
 }
 
 func TestGetCurrentSessionProjectsAuthenticatedIdentityIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.Author().ID())
 	service := &MemberService{
@@ -96,6 +98,7 @@ func (currentSessionAccountSummaryReader) SummariesForMembers(
 }
 
 func TestGetCurrentSessionUsesLeanProjectionWithoutProfileOrSectionAuthorizationIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.Author().ID())
 	email := "author@example.test"

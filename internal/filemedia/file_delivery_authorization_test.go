@@ -172,6 +172,7 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentsNotIngestBinding
 }
 
 func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing.T) {
+	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
 	stack := testutil.SetupOryStack(t)
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -245,6 +246,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 }
 
 func TestArchivedProgramEventFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing.T) {
+	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
 	stack := testutil.SetupOryStack(t)
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -286,6 +288,7 @@ func TestArchivedProgramEventFileBoundariesAllowAuthorViewAndRequireAdminEdit(t 
 }
 
 func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBinding(t *testing.T) {
+	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -336,6 +339,7 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBind
 }
 
 func TestAuthorizeManageFileDeliveriesGlobalAuthorIsIndependentOfCurrentContentOwners(t *testing.T) {
+	t.Parallel()
 	db := newFileDeliveryAuthorizationDB(t)
 	stack := testutil.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -360,6 +364,7 @@ func TestAuthorizeManageFileDeliveriesGlobalAuthorIsIndependentOfCurrentContentO
 }
 
 func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentCurrentSchemaIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,

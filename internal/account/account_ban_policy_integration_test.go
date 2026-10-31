@@ -36,6 +36,7 @@ func (accountBanNoopLifecyclePublisher) PublishUserDeleteAvatar(
 }
 
 func TestBanAccountRejectsAdminTargetWithoutIdentityMutationIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -66,6 +67,7 @@ func TestBanAccountRejectsAdminTargetWithoutIdentityMutationIntegration(t *testi
 }
 
 func TestBanAccountRejectsTargetAfterRolePromotionIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())

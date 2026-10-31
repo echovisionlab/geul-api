@@ -33,6 +33,7 @@ type seriesOgSnapshot struct {
 }
 
 func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()

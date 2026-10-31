@@ -12,6 +12,7 @@ import (
 )
 
 func TestRevokeOtherSessionsPreservesCurrentSessionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "session-revoke-" + identityID + "@example.test"

@@ -16,6 +16,7 @@ import (
 )
 
 func TestProjectionPreservesLegacyReleaseBindingIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	db := pg.DB
 	now := time.Now().UTC()

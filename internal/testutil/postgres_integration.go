@@ -173,42 +173,6 @@ func CurrentAppIntegrationBackendLease() (*AppIntegrationBackendLease, error) {
 	return &backend, nil
 }
 
-func connectSharedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescriptor) (*AppPostgres, func() error, error) {
-	if lease.Backend == nil {
-		return nil, nil, fmt.Errorf("suite backend lease is required")
-	}
-	// Application-facing integration handles use the same pgx database/sql
-	// driver as the production GORM connection so PostgreSQL errors retain the
-	// same concrete type at domain boundaries.
-	sqlDB, err := sql.Open("pgx", lease.Backend.PostgresDSN)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open suite backend database: %w", err)
-	}
-	cleanup := sqlDB.Close
-	if err := sqlDB.PingContext(ctx); err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("ping suite backend database: %w", err),
-			cleanup(),
-		)
-	}
-	database, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("open suite backend database with gorm: %w", err),
-			cleanup(),
-		)
-	}
-	return &AppPostgres{
-		ContainerID:  lease.PostgresContainerID,
-		DatabaseName: lease.Backend.PostgresDatabaseName,
-		DSN:          lease.Backend.PostgresDSN,
-		SQLDB:        sqlDB,
-		DB:           database,
-	}, cleanup, nil
-}
-
 // PrepareAppIntegrationTemplate applies the reviewed initialization assets and
 // application schema once to the orchestrator-owned template database.
 func PrepareAppIntegrationTemplate(ctx context.Context, dsn, schemaRoot, postgresAssetRoot string) error {
@@ -292,7 +256,7 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 		pq.QuoteIdentifier(databaseName),
 		pq.QuoteIdentifier(templateName),
 	)
-	if _, err := admin.ExecContext(ctx, createSQL); err != nil {
+	if err := execRetryingObjectInUse(ctx, admin, createSQL); err != nil {
 		return failBeforeDatabase(errors.Join(
 			fmt.Errorf("create integration database lease: %w", err),
 			admin.Close(),
@@ -302,8 +266,7 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 	dropLease := func() error {
 		dropSQL := fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", pq.QuoteIdentifier(databaseName))
 		dropErr := runAppIntegrationCleanup(func(cleanupCtx context.Context) error {
-			_, err := admin.ExecContext(cleanupCtx, dropSQL)
-			return err
+			return execRetryingObjectInUse(cleanupCtx, admin, dropSQL)
 		})
 		closeErr := admin.Close()
 		return errors.Join(dropErr, closeErr)
@@ -361,6 +324,24 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 		SQLDB:        sqlDB,
 		DB:           database,
 	}, cleanup, nil
+}
+
+// execRetryingObjectInUse retries database-level DDL that briefly races
+// another session: a template clone while a connection is closing, or a forced
+// drop while the test's last connection opens.
+func execRetryingObjectInUse(ctx context.Context, admin *sql.DB, statement string) error {
+	for attempt := 1; ; attempt++ {
+		_, err := admin.ExecContext(ctx, statement)
+		var pqErr *pq.Error
+		if err == nil || attempt == 5 || !errors.As(err, &pqErr) || pqErr.Code != "55006" {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 func (postgres *AppPostgres) InternalDSN(host string) (string, error) {

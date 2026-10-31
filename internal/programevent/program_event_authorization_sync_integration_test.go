@@ -15,6 +15,7 @@ import (
 )
 
 func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	contentBlocks := newProgramEventIntegrationContentBlockStore(t, spiceDB)

@@ -13,6 +13,7 @@ import (
 )
 
 func TestLayoutTranslationPersistenceIntegration(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := t.Context()
 	db := postgres.DB

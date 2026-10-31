@@ -38,6 +38,7 @@ func campaignAllTarget() *managev1.CreateCampaignRequest_All {
 }
 
 func TestCampaignAuthorizationIsSynchronousIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())

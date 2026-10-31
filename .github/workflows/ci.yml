@@ -253,7 +253,7 @@ jobs:
       GEUL_TEST_KRATOS_IMAGE: registry.rawsector.com/echovisionlab/geul-identity-kratos@sha256:a7f0f4b44816a70cf34d850cc08ba24d3ba562969e87d5dd8dfa6ee303a45b05
       INTEGRATION_COLLAB_REVISION: 7508b50cafbbdb06a8b767035b5798dd39ce318c # v0.6.10
       INTEGRATION_COMMON_REVISION: 8faddac1a051b786c88f677950c4a415012c837d # v0.11.1
-      INTEGRATION_CONTRACTS_REVISION: ec55a407bddaac454b4288ac8f6e567380fcbadd # v0.14.0
+      INTEGRATION_CONTRACTS_REVISION: 95ab5d8007a578c2a98f0fd5d9ba81acfa0f4e73 # v0.14.1
       INTEGRATION_TELEMETRY_REVISION: 603b6d63d3969220c6669c7fe11b7c7a53b5a116 # v0.2.3
     steps:
       - name: Checkout
@@ -432,7 +432,7 @@ jobs:
           go run -tags=integration ./scripts/test/integration $SELECTION \
             --schema-root "$GITHUB_WORKSPACE/geul-schema" \
             --postgres-image "$INTEGRATION_POSTGRES_IMAGE" \
-            --jobs 2
+            --jobs 4
 
       - name: Remove private Git credentials
         if: ${{ always() }}

@@ -5,6 +5,7 @@ package member
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -64,7 +65,9 @@ func (p *recordingOnboardingWelcomePublisher) snapshot() []*managev1.SendEmailEv
 
 func createOnboardingMember(t *testing.T, db *gorm.DB, email string) onboardingMemberFixture {
 	t.Helper()
-	fixture := onboardingMemberFixture{IdentityID: uuid.NewString(), MemberID: uuid.NewString(), Email: email}
+	fixture := onboardingMemberFixture{IdentityID: uuid.NewString(), MemberID: uuid.NewString()}
+	// Kratos is shared by concurrent tests, so the seeded address is made unique.
+	fixture.Email = strings.Replace(email, "@", "-"+fixture.IdentityID+"@", 1)
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
 		ID: fixture.IdentityID, Email: fixture.Email, Name: fixture.MemberID,
 	})
@@ -147,6 +150,7 @@ func (failingOnboardingAuditWriter) AppendDomainAuditInTransaction(
 }
 
 func TestCompleteMyOnboardingConcurrentNicknameClaimHasOneWinner(t *testing.T) {
+	t.Parallel()
 	stack := newConcurrentServiceIntegrationPostgres(t)
 	first := createOnboardingMember(t, stack.DB, "first@example.test")
 	second := createOnboardingMember(t, stack.DB, "second@example.test")
@@ -239,6 +243,7 @@ func TestCompleteMyOnboardingConcurrentNicknameClaimHasOneWinner(t *testing.T) {
 }
 
 func TestCompleteMyOnboardingSameNicknameRetryIsIdempotent(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "member@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{}
@@ -273,6 +278,7 @@ func TestCompleteMyOnboardingSameNicknameRetryIsIdempotent(t *testing.T) {
 }
 
 func TestCompleteMyOnboardingWelcomeEnqueueFailureRollsBackThenRetrySends(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "publish-failure@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{err: errors.New("queue unavailable")}
@@ -310,6 +316,7 @@ func TestCompleteMyOnboardingWelcomeEnqueueFailureRollsBackThenRetrySends(t *tes
 }
 
 func TestCompleteMyOnboardingAuditFailureRollsBackTransition(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "audit-failure@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{}
@@ -337,6 +344,7 @@ func TestCompleteMyOnboardingAuditFailureRollsBackTransition(t *testing.T) {
 }
 
 func TestCheckNicknameAvailabilityIgnoresDeletedMembers(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "member@example.test")
 	require.NoError(t, db.Exec(`

@@ -22,6 +22,7 @@ import (
 )
 
 func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
@@ -133,6 +134,7 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 }
 
 func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(adminCtx).MemberID.String()
@@ -210,6 +212,7 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 }
 
 func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
@@ -269,6 +272,7 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 }
 
 func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
@@ -310,6 +314,7 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 }
 
 func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
@@ -361,6 +366,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 }
 
 func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	principal := auth.GetUser(adminCtx)

@@ -45,6 +45,7 @@ import (
 // MAIL-01: pinned Kratos login, registration, and verification triggers each
 // reach one provider-neutral queue event through the authenticated ingress.
 func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 

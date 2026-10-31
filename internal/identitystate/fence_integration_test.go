@@ -57,6 +57,7 @@ func acquireAuthorizationMutationTransactionWithTimeout(db *gorm.DB) error {
 }
 
 func TestUserIdentityStateMutationRetainsLeaseTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 	require.NoError(t, WithMutation(t.Context(), stack.DB, user.IdentityID, func(_ context.Context, tx *gorm.DB) error {
@@ -72,6 +73,7 @@ func TestUserIdentityStateMutationRetainsLeaseTransactionIntegration(t *testing.
 }
 
 func TestUserIdentityStateMutationAcquiresGlobalBeforeIdentitySessionFenceIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 

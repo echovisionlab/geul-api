@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ import (
 )
 
 func TestRenderTemplateForLocaleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newEmailIntegrationDB(t)
 	layoutID := seedEmailLayout(t, db)
 	sourceLayout, err := CanonicalizeLayoutSourceMarkers("<main>{{content}}</main><footer>Layout footer</footer>")
@@ -56,7 +58,10 @@ func TestRenderTemplateForLocaleIntegration(t *testing.T) {
 
 func newEmailIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return newEmailIntegrationTransaction(t)
+	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+		BootstrapKratosStub: true,
+		ApplyAppSchemaSQL:   true,
+	}).DB
 }
 
 func seedEmailTemplate(t *testing.T, db *gorm.DB, layoutID string) string {

@@ -17,6 +17,7 @@ import (
 )
 
 func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page target locale CAS")

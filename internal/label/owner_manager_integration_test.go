@@ -15,6 +15,7 @@ import (
 )
 
 func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminIdentityID := integrationTestUUID()
 	managerIdentityID := integrationTestUUID()

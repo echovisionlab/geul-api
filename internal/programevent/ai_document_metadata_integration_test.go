@@ -16,6 +16,7 @@ import (
 )
 
 func TestProgramEventAIDocumentMetadataOwningTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()

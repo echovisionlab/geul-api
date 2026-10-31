@@ -24,6 +24,7 @@ import (
 )
 
 func TestWorkServiceAdminListIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Admin List Admin")
@@ -178,6 +179,7 @@ func TestWorkServiceAdminListIntegration(t *testing.T) {
 }
 
 func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work File Retention Admin")

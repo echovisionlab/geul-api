@@ -14,6 +14,7 @@ import (
 )
 
 func TestSeriesAuthorizationMutationsAreSynchronousIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	adminID := integrationTestUUID()

@@ -33,6 +33,7 @@ func (releaseTargetIntegrationFileAuthorizer) AuthorizeFileReuse(
 }
 
 func TestReleaseTargetLocaleCASIsIndependentAndDeletePreservesSharedRevisionIntegration(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
 	store, err := contentblock.NewGeneratedStore(releaseTargetIntegrationFileAuthorizer{})
 	require.NoError(t, err)

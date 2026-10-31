@@ -51,6 +51,7 @@ func (postgresPersistenceReuseAuthorizer) AuthorizeFileReuse(
 }
 
 func TestPostgresReplaceSnapshotPersistsGeneratedRichTextJSONB(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
@@ -114,6 +115,7 @@ func TestPostgresReplaceSnapshotPersistsGeneratedRichTextJSONB(t *testing.T) {
 }
 
 func TestPostgresLocaleEditUsesOneCASStatementAndRollsBackInvalidPayload(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,

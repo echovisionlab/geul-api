@@ -24,6 +24,7 @@ import (
 )
 
 func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.T) {
+	t.Parallel()
 	type legalPolicyCase struct {
 		name      string
 		table     string
@@ -151,7 +152,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			db := newLegalIntegrationDB(t)
+			db := newLegalLocalKratosIntegrationDB(t)
 			adminCtx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 			admin := auth.GetUser(adminCtx)
 			require.NotNil(t, admin)

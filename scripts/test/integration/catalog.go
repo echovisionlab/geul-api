@@ -61,10 +61,12 @@ var integrationCatalog = []integrationBand{
 		},
 	},
 	{
-		// Uses the orchestrator-owned Kratos, SpiceDB, Oathkeeper, MinIO, or
-		// backend lease. Packages run one at a time with a backend reset between them.
-		Name:      "ory",
-		Resources: integrationSharedBackend,
+		// Uses the orchestrator-owned Kratos, SpiceDB, Oathkeeper or MinIO. Every
+		// test clones its own database and SpiceDB datastore, so packages and
+		// tests run concurrently on the shared services.
+		Name:             "ory",
+		Resources:        integrationSharedBackend,
+		ParallelPackages: true,
 		Packages: []string{
 			"./internal/account",
 			"./internal/adapters/collaboration",

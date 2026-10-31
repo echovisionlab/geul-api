@@ -13,6 +13,7 @@ import (
 )
 
 func TestTranslationPersistenceAndSourceProjectionIntegration(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := t.Context()
 	seriesID := "11111111-1111-4111-8111-111111111111"

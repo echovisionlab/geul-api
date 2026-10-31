@@ -31,6 +31,7 @@ func (writer *captureFailingAudienceAuditAppender) AppendDomainAuditInTransactio
 }
 
 func TestAudienceAuthorizationIsSynchronousIntegration(t *testing.T) {
+	t.Parallel()
 	db := newAudienceIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())

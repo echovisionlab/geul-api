@@ -37,6 +37,7 @@ func (p enqueueThenFailUserDeletionPublisher) PublishUserDeleteIdentityWithExecu
 }
 
 func TestEnqueueExpiredUnonboardedMembersCommitsOnlyDurableCommands(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	recent := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -76,6 +77,7 @@ func TestEnqueueExpiredUnonboardedMembersCommitsOnlyDurableCommands(t *testing.T
 }
 
 func TestEnqueueExpiredUnonboardedMembersRollsBackQueueWrite(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	now := time.Now().UTC()
@@ -96,6 +98,7 @@ func TestEnqueueExpiredUnonboardedMembersRollsBackQueueWrite(t *testing.T) {
 }
 
 func TestUnonboardedDeletionWorkerHardDeletesOnceAndCleansSpiceDB(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -150,6 +153,7 @@ func TestUnonboardedDeletionWorkerHardDeletesOnceAndCleansSpiceDB(t *testing.T) 
 }
 
 func TestUnonboardedDeletionWorkerSkipsStaleOnboardedCommand(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	now := time.Now().UTC()
@@ -185,6 +189,7 @@ func TestUnonboardedDeletionWorkerSkipsStaleOnboardedCommand(t *testing.T) {
 }
 
 func TestUnonboardedDeletionWorkerReplaysAfterAnchorCleanup(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())

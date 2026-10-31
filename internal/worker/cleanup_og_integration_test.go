@@ -66,6 +66,7 @@ func cancelWorkerOgGenerationEntityForTest(
 }
 
 func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	cutoff := now.Add(-unboundOgAssetRetention)
@@ -98,6 +99,7 @@ func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
 }
 
 func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	plan, err := requestWorkerOgGenerationForTest(
@@ -128,8 +130,8 @@ func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t
 }
 
 func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	now := time.Now().UTC()
 	cutoff := now.Add(-unreadyAssetRetention)
 	digest := sha256.Sum256([]byte("completed"))
@@ -225,6 +227,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 }
 
 func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	ctx := context.Background()
 	s3Client, cfg := newWorkerIntegrationS3(t)
@@ -303,6 +306,7 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 }
 
 func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	old := now.Add(-25 * time.Hour)

@@ -18,6 +18,7 @@ import (
 )
 
 func TestPostSeriesTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedSeriesActor(t, db, adminID, "Post Series XLIFF admin")

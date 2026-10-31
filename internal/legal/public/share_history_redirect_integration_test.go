@@ -21,6 +21,7 @@ import (
 )
 
 func TestExpiredAutomaticLegalPreviewTokenResolvesOnlyExactPublicHistoryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	store := newPublicLegalContentBlockStore(t)
 	now := time.Now().UTC()

@@ -32,6 +32,7 @@ func (getter accountBanTargetIdentityGetter) GetIdentityWithIncludeCredential(
 }
 
 func TestEnsureAccountBanTargetIsNonAdminUsesIdentityRoleAuthority(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	service := &AccountService{spicedb: stack.SpiceDBClient}
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())

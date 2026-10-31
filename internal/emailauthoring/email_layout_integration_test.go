@@ -14,6 +14,7 @@ import (
 )
 
 func TestEmailLayoutServiceListUsesCanonicalSourceBatchAndFailsClosedIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
@@ -57,6 +58,7 @@ func TestEmailLayoutServiceListUsesCanonicalSourceBatchAndFailsClosedIntegration
 }
 
 func TestEmailLayoutPreviewFallsBackToCanonicalSourceWhenTargetIsMissingIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
@@ -83,6 +85,7 @@ func TestEmailLayoutPreviewFallsBackToCanonicalSourceWhenTargetIsMissingIntegrat
 }
 
 func TestEmailLayoutMutationIsFrozenOnlyWhileDeliveryRunIsActiveIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)

@@ -4,9 +4,6 @@ package application
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,43 +18,18 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-var applicationIntegrationPostgres *testutil.AppPostgres
-var applicationIntegrationPostgresOnce sync.Once
-var applicationIntegrationPostgresCleanup func() error
-var applicationIntegrationPostgresErr error
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if applicationIntegrationPostgresCleanup != nil {
-		if err := applicationIntegrationPostgresCleanup(); err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup transcode application integration postgres: %v\n", err)
-			if code == 0 {
-				code = 1
-			}
-		}
-	}
-	os.Exit(code)
+// newWorkerIntegrationPostgres returns a database owned by the calling test.
+func newWorkerIntegrationPostgres(t *testing.T) *testutil.AppPostgres {
+	t.Helper()
+	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+		BootstrapKratosStub: true,
+		ApplyAppSchemaSQL:   true,
+	})
 }
 
 func newWorkerIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
-	tx := pg.DB.Begin()
-	require.NoError(t, tx.Error)
-	t.Cleanup(func() { require.NoError(t, tx.Rollback().Error) })
-	return tx
-}
-
-func sharedWorkerIntegrationPostgres() (*testutil.AppPostgres, error) {
-	applicationIntegrationPostgresOnce.Do(func() {
-		applicationIntegrationPostgres, applicationIntegrationPostgresCleanup, applicationIntegrationPostgresErr =
-			testutil.StartAppPostgres(context.Background(), testutil.AppPostgresOptions{
-				BootstrapKratosStub: true,
-				ApplyAppSchemaSQL:   true,
-			})
-	})
-	return applicationIntegrationPostgres, applicationIntegrationPostgresErr
+	return newWorkerIntegrationPostgres(t).DB
 }
 
 func seedWorkerAllocatedMediaGeneration(

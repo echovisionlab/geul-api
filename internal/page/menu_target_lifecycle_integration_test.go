@@ -42,6 +42,7 @@ func (failingPageMenuTargets) Remove(
 }
 
 func TestPageMenuTargetFailureRollsBackSlugAndDeleteIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	pageSvc := NewPageService(

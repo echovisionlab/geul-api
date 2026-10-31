@@ -32,14 +32,16 @@ func (l memberAdminQueryCounter) Trace(ctx context.Context, begin time.Time, fc 
 }
 
 func TestListMembersAdminFiltersSortsAndKeepsConstantQueryCount(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceStack := testutil.SetupOryStack(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	alice := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Alice", "alice@example.test", policyv1.Role.Admin(), true, false, now.Add(-4*time.Hour))
-	bob := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Bob", "bob@example.test", policyv1.Role.User(), false, false, now.Add(-3*time.Hour))
+	alice := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Alice", memberAdminListEmail("alice"), policyv1.Role.Admin(), true, false, now.Add(-4*time.Hour))
+	bobEmail := memberAdminListEmail("bob")
+	bob := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Bob", bobEmail, policyv1.Role.User(), false, false, now.Add(-3*time.Hour))
 	require.NoError(t, db.Exec(`UPDATE member SET onboarded=FALSE WHERE id=?::uuid`, bob.memberID).Error)
-	carol := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Carol", "carol@example.test", policyv1.Role.Author(), false, true, now.Add(-2*time.Hour))
-	pending := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Pending", "pending@example.test", policyv1.Role.User(), false, false, now.Add(-90*time.Minute))
+	carol := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Carol", memberAdminListEmail("carol"), policyv1.Role.Author(), false, true, now.Add(-2*time.Hour))
+	pending := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Pending", memberAdminListEmail("pending"), policyv1.Role.User(), false, false, now.Add(-90*time.Minute))
 	deletedMemberID := seedMemberAdminListTombstone(t, db, "Deleted member", "deleted@example.test", now.Add(-time.Hour))
 	scheduledAt := now.Add(-time.Minute)
 	notificationEmail := "pending@example.test"
@@ -63,7 +65,7 @@ func TestListMembersAdminFiltersSortsAndKeepsConstantQueryCount(t *testing.T) {
 		identity: &fakeIdentityManager{identity: &auth.Identity{
 			ID:         bob.identityID,
 			ExternalID: bob.memberID,
-			Traits:     map[string]interface{}{"email": "bob@example.test"},
+			Traits:     map[string]interface{}{"email": bobEmail},
 		}},
 	}
 	adminIdentityID := uuid.NewString()
@@ -140,12 +142,13 @@ func TestListMembersAdminFiltersSortsAndKeepsConstantQueryCount(t *testing.T) {
 }
 
 func TestSearchMembersCanRestrictCandidatesToEffectiveAuthorsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceStack := testutil.SetupOryStack(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	author := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Author candidate", "author-candidate@example.test", policyv1.Role.Author(), false, false, now)
-	admin := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Admin candidate", "admin-candidate@example.test", policyv1.Role.Admin(), false, false, now)
-	seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "User candidate", "user-candidate@example.test", policyv1.Role.User(), false, false, now)
+	author := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Author candidate", memberAdminListEmail("author-candidate"), policyv1.Role.Author(), false, false, now)
+	admin := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Admin candidate", memberAdminListEmail("admin-candidate"), policyv1.Role.Admin(), false, false, now)
+	seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "User candidate", memberAdminListEmail("user-candidate"), policyv1.Role.User(), false, false, now)
 
 	viewerIdentityID := uuid.NewString()
 	viewerCtx := auth.WithUser(t.Context(), &auth.UserInfo{
@@ -166,11 +169,12 @@ func TestSearchMembersCanRestrictCandidatesToEffectiveAuthorsIntegration(t *test
 }
 
 func TestListMemberTagsAdminAppliesFiltersAndSorts(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceStack := testutil.SetupOryStack(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	first := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "First", "first@example.test", policyv1.Role.User(), false, false, now)
-	second := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Second", "second@example.test", policyv1.Role.User(), false, false, now)
+	first := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "First", memberAdminListEmail("first"), policyv1.Role.User(), false, false, now)
+	second := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Second", memberAdminListEmail("second"), policyv1.Role.User(), false, false, now)
 	tags := []model.UserTag{
 		{Name: "Alpha", CreatedAt: now.Add(-time.Hour)},
 		{Name: "Editorial", CreatedAt: now},
@@ -238,6 +242,11 @@ func seedMemberAdminListPair(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBCli
 	}
 	syncIntegrationGlobalRole(t, spiceDB, pair.identityID, role)
 	return pair
+}
+
+// memberAdminListEmail keeps seeded Kratos addresses unique in the shared Kratos.
+func memberAdminListEmail(local string) string {
+	return local + "-" + uuid.NewString() + "@example.test"
 }
 
 func seedMemberAdminListTombstone(t *testing.T, db *gorm.DB, name, email string, createdAt time.Time) string {

@@ -37,24 +37,22 @@ type translationProviderAuditRow struct {
 }
 
 func TestTranslationProviderConfigDomainAuditIntegration(t *testing.T) {
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stack.Close()) })
+	t.Parallel()
 
 	t.Run("exact changes and semantic no-op", func(t *testing.T) {
-		prepareTranslationProviderIntegrationCase(t, stack)
+		stack := prepareTranslationProviderIntegrationCase(t)
 		testTranslationProviderUpdatesAuditExactChangesAndSkipSemanticNoOps(
 			t, stack.Postgres.DB, stack.SpiceDBClient,
 		)
 	})
 	t.Run("audit failure rolls back mutation", func(t *testing.T) {
-		prepareTranslationProviderIntegrationCase(t, stack)
+		stack := prepareTranslationProviderIntegrationCase(t)
 		testTranslationProviderAuditFailureRollsBackMutation(
 			t, stack.Postgres.DB, stack.SpiceDBClient,
 		)
 	})
 	t.Run("concurrent source change uses locked latest row", func(t *testing.T) {
-		prepareTranslationProviderIntegrationCase(t, stack)
+		stack := prepareTranslationProviderIntegrationCase(t)
 		testTranslationProviderConfigUsesLockedLatestSource(
 			t, stack.Postgres.DB, stack.SpiceDBClient,
 		)
@@ -264,17 +262,12 @@ func testTranslationProviderConfigUsesLockedLatestSource(
 	require.EqualValues(t, 1, auditCount)
 }
 
-func prepareTranslationProviderIntegrationCase(
-	t *testing.T,
-	stack *testutil.BackendIntegrationStack,
-) {
+func prepareTranslationProviderIntegrationCase(t *testing.T) *testutil.BackendIntegrationStack {
 	t.Helper()
-	require.NoError(t, testutil.ResetBackendIntegrationState(t.Context(), stack))
-	t.Cleanup(func() {
-		require.NoError(t, testutil.ResetBackendIntegrationState(
-			context.Background(), stack,
-		))
-	})
+	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, stack.Close()) })
+	return stack
 }
 
 type translationProviderAuditAdmin struct {

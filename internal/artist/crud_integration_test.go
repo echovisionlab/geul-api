@@ -68,6 +68,7 @@ func artistIntegrationAdminCtx(id string) context.Context {
 }
 
 func TestArtistCreateRechecksCurrentSiteAdminInTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Demoted Admin")
@@ -87,6 +88,7 @@ func TestArtistCreateRechecksCurrentSiteAdminInTransactionIntegration(t *testing
 }
 
 func TestListMyArtistsGivesCurrentSiteAdminAllArtistsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	otherAdminID := testutil.IntegrationUUID()
@@ -148,6 +150,7 @@ func requireArtistIDs(t *testing.T, artists []*managev1.Artist, expectedIDs ...s
 }
 
 func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Gallery Admin")
@@ -250,6 +253,7 @@ func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 }
 
 func TestArtistDeletePreviewRejectsChangedRelationsAndPreservesTargetsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Delete Admin")
@@ -320,6 +324,7 @@ func TestArtistDeletePreviewRejectsChangedRelationsAndPreservesTargetsIntegratio
 }
 
 func TestArtistDeleteSerializesRelationshipSnapshotWithReparentIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist delete lock admin")
@@ -387,6 +392,7 @@ func TestArtistDeleteSerializesRelationshipSnapshotWithReparentIntegration(t *te
 }
 
 func TestArtistOwnerManagerTransitionsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	participantID := testutil.IntegrationUUID()

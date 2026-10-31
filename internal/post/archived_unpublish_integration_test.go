@@ -21,6 +21,7 @@ import (
 )
 
 func TestArchivedPostUnpublishStoresDirectDraftTransitionIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminID, authorID := testutil.PostIntegrationUUID(), testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Archived unpublish Admin")

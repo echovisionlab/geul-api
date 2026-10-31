@@ -17,6 +17,7 @@ import (
 )
 
 func TestArchivedWorkRemainsInDefaultPublicReadsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Archived Public Work Admin"})

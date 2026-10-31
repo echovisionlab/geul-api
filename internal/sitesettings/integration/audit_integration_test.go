@@ -24,6 +24,7 @@ import (
 )
 
 func TestSiteSettingsAuditCommitsExactChangesAndSkipsNoOpIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings audit admin")
@@ -77,6 +78,7 @@ func TestSiteSettingsAuditCommitsExactChangesAndSkipsNoOpIntegration(t *testing.
 }
 
 func TestSiteSettingsAuditFailureRollsBackMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings rollback admin")
@@ -105,6 +107,7 @@ func TestSiteSettingsAuditFailureRollsBackMutationIntegration(t *testing.T) {
 }
 
 func TestSiteSettingsNestedOgAuditUsesAggregateFieldAndRollsBackIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings OG audit admin")

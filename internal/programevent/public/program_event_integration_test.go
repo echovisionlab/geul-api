@@ -36,6 +36,7 @@ import (
 )
 
 func TestPublicProgramEventServiceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
@@ -57,7 +58,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	publicFileSvc := publicProgramEventFileGateway{db: db}
 	manageFileGateway := publicFileSvc
 
-	typeSvc := eventdomain.NewProgramEventTypeService(db, publicIntegrationSpiceDB)
+	typeSvc := eventdomain.NewProgramEventTypeService(db, publicIntegrationSpiceDB(t))
 	typeResp, err := typeSvc.CreateProgramEventType(adminCtx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 		Slug:              "public-program-event-type-" + suffix,
 		Locale:            "en",
@@ -69,7 +70,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	seriesPosterFileID, seriesPosterAssetID := seedCanonicalPublicFileFixture(t, db, "series-poster.webp", "image/webp", "poster")
-	seriesSvc := eventdomain.NewProgramEventSeriesService(db, newManageProgramEventRuntime("https://cdn.example.com"), publicIntegrationSpiceDB)
+	seriesSvc := eventdomain.NewProgramEventSeriesService(db, newManageProgramEventRuntime("https://cdn.example.com"), publicIntegrationSpiceDB(t))
 	seriesResp, err := seriesSvc.CreateProgramEventSeries(adminCtx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title:        "Public Program Event Series " + suffix,
 		Slug:         "public-program-event-series-" + suffix,
@@ -88,7 +89,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 		db,
 		referencecatalogadapter.NewAssets("https://cdn.example.com"),
 		referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDB(t),
 	)
 	googlePlaceID := "google-place-" + suffix
 	placeResp, err := placeSvc.CreateMapPlace(adminCtx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
@@ -105,7 +106,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 		newManageProgramEventRuntime("https://cdn.example.com"),
 		manageFileGateway,
 		apitelemetry.NewDurableWriter(db),
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDB(t),
 		programeventadapter.NewCreditMemberSummaries(db, "https://cdn.example.com"),
 		eventdomain.WithProgramEventContentBlockStore(contentBlocks),
 		// Production wires the PostgreSQL publisher; content.updated is required in-transaction.
@@ -153,10 +154,10 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	internalEventSvc := eventdomain.NewInternalProgramEventService(
 		db,
 		publicProgramEventSignals{},
-		eventdomain.WithInternalProgramEventSpiceDB(publicIntegrationSpiceDB),
+		eventdomain.WithInternalProgramEventSpiceDB(publicIntegrationSpiceDB(t)),
 		eventdomain.WithInternalProgramEventContentBlockStore(contentBlocks),
 		eventdomain.WithInternalProgramEventMediaHydrator(manageFileGateway),
-		eventdomain.WithInternalProgramEventCheckpoints(testcollaboration.NewCheckpoints(db, publicIntegrationSpiceDB)),
+		eventdomain.WithInternalProgramEventCheckpoints(testcollaboration.NewCheckpoints(db, publicIntegrationSpiceDB(t))),
 	)
 	blockID := uuid.NewString()
 	sourceApplied, err := internalEventSvc.ApplyProgramEventBlockBatch(adminCtx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{

@@ -10,6 +10,7 @@ import (
 )
 
 func TestSitemapPageAudienceExcludesRestrictedPagesAndHomepageIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{}).DB
 	publicID, authenticatedID, conditionsID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	for _, fixture := range []struct{ id, policy string }{{publicID, "{}"}, {authenticatedID, `{"mode":"PAGE_ACCESS_MODE_AUTHENTICATED"}`}, {conditionsID, `{"mode":"PAGE_ACCESS_MODE_CONDITIONS","allowedRoles":["AUTHOR"]}`}} {

@@ -35,6 +35,7 @@ func (c *blockingWorkPolicyChecker) CheckActorCan(
 }
 
 func TestWorkPolicyAuthorityLocksArchivedRootAndActivePrincipalIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name           string
 		requirePolicy  func(context.Context, *workdomain.PolicyAuthority, *gorm.DB, string) error

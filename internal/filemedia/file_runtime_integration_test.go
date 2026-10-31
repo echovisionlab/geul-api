@@ -46,6 +46,7 @@ import (
 )
 
 func TestRuntimeEditorFileUploadIsIndependentAndFileScoped(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
@@ -103,6 +104,7 @@ func (r runtimeRemoteImportResolver) LookupIP(context.Context, string, string) (
 }
 
 func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 
@@ -178,6 +180,7 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 }
 
 func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupRuntimeStack(t)
 	stack.BackendReadTimeoutSec = 1
 	stack.StartBackend(t)

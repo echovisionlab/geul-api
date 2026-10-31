@@ -21,6 +21,7 @@ import (
 )
 
 func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Label hierarchy admin")

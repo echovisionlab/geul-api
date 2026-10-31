@@ -36,18 +36,20 @@ func (memberEmailProjectionIntegration) SyncEmailProjection(ctx context.Context,
 }
 
 func TestSyncMemberEmailProjectionReplacesExactProvenCandidateSet(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID, memberID := uuid.NewString(), uuid.NewString()
-	seedAccountEmailProjectionPair(t, db, identityID, memberID, "primary@example.test")
+	primaryEmail := "primary-" + identityID + "@example.test"
+	seedAccountEmailProjectionPair(t, db, identityID, memberID, primaryEmail)
 	require.NoError(t, db.Exec(`INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails) VALUES (?::uuid, ?::uuid, 'Active member', TRUE, 'stale@example.test', ARRAY['stale@example.test']::text[])`, memberID, identityID).Error)
 	identity := &auth.Identity{
 		ID: identityID, ExternalID: memberID, State: auth.KratosStateActive,
-		Traits: map[string]interface{}{"email": "primary@example.test"},
+		Traits: map[string]interface{}{"email": primaryEmail},
 		Credentials: map[string]auth.Credential{
-			"code": {Type: "code", Identifiers: []string{"primary@example.test", "alternate@example.test"}},
+			"code": {Type: "code", Identifiers: []string{primaryEmail, "alternate@example.test"}},
 		},
 		VerifiableAddresses: []auth.VerifiableAddress{
-			{Via: "email", Value: "primary@example.test", Verified: true},
+			{Via: "email", Value: primaryEmail, Verified: true},
 			{Via: "email", Value: "alternate@example.test", Verified: true},
 			{Via: "email", Value: "pending@example.test", Verified: false},
 		},
@@ -60,18 +62,20 @@ func TestSyncMemberEmailProjectionReplacesExactProvenCandidateSet(t *testing.T) 
 	require.False(t, pending.UsableForDelivery)
 	var member model.Member
 	require.NoError(t, db.Where("id = ?::uuid", memberID).Take(&member).Error)
-	require.Equal(t, "primary@example.test", *member.PrimaryEmail)
-	require.Equal(t, []string{"primary@example.test"}, []string(member.AvailableEmails))
+	require.Equal(t, primaryEmail, *member.PrimaryEmail)
+	require.Equal(t, []string{primaryEmail}, []string(member.AvailableEmails))
 }
 
 func TestSyncMemberEmailProjectionRejectsUnusableCanonical(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID, memberID := uuid.NewString(), uuid.NewString()
-	seedAccountEmailProjectionPair(t, db, identityID, memberID, "unproven@example.test")
+	unprovenEmail := "unproven-" + identityID + "@example.test"
+	seedAccountEmailProjectionPair(t, db, identityID, memberID, unprovenEmail)
 	require.NoError(t, db.Exec(`INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails) VALUES (?::uuid, ?::uuid, 'Active member', TRUE, 'stale@example.test', ARRAY['stale@example.test']::text[])`, memberID, identityID).Error)
 	identity := &auth.Identity{
 		ID: identityID, ExternalID: memberID, State: auth.KratosStateActive,
-		Traits: map[string]interface{}{"email": "unproven@example.test"},
+		Traits: map[string]interface{}{"email": unprovenEmail},
 		Credentials: map[string]auth.Credential{
 			"code": {Type: "code", Identifiers: []string{"zulu@example.test", "alpha@example.test"}},
 		},
@@ -108,18 +112,20 @@ func seedAccountEmailProjectionPair(
 }
 
 func TestSyncAccountEmailCandidateProjectionDoesNotMutateIdentityTraits(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID, memberID := uuid.NewString(), uuid.NewString()
-	seedAccountEmailProjectionPair(t, db, identityID, memberID, "delivery@example.test")
-	require.NoError(t, db.Exec(`INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails) VALUES (?::uuid, ?::uuid, 'Active member', TRUE, 'delivery@example.test', ARRAY['delivery@example.test']::text[])`, memberID, identityID).Error)
+	deliveryEmail := "delivery-" + identityID + "@example.test"
+	seedAccountEmailProjectionPair(t, db, identityID, memberID, deliveryEmail)
+	require.NoError(t, db.Exec(`INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails) VALUES (?::uuid, ?::uuid, 'Active member', TRUE, ?, ARRAY[?]::text[])`, memberID, identityID, deliveryEmail, deliveryEmail).Error)
 	identity := &auth.Identity{
 		ID:         identityID,
 		ExternalID: memberID,
 		Traits: structured.Fields{
-			"email": "delivery@example.test",
+			"email": deliveryEmail,
 		},
 		VerifiableAddresses: []auth.VerifiableAddress{
-			{Via: "email", Value: "delivery@example.test", Verified: true},
+			{Via: "email", Value: deliveryEmail, Verified: true},
 		},
 	}
 	credentials := map[string]auth.Credential{
@@ -147,7 +153,7 @@ func TestSyncAccountEmailCandidateProjectionDoesNotMutateIdentityTraits(t *testi
 		},
 		"code": {
 			Type:        "code",
-			Identifiers: []string{"delivery@example.test"},
+			Identifiers: []string{deliveryEmail},
 		},
 	}
 	providerCandidates := ResolveAccountEmailProviderCandidates(t.Context(), credentials)
@@ -161,9 +167,9 @@ func TestSyncAccountEmailCandidateProjectionDoesNotMutateIdentityTraits(t *testi
 	)
 	require.NoError(t, err)
 
-	require.Equal(t, structured.Fields{"email": "delivery@example.test"}, identity.Traits)
+	require.Equal(t, structured.Fields{"email": deliveryEmail}, identity.Traits)
 	var member model.Member
 	require.NoError(t, db.Where("id = ?::uuid", memberID).Take(&member).Error)
-	require.Equal(t, "delivery@example.test", *member.PrimaryEmail)
-	require.Equal(t, []string{"delivery@example.test", "github@example.test", "google@example.test"}, []string(member.AvailableEmails))
+	require.Equal(t, deliveryEmail, *member.PrimaryEmail)
+	require.Equal(t, []string{deliveryEmail, "github@example.test", "google@example.test"}, []string(member.AvailableEmails))
 }

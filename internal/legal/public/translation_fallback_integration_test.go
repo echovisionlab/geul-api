@@ -16,6 +16,7 @@ import (
 )
 
 func TestPublishedAndArchivedLegalHistoryFallsBackAfterTargetDeletionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	store := newPublicLegalContentBlockStore(t)
 	media := legaladapter.NewOGRuntime("", nil)

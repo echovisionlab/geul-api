@@ -26,6 +26,7 @@ import (
 )
 
 func TestPublicFormServiceAccessPasswordSubmitAndLimitIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Public Form Admin"})

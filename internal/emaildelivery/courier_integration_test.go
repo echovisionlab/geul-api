@@ -21,6 +21,7 @@ import (
 )
 
 func TestEmailCourierServiceEnqueuesReservedPGMQMessageIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

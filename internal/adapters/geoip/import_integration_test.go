@@ -34,6 +34,7 @@ func newGeoIPZipFile(t *testing.T, name string, content string) *zip.File {
 }
 
 func TestImportGormWritesPublicGeoIPStagingShapes(t *testing.T) {
+	t.Parallel()
 	db := newAdapterGeoIPIntegrationDB(t)
 	createGeoIPNetworkStagingTable(t, db)
 
@@ -158,6 +159,7 @@ func assertImportLocationsGormWritesPublicGeoIPLocationShape(t *testing.T) {
 }
 
 func TestImportLocationsGormRejectsInvalidRows(t *testing.T) {
+	t.Parallel()
 	db := newAdapterGeoIPIntegrationDB(t)
 	createGeoIPLocationStagingTable(t, db)
 
@@ -170,6 +172,7 @@ func TestImportLocationsGormRejectsInvalidRows(t *testing.T) {
 }
 
 func TestImportNetworksGormRejectsInvalidRows(t *testing.T) {
+	t.Parallel()
 	db := newAdapterGeoIPIntegrationDB(t)
 	createGeoIPNetworkStagingTable(t, db)
 
@@ -182,6 +185,7 @@ func TestImportNetworksGormRejectsInvalidRows(t *testing.T) {
 }
 
 func TestRefreshExecutorRollsBackPartialImport(t *testing.T) {
+	t.Parallel()
 	db := newAdapterGeoIPIntegrationDB(t)
 	oldImportedAt := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, db.Exec(`DELETE FROM geoip_metadata`).Error)

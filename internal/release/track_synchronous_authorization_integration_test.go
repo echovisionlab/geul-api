@@ -19,6 +19,7 @@ import (
 )
 
 func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	adminID := integrationTestUUID()

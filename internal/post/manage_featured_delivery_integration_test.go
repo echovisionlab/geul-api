@@ -24,6 +24,7 @@ import (
 )
 
 func TestManagePostFeaturedImageUsesExactFinalOwnerBoundaryIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("public reader cannot enter manage private delivery", func(t *testing.T) {
 		fixture := newManagePostFeaturedDeliveryFixture(t)
 		fixture.files.beforeExact = func() { t.Fatal("anonymous manage read reached the private File signer") }

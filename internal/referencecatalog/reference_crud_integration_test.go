@@ -19,6 +19,7 @@ import (
 )
 
 func TestReferenceCatalogCRUDIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	spiceDB := stack.SpiceDBClient
 	referenceAdmin := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -539,6 +540,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 }
 
 func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		prepare func(*testing.T, *CategoryService, context.Context, string) string

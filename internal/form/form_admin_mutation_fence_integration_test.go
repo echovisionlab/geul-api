@@ -19,6 +19,7 @@ import (
 )
 
 func TestFormAdminMutationRechecksAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	principal := auth.GetUser(ctx)
@@ -59,10 +60,9 @@ func TestFormAdminMutationRechecksAuthorityAfterRootLockIntegration(t *testing.T
 
 func newFormMutationFenceDB(t *testing.T) (*gorm.DB, string) {
 	t.Helper()
-	lease, err := testutil.CurrentAppIntegrationBackendLease()
-	require.NoError(t, err)
+	stack := testutil.PrepareOryIntegrationTest(t)
 	applicationName := "geul_form_admin_fence_" + testutil.IntegrationUUID()
-	db, err := gorm.Open(gormpostgres.Open(lease.PostgresDSN), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)

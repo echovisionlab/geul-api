@@ -22,7 +22,9 @@ import (
 )
 
 func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *testing.T) {
-	db := newCampaignConcurrentIntegrationDB(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := openCampaignIntegrationDB(t, stack)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
 	references := emailauthoringadapter.NewCampaignDeliveryReferences()
@@ -86,8 +88,8 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 
 	deleteApplication := durableEmailApplicationName("schedule_layout_delete")
 	scheduleApplication := durableEmailApplicationName("schedule_layout_send")
-	deleteDB := newNamedCampaignDeliveryIntegrationDB(t, deleteApplication)
-	scheduleDB := newNamedCampaignDeliveryIntegrationDB(t, scheduleApplication)
+	deleteDB := newNamedCampaignDeliveryIntegrationDBForStack(t, stack, deleteApplication)
+	scheduleDB := newNamedCampaignDeliveryIntegrationDBForStack(t, stack, scheduleApplication)
 	start := make(chan struct{})
 	deleteDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
 		<-start

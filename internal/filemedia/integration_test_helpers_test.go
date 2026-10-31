@@ -32,8 +32,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-var fileIntegrationSuite *testutil.OryIntegrationSuite
-
 type postSeriesAuditRow struct {
 	Action        string
 	TargetType    string `gorm:"column:target_type"`
@@ -51,9 +49,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	testutil.ActivateOryIntegrationSuite(suite)
-	fileIntegrationSuite = suite
 	code := m.Run()
-	fileIntegrationSuite = nil
 	testutil.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close File/Media integration suite: %v\n", err)
@@ -73,8 +69,21 @@ func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
 	require.NotNil(t, stack)
-	require.NotNil(t, fileIntegrationSuite)
-	db, err := gorm.Open(gormpostgres.Open(fileIntegrationSuite.Stack().PostgresDSN), &gorm.Config{
+	return openConcurrentServiceIntegrationDB(t, stack)
+}
+
+// newLocalKratosConcurrentServiceIntegrationDB is for identity fences that
+// lock kratos rows: the shared Kratos tables are postgres_fdw foreign tables
+// whose remote REPEATABLE READ transactions do not wait like production.
+func newLocalKratosConcurrentServiceIntegrationDB(t *testing.T) (*gorm.DB, *auth.SpiceDBClient) {
+	t.Helper()
+	stack := testutil.SetupOryStackWithLocalKratos(t)
+	return openConcurrentServiceIntegrationDB(t, stack), stack.SpiceDBClient
+}
+
+func openConcurrentServiceIntegrationDB(t *testing.T, stack *testutil.OryStack) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err)
@@ -142,14 +151,19 @@ func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, ident
 
 func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
+	spiceDB := integrationSpiceDB(t)
+	return integrationAdminCtxWithIdentity(t, db, spiceDB), spiceDB
+}
+
+func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) context.Context {
+	t.Helper()
 	identityID := integrationTestUUID()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "File/Media integration Admin")
-	spiceDB := integrationSpiceDB(t)
 	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
-	}), spiceDB
+	})
 }
 
 func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceID string) {

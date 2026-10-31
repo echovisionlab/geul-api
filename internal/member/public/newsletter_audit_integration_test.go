@@ -23,7 +23,8 @@ import (
 )
 
 func TestNewsletterTokenUnsubscribeAuditsOnlyCommittedTransitionIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, _ := newPublicIntegrationDB(t)
 	identityID, memberID := createNewsletterAuditMember(t, db)
 	require.NoError(t, db.Create(&model.NewsletterSubscription{IdentityID: identityID}).Error)
 	service := NewAuditedNewsletterService(db, publicNewsletterTokenTestSecret, apitelemetry.NewDurableWriter(db))
@@ -72,7 +73,8 @@ func TestNewsletterTokenUnsubscribeAuditsOnlyCommittedTransitionIntegration(t *t
 }
 
 func TestNewsletterTokenUnsubscribeAuditFailureRollsBackIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, _ := newPublicIntegrationDB(t)
 	identityID, _ := createNewsletterAuditMember(t, db)
 	require.NoError(t, db.Create(&model.NewsletterSubscription{IdentityID: identityID}).Error)
 	service := NewAuditedNewsletterService(db, publicNewsletterTokenTestSecret, failingNewsletterAuditAppender{})
@@ -91,9 +93,10 @@ func TestNewsletterTokenUnsubscribeAuditFailureRollsBackIntegration(t *testing.T
 }
 
 func TestNewsletterTokenUnsubscribeMissingMemberRollsBackIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, _ := newPublicIntegrationDB(t)
 	identityID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: "orphan@example.test"})
+	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: "orphan-" + identityID + "@example.test"})
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)
 	require.NoError(t, db.Create(&model.NewsletterSubscription{IdentityID: identityID}).Error)
 	service := NewAuditedNewsletterService(db, publicNewsletterTokenTestSecret, apitelemetry.NewDurableWriter(db))

@@ -24,6 +24,7 @@ import (
 )
 
 func TestOgGenerationNewerCompletionWinsBeforeSupersededCompletionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -64,6 +65,7 @@ func TestOgGenerationNewerCompletionWinsBeforeSupersededCompletionIntegration(t 
 }
 
 func TestOgGenerationRequestAndCompletionUseDeadlockFreeTargetFirstLockOrderIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
@@ -143,6 +145,7 @@ func newWorkOGLifecycleForConcurrencyTest(db *gorm.DB) *og.Lifecycle {
 }
 
 func TestOgGenerationConcurrentTerminalUpdatesRefreshRunAfterSerializationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
@@ -200,6 +203,7 @@ func TestOgGenerationConcurrentTerminalUpdatesRefreshRunAfterSerializationIntegr
 }
 
 func TestOgGenerationClaimSerializesBehindRowsOwnedByAnotherReplicaIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	for _, lock := range []struct {
 		name  string
@@ -305,6 +309,7 @@ func requireOGClaimWaitingOnLock(
 }
 
 func TestOgGenerationDuplicateClaimNeverRewritesTerminalHistoryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	for _, testCase := range []struct {
 		name        string
@@ -370,6 +375,7 @@ func TestOgGenerationDuplicateClaimNeverRewritesTerminalHistoryIntegration(t *te
 }
 
 func TestOgGenerationPartialCancellationStartsStillRunningRunIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	firstWorkID := seedOgGenerationConcurrencyWork(t, db)
 	secondWorkID := seedOgGenerationConcurrencyWork(t, db)

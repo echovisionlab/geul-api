@@ -15,7 +15,8 @@ import (
 )
 
 func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
+	t.Parallel()
+	db := newCampaignLocalKratosStack(t).DB
 	now := time.Now().UTC()
 	includedIdentityID := uuid.NewString()
 	excludedIdentityID := uuid.NewString()

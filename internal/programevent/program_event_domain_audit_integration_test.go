@@ -32,6 +32,7 @@ type programEventAuditRow struct {
 }
 
 func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Program event audit admin")

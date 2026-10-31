@@ -15,6 +15,7 @@ import (
 )
 
 func TestOgGenerationBulkBatchesThousandsOfTargetsInOnePostgresTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	const targetCount = 3200
 	requests := make([]og.Request, targetCount)

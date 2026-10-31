@@ -22,6 +22,7 @@ import (
 )
 
 func TestEmailSuppressionReleaseDomainAuditIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	baseContext, spiceDB := testutil.IntegrationAdminContext(t, db)
 	admin := auth.GetUser(baseContext)

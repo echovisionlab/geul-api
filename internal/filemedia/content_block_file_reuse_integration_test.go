@@ -14,6 +14,7 @@ import (
 )
 
 func TestContentBlockForeignFileReuseUsesFileListAdmissionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	fileID := uuid.New()
 	uploaderIdentityID := uuid.NewString()

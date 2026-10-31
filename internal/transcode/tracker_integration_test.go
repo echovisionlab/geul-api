@@ -22,6 +22,7 @@ import (
 )
 
 func TestTrackerPublishTranscodeAudioTracksJobAndSupersedesPreviousActiveJob(t *testing.T) {
+	t.Parallel()
 	db := newTranscodeIntegrationDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -123,6 +124,7 @@ func TestTrackerPublishTranscodeAudioTracksJobAndSupersedesPreviousActiveJob(t *
 }
 
 func TestTrackerIntegrationSchemaOmitsBrokerTransportColumns(t *testing.T) {
+	t.Parallel()
 	db := newTranscodeIntegrationDB(t)
 
 	var columns []string
@@ -138,6 +140,7 @@ ORDER BY column_name
 }
 
 func TestTrackerPublishTranscodeAudioIsIdempotentForStableEvent(t *testing.T) {
+	t.Parallel()
 	db := newTranscodeIntegrationDB(t)
 	ctx := context.Background()
 	fileID := uuid.NewString()
@@ -160,6 +163,7 @@ func TestTrackerPublishTranscodeAudioIsIdempotentForStableEvent(t *testing.T) {
 }
 
 func TestTrackerPublishTranscodeAudioRetriesSameStableCommandWithoutDatabaseTransportState(t *testing.T) {
+	t.Parallel()
 	db := newTranscodeIntegrationDB(t)
 	ctx := context.Background()
 	job := newTrackerIntegrationAudioJob(t, uuid.NewString())
@@ -177,6 +181,7 @@ func TestTrackerPublishTranscodeAudioRetriesSameStableCommandWithoutDatabaseTran
 }
 
 func TestTrackerRegisterTranscodeAudioUsesCallersTransaction(t *testing.T) {
+	t.Parallel()
 	db := newTranscodeIntegrationDB(t)
 	ctx := context.Background()
 	job := newTrackerIntegrationAudioJob(t, uuid.NewString())
@@ -195,6 +200,7 @@ func TestTrackerRegisterTranscodeAudioUsesCallersTransaction(t *testing.T) {
 }
 
 func TestTrackerRegisterTranscodeVideoUsesCallersTransaction(t *testing.T) {
+	t.Parallel()
 	db := newTranscodeIntegrationDB(t)
 	ctx := context.Background()
 	job := newTrackerIntegrationVideoJob(t, uuid.NewString())

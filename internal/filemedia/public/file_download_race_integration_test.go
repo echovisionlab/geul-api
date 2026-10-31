@@ -54,6 +54,7 @@ func (l *relationSourceBlockingLogger) Trace(
 }
 
 func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	spiceDB := publicIntegrationSpiceDBClient(t)
 	postID, documentID, blockID := uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -130,6 +131,7 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 }
 
 func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	spiceDB := publicIntegrationSpiceDBClient(t)
 	postID, documentID, blockID := uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -199,6 +201,7 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 }
 
 func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	spiceDB := publicIntegrationSpiceDBClient(t)
 	postID, documentID := uuid.NewString(), uuid.NewString()
@@ -272,6 +275,7 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 }
 
 func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, fileID := seedDownloadRelationForPrincipalFenceIntegration(
@@ -321,6 +325,7 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 }
 
 func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
@@ -374,6 +379,7 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 }
 
 func TestAuthorizeDownloadDraftPublicPolicyRejectsPrincipalRevokedAfterPhaseOneIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(

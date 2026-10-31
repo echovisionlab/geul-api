@@ -24,6 +24,7 @@ import (
 )
 
 func TestCampaignDomainAuditMemberMutationsAndRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -130,6 +131,7 @@ func TestCampaignDomainAuditMemberMutationsAndRollbackIntegration(t *testing.T) 
 }
 
 func TestCampaignDeliveryTerminalAuditIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
 	stack := testutil.SetupOryStack(t)
@@ -214,9 +216,10 @@ func TestCampaignDeliveryTerminalAuditIntegration(t *testing.T) {
 }
 
 func TestCampaignLifecycleAndDeletionAuditIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := stack.DB
 	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
-	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	identityID, memberID := admin.IdentityID, admin.MemberID
 	spiceDB := stack.SpiceDBClient

@@ -43,7 +43,8 @@ func (t *multipartListPartsFailureTransport) RoundTrip(req *http.Request) (*http
 }
 
 func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -106,7 +107,8 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 }
 
 func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -193,7 +195,8 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 }
 
 func TestMultipartCompletionUsesActualPartAfterConfirmedPresignIsReusedDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -226,7 +229,8 @@ func TestMultipartCompletionUsesActualPartAfterConfirmedPresignIsReusedDirectInt
 }
 
 func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	verifiedBody, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -257,7 +261,8 @@ func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegra
 }
 
 func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	fixtureBytes, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -376,7 +381,8 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 }
 
 func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -424,7 +430,8 @@ func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(
 }
 
 func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))

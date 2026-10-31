@@ -12,6 +12,7 @@ import (
 )
 
 func TestQueryDBUsesIP4RAddressCastAndHandlesMissingCoordinates(t *testing.T) {
+	t.Parallel()
 	db := newGeoIPIntegrationDB(t)
 	seedGeoIPLocation(t, db, 5375480, "US", "United States", "Mountain View", "America/Los_Angeles")
 	seedGeoIPNetwork(t, db, "8.8.8.0/24", 5375480, "SRID=4326;POINT(-122.08400000 37.38600000)")

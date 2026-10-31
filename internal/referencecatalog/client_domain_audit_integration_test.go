@@ -35,6 +35,7 @@ type clientDomainAuditRecord struct {
 }
 
 func TestClientDomainAuditLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	admin := auth.GetUser(adminCtx)
@@ -138,6 +139,7 @@ func TestClientDomainAuditLifecycleIntegration(t *testing.T) {
 }
 
 func TestClientDomainAuditFailureAndReferenceRejectionIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	admin := auth.GetUser(adminCtx)

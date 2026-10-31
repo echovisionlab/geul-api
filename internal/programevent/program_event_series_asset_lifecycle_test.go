@@ -14,6 +14,7 @@ import (
 )
 
 func TestProgramEventSeriesPosterBindingLifecyclePreservesFiles(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	readyPoster := func() *model.PublicAsset {

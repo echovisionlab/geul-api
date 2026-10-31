@@ -18,6 +18,7 @@ import (
 )
 
 func TestListFormSubmissionsFiltersAndSortsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	admin := auth.GetUser(adminCtx)

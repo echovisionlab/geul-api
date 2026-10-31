@@ -22,6 +22,7 @@ import (
 )
 
 func TestPageDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminIdentityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminIdentityID, "Page audit admin")

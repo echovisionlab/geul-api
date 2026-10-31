@@ -18,6 +18,7 @@ import (
 )
 
 func TestClientThemeLogoSlotsDoNotDeleteSharedFilesIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	service := referencecatalog.NewClientService(db, referencecatalogadapter.NewAssets("https://cdn.example.com"), spiceDB)

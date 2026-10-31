@@ -355,12 +355,40 @@ Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
 local inputs. The runner starts its own PostgreSQL container and creates
 disposable databases.
 
-The database band bounds both package concurrency and opted-in parallel tests
-with `--jobs` (default 2). MQ and durable-telemetry tests own separate disposable
-databases, including queues and committed records. Legacy package-scoped database
-fixtures remain sequential. The Ory and runtime bands still run serially because
-their PostgreSQL, Kratos, SpiceDB, object storage, and process resets share a
-backend lease.
+Every integration test owns its state, so tests and packages run concurrently
+and nothing is reset between them. The runner starts one set of containers
+(PostgreSQL, Kratos, SpiceDB, Oathkeeper, MinIO, imgproxy) for the whole run and
+discards them at the end. Each test then gets:
+
+- its own PostgreSQL database, cloned from the schema template in about 0.1 s
+  (`SetupOryStack`, `PrepareOryIntegrationTest`, `StartBackendIntegrationStack`,
+  `SetupAppPostgres`);
+- its own SpiceDB datastore (SpiceDB `serve-testing` isolates datastores by
+  bearer token) with the generated schema and role graph;
+- its own S3 buckets when it uses a backend or runtime stack.
+
+Kratos is the one shared service. In an Ory or backend stack database, the
+`kratos` schema is a postgres_fdw view of the shared Kratos database, so tests
+must use unique identity IDs and emails, assert only on identities they created,
+and never update or delete `kratos.*` rows they do not own. postgres_fdw does
+not support `ON CONFLICT ... DO UPDATE` on those tables. The foreign server uses
+remote estimates so joins such as identity fences lock only the joined rows.
+
+postgres_fdw runs remote transactions at REPEATABLE READ, so a test that locks
+or re-reads `kratos.*` rows inside a transaction while another connection
+changes them (identity and session fences, revocation ordering) would see a
+serialization failure where production waits. Such tests use
+`SetupOryStackWithLocalKratos`: its database holds a private copy of the kratos
+schema with real tables. The Kratos API does not see that copy, and
+`CreateUser` seeds identities with SQL there.
+
+Every top-level test in an integration-tagged file starts with `t.Parallel()`;
+`scripts/test/integration` enforces this. A test that must replace
+process-global state may opt out with a `// integration:serial <reason>` doc
+comment. `--jobs` (default 4) bounds both package and test concurrency. The
+runtime band (`cmd/backend-integration-stack`, `internal/filemedia`,
+`internal/testutil`) still runs one test at a time because its fixtures start
+shared application processes.
 
 For in-process SQLite fixtures, use `internal/testutil/sqlitetest.Open` with the
 test's SQLite driver. It allocates a fresh shared-memory database per invocation

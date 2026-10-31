@@ -29,6 +29,7 @@ import (
 )
 
 func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event Internal Admin")
@@ -309,6 +310,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 }
 
 func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event translation invariant admin")
@@ -409,6 +411,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 }
 
 func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event Media Name Admin")

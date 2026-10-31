@@ -62,6 +62,7 @@ func seedBulkEmailAudienceIdentity(
 func publishCampaignSourceForDeliveryIntegration(
 	t *testing.T,
 	db *gorm.DB,
+	spiceDB *auth.SpiceDBClient,
 	campaignID string,
 	subject string,
 	contentHTML string,
@@ -69,7 +70,7 @@ func publishCampaignSourceForDeliveryIntegration(
 	t.Helper()
 	_ = subject
 	publishCampaignSourceBlocksForIntegration(
-		t, db, testutil.IntegrationSpiceDB(t), campaignID, emailutil.StripHTML(contentHTML),
+		t, db, spiceDB, campaignID, emailutil.StripHTML(contentHTML),
 	)
 }
 
@@ -138,18 +139,12 @@ func logPostgresErrorDetail(t *testing.T, err error) {
 	)
 }
 
-func newCampaignDeliveryIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db := testutil.NewIntegrationDB(t)
-	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
-	return db
-}
-
 func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	t *testing.T,
 ) {
-	db := newCampaignConcurrentIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := openCampaignIntegrationDB(t, stack)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	adminContext := auth.WithUser(context.Background(), admin.AuthUserInfo())
 	var runID, campaignID, segmentID string
@@ -199,6 +194,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	publishCampaignSourceForDeliveryIntegration(
 		t,
 		db,
+		stack.SpiceDBClient,
 		campaign.ID,
 		campaign.Subject,
 		content,
@@ -253,8 +249,8 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 		strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 	cancelApplication := "geul_cancel_archive_" +
 		strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
-	archiveDB := newNamedCampaignDeliveryIntegrationDB(t, archiveApplication)
-	cancelDB := newNamedCampaignDeliveryIntegrationDB(t, cancelApplication)
+	archiveDB := newNamedCampaignDeliveryIntegrationDBForStack(t, stack, archiveApplication)
+	cancelDB := newNamedCampaignDeliveryIntegrationDBForStack(t, stack, cancelApplication)
 
 	archiveResult := make(chan error, 1)
 	go func() {
@@ -323,6 +319,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 	t *testing.T,
 ) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		runStatus       string
@@ -390,8 +387,8 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db := newCampaignConcurrentIntegrationDB(t)
-			stack := testutil.SetupOryStack(t)
+			stack := newCampaignLocalKratosStack(t)
+			db := openCampaignIntegrationDB(t, stack)
 			admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 			adminContext := auth.WithUser(context.Background(), admin.AuthUserInfo())
 			var runID, campaignID, identityID string
@@ -527,8 +524,9 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 
 			applicationName := "geul_entry_lock_" +
 				strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
-			operationDB := newNamedCampaignDeliveryIntegrationDB(
+			operationDB := newNamedCampaignDeliveryIntegrationDBForStack(
 				t,
+				stack,
 				applicationName,
 			)
 			publisher := &recordingCampaignPublisher{}
@@ -594,7 +592,15 @@ func newNamedCampaignDeliveryIntegrationDB(
 	applicationName string,
 ) *gorm.DB {
 	t.Helper()
-	stack := testutil.SetupOryStack(t)
+	return newNamedCampaignDeliveryIntegrationDBForStack(t, testutil.SetupOryStack(t), applicationName)
+}
+
+func newNamedCampaignDeliveryIntegrationDBForStack(
+	t *testing.T,
+	stack *testutil.OryStack,
+	applicationName string,
+) *gorm.DB {
+	t.Helper()
 	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -665,8 +671,10 @@ func memberIDForCampaignLockTest(
 }
 
 func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T) {
-	db := newCampaignDeliveryIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := stack.DB
+	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
 	sqlDB, err := stack.DB.DB()
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

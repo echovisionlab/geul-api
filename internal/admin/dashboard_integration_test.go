@@ -18,8 +18,8 @@ import (
 )
 
 func TestAdminDashboardStatsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
-	testutil.ConstrainKratosIdentityAggregateFixture(t, db)
 	now := time.Now().UTC()
 	adminID := uuid.NewString()
 	activeUserID := uuid.NewString()
@@ -131,6 +131,8 @@ func TestAdminDashboardStatsIntegration(t *testing.T) {
 	statsResp, err := svc.GetDashboardStats(ctx, connect.NewRequest(&managev1.GetDashboardStatsRequest{}))
 	require.NoError(t, err)
 	stats := statsResp.Msg.GetStats()
+	// The member total joins this test's own member rows to the shared Kratos
+	// identities, so only identities seeded here can contribute to it.
 	require.Equal(t, int32(2), stats.GetTotalMembers(), "active non-banned members include the admin and active member only")
 	require.Equal(t, int32(2), stats.GetTotalPosts())
 	require.Equal(t, int32(1), stats.GetTotalPages())

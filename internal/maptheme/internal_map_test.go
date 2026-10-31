@@ -74,6 +74,7 @@ func validDocumentSnapshot(name string) *intrav1.MapThemeDocumentSnapshot {
 }
 
 func TestInternalMapServiceLoadsTypedSnapshotAndCASAllowsExactlyOneWriter(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	admin := mapThemeAdminUser(t)
@@ -126,6 +127,7 @@ func TestInternalMapServiceLoadsTypedSnapshotAndCASAllowsExactlyOneWriter(t *tes
 }
 
 func TestInternalMapServiceRejectsIncompleteSnapshotWithoutDBChanges(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)

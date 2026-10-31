@@ -31,18 +31,16 @@ type mailAdapterAuditRow struct {
 }
 
 func TestMailAdapterProviderConfigDomainAuditIntegration(t *testing.T) {
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stack.Close()) })
+	t.Parallel()
 
 	t.Run("exact changes and semantic no-op", func(t *testing.T) {
-		prepareMailAdapterIntegrationCase(t, stack)
+		stack := prepareMailAdapterIntegrationCase(t)
 		testMailAdapterUpdatesAuditExactChangesAndSkipSemanticNoOps(
 			t, stack.Postgres.DB, stack.SpiceDBClient,
 		)
 	})
 	t.Run("audit failure rolls back mutation", func(t *testing.T) {
-		prepareMailAdapterIntegrationCase(t, stack)
+		stack := prepareMailAdapterIntegrationCase(t)
 		testMailAdapterAuditFailureRollsBackMutation(
 			t, stack.Postgres.DB, stack.SpiceDBClient,
 		)
@@ -163,17 +161,12 @@ func testMailAdapterAuditFailureRollsBackMutation(
 	require.Zero(t, auditCount)
 }
 
-func prepareMailAdapterIntegrationCase(
-	t *testing.T,
-	stack *testutil.BackendIntegrationStack,
-) {
+func prepareMailAdapterIntegrationCase(t *testing.T) *testutil.BackendIntegrationStack {
 	t.Helper()
-	require.NoError(t, testutil.ResetBackendIntegrationState(t.Context(), stack))
-	t.Cleanup(func() {
-		require.NoError(t, testutil.ResetBackendIntegrationState(
-			context.Background(), stack,
-		))
-	})
+	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, stack.Close()) })
+	return stack
 }
 
 type mailAdapterAuditAdmin struct {

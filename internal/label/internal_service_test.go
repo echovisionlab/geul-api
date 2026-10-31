@@ -50,6 +50,7 @@ func seedInternalLabel(t *testing.T, db *gorm.DB, contentBlocks *contentblock.St
 }
 
 func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
