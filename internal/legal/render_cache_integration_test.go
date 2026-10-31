@@ -12,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -33,7 +32,7 @@ func TestLegalDerivedContentRegenerationUsesExactTypedDocumentIntegration(t *tes
 			var regenerate func(context.Context, string) error
 			if kind == "terms" {
 				service := newTermsServiceForLegalIntegrationTest(
-					db, "", "", spiceDB, legaldomain.WithTermsContentBlockStore(store),
+					db, "", "", spiceDB, withLegalContentBlocks(store),
 				)
 				created, createErr := service.CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{
 					Title:    ptrString("Legal render terms"),
@@ -54,7 +53,7 @@ func TestLegalDerivedContentRegenerationUsesExactTypedDocumentIntegration(t *tes
 				}
 			} else {
 				service := newPrivacyServiceForLegalIntegrationTest(
-					db, "", "", spiceDB, legaldomain.WithPrivacyContentBlockStore(store),
+					db, "", "", spiceDB, withLegalContentBlocks(store),
 				)
 				created, createErr := service.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
 					Title:    ptrString("Legal render privacy"),

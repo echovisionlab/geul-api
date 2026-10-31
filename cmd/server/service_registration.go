@@ -601,27 +601,23 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	privacyService := legal.NewAuditedPrivacyService(
-		db,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		legalDependencies,
-		legal.WithPrivacyContentBlockStore(contentBlockStore),
-	)
-	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(privacyService, handlerOpts...)
+	legalPolicyService, err := legal.NewService(legal.Deps{
+		DB:            db,
+		SpiceDB:       spicedbClient,
+		ContentBlocks: contentBlockStore,
+		OG:            legalDependencies.OG,
+		Notice:        legalDependencies.Notice,
+		Audit:         telemetryWriter,
+		BaseURL:       cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
+	}
+	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(legal.NewPrivacyConnectHandler(legalPolicyService), handlerOpts...)
 	mux.Handle(privacyPath, privacyHandler)
 	slog.Info("Registered service", "path", privacyPath)
 
-	termsService := legal.NewAuditedTermsService(
-		db,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		legalDependencies,
-		legal.WithTermsContentBlockStore(contentBlockStore),
-	)
-	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(termsService, handlerOpts...)
+	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(legal.NewTermsConnectHandler(legalPolicyService), handlerOpts...)
 	mux.Handle(termsPath, termsHandler)
 	slog.Info("Registered service", "path", termsPath)
 
@@ -845,29 +841,28 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		releaseService,
 		artistService,
 		contentMCPApplications{
-			terms:        termsService,
-			privacy:      privacyService,
-			categories:   categoryService,
-			tags:         tagService,
-			clients:      clientService,
-			mapPlaces:    mapPlaceService,
-			members:      memberService,
-			artists:      artistService,
-			files:        fileService,
-			eventTypes:   programEventTypeService,
-			eventSeries:  programEventSeriesService,
-			labels:       labelService,
-			genres:       genreService,
-			styles:       styleService,
-			formats:      formatService,
-			forms:        formService,
-			postSeries:   seriesService,
-			tracks:       trackService,
-			mapThemes:    mapThemeService,
-			menus:        menuService,
-			menuSettings: siteSettingService,
-			siteSettings: siteSettingService,
-			mailAdapters: mailAdapterService,
+			legalPolicies: legalPolicyService,
+			categories:    categoryService,
+			tags:          tagService,
+			clients:       clientService,
+			mapPlaces:     mapPlaceService,
+			members:       memberService,
+			artists:       artistService,
+			files:         fileService,
+			eventTypes:    programEventTypeService,
+			eventSeries:   programEventSeriesService,
+			labels:        labelService,
+			genres:        genreService,
+			styles:        styleService,
+			formats:       formatService,
+			forms:         formService,
+			postSeries:    seriesService,
+			tracks:        trackService,
+			mapThemes:     mapThemeService,
+			menus:         menuService,
+			menuSettings:  siteSettingService,
+			siteSettings:  siteSettingService,
+			mailAdapters:  mailAdapterService,
 		},
 		translationService,
 		fileService,

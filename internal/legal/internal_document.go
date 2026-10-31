@@ -30,23 +30,26 @@ type internalLegalDocumentService struct {
 	legalOG       OG
 }
 
-type legalDocumentLocaleMetadata struct {
+// LocaleMetadata is a version's title in one locale.
+type LocaleMetadata struct {
 	Locale string
 	Title  *string
 }
 
-type legalDocumentLoadResult struct {
+// BlockDocument is a version's document as collaboration loads it.
+type BlockDocument struct {
 	Document       *contentv1.LocalizedRichTextDocument
 	Snapshot       contentblock.Snapshot
 	SourceLocale   string
-	SourceMetadata legalDocumentLocaleMetadata
+	SourceMetadata LocaleMetadata
 	Locale         string
 	LocaleExists   bool
-	LocaleMetadata *legalDocumentLocaleMetadata
+	LocaleMetadata *LocaleMetadata
 	TargetRevision *string
 }
 
-type legalDocumentMutationResult struct {
+// DocumentChange is what a collaboration write changed.
+type DocumentChange struct {
 	DocumentRevision string
 	Changed          bool
 	SourceChanged    bool
@@ -55,7 +58,8 @@ type legalDocumentMutationResult struct {
 	TargetRevision   *string
 }
 
-type legalDocumentMetadataInput struct {
+// UpdateLocaleMetadataCommand changes a version's title in one locale.
+type UpdateLocaleMetadataCommand struct {
 	EntityID               string
 	Locale                 string
 	ExpectedRevision       string
@@ -79,7 +83,7 @@ func (s internalLegalDocumentService) loadDocument(
 	entityID string,
 	locale string,
 	principal *intrav1.CollaborationPrincipal,
-) (*legalDocumentLoadResult, error) {
+) (*BlockDocument, error) {
 	if err := s.requireBlockStore(); err != nil {
 		return nil, err
 	}
@@ -101,10 +105,10 @@ func (s internalLegalDocumentService) loadDocument(
 	if err != nil {
 		return nil, normalizeLegalContentBlockError(s.kind, err)
 	}
-	result := &legalDocumentLoadResult{
+	result := &BlockDocument{
 		Document: state.LocalizedDocument, Snapshot: state.Snapshot,
 		SourceLocale: state.SourceLocale,
-		SourceMetadata: legalDocumentLocaleMetadata{
+		SourceMetadata: LocaleMetadata{
 			Locale: state.SourceMetadata.Locale, Title: state.SourceMetadata.Title,
 		},
 		Locale: locale,
@@ -117,7 +121,7 @@ func (s internalLegalDocumentService) loadDocument(
 	}
 	if state.TargetMetadata != nil {
 		result.LocaleExists = true
-		result.LocaleMetadata = &legalDocumentLocaleMetadata{
+		result.LocaleMetadata = &LocaleMetadata{
 			Locale: state.TargetMetadata.Locale, Title: state.TargetMetadata.Title,
 		}
 		targetRevision := state.TargetRevision
@@ -145,7 +149,7 @@ func (s internalLegalDocumentService) applyDocumentMutation(
 	expectedTargetRevision *string,
 	request *contentv1.RichTextBlockMutationBatch,
 	affectedLocaleValues []*managev1.AIDocumentFieldTarget,
-) (*legalDocumentMutationResult, error) {
+) (*DocumentChange, error) {
 	if err := s.requireBlockStore(); err != nil {
 		return nil, err
 	}
@@ -269,13 +273,13 @@ func (s internalLegalDocumentService) applyDocumentMutation(
 	}
 	if locale != sourceLocale {
 		targetRevision := targetResult.TargetRevision
-		return &legalDocumentMutationResult{
+		return &DocumentChange{
 			DocumentRevision: targetResult.DocumentRevision, Changed: targetResult.Changed,
 			ChangedLocales: []string{locale},
 			Locale:         locale, TargetRevision: &targetRevision,
 		}, nil
 	}
-	return &legalDocumentMutationResult{
+	return &DocumentChange{
 		DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
 		SourceChanged: result.TranslationSourceChanged, ChangedLocales: result.ChangedLocales,
 		Locale: locale,
@@ -363,8 +367,8 @@ func legalSnapshotLocales(snapshot contentblock.Snapshot) []string {
 
 func (s internalLegalDocumentService) updateDocumentMetadata(
 	ctx context.Context,
-	input legalDocumentMetadataInput,
-) (*legalDocumentMutationResult, error) {
+	input UpdateLocaleMetadataCommand,
+) (*DocumentChange, error) {
 	if err := s.requireBlockStore(); err != nil {
 		return nil, err
 	}
@@ -471,13 +475,13 @@ func (s internalLegalDocumentService) updateDocumentMetadata(
 	}
 	if input.Locale != sourceLocale {
 		targetRevision := targetResult.TargetRevision
-		return &legalDocumentMutationResult{
+		return &DocumentChange{
 			DocumentRevision: targetResult.DocumentRevision, Changed: targetResult.Changed,
 			ChangedLocales: []string{input.Locale},
 			Locale:         input.Locale, TargetRevision: &targetRevision,
 		}, nil
 	}
-	return &legalDocumentMutationResult{
+	return &DocumentChange{
 		DocumentRevision: advance.DocumentRevision.String(), Changed: advance.Changed,
 		SourceChanged:  advance.TranslationSourceChanged,
 		ChangedLocales: []string{input.Locale},

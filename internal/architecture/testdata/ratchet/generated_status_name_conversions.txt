@@ -3,7 +3,7 @@
 # domain (docs/architecture.md); lower with -update.
 5 internal/adapters/collaboration
 4 internal/adapters/legal
-12 internal/adapters/mcp
+10 internal/adapters/mcp
 1 internal/adapters/release
 4 internal/adapters/series/public
 12 internal/adapters/sharelink
@@ -16,7 +16,7 @@
 16 internal/filemedia/public
 15 internal/label
 12 internal/label/public
-42 internal/legal
+18 internal/legal
 16 internal/legal/public
 13 internal/page
 3 internal/page/public

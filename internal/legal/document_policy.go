@@ -8,7 +8,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -21,24 +20,16 @@ type legalDocumentPolicy struct {
 }
 
 func legalDocumentPolicyForType(entityType string) (legalDocumentPolicy, error) {
-	switch entityType {
-	case "terms":
-		return legalDocumentPolicy{
-			table:           "terms_history",
-			draftStatus:     managev1.TermsStatus_TERMS_STATUS_DRAFT.String(),
-			scheduledStatus: managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(),
-			archivedStatus:  managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String(),
-		}, nil
-	case "privacy":
-		return legalDocumentPolicy{
-			table:           "privacy_history",
-			draftStatus:     managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT.String(),
-			scheduledStatus: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
-			archivedStatus:  managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String(),
-		}, nil
-	default:
+	kind, ok := policyKinds[PolicyKind(entityType)]
+	if !ok {
 		return legalDocumentPolicy{}, errs.InternalMsg("unsupported legal document type")
 	}
+	return legalDocumentPolicy{
+		table:           kind.table,
+		draftStatus:     string(kind.draft),
+		scheduledStatus: string(kind.scheduled),
+		archivedStatus:  string(kind.archived),
+	}, nil
 }
 
 func requireLegalPermission(

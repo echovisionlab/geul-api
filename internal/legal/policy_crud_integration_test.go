@@ -13,7 +13,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
-	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -34,8 +33,8 @@ func TestLegalPolicyDeletionWithSentHistoryInEveryLifecycleIntegration(t *testin
 				ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 				user := auth.GetUser(ctx)
 				store := newLegalLifecycleContentBlockStore(t, spiceDB)
-				terms := newTermsServiceForLegalIntegrationTest(db, "https://example.com", "https://cdn.example.com", spiceDB, legaldomain.WithTermsContentBlockStore(store))
-				privacy := newPrivacyServiceForLegalIntegrationTest(db, "https://example.com", "https://cdn.example.com", spiceDB, legaldomain.WithPrivacyContentBlockStore(store))
+				terms := newTermsServiceForLegalIntegrationTest(db, "https://example.com", "https://cdn.example.com", spiceDB, withLegalContentBlocks(store))
+				privacy := newPrivacyServiceForLegalIntegrationTest(db, "https://example.com", "https://cdn.example.com", spiceDB, withLegalContentBlocks(store))
 				var id, revision string
 				var version int32
 				create := func() {

@@ -200,23 +200,22 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalEmailLayoutPath, internalRPCTrust.collab(internalEmailLayoutHandler))
 	slog.Info("Registered internal service", "path", internalEmailLayoutPath)
 
-	internalTermsService := legal.NewAuditedInternalTermsService(
-		db,
-		telemetryWriter,
-		legalDependencies,
-		legal.WithInternalTermsContentBlocks(contentBlockStore, spicedbClient, collaborationRuntime.Checkpoints),
-	)
-	internalTermsPath, internalTermsHandler := intrav1connect.NewInternalTermsServiceHandler(internalTermsService, internalHandlerOpts...)
+	internalLegalService, err := legal.NewInternalService(legal.InternalDeps{
+		DB:            db,
+		ContentBlocks: contentBlockStore,
+		Permissions:   spicedbClient,
+		Checkpoints:   collaborationRuntime.Checkpoints,
+		OG:            legalDependencies.OG,
+		Audit:         telemetryWriter,
+	})
+	if err != nil {
+		return internalContentServices{}, fmt.Errorf("initialize internal legal service: %w", err)
+	}
+	internalTermsPath, internalTermsHandler := intrav1connect.NewInternalTermsServiceHandler(legal.NewInternalTermsConnectHandler(internalLegalService), internalHandlerOpts...)
 	mux.Handle(internalTermsPath, internalRPCTrust.collab(internalTermsHandler))
 	slog.Info("Registered internal service", "path", internalTermsPath)
 
-	internalPrivacyService := legal.NewAuditedInternalPrivacyService(
-		db,
-		telemetryWriter,
-		legalDependencies,
-		legal.WithInternalPrivacyContentBlocks(contentBlockStore, spicedbClient, collaborationRuntime.Checkpoints),
-	)
-	internalPrivacyPath, internalPrivacyHandler := intrav1connect.NewInternalPrivacyServiceHandler(internalPrivacyService, internalHandlerOpts...)
+	internalPrivacyPath, internalPrivacyHandler := intrav1connect.NewInternalPrivacyServiceHandler(legal.NewInternalPrivacyConnectHandler(internalLegalService), internalHandlerOpts...)
 	mux.Handle(internalPrivacyPath, internalRPCTrust.collab(internalPrivacyHandler))
 	slog.Info("Registered internal service", "path", internalPrivacyPath)
 

@@ -6,7 +6,6 @@
 5 internal/adapters/mcp/document_discovery_tools.go
 3 internal/adapters/mcp/file_block_tools.go
 8 internal/adapters/mcp/file_manager_tools.go
-14 internal/adapters/mcp/legal_policy_tools.go
 6 internal/adapters/mcp/map_place_management_tools.go
 7 internal/adapters/mcp/map_theme_management_tools.go
 2 internal/adapters/mcp/menu_discovery_tools.go

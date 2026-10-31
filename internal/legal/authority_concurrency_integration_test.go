@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -44,10 +43,10 @@ func TestLegalVersionCreateRejectsAdminRevokedWhileVersionLockWaitsIntegration(t
 			var create func() error
 			switch policy.name {
 			case "terms":
-				service := legaldomain.NewTermsService(
+				service := newRecordedTestTermsService(
 					stack.DB, "", stack.SpiceDBClient,
 					legalIntegrationDependencies(stack.DB, ""),
-					legaldomain.WithTermsContentBlockStore(store),
+					withLegalContentBlocks(store),
 				)
 				create = func() error {
 					_, createErr := service.CreateTermsVersion(ctx, connect.NewRequest(
@@ -58,10 +57,10 @@ func TestLegalVersionCreateRejectsAdminRevokedWhileVersionLockWaitsIntegration(t
 					return createErr
 				}
 			case "privacy":
-				service := legaldomain.NewPrivacyService(
+				service := newRecordedTestPrivacyService(
 					stack.DB, "", stack.SpiceDBClient,
 					legalIntegrationDependencies(stack.DB, ""),
-					legaldomain.WithPrivacyContentBlockStore(store),
+					withLegalContentBlocks(store),
 				)
 				create = func() error {
 					_, createErr := service.CreatePrivacyVersion(ctx, connect.NewRequest(

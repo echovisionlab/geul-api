@@ -4,6 +4,13 @@ import (
 	"time"
 )
 
+const (
+	PrivacyStatusDraft     LegalPolicyStatus = "PRIVACY_STATUS_DRAFT"
+	PrivacyStatusScheduled LegalPolicyStatus = "PRIVACY_STATUS_SCHEDULED"
+	PrivacyStatusActive    LegalPolicyStatus = "PRIVACY_STATUS_ACTIVE"
+	PrivacyStatusArchived  LegalPolicyStatus = "PRIVACY_STATUS_ARCHIVED"
+)
+
 // Privacy represents a privacy policy version
 // Maps to: sql/001_schema.sql - privacy_history table
 type Privacy struct {
