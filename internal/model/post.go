@@ -82,21 +82,30 @@ func (Tag) TableName() string {
 	return "tag"
 }
 
+// SeriesStatus is the stored lifecycle state of a Post series. The values
+// are the strings the series table already holds.
+type SeriesStatus string
+
+const (
+	SeriesStatusDraft     SeriesStatus = "SERIES_STATUS_DRAFT"
+	SeriesStatusPublished SeriesStatus = "SERIES_STATUS_PUBLISHED"
+)
+
 // Series represents a post series
 // Maps to: schema migrations - series table
 // Note: Series membership is managed by SpiceDB, not series_member table.
 type Series struct {
-	ID                  string     `gorm:"column:id;primaryKey"`
-	ContentDocumentID   string     `gorm:"column:content_document_id;type:uuid"`
-	Title               string     `gorm:"-"`
-	Slug                string     `gorm:"column:slug"` // NOT NULL in schema
-	Description         *string    `gorm:"-"`
-	Status              string     `gorm:"column:status"` // SERIES_STATUS_DRAFT or SERIES_STATUS_PUBLISHED
-	SourceLocale        string     `gorm:"column:source_locale"`
-	FeaturedImageFileID *string    `gorm:"column:featured_image_file_id;type:uuid"`
-	OgAssetID           *string    `gorm:"-"`
-	CreatedAt           time.Time  `gorm:"column:created_at"`
-	UpdatedAt           *time.Time `gorm:"column:updated_at"`
+	ID                  string       `gorm:"column:id;primaryKey"`
+	ContentDocumentID   string       `gorm:"column:content_document_id;type:uuid"`
+	Title               string       `gorm:"-"`
+	Slug                string       `gorm:"column:slug"` // NOT NULL in schema
+	Description         *string      `gorm:"-"`
+	Status              SeriesStatus `gorm:"column:status"`
+	SourceLocale        string       `gorm:"column:source_locale"`
+	FeaturedImageFileID *string      `gorm:"column:featured_image_file_id;type:uuid"`
+	OgAssetID           *string      `gorm:"-"`
+	CreatedAt           time.Time    `gorm:"column:created_at"`
+	UpdatedAt           *time.Time   `gorm:"column:updated_at"`
 }
 
 type SeriesTranslation struct {

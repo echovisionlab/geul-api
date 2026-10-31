@@ -14,9 +14,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -293,14 +293,12 @@ func sameStringSet(left, right []string) bool {
 	return true
 }
 
-func validateSeriesStatus(status string) error {
-	switch status {
-	case managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(),
-		managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String():
-		return nil
-	default:
-		return domainerr.InvalidField("status", "must be draft or published")
+func validateSeriesStatus(name string) (model.SeriesStatus, error) {
+	status, known := parseSeriesStatus(name)
+	if !known {
+		return "", domainerr.InvalidField("status", "must be draft or published")
 	}
+	return status, nil
 }
 
 func seriesSlugFromTitle(title string) string {

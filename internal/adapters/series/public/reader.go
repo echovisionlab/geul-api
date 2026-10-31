@@ -45,7 +45,7 @@ func (r *PublicReader) List(ctx context.Context, request seriespublic.ListSeries
 	query := r.db.WithContext(ctx).Table("series AS s").
 		Select(`s.id, s.slug, s.featured_image_file_id,
 			(SELECT COUNT(DISTINCT p.id) FROM post p WHERE p.series_id = s.id AND p.status IN ?) AS post_count`, publicPostStatusValues()).
-		Where("s.status = ?", managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
+		Where("s.status = ?", model.SeriesStatusPublished)
 
 	var err error
 	query, err = seriespublic.SeriesFilterConfig.ApplyFilters(query, request.Filters)
@@ -77,7 +77,7 @@ func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string)
 	query := r.db.WithContext(ctx).Table("series AS s").
 		Select(`s.id, s.slug, s.featured_image_file_id,
 			(SELECT COUNT(DISTINCT p.id) FROM post p WHERE p.series_id = s.id AND p.status IN ?) AS post_count`, publicPostStatusValues()).
-		Where("s.status = ?", managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
+		Where("s.status = ?", model.SeriesStatusPublished)
 	if _, err := uuid.Parse(idOrSlug); err == nil {
 		query = query.Where("s.id = ?", idOrSlug)
 	} else {

@@ -87,7 +87,7 @@ type postSeriesAIMutation struct {
 	createTranslation  bool
 	deleteTranslation  bool
 	slug               *string
-	status             *string
+	status             *model.SeriesStatus
 	postIDs            []string
 	localeChanged      bool
 	titleChanged       bool
@@ -194,18 +194,19 @@ func (s *Service) applyAISetField(
 		mutation.slugChanged = value != mutation.state.root.Slug
 		return true, nil
 	case postSeriesAIFieldStatus:
-		if err := validateSeriesStatus(value); err != nil {
+		status, err := validateSeriesStatus(value)
+		if err != nil {
 			return false, err
 		}
 		current := mutation.state.root.Status
 		if mutation.status != nil {
 			current = *mutation.status
 		}
-		if value == current {
+		if status == current {
 			return false, nil
 		}
-		mutation.status = &value
-		mutation.statusChanged = value != mutation.state.root.Status
+		mutation.status = &status
+		mutation.statusChanged = status != mutation.state.root.Status
 		return true, nil
 	default:
 		return false, domainerr.InvalidField("field", "unsupported Post Series field")
@@ -504,7 +505,7 @@ func (s postSeriesAIDocumentState) document(identity core.DocumentIdentity, loca
 		ID: postSeriesAIDocumentBlock, Kind: postSeriesAIDocumentKind,
 		Shared: []core.FieldValue{
 			{ID: postSeriesAIFieldSlug, Value: core.Text(s.root.Slug)},
-			{ID: postSeriesAIFieldStatus, Value: core.Text(s.root.Status)},
+			{ID: postSeriesAIFieldStatus, Value: core.Text(string(s.root.Status))},
 		},
 	}
 	if s.locale != nil {

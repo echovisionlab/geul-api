@@ -93,7 +93,7 @@ func (s *Service) toProtoSeries(
 		Id:           seriesModel.ID,
 		Title:        seriesModel.Title,
 		Slug:         seriesModel.Slug,
-		Status:       seriesModel.Status,
+		Status:       string(seriesModel.Status),
 		CreatedAt:    timestamppb.New(seriesModel.CreatedAt),
 		OgAsset:      ogAsset,
 		SourceLocale: seriesModel.SourceLocale,

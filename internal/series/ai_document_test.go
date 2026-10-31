@@ -358,7 +358,7 @@ func TestPostSeriesAIDocumentRepeatedMetadataAssignmentsUseFinalValue(t *testing
 			var stored model.Series
 			require.NoError(t, db.Where("id = ?", seriesID).Take(&stored).Error)
 			if test.field == postSeriesAIFieldStatus {
-				require.Equal(t, test.want, stored.Status)
+				require.Equal(t, test.want, string(stored.Status))
 			} else {
 				require.Equal(t, test.want, stored.Slug)
 			}
@@ -394,7 +394,7 @@ func TestPostSeriesAIDocumentStatusResetKeepsOtherFieldChange(t *testing.T) {
 	require.Equal(t, 1, result.Changes[0].Operation)
 	var stored model.Series
 	require.NoError(t, db.Where("id = ?", seriesID).Take(&stored).Error)
-	require.Equal(t, "SERIES_STATUS_DRAFT", stored.Status)
+	require.Equal(t, model.SeriesStatusDraft, stored.Status)
 	after, err := port.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
 	require.Equal(t, "Changed title", requireAIDocumentLocalizedText(t, after, postSeriesAIFieldTitle))
