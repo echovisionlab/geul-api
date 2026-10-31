@@ -127,7 +127,7 @@ func (s *PostService) ListPostVersions(
 		result[i], err = s.toProtoPostVersion(&versions[i], contributorNames)
 		if err != nil {
 			return nil, failurecause.WithAttrs(
-				errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), err),
+				errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), failurecause.ServerFault(err)),
 				slog.String("post_version_id", versions[i].ID),
 			)
 		}
@@ -166,7 +166,7 @@ func (s *PostService) RestorePostVersion(
 	versionEnvelope, versionDocument, err := unmarshalPostVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
 		return nil, failurecause.WithAttrs(
-			errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), err),
+			errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), failurecause.ServerFault(err)),
 			slog.String("post_version_id", version.ID),
 		)
 	}

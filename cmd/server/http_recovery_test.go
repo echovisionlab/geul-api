@@ -179,6 +179,29 @@ func TestConnectRoutesRecordKratosFailureOnceWithIdentifiers(t *testing.T) {
 	require.NotContains(t, logs.String(), "traits.nickname")
 }
 
+// A 4xx answer that hides a server fault (stored data the server cannot read)
+// is still recorded once, at Error.
+func TestConnectRoutesRecordServerFaultBehindClientAnswerAtError(t *testing.T) {
+	logs := captureServerLogs(t)
+	client := serveConnectThroughProductionChain(t, func(context.Context) error {
+		return errs.WithCause(errs.FailedPrecondition("subscription snapshot is invalid"),
+			failurecause.ServerFault(errors.New("decode stored snapshot: unexpected EOF")))
+	})
+
+	_, err := client.CallUnary(t.Context(), connect.NewRequest(&openv1.UnsubscribeNewsletterRequest{Token: recoveryPrivateToken}))
+
+	var connectErr *connect.Error
+	require.ErrorAs(t, err, &connectErr)
+	require.Equal(t, connect.CodeFailedPrecondition, connectErr.Code())
+	require.Equal(t, "subscription snapshot is invalid", connectErr.Message())
+	records := logs.records(t)
+	require.Len(t, records, 1, logs.String())
+	require.Equal(t, "request.completed", records[0]["event"])
+	require.Equal(t, "ERROR", records[0]["level"])
+	require.EqualValues(t, http.StatusBadRequest, records[0]["status_code"])
+	require.Equal(t, "decode stored snapshot: unexpected EOF", records[0]["failure_cause"])
+}
+
 func TestConnectRoutesRecoverHandlerPanics(t *testing.T) {
 	logs := captureServerLogs(t)
 	client := serveConnectThroughProductionChain(t, func(context.Context) error {

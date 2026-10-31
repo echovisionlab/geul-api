@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -228,7 +229,7 @@ func validateCompiledPostAIDocumentMutation(
 ) (uuid.UUID, error) {
 	documentID, err := uuid.Parse(state.ContentDocumentID)
 	if err != nil || documentID == uuid.Nil || documentID.String() != state.ContentDocumentID {
-		return uuid.Nil, errs.WithCause(errs.FailedPrecondition("Post content document identity is invalid"), err)
+		return uuid.Nil, errs.WithCause(errs.FailedPrecondition("Post content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	if mutation.PostID != state.PostID || mutation.Locale != state.RequestedLocale ||
 		mutation.ContributorMemberID.String() != state.ViewerMemberID ||

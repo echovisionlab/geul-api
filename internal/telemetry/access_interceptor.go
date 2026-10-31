@@ -213,7 +213,7 @@ type requestFailureHandler struct {
 func (h *requestFailureHandler) Handle(ctx context.Context, record slog.Record) error {
 	record = record.Clone()
 	record.Level = slog.LevelWarn
-	if h.status >= http.StatusInternalServerError {
+	if h.status >= http.StatusInternalServerError || h.failure.ServerFault {
 		record.Level = slog.LevelError
 	}
 	// An identifier never replaces a field of the request record itself.

@@ -283,7 +283,7 @@ func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string
 	}
 	normalized, err := normalizeCampaignDocumentLocale(sourceLocale)
 	if err != nil {
-		return contentblock.DomainContext{}, errs.WithCause(errs.FailedPrecondition("Campaign translation source locale is invalid"), err)
+		return contentblock.DomainContext{}, errs.WithCause(errs.FailedPrecondition("Campaign translation source locale is invalid"), failurecause.ServerFault(err))
 	}
 	return contentblock.DomainContext{SourceLocale: normalized}, nil
 }

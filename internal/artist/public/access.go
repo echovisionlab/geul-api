@@ -39,7 +39,7 @@ func requireOpaqueDraftShareLinkAccess(ctx context.Context, db *gorm.DB, token, 
 	var link model.ShareLink
 	if err := db.WithContext(ctx).Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", token, entityType.String(), entityID, time.Now()).Take(&link).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.WithCause(errs.NotFoundMsg(entityName+" not found"), failurecause.WithPrivate(err, token, password))
+			return errs.WithCause(errs.NotFoundMsg(entityName+" not found"), failurecause.ServerFault(failurecause.WithPrivate(err, token, password)))
 		}
 		return errs.NotFoundMsg(entityName + " not found")
 	}
@@ -51,7 +51,7 @@ func requireOpaqueDraftShareLinkAccess(ctx context.Context, db *gorm.DB, token, 
 	}
 	match, err := crypto.NewPasswordHasher(nil).Verify(password, *link.PasswordHash)
 	if err != nil {
-		return errs.WithCause(errs.NotFoundMsg(entityName+" not found"), failurecause.WithPrivate(err, token, password, *link.PasswordHash))
+		return errs.WithCause(errs.NotFoundMsg(entityName+" not found"), failurecause.ServerFault(failurecause.WithPrivate(err, token, password, *link.PasswordHash)))
 	}
 	if !match {
 		return errs.NotFoundMsg(entityName + " not found")

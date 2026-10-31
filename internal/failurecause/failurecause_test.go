@@ -157,3 +157,24 @@ func TestChainCarriesPrivateValuesAndAttrsThroughWrapsAndJoins(t *testing.T) {
 		t.Fatal("annotating nil must stay nil")
 	}
 }
+
+func TestServerFaultSurvivesWrapsAndJoins(t *testing.T) {
+	fault := ServerFault(errors.New("decode stored snapshot: unexpected EOF"))
+	err := fmt.Errorf("restore version: %w", errors.Join(errors.New("other"), WithAttrs(fault, slog.String("page_id", "p1"))))
+	if !IsServerFault(err) || !Of(err).ServerFault {
+		t.Fatal("server fault lost through wrapping")
+	}
+	if IsServerFault(errors.New("not found")) || ServerFault(nil) != nil {
+		t.Fatal("unmarked errors are not server faults")
+	}
+	if err.Error() != "restore version: other\ndecode stored snapshot: unexpected EOF" {
+		t.Fatalf("marking changed the text: %q", err.Error())
+	}
+}
+
+func TestPanicRedactsPrivateValuesOfAnErrorValue(t *testing.T) {
+	cause, _ := Panic(fmt.Errorf("lock identity: %w", &upstreamError{body: "traits quiet-river"}))
+	if cause != "lock identity: upstream returned 409: [redacted]" {
+		t.Fatalf("Panic cause = %q", cause)
+	}
+}

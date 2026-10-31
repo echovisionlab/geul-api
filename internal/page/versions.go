@@ -120,7 +120,7 @@ func (s *PageService) RestorePageVersion(
 	versionSnapshot, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
 		return nil, failurecause.WithAttrs(
-			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), err),
+			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), failurecause.ServerFault(err)),
 			slog.String("page_version_id", version.ID),
 		)
 	}
@@ -356,7 +356,7 @@ func (s *PageService) toProtoPageVersion(
 	snapshot, err := DecodeVersionContentSnapshot(v.ContentSnapshot)
 	if err != nil {
 		return nil, failurecause.WithAttrs(
-			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), err),
+			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), failurecause.ServerFault(err)),
 			slog.String("page_version_id", v.ID),
 		)
 	}

@@ -17,16 +17,18 @@ type Recorder struct {
 }
 
 // Failure is a sanitized cause for a terminal record: the cause text, a
-// panic's stack, and the identifier attributes the error carried.
+// panic's stack, the identifier attributes the error carried, and whether it
+// is a server fault whatever the client was answered (see ServerFault).
 type Failure struct {
-	Cause string
-	Stack string
-	Attrs []slog.Attr
+	Cause       string
+	Stack       string
+	Attrs       []slog.Attr
+	ServerFault bool
 }
 
-// Of returns err's sanitized cause and the identifier attributes it carries.
+// Of returns err's sanitized cause and the diagnosis it carries.
 func Of(err error, private ...string) Failure {
-	return Failure{Cause: Message(err, private...), Attrs: Attrs(err)}
+	return Failure{Cause: Message(err, private...), Attrs: Attrs(err), ServerFault: IsServerFault(err)}
 }
 
 type recorderKey struct{}

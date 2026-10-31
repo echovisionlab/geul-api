@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -200,7 +201,7 @@ func (s *ProgramEventService) loadAIDocumentStateAfterAuthorization(
 ) (AIDocumentState, error) {
 	documentID, err := uuidutil.ParseCanonical(*root.ContentDocumentID, "content_document_id")
 	if err != nil {
-		return AIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Program Event content document identity is invalid"), err)
+		return AIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Program Event content document identity is invalid"), failurecause.ServerFault(err))
 	}
 	sourceState, err := loadProgramEventSourceLocale(ctx, tx, root.ID, false)
 	if err != nil {

@@ -66,7 +66,7 @@ func loadLegalContentDocumentRoot(
 		return legalContentDocumentRoot{}, errs.FailedPrecondition(kind + " source locale is missing")
 	}
 	if _, err := canonicalLegalLocale(root.SourceLocale); err != nil {
-		return legalContentDocumentRoot{}, errs.WithCause(errs.FailedPrecondition(kind+" source locale is not canonical"), err)
+		return legalContentDocumentRoot{}, errs.WithCause(errs.FailedPrecondition(kind+" source locale is not canonical"), failurecause.ServerFault(err))
 	}
 	return root, nil
 }

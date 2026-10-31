@@ -48,7 +48,7 @@ func loadCampaignSourceLocales(
 	for _, row := range rows {
 		locale, normalizeErr := normalizeCampaignDocumentLocale(row.SourceLocale)
 		if normalizeErr != nil {
-			return nil, errs.WithCause(errs.FailedPrecondition("Campaign source locale is invalid"), failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID)))
+			return nil, errs.WithCause(errs.FailedPrecondition("Campaign source locale is invalid"), failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID))))
 		}
 		locales[row.EntityID] = locale
 	}

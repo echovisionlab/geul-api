@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -60,7 +61,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	sourceHTML := derefString(source.ContentHTML)
 	descriptors, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before provider apply"), err)
+		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before provider apply"), failurecause.ServerFault(err))
 	}
 	allowed := make(map[string]struct{}, len(descriptors))
 	for _, descriptor := range descriptors {
@@ -78,7 +79,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	} else if entry != nil && entry.ContentHTML != nil {
 		currentValues, err = emailutil.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 		if err != nil {
-			return errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require repair before provider apply"), err)
+			return errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require repair before provider apply"), failurecause.ServerFault(err))
 		}
 	}
 	nextValues := maps.Clone(currentValues)

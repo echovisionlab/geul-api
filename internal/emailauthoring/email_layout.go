@@ -685,7 +685,7 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 		}
 		documentID, parseErr := uuid.Parse(layout.ContentDocumentID)
 		if parseErr != nil || documentID == uuid.Nil {
-			return errs.WithCause(errs.FailedPrecondition("Email Layout Content Document is not initialized"), failurecause.WithAttrs(parseErr, slog.String("layout_id", layout.ID)))
+			return errs.WithCause(errs.FailedPrecondition("Email Layout Content Document is not initialized"), failurecause.ServerFault(failurecause.WithAttrs(parseErr, slog.String("layout_id", layout.ID))))
 		}
 		if err := s.contentBlocks.DeleteDocument(
 			ctx, tx, documentID, emailLayoutContentFence(s.references, layout.ID),

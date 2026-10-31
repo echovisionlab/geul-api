@@ -263,7 +263,7 @@ func (s *InternalFormService) persistAIDocumentMutation(ctx context.Context, tx 
 	}
 	documentID, err := uuid.Parse(root.DocumentID)
 	if err != nil || documentID == uuid.Nil {
-		return false, errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), err)
+		return false, errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), failurecause.ServerFault(err))
 	}
 	expectedRevision, err := uuid.Parse(input.ExpectedDocumentRevision)
 	if err != nil || expectedRevision == uuid.Nil {

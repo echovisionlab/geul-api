@@ -386,7 +386,7 @@ func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
 	sourceHTML := derefString(source.ContentHTML)
 	descriptors, err := emailutil.ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		return EmailLayoutAIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require backfill before editing"), err)
+		return EmailLayoutAIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require backfill before editing"), failurecause.ServerFault(err))
 	}
 
 	localeEntry, err := emailutil.LoadLayoutTranslationEntry(ctx, tx, layoutID, locale)
@@ -406,7 +406,7 @@ func (s *EmailLayoutAIDocumentService) loadStateAfterAuthorization(
 		} else if localeEntry.ContentHTML != nil {
 			values, err = emailutil.ExtractLayoutStoredLocaleValues(*localeEntry.ContentHTML)
 			if err != nil {
-				return EmailLayoutAIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require backfill before editing"), err)
+				return EmailLayoutAIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require backfill before editing"), failurecause.ServerFault(err))
 			}
 		}
 	}

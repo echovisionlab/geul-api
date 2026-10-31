@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -277,7 +278,7 @@ func compileEmailLayoutTargetValues(
 ) (*string, *string, error) {
 	units, err := emailutil.ExtractLayoutContentUnits(canonicalSource)
 	if err != nil {
-		return nil, nil, errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require backfill before collaboration editing"), err)
+		return nil, nil, errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require backfill before collaboration editing"), failurecause.ServerFault(err))
 	}
 	allowed := make(map[string]struct{}, len(units))
 	for _, unit := range units {
@@ -343,7 +344,7 @@ func (s *InternalEmailLayoutService) LoadDocument(
 			if unitErr != nil {
 				return errs.WithCause(errs.FailedPrecondition(
 					"Email Layout source unit markers require backfill before collaboration editing",
-				), unitErr)
+				), failurecause.ServerFault(unitErr))
 			}
 			units = make([]*intrav1.EmailLayoutContentUnit, 0, len(sourceUnits))
 			for _, unit := range sourceUnits {
@@ -357,7 +358,7 @@ func (s *InternalEmailLayoutService) LoadDocument(
 				if valueErr != nil {
 					return errs.WithCause(errs.FailedPrecondition(
 						"Email Layout target unit markers require backfill before collaboration editing",
-					), valueErr)
+					), failurecause.ServerFault(valueErr))
 				}
 				localeValues = make([]*intrav1.EmailLayoutLocaleValue, 0, len(storedValues))
 				for _, unit := range sourceUnits {

@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -324,7 +325,7 @@ func (s *FormService) applyFormUpdate(
 	if plan.nextSourceTitle != nil || plan.nextSourceSchema != nil {
 		documentID, err := uuid.Parse(form.ContentDocumentID)
 		if err != nil || documentID == uuid.Nil {
-			return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), err)
+			return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), failurecause.ServerFault(err))
 		}
 		var documentRevision uuid.UUID
 		if err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Take(&documentRevision).Error; err != nil {

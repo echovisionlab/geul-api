@@ -7,6 +7,7 @@ import (
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -112,7 +113,7 @@ func PrepareLayoutSourceLocaleSwitch(
 		)
 	}
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching"), err)
+		return errs.WithCause(errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching"), failurecause.ServerFault(err))
 	}
 	if entry == nil {
 		return UpsertLayoutTranslationEntry(ctx, db, layoutID, requestedLocale, translation.EntryWrite{
@@ -163,7 +164,7 @@ func normalizeLayoutTargetRepresentations(
 			row.ContentHTML.String,
 		)
 		if err != nil {
-			return errs.WithCause(errs.FailedPrecondition("Email Layout target markers require backfill before source editing"), err)
+			return errs.WithCause(errs.FailedPrecondition("Email Layout target markers require backfill before source editing"), failurecause.ServerFault(err))
 		}
 		if dereferenceString(nextHTML) == row.ContentHTML.String &&
 			row.ContentText.Valid && dereferenceString(nextText) == row.ContentText.String {
@@ -205,7 +206,7 @@ func SeedLayoutTranslationEntryFromSource(
 	sourceHTML := dereferenceString(source.ContentHTML)
 	units, err := ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target"), err)
+		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target"), failurecause.ServerFault(err))
 	}
 	values := make(map[string]string, len(units))
 	for _, unit := range units {

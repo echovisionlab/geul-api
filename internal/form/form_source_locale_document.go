@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
 )
@@ -203,7 +204,7 @@ func PrepareSourceLocaleSwitch(
 		return errs.FailedPrecondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), err)
+		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
 	}
 	requested, requestedExists, err := loadFormAIDocumentLocale(
 		ctx, db, formID, requestedLocale, true,
@@ -213,13 +214,13 @@ func PrepareSourceLocaleSwitch(
 	}
 	if requestedExists {
 		if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
-			return errs.WithCause(errs.FailedPrecondition("Form requested source locale document is invalid"), err)
+			return errs.WithCause(errs.FailedPrecondition("Form requested source locale document is invalid"), failurecause.ServerFault(err))
 		}
 		return nil
 	}
 	emptySchema, err := formAIDocumentEmptyTargetSchema(source.Schema)
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), err)
+		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
 	}
 	writeTime := now.UTC()
 	result := db.WithContext(ctx).Exec(

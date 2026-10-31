@@ -130,7 +130,7 @@ func (s *InternalFormService) SaveDocument(
 		if locale == root.SourceLocale {
 			documentID, parseErr := uuid.Parse(root.DocumentID)
 			if parseErr != nil || documentID == uuid.Nil {
-				return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), parseErr)
+				return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), failurecause.ServerFault(parseErr))
 			}
 			advance, advanceErr := s.contentBlocks.AdvanceRevision(
 				ctx,
@@ -345,7 +345,7 @@ func (s *InternalFormService) LoadDocument(
 		}
 		sourceMeta, err := formMetaFromCanonicalRow(source)
 		if err != nil {
-			return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), err)
+			return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
 		}
 
 		requested := source
@@ -364,18 +364,18 @@ func (s *InternalFormService) LoadDocument(
 		if requestedExists {
 			requestedMeta, err = formMetaFromCanonicalRow(requested)
 			if err != nil {
-				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), err)
+				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), failurecause.ServerFault(err))
 			}
 			if locale != root.SourceLocale {
 				if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
-					return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), err)
+					return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), failurecause.ServerFault(err))
 				}
 			}
 			presentLocaleValues, err = formCanonicalLocaleTargets(
 				requested.Title, requested.Schema,
 			)
 			if err != nil {
-				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), err)
+				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), failurecause.ServerFault(err))
 			}
 			if locale != root.SourceLocale {
 				revision, err := deriveFormTargetRevision(root.DocumentRevision, requested)

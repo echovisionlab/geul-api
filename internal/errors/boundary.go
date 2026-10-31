@@ -131,8 +131,12 @@ func boundaryError(ctx context.Context, procedure string, err error, private []s
 	}
 	// The client message is the whole story unless classification hid
 	// operation context or the error carries identifiers.
-	if _, kept := classified.Unwrap().(*classifiedCause); kept || len(failure.Attrs) > 0 { //nolint:errorlint // only a cause Wrap attached directly carries operation context
-		recordFailure(ctx, OperationLogLevel(classified), "Classified RPC error", procedure, code, failure)
+	if _, kept := classified.Unwrap().(*classifiedCause); kept || len(failure.Attrs) > 0 || failure.ServerFault { //nolint:errorlint // only a cause Wrap attached directly carries operation context
+		level := OperationLogLevel(classified)
+		if failure.ServerFault {
+			level = slog.LevelError
+		}
+		recordFailure(ctx, level, "Classified RPC error", procedure, code, failure)
 	}
 	return redactClientMessage(classified, private)
 }

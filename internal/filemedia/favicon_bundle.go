@@ -86,7 +86,7 @@ func (s *FileService) loadValidatedFaviconSource(
 	}
 	objectKey, err := mediaauth.MediaObjectKey(source.ID, source.Extension)
 	if err != nil {
-		return model.File{}, nil, errs.WithCause(errs.FailedPrecondition("favicon source metadata is not canonical"), failurecause.WithAttrs(err, slog.String("file_id", source.ID)))
+		return model.File{}, nil, errs.WithCause(errs.FailedPrecondition("favicon source metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", source.ID))))
 	}
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.s3Bucket),

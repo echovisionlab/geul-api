@@ -8,6 +8,7 @@ import (
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -250,7 +251,7 @@ func LoadCanonicalLayoutTranslationDocument(
 	}
 	contentHTML, contentText, err := MaterializeLayoutSourceLocale(*document.ContentHTML)
 	if err != nil {
-		return nil, errs.WithCause(errs.FailedPrecondition("Email Layout source locale markers are invalid"), err)
+		return nil, errs.WithCause(errs.FailedPrecondition("Email Layout source locale markers are invalid"), failurecause.ServerFault(err))
 	}
 	document.ContentHTML = contentHTML
 	document.ContentText = contentText

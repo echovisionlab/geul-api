@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
@@ -537,6 +538,9 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 
 func logToolFailure(ctx context.Context, level slog.Level, message, tool string, err error, private []string) {
 	failure := failurecause.Of(err, private...)
+	if failure.ServerFault {
+		level = slog.LevelError
+	}
 	attrs := append([]slog.Attr{slog.String("failure_cause", failure.Cause), slog.String("tool", tool)}, failure.Attrs...)
 	slog.LogAttrs(ctx, level, message, attrs...)
 }

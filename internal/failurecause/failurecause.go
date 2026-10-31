@@ -115,12 +115,36 @@ func AnnotatePrivate(errp *error, values ...string) {
 	*errp = WithPrivate(*errp, values...)
 }
 
+// ServerFault marks err as a fault an operator must act on even when the
+// client's answer is a 4xx: stored data the server cannot read, or a
+// dependency failure answered as "not found" on purpose. The record that logs
+// it uses Error. It returns nil for a nil err.
+func ServerFault(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &annotatedError{cause: err, fault: true}
+}
+
+// IsServerFault reports whether ServerFault marked any error in err's chain.
+func IsServerFault(err error) bool {
+	fault := false
+	walk(err, func(node error) bool {
+		if annotated, ok := node.(*annotatedError); ok && annotated.fault { //nolint:errorlint // walk visits every node itself
+			fault = true
+		}
+		return !fault
+	})
+	return fault
+}
+
 // annotatedError adds diagnosis to an error without changing its text or
 // classification: errors.Is, errors.As and connect.CodeOf see the cause.
 type annotatedError struct {
 	cause   error
 	private []string
 	attrs   []slog.Attr
+	fault   bool
 }
 
 func (e *annotatedError) Error() string           { return e.cause.Error() }
@@ -199,6 +223,9 @@ func Args(err error, private ...string) []any {
 // Panic returns the recovered value as a cause and a stack without rendered
 // call arguments, which can contain request data.
 func Panic(recovered any, private ...string) (cause string, stack string) {
+	if err, ok := recovered.(error); ok {
+		private = append(PrivateValues(err), private...)
+	}
 	cause = redact(fmt.Sprint(recovered), private)
 	lines := strings.Split(string(debug.Stack()), "\n")
 	for i, line := range lines {
