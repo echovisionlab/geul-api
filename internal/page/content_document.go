@@ -7,16 +7,16 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -47,21 +47,7 @@ func loadPageContentDocumentID(
 	db *gorm.DB,
 	pageID string,
 ) (uuid.UUID, error) {
-	var root pageContentDocumentRoot
-	if err := db.WithContext(ctx).
-		Table("page").
-		Select("id", "content_document_id").
-		Where("id = ?", pageID).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound("page", pageID)
-		}
-		return uuid.Nil, errs.Internal(err)
-	}
-	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-		return uuid.Nil, errs.FailedPrecondition("page content document has not been populated")
-	}
-	return *root.ContentDocumentID, nil
+	return loadPageContentDocumentIDWithLock(ctx, db, pageID, "")
 }
 
 func loadPageContentDocumentIDForRead(
@@ -69,20 +55,23 @@ func loadPageContentDocumentIDForRead(
 	tx *gorm.DB,
 	pageID string,
 ) (uuid.UUID, error) {
+	return loadPageContentDocumentIDWithLock(ctx, tx, pageID, clause.LockingStrengthShare)
+}
+
+func loadPageContentDocumentIDWithLock(ctx context.Context, db *gorm.DB, pageID, lock string) (uuid.UUID, error) {
+	query := db.WithContext(ctx).Table("page")
+	if lock != "" {
+		query = query.Clauses(clause.Locking{Strength: lock})
+	}
 	var root pageContentDocumentRoot
-	if err := tx.WithContext(ctx).
-		Table("page").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Select("id", "content_document_id").
-		Where("id = ?", pageID).
-		Take(&root).Error; err != nil {
+	if err := query.Select("id", "content_document_id").Where("id = ?", pageID).Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound("page", pageID)
+			return uuid.Nil, domainerr.ResourceNotFound("page", pageID)
 		}
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-		return uuid.Nil, errs.FailedPrecondition("page content document has not been populated")
+		return uuid.Nil, domainerr.Precondition("page content document has not been populated")
 	}
 	return *root.ContentDocumentID, nil
 }
@@ -95,61 +84,63 @@ func LoadPageContentDocumentIDForPublicRead(
 	return loadPageContentDocumentIDForRead(ctx, tx, pageID)
 }
 
+// authorizePageBlockBootstrap resolves the browser session sessionID to its
+// principal and requires it to edit the Page, locking the session for the
+// read.
 func authorizePageBlockBootstrap(
 	ctx context.Context,
 	db *gorm.DB,
 	checker CollaborationPermissionChecker,
 	pageID string,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID string,
 ) (*auth.UserInfo, error) {
-	if principalMessage == nil || strings.TrimSpace(principalMessage.GetSessionId()) == "" {
-		return nil, errs.AuthenticationRequired()
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, domainerr.AuthenticationRequired()
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-		ctx,
-		db,
-		principalMessage.GetSessionId(),
-	)
+	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), failurecause.WithAttrs(
-			failurecause.WithPrivate(err, principalMessage.GetSessionId()), slog.String("page_id", pageID),
+		return nil, domainerr.AuthenticationRequired().WithCause(failurecause.WithAttrs(
+			failurecause.WithPrivate(err, sessionID), slog.String("page_id", pageID),
 		))
 	}
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("resolve Page collaboration principal: %w", err))
+		return nil, fmt.Errorf("resolve Page collaboration principal: %w", err)
 	}
+	if err := requireActiveBootstrapPrincipal(ctx, db, principal); err != nil {
+		return nil, err
+	}
+	if err := requireCollaborationEditForPrincipal(ctx, checker, pageID, principal); err != nil {
+		return nil, err
+	}
+	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, sessionID, principal); err != nil {
+		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+			return nil, domainerr.AuthenticationRequired().WithCause(failurecause.WithPrivate(err, sessionID))
+		}
+		return nil, fmt.Errorf("lock Page collaboration session: %w", err)
+	}
+	return principal, nil
+}
+
+// requireActiveBootstrapPrincipal admits an authenticated, onboarded and
+// active principal that is not banned.
+func requireActiveBootstrapPrincipal(ctx context.Context, db *gorm.DB, principal *auth.UserInfo) error {
 	if principal == nil || !principal.Authenticated {
-		return nil, errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if principal.Banned {
-		return nil, errs.AccountBanned()
+		return domainerr.AccountBanned()
 	}
 	if !principal.Onboarded {
-		return nil, errs.NoPermission("edit", "page")
+		return domainerr.NoPermission("edit", "page")
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, db, principal)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	if !active {
-		return nil, errs.NoPermission("edit", "page")
+		return domainerr.NoPermission("edit", "page")
 	}
-	if err := RequireCollaborationEditForPrincipal(
-		ctx,
-		checker,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PAGE,
-		pageID,
-		principal,
-	); err != nil {
-		return nil, err
-	}
-	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, principalMessage.GetSessionId(), principal); err != nil {
-		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			return nil, errs.WithCause(errs.AuthenticationRequired(), failurecause.WithPrivate(err, principalMessage.GetSessionId()))
-		}
-		return nil, errs.Internal(fmt.Errorf("lock Page collaboration session: %w", err))
-	}
-	return principal, nil
+	return nil
 }
 
 func lockPageContentDocumentRoot(
@@ -166,18 +157,19 @@ func lockPageContentDocumentRoot(
 		Where("id = ?", pageID).
 		Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("page", pageID)
+			return domainerr.ResourceNotFound("page", pageID)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-		return errs.FailedPrecondition("page content document changed; reload before saving")
+		return domainerr.Precondition("page content document changed; reload before saving")
 	}
 	return nil
 }
 
-func pageCollaborationDocumentFence(
-	spiceDB CollaborationPermissionChecker,
+// pageCollaborationDocumentFence locks the Page root of documentID and
+// requires every contributor to hold action on it.
+func (s *Service) pageCollaborationDocumentFence(
 	pageID string,
 	action pageAction,
 	contributorMemberIDs []string,
@@ -187,7 +179,7 @@ func pageCollaborationDocumentFence(
 		if err := lockPageContentDocumentRoot(ctx, tx, pageID, documentID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if err := requirePageContributorsPermission(ctx, tx, spiceDB, pageID, action, contributors); err != nil {
+		if err := s.requirePageContributorsPermission(ctx, tx, pageID, action, contributors); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return loadPageContentDomainContext(ctx, tx, pageID)
@@ -219,13 +211,13 @@ func loadPageContentDomainContext(
 		Where("id = ?", pageID).
 		Take(&source).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return contentblock.DomainContext{}, errs.NotFound("page", pageID)
+			return contentblock.DomainContext{}, domainerr.ResourceNotFound("page", pageID)
 		}
-		return contentblock.DomainContext{}, errs.Internal(err)
+		return contentblock.DomainContext{}, err
 	}
 	locale := strings.TrimSpace(source.SourceLocale)
 	if locale == "" {
-		return contentblock.DomainContext{}, errs.FailedPrecondition("page translation source locale is missing")
+		return contentblock.DomainContext{}, domainerr.Precondition("page translation source locale is missing")
 	}
 	return contentblock.DomainContext{SourceLocale: locale}, nil
 }
@@ -234,37 +226,39 @@ func parsePageContentUUID(fieldName string, value string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
-		return uuid.Nil, errs.InvalidArgument(fieldName, "must be a canonical UUID")
+		return uuid.Nil, domainerr.InvalidField(fieldName, "must be a canonical UUID")
 	}
 	return parsed, nil
 }
 
+// normalizePageContentBlockError answers a content store failure. An error
+// a shared helper or this package already answered passes through.
 func normalizePageContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || mutation.IsClassified(err) {
 		return err
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		return errs.WithCause(errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Page target translation changed since it was loaded; reload before saving", err,
-		), err)
+			"Page target translation changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	}
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg("page content document not found"), err)
+		return domainerr.New(domainerr.NotFound, "", "page content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.WithCause(errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Page document changed since it was loaded; reload before saving", err,
-		), err)
+			"Page document changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.FailedPrecondition("a Page Block File reference is not attachable"), err)
+		return domainerr.Precondition("a Page Block File reference is not attachable").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("page content document: %w", err))
+		return fmt.Errorf("page content document: %w", err)
 	}
 }

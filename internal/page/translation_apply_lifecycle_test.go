@@ -3,6 +3,8 @@ package page
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -37,5 +39,5 @@ func TestPageTranslationApplyFenceAllowsDraftRootAndRejectsDeletedRoot(t *testin
 	// A deleted Page must reject a late result.
 	require.NoError(t, db.Exec(`DELETE FROM page WHERE id = ?`, pageID).Error)
 	_, err = fence(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }

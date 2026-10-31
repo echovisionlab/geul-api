@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -25,10 +27,7 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	ctx = withPageAuditedRequestContext(t, ctx)
-	service := NewAuditedPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"),
-		newPageIntegrationFiles(db, spiceDB), noopAsyncPublisher{}, nil, apitelemetry.NewDurableWriter(db), spiceDB,
-		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}), WithPageMenuTargets(noopPageMenuTargets{}))
+	service := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: newPageIntegrationFiles(db, spiceDB), ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB), MediaHydrator: passthroughPageContentBlockMediaHydrator{}, MenuTargets: noopPageMenuTargets{}, Audit: apitelemetry.NewDurableWriter(db)}))
 	created, err := service.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Access policy settings"}))
 	require.NoError(t, err)
 	pageID := created.Msg.Id
@@ -74,9 +73,9 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 		{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, UserTagIds: []string{uuid.NewString()}},
 	} {
 		_, err := service.UpdatePage(ctx, connect.NewRequest(&managev1.UpdatePageRequest{Id: pageID, AccessPolicy: invalid}))
-		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 		_, err = service.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Invalid access", AccessPolicy: invalid}))
-		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	}
 	// A removed saved tag remains readable, but it cannot be selected on save.
 	require.NoError(t, db.Delete(&model.UserTag{}, "id = ?", tagID).Error)
@@ -84,7 +83,7 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, proto.Equal(normalized, unchanged.Msg.AccessPolicy))
 	_, err = service.UpdatePage(ctx, connect.NewRequest(&managev1.UpdatePageRequest{Id: pageID, AccessPolicy: normalized}))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	reset, err := service.UpdatePage(ctx, connect.NewRequest(&managev1.UpdatePageRequest{Id: pageID, AccessPolicy: &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_PUBLIC}}))
 	require.NoError(t, err)
 	require.True(t, reset.Msg.Changed)
@@ -96,17 +95,16 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, memberIdentityID, policyv1.Role.User())
 	memberCtx := auth.WithUser(ctx, &auth.UserInfo{IdentityID: auth.IdentityID(memberIdentityID), MemberID: auth.MemberID(memberID), SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true})
 	_, err = service.UpdatePage(memberCtx, connect.NewRequest(&managev1.UpdatePageRequest{Id: pageID, AccessPolicy: conditions}))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	_, err = service.CreatePage(memberCtx, connect.NewRequest(&managev1.CreatePageRequest{Title: "User forbidden"}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 }
 
 func TestPageAccessPolicyAbsentUpdateReadsLockedStateIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
-	service := NewPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"), newPageIntegrationFiles(db, spiceDB), noopAsyncPublisher{}, nil, spiceDB,
-		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)), WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}))
+	service := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: newPageIntegrationFiles(db, spiceDB), ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB), MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	created, err := service.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Locked access policy"}))
 	require.NoError(t, err)
 	encoded, err := pageaccess.Encode(&commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_AUTHENTICATED})

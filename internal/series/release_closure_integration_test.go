@@ -163,10 +163,9 @@ func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 	testutil.GrantIntegrationGlobalRole(t, service.spiceDB, authorID, policyv1.Role.Author())
 	adminCtx := seriesIntegrationAdminCtx(t, adminID)
-	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(authorID)),
-		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
-	})
+	// Series membership changes are audited, so the author acts in a member
+	// request.
+	authorCtx := testutil.NewAuditContext(t, authorID, testutil.PostIntegrationMemberID(authorID))
 	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	seriesOne := createSeriesForClosure(t, service, adminCtx, "Relation One "+suffix, "relation-one-"+suffix)
 	seriesTwo := createSeriesForClosure(t, service, adminCtx, "Relation Two "+suffix, "relation-two-"+suffix)

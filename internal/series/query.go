@@ -3,10 +3,11 @@ package series
 import (
 	"context"
 	"errors"
+	"time"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"time"
 
 	"gorm.io/gorm"
 

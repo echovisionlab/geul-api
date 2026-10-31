@@ -22,6 +22,7 @@ var pipelineDomains = []string{
 	"internal/emaildelivery",
 	"internal/member",
 	"internal/menu",
+	"internal/page",
 	"internal/series",
 	"internal/sharelink",
 }

@@ -3,16 +3,17 @@ package page
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -21,7 +22,17 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// UpdatePageCommand changes the Page settings it sets. A present Slug that
+// trims to empty clears the slug; AccessPolicy replaces the whole audience.
+type UpdatePageCommand struct {
+	ID           string
+	Slug         *string
+	ShowTitle    *bool
+	AccessPolicy *commonv1.PageAccessPolicy
+}
 
 // pageUpdate is a validated Page configuration update. Each field is set
 // only when the request sets it; slugPresent with a nil normalizedSlug clears
@@ -52,29 +63,81 @@ func (u pageUpdate) columns(updatedAt time.Time) structured.Fields {
 	return columns
 }
 
-func (s *PageService) preparePageUpdate(
-	ctx context.Context,
-	request *managev1.UpdatePageRequest,
-) (pageUpdate, error) {
-	normalizedSlug, slugPresent := normalizeOptionalNullableString(request.Slug)
+// pageUpdated is the Page settings an update leaves behind.
+type pageUpdated struct {
+	page          model.Page
+	changedFields []string
+}
+
+// UpdatePage changes the Page slug, title visibility or reader audience.
+func (s *Service) UpdatePage(ctx context.Context, command UpdatePageCommand) (_ *managev1.UpdatePageResponse, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.ID))
+
+	update, err := s.preparePageUpdate(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageUpdated]{
+		Access: s.lockedPage(command.ID, policyv1.Page.Manage),
+		Change: func(ctx context.Context, tx *gorm.DB) (pageUpdated, error) {
+			return s.applyPageUpdate(ctx, tx, command.ID, update)
+		},
+		Audit: func(updated pageUpdated) mutation.Audit {
+			if len(updated.changedFields) == 0 {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageConfigurationAuditRecord(metadata, command.ID, updated.changedFields)
+			})
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, updated pageUpdated) error {
+			if len(updated.changedFields) == 0 {
+				return nil
+			}
+			return s.publish(ctx, tx, buildManagePageContentUpdatedEvent(command))
+		},
+	})
+	if err != nil {
+		if dberrors.IsUniqueViolation(err) {
+			return nil, domainerr.Duplicate("page", "slug", "slug").WithCause(err)
+		}
+		return nil, err
+	}
+	page := updated.page
+	accessPolicy, err := pageaccess.Decode(page.AccessPolicy)
+	if err != nil {
+		return nil, err
+	}
+	return &managev1.UpdatePageResponse{
+		Id:           page.ID,
+		Changed:      len(updated.changedFields) != 0,
+		Slug:         page.Slug,
+		ShowTitle:    page.ShowTitle,
+		UpdatedAt:    timestamppb.New(page.UpdatedAt),
+		AccessPolicy: accessPolicy,
+	}, nil
+}
+
+func (s *Service) preparePageUpdate(ctx context.Context, command UpdatePageCommand) (pageUpdate, error) {
+	normalizedSlug, slugPresent := normalizeOptionalNullableString(command.Slug)
 	if slugPresent && normalizedSlug != nil {
-		if err := s.checkSlugAvailable(ctx, *normalizedSlug, request.Id); err != nil {
+		if err := s.checkSlugAvailable(ctx, *normalizedSlug, command.ID); err != nil {
 			return pageUpdate{}, err
 		}
 	}
 	update := pageUpdate{
 		normalizedSlug: normalizedSlug,
 		slugPresent:    slugPresent,
-		showTitle:      request.ShowTitle,
+		showTitle:      command.ShowTitle,
 	}
-	if request.AccessPolicy != nil {
-		policy, err := pageaccess.Normalize(request.AccessPolicy)
+	if command.AccessPolicy != nil {
+		policy, err := pageaccess.Normalize(command.AccessPolicy)
 		if err != nil {
-			return pageUpdate{}, errs.InvalidArgument("access_policy", err.Error())
+			return pageUpdate{}, domainerr.InvalidField("access_policy", err.Error())
 		}
 		encoded, err := pageaccess.Encode(policy)
 		if err != nil {
-			return pageUpdate{}, errs.Internal(err)
+			return pageUpdate{}, err
 		}
 		update.accessPolicy = policy
 		update.encodedAccessPolicy = encoded
@@ -82,77 +145,60 @@ func (s *PageService) preparePageUpdate(
 	return update, nil
 }
 
-// applyPageUpdate commits the Page configuration change and, when it changed,
-// schedules event in the same transaction.
-func (s *PageService) applyPageUpdate(
-	ctx context.Context,
-	page *model.Page,
-	update pageUpdate,
-	event *managev1.ContentUpdatedEvent,
-) (bool, error) {
-	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		lockedPage, err := lockPageMenuTargetStateForUpdate(ctx, tx, page.ID)
-		if err != nil {
-			return err
+// applyPageUpdate writes the Page configuration change and reports the
+// fields it changed; none means the Page already had these settings.
+func (s *Service) applyPageUpdate(ctx context.Context, tx *gorm.DB, pageID string, update pageUpdate) (pageUpdated, error) {
+	lockedPage, err := lockPageMenuTargetStateForUpdate(ctx, tx, pageID)
+	if err != nil {
+		return pageUpdated{}, err
+	}
+	if update.slugPresent && update.normalizedSlug != nil {
+		if err := lockAvailablePageSlug(ctx, tx, *update.normalizedSlug, pageID); err != nil {
+			return pageUpdated{}, err
 		}
-		if err := requireLockedPagePermission(ctx, tx, s.spiceDB, page.ID, policyv1.Page.Manage); err != nil {
-			return err
-		}
-		if err := validatePageUpdateSlug(ctx, tx, page.ID, update); err != nil {
-			return err
-		}
-		if err := validatePageAccessPolicyTags(ctx, tx, update.accessPolicy); err != nil {
-			return err
-		}
-		currentPolicy, err := pageaccess.Decode(lockedPage.AccessPolicy)
-		if err != nil {
-			return errs.Internal(err)
-		}
-		// Keep the root value read under FOR UPDATE as an immutable rewrite
-		// input. The Page row update below must never influence which legacy
-		// slug-only Menu targets are selected for the same transaction.
-		previousSlug := cloneOptionalString(lockedPage.Slug)
-		page.Slug = cloneOptionalString(previousSlug)
-		page.ShowTitle = lockedPage.ShowTitle
-		page.UpdatedAt = lockedPage.UpdatedAt
-		page.AccessPolicy = lockedPage.AccessPolicy
-		changedFields := pageUpdateChangedFields(lockedPage, update)
-		if update.accessPolicy != nil && !proto.Equal(currentPolicy, update.accessPolicy) {
-			changedFields = append(changedFields, "access_policy")
-		}
-		if len(changedFields) == 0 {
-			return nil
-		}
-		// PostgreSQL keeps microseconds; respond with the value later reads return.
-		mutationNow := dbtime.Now()
-		if err := tx.Model(page).Updates(update.columns(mutationNow)).Error; err != nil {
-			return err
-		}
-		if update.slugPresent {
-			page.Slug = update.normalizedSlug
-		}
-		if update.showTitle != nil {
-			page.ShowTitle = *update.showTitle
-		}
-		page.UpdatedAt = mutationNow
-		if update.accessPolicy != nil {
-			page.AccessPolicy = update.encodedAccessPolicy
-		}
-		if err := s.updatePageMenuTargetAfterSlugChange(ctx, tx, page.ID, previousSlug, update); err != nil {
-			return err
-		}
-		changed = true
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPageConfigurationAuditRecord(metadata, page.ID, changedFields)
-			}); err != nil {
-				return err
-			}
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, event)
-	})
-	return changed, err
+	}
+	if err := s.validatePageAccessPolicyTags(ctx, tx, update.accessPolicy); err != nil {
+		return pageUpdated{}, err
+	}
+	currentPolicy, err := pageaccess.Decode(lockedPage.AccessPolicy)
+	if err != nil {
+		return pageUpdated{}, err
+	}
+	// Keep the root value read under FOR UPDATE as an immutable rewrite
+	// input. The Page row update below must never influence which legacy
+	// slug-only Menu targets are selected for the same transaction.
+	previousSlug := cloneOptionalString(lockedPage.Slug)
+	updated := pageUpdated{page: model.Page{
+		ID: pageID, Slug: cloneOptionalString(previousSlug), ShowTitle: lockedPage.ShowTitle,
+		UpdatedAt: lockedPage.UpdatedAt, AccessPolicy: lockedPage.AccessPolicy,
+	}}
+	updated.changedFields = pageUpdateChangedFields(lockedPage, update)
+	if update.accessPolicy != nil && !proto.Equal(currentPolicy, update.accessPolicy) {
+		updated.changedFields = append(updated.changedFields, "access_policy")
+	}
+	if len(updated.changedFields) == 0 {
+		return updated, nil
+	}
+	// PostgreSQL keeps microseconds; respond with the value later reads return.
+	mutationNow := dbtime.Now()
+	page := &updated.page
+	if err := tx.Model(page).Updates(update.columns(mutationNow)).Error; err != nil {
+		return pageUpdated{}, err
+	}
+	if update.slugPresent {
+		page.Slug = update.normalizedSlug
+	}
+	if update.showTitle != nil {
+		page.ShowTitle = *update.showTitle
+	}
+	page.UpdatedAt = mutationNow
+	if update.accessPolicy != nil {
+		page.AccessPolicy = update.encodedAccessPolicy
+	}
+	if err := s.updatePageMenuTargetAfterSlugChange(ctx, tx, pageID, previousSlug, update); err != nil {
+		return pageUpdated{}, err
+	}
+	return updated, nil
 }
 
 func pageUpdateChangedFields(page *lockedPageMenuTargetState, update pageUpdate) []string {
@@ -166,27 +212,23 @@ func pageUpdateChangedFields(page *lockedPageMenuTargetState, update pageUpdate)
 	return fields
 }
 
-func validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *commonv1.PageAccessPolicy) error {
+func (s *Service) validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *commonv1.PageAccessPolicy) error {
 	if policy == nil || len(policy.UserTagIds) == 0 {
 		return nil
 	}
-	var ids []string
-	if err := tx.WithContext(ctx).Model(&model.UserTag{}).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Where("id IN ?", policy.UserTagIds).Pluck("id", &ids).Error; err != nil {
-		return errs.Internal(err)
+	ids, err := s.members.LockUserTags(ctx, tx, policy.UserTagIds)
+	if err != nil {
+		return err
 	}
 	if len(ids) != len(policy.UserTagIds) {
-		return errs.InvalidArgument("access_policy.user_tag_ids", "selected user tag does not exist")
+		return domainerr.InvalidField("access_policy.user_tag_ids", "selected user tag does not exist")
 	}
 	return nil
 }
 
-func validatePageUpdateSlug(ctx context.Context, tx *gorm.DB, pageID string, update pageUpdate) error {
-	if !update.slugPresent || update.normalizedSlug == nil {
-		return nil
-	}
-	slug := *update.normalizedSlug
+// lockAvailablePageSlug locks the route of slug and rejects a slug another
+// Page or resource route holds.
+func lockAvailablePageSlug(ctx context.Context, tx *gorm.DB, slug, pageID string) error {
 	if err := routeregistry.LockPageRouteConflict(ctx, tx, slug); err != nil {
 		return err
 	}
@@ -198,12 +240,12 @@ func validatePageUpdateSlug(ctx context.Context, tx *gorm.DB, pageID string, upd
 		return err
 	}
 	if occupied {
-		return errs.SlugAlreadyExists("page", slug)
+		return domainerr.Duplicate("page", "slug", slug)
 	}
 	return nil
 }
 
-func (s *PageService) updatePageMenuTargetAfterSlugChange(
+func (s *Service) updatePageMenuTargetAfterSlugChange(
 	ctx context.Context,
 	tx *gorm.DB,
 	pageID string,
@@ -217,15 +259,5 @@ func (s *PageService) updatePageMenuTargetAfterSlugChange(
 	if update.normalizedSlug != nil {
 		nextTarget = *update.normalizedSlug
 	}
-	if s.menuTargets == nil {
-		return errs.InternalMsg("Page Menu target slug updater is not configured")
-	}
 	return s.menuTargets.UpdateSlug(ctx, tx, "page", pageID, derefString(previousSlug), nextTarget)
-}
-
-func normalizePageUpdateError(err error) error {
-	if dberrors.IsUniqueViolation(err) {
-		return errs.WithCause(errs.SlugAlreadyExists("page", "slug"), err)
-	}
-	return errs.Internal(err)
 }

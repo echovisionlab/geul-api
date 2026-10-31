@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -197,7 +198,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 			}
 		})
 	}
-	if posts.get.Msg.Id != managementPostID || pages.get.Msg.Id != managementPageID {
+	if posts.get.Msg.Id != managementPostID || pages.get.ID != managementPageID {
 		t.Fatalf("getters changed exact target: %+v %+v", posts.get, pages.get)
 	}
 }
@@ -261,8 +262,8 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pages.create.Header().Get("Accept-Language") != "ja" || pages.create.Msg.ShowTitle == nil || *pages.create.Msg.ShowTitle {
-		t.Fatalf("Page create = %#v", pages.create.Msg)
+	if pages.create.AcceptLanguage != "ja" || pages.create.ShowTitle == nil || *pages.create.ShowTitle {
+		t.Fatalf("Page create = %#v", pages.create)
 	}
 	if pageResult.StructuredContent["document_id"] != managementPageID {
 		t.Fatalf("Page result = %#v", pageResult.StructuredContent)
@@ -380,7 +381,7 @@ func TestPageSettingsUpdateReturnsOwningValuesAndNoopStatus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pages.update.Msg.ShowTitle == nil || !*pages.update.Msg.ShowTitle || result.StructuredContent["show_title"] != false || result.StructuredContent["changed"] != changed {
+		if pages.update.ShowTitle == nil || !*pages.update.ShowTitle || result.StructuredContent["show_title"] != false || result.StructuredContent["changed"] != changed {
 			t.Fatalf("request/owning response=%+v %+v", pages.update, result.StructuredContent)
 		}
 	}
@@ -420,8 +421,8 @@ func TestPageSettingsUpdateForwardsAccessPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !proto.Equal(pages.update.Msg.AccessPolicy, test.want) || pages.update.Msg.Slug != nil || pages.update.Msg.ShowTitle != nil {
-				t.Fatalf("request = %+v", pages.update.Msg)
+			if !proto.Equal(pages.update.AccessPolicy, test.want) || pages.update.Slug != nil || pages.update.ShowTitle != nil {
+				t.Fatalf("request = %+v", pages.update)
 			}
 			if !reflect.DeepEqual(result.StructuredContent["access_policy"], pageAccessPolicyOutput(test.want)) {
 				t.Fatalf("access_policy = %#v", result.StructuredContent["access_policy"])
@@ -610,31 +611,42 @@ func (r *recordingWorkManagement) CreateWork(_ context.Context, req *connect.Req
 }
 
 type recordingPageManagement struct {
-	managev1connect.UnimplementedPageServiceHandler
-	create         *connect.Request[managev1.CreatePageRequest]
-	get            *connect.Request[managev1.GetPageRequest]
+	create         *pagedomain.CreatePageCommand
+	get            *pagedomain.GetPageQuery
 	getResponse    *managev1.Page
 	getErr         error
-	update         *connect.Request[managev1.UpdatePageRequest]
+	update         *pagedomain.UpdatePageCommand
 	updateResponse *managev1.UpdatePageResponse
 }
 
-func (r *recordingPageManagement) GetPage(_ context.Context, req *connect.Request[managev1.GetPageRequest]) (*connect.Response[managev1.Page], error) {
-	r.get = req
+func (r *recordingPageManagement) GetPage(_ context.Context, query pagedomain.GetPageQuery) (*managev1.Page, error) {
+	r.get = &query
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingPageManagement) UpdatePage(_ context.Context, req *connect.Request[managev1.UpdatePageRequest]) (*connect.Response[managev1.UpdatePageResponse], error) {
-	r.update = req
-	return connect.NewResponse(r.updateResponse), nil
+func (r *recordingPageManagement) UpdatePage(_ context.Context, command pagedomain.UpdatePageCommand) (*managev1.UpdatePageResponse, error) {
+	r.update = &command
+	return r.updateResponse, nil
 }
 
-func (r *recordingPageManagement) CreatePage(_ context.Context, req *connect.Request[managev1.CreatePageRequest]) (*connect.Response[managev1.Page], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Page{Id: managementPageID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "page-revision"}), nil
+func (r *recordingPageManagement) CreatePage(_ context.Context, command pagedomain.CreatePageCommand) (*managev1.Page, error) {
+	r.create = &command
+	return &managev1.Page{Id: managementPageID, Title: command.Title, SourceLocale: command.SourceLocale, Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "page-revision"}, nil
+}
+
+func (*recordingPageManagement) PublishPage(context.Context, pagedomain.PublishPageCommand) (*managev1.PageLifecycleMutationResponse, error) {
+	return nil, errors.New("publish page is not part of this test")
+}
+
+func (*recordingPageManagement) UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (*managev1.PageLifecycleMutationResponse, error) {
+	return nil, errors.New("unpublish page is not part of this test")
+}
+
+func (*recordingPageManagement) DeletePage(context.Context, pagedomain.DeletePageCommand) error {
+	return errors.New("delete page is not part of this test")
 }
 
 func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {

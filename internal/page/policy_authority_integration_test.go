@@ -17,7 +17,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -63,7 +62,7 @@ func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *tes
 	err = requireLocked(func(tx *gorm.DB) error {
 		return authority.RequireLockedView(ctx, tx, missingPageID)
 	})
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 
 	require.NoError(t, requireLocked(func(tx *gorm.DB) error {
 		return authority.RequireLockedView(ctx, tx, pageID)
@@ -76,7 +75,7 @@ func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *tes
 	err = requireLocked(func(tx *gorm.DB) error {
 		return authority.RequireLockedEdit(ctx, tx, pageID)
 	})
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }
 
 func TestCollaborationSessionLockFencesRevocationIntegration(t *testing.T) {
@@ -174,7 +173,7 @@ func TestPageCollaborationSignFirstDoesNotInvertAccountSessionDeletionIntegratio
 			}
 			if _, err := authorizePageBlockBootstrap(
 				t.Context(), tx, stack.SpiceDBClient, pageID,
-				&intrav1.CollaborationPrincipal{SessionId: user.SessionID},
+				user.SessionID,
 			); err != nil {
 				return err
 			}

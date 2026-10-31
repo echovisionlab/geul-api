@@ -2,22 +2,21 @@ package page
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -27,7 +26,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (s *PageService) overlayPageSourceLocaleMetadataForPages(
+type CheckPageSlugAvailableQuery struct {
+	Slug      string
+	ExcludeID *string
+}
+
+func (s *Service) overlayPageSourceLocaleMetadataForPages(
 	ctx context.Context,
 	pages []model.Page,
 ) error {
@@ -38,44 +42,24 @@ func (s *PageService) overlayPageSourceLocaleMetadataForPages(
 	for i := range pages {
 		state := sourceStates[pages[i].ID]
 		if state == nil {
-			return errs.NotFound("page_translation", pages[i].ID)
+			return domainerr.ResourceNotFound("page_translation", pages[i].ID)
 		}
 		overlayPageSourceLocaleMetadata(&pages[i], state)
 	}
 	return nil
 }
 
-func (s *PageService) pageResponseWithReadyOg(
-	ctx context.Context,
-	page *model.Page,
-) (*connect.Response[managev1.Page], error) {
-	if page == nil {
-		return nil, errs.InternalMsg("Page is required")
-	}
-	return s.pageResponseByWithReadyOg(ctx, "id", page.ID)
-}
-
-func (s *PageService) pageResponseByWithReadyOg(
-	ctx context.Context,
-	column string,
-	value string,
-) (*connect.Response[managev1.Page], error) {
-	page, document, snapshot, sourceMetadata, blockMedia, err := s.loadPageContentProjection(ctx, column, value)
+// pageBy reads the management projection of the Page whose column equals
+// value.
+func (s *Service) pageBy(ctx context.Context, column string, value string) (*managev1.Page, error) {
+	projection, err := s.loadPageContentProjection(ctx, column, value)
 	if err != nil {
 		return nil, err
 	}
-	if s.mediaHydrator == nil {
-		return nil, errs.InternalMsg("Page Block media hydrator is not configured")
-	}
-	overlayPageSourceLocaleMetadata(page, sourceMetadata)
+	page := &projection.page
+	overlayPageSourceLocaleMetadata(page, projection.sourceMetadata)
 
-	ogAsset, err := readyManageOgAssetRef(
-		ctx,
-		s.runtime,
-		s.db,
-		page.SourceLocaleOgAssetID,
-		page.OgAssetID,
-	)
+	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, page.SourceLocaleOgAssetID, page.OgAssetID)
 	if err != nil {
 		return nil, err
 	}
@@ -83,123 +67,126 @@ func (s *PageService) pageResponseByWithReadyOg(
 	if err != nil {
 		return nil, err
 	}
-	protoPage, err := s.toProtoPage(page, ogAsset, featuredDeliveries[page.ID])
+	protoPage, err := toProtoPage(page, ogAsset, featuredDeliveries[page.ID])
 	if err != nil {
 		return nil, err
 	}
-	protoPage.Document = document
-	protoPage.Revision = snapshot.Document.Revision.String()
-	protoPage.BlockMedia = blockMedia
-	return connect.NewResponse(protoPage), nil
+	protoPage.Document = projection.document
+	protoPage.Revision = projection.snapshot.Document.Revision.String()
+	protoPage.BlockMedia = projection.blockMedia
+	return protoPage, nil
 }
 
-func (s *PageService) loadPageContentProjection(
-	ctx context.Context,
-	column string,
-	value string,
-) (*model.Page, *contentv1.PageDocument, contentblock.Snapshot, *PageSourceLocaleMetadata, []*contentv1.ContentBlockMediaItem, error) {
+// pageContentProjection is what one repeatable-read projection observed.
+type pageContentProjection struct {
+	page           model.Page
+	sourceMetadata *PageSourceLocaleMetadata
+	snapshot       contentblock.Snapshot
+	document       *contentv1.PageDocument
+	blockMedia     []*contentv1.ContentBlockMediaItem
+}
+
+func (s *Service) loadPageContentProjection(ctx context.Context, column string, value string) (pageContentProjection, error) {
 	if column != "id" && column != "slug" {
-		return nil, nil, contentblock.Snapshot{}, nil, nil, errs.InternalMsg("Page read locator is invalid")
+		return pageContentProjection{}, errors.New("page read locator is invalid")
 	}
-	if s.contentBlocks == nil {
-		return nil, nil, contentblock.Snapshot{}, nil, nil, errs.InternalMsg("Page content Block store is not configured")
-	}
-	var page model.Page
-	var sourceMetadata *PageSourceLocaleMetadata
-	var snapshot contentblock.Snapshot
-	var document *contentv1.PageDocument
-	var blockMedia []*contentv1.ContentBlockMediaItem
-	var principal *auth.UserInfo
+	var projection pageContentProjection
 	// The repeatable read snapshot with a share lock on the root conflicts with a
 	// concurrent Page write (SQLSTATE 40001); the read is retried after it commits.
 	err := dberrors.RetrySerializationFailure(ctx, func() error {
-		page, sourceMetadata, snapshot, document, blockMedia, principal = model.Page{}, nil, contentblock.Snapshot{}, nil, nil, nil
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			var err error
-			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-				Where(column+" = ?", value).
-				Take(&page).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return errs.NotFound("page", value)
-				}
-				return errs.Internal(err)
-			}
-			principal, err = authorizePagePermissionAfterRootLock(
-				ctx, tx, s.spiceDB, page.ID, policyv1.Page.View,
-			)
-			if err != nil {
-				cause := failurecause.WithAttrs(err, slog.String("page_id", page.ID))
-				if code := connect.CodeOf(err); code != connect.CodeUnauthenticated &&
-					code != connect.CodePermissionDenied && code != connect.CodeNotFound {
-					// Every failure answers not found; a dependency failure is
-					// still a server fault.
-					cause = failurecause.ServerFault(cause)
-				}
-				return errs.WithCause(errs.NotFound("page", value), cause)
-			}
-			if err := pageaccess.Require(ctx, tx, s.spiceDB, page.ID, page.AccessPolicy); err != nil {
-				return err
-			}
-			documentID, err := loadPageContentDocumentIDForRead(ctx, tx, page.ID)
+		projection = pageContentProjection{}
+		return mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
+			principal, err := s.authorizePageProjection(ctx, tx, &projection.page, column, value)
 			if err != nil {
 				return err
 			}
-			sourceMetadata, err = loadRequiredPageSourceLocaleMetadata(ctx, tx, page.ID)
-			if err != nil {
-				return err
-			}
-			snapshot, err = s.contentBlocks.LoadSnapshotInTransaction(
-				ctx,
-				tx,
-				documentID,
-				sourceMetadata.Locale,
-			)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("load Page content document: %w", err))
-			}
-			document, err = MaterializePageContentDocument(snapshot)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
-			}
-			blockMedia, err = contentblock.LoadMediaReferences(ctx, tx, documentID)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("load Page Block media: %w", err))
-			}
-			blockMedia, err = s.mediaHydrator.HydrateAuthorizedPageBlockMediaWithDB(
-				auth.WithUser(ctx, principal), tx, page.ID, documentID, principal, blockMedia,
-			)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("hydrate Page Block media: %w", err))
-			}
-			return nil
-		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+			return s.loadPageContent(ctx, tx, &projection, principal)
+		})
 	})
 	if err != nil {
-		return nil, nil, contentblock.Snapshot{}, nil, nil, err
+		return pageContentProjection{}, err
 	}
-	return &page, document, snapshot, sourceMetadata, blockMedia, nil
+	return projection, nil
 }
 
-func (s *PageService) toProtoPage(
+// authorizePageProjection share-locks the Page into page and requires the
+// caller to view it under its access policy. Every authorization failure
+// answers not found.
+func (s *Service) authorizePageProjection(ctx context.Context, tx *gorm.DB, page *model.Page, column, value string) (*auth.UserInfo, error) {
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
+		Where(column+" = ?", value).
+		Take(page).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerr.ResourceNotFound("page", value)
+		}
+		return nil, err
+	}
+	principal, err := authorizePagePermissionAfterRootLock(ctx, tx, s.permissions, page.ID, policyv1.Page.View)
+	if err != nil {
+		cause := failurecause.WithAttrs(err, slog.String("page_id", page.ID))
+		if !mutation.IsUnauthenticated(err) && !mutation.IsDenied(err) && !mutation.IsNotFound(err) {
+			// Every failure answers not found; a dependency failure is
+			// still a server fault.
+			cause = failurecause.ServerFault(cause)
+		}
+		return nil, domainerr.ResourceNotFound("page", value).WithCause(cause)
+	}
+	if err := pageaccess.Require(ctx, tx, s.permissions, page.ID, page.AccessPolicy); err != nil {
+		return nil, err
+	}
+	return principal, nil
+}
+
+// loadPageContent loads the source locale document of the authorized Page
+// and its Block media delivered to principal.
+func (s *Service) loadPageContent(ctx context.Context, tx *gorm.DB, projection *pageContentProjection, principal *auth.UserInfo) error {
+	pageID := projection.page.ID
+	documentID, err := loadPageContentDocumentIDForRead(ctx, tx, pageID)
+	if err != nil {
+		return err
+	}
+	if projection.sourceMetadata, err = loadRequiredPageSourceLocaleMetadata(ctx, tx, pageID); err != nil {
+		return err
+	}
+	if projection.snapshot, err = s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, projection.sourceMetadata.Locale); err != nil {
+		return fmt.Errorf("load Page content document: %w", err)
+	}
+	if projection.document, err = MaterializePageContentDocument(projection.snapshot); err != nil {
+		return fmt.Errorf("materialize Page content document: %w", err)
+	}
+	blockMedia, err := contentblock.LoadMediaReferences(ctx, tx, documentID)
+	if err != nil {
+		return fmt.Errorf("load Page Block media: %w", err)
+	}
+	projection.blockMedia, err = s.mediaHydrator.HydrateAuthorizedPageBlockMediaWithDB(
+		auth.WithUser(ctx, principal), tx, pageID, documentID, principal, blockMedia,
+	)
+	if err != nil {
+		return fmt.Errorf("hydrate Page Block media: %w", err)
+	}
+	return nil
+}
+
+func toProtoPage(
 	p *model.Page,
 	ogAsset *commonv1.AssetRef,
 	featuredImage *commonv1.MediaDelivery,
 ) (*managev1.Page, error) {
 	accessPolicy, err := pageaccess.Decode(p.AccessPolicy)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	documentLayout, err := p.DocumentLayout.Proto()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	page := &managev1.Page{
 		AccessPolicy:          accessPolicy,
 		Id:                    p.ID,
 		Title:                 p.Title,
 		SourceLocale:          p.SourceLocale,
-		Status:                managev1.PageStatus(managev1.PageStatus_value[string(p.Status)]),
+		Status:                pageStatusToProto(p.Status),
 		ShowTitle:             p.ShowTitle,
 		DocumentLayout:        documentLayout,
 		CreatedAt:             timestamppb.New(p.CreatedAt),
@@ -220,17 +207,17 @@ func (s *PageService) toProtoPage(
 	return page, nil
 }
 
-func (s *PageService) toProtoPageSummary(p *model.Page) (*managev1.PageSummary, error) {
+func toProtoPageSummary(p *model.Page) (*managev1.PageSummary, error) {
 	accessPolicy, err := pageaccess.Decode(p.AccessPolicy)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	summary := &managev1.PageSummary{
 		AccessPolicy: accessPolicy,
 		Id:           p.ID,
 		Title:        p.Title,
 		SourceLocale: p.SourceLocale,
-		Status:       managev1.PageStatus(managev1.PageStatus_value[string(p.Status)]),
+		Status:       pageStatusToProto(p.Status),
 		ShowTitle:    p.ShowTitle,
 		CreatedAt:    timestamppb.New(p.CreatedAt),
 		UpdatedAt:    timestamppb.New(p.UpdatedAt),
@@ -246,23 +233,21 @@ func (s *PageService) toProtoPageSummary(p *model.Page) (*managev1.PageSummary, 
 	return summary, nil
 }
 
-// CheckPageSlugAvailable checks if a slug is available.
-func (s *PageService) CheckPageSlugAvailable(
-	ctx context.Context,
-	req *connect.Request[managev1.CheckPageSlugAvailableRequest],
-) (*connect.Response[managev1.CheckPageSlugAvailableResponse], error) {
+// CheckPageSlugAvailable reports whether a slug is available. With
+// ExcludeID the caller must be able to manage that Page.
+func (s *Service) CheckPageSlugAvailable(ctx context.Context, query CheckPageSlugAvailableQuery) (*managev1.CheckPageSlugAvailableResponse, error) {
 	excludeID := ""
-	if req.Msg.ExcludeId != nil {
-		excludeID = *req.Msg.ExcludeId
-		if err := requirePagePermission(ctx, s.spiceDB, excludeID, policyv1.Page.Manage); err != nil {
+	if query.ExcludeID != nil {
+		excludeID = *query.ExcludeID
+		if err := requirePagePermission(ctx, s.permissions, excludeID, policyv1.Page.Manage); err != nil {
 			return nil, err
 		}
-	} else if err := requirePageCreate(ctx, s.spiceDB); err != nil {
+	} else if err := requirePageCreate(ctx, s.permissions); err != nil {
 		return nil, err
 	}
-	slug := strings.TrimSpace(req.Msg.Slug)
+	slug := strings.TrimSpace(query.Slug)
 	if err := routeregistry.ValidatePagePath(slug); err != nil {
-		return connect.NewResponse(&managev1.CheckPageSlugAvailableResponse{Available: false}), nil //nolint:nilerr // an invalid path is an unavailable slug, not a failed check
+		return &managev1.CheckPageSlugAvailableResponse{Available: false}, nil //nolint:nilerr // an invalid path is an unavailable slug, not a failed check
 	}
 
 	available, err := isSlugAvailable(ctx, s.db, &model.Page{}, slug, excludeID)
@@ -276,15 +261,12 @@ func (s *PageService) CheckPageSlugAvailable(
 		}
 		available = !occupied
 	}
-
-	return connect.NewResponse(&managev1.CheckPageSlugAvailableResponse{
-		Available: available,
-	}), nil
+	return &managev1.CheckPageSlugAvailableResponse{Available: available}, nil
 }
 
 // checkSlugAvailable checks if a page slug is available for use
 // excludeID can be empty for new pages, or set to the current page ID when updating
-func (s *PageService) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
+func (s *Service) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
 	if err := routeregistry.ValidatePagePath(slug); err != nil {
 		return err
 	}
@@ -296,13 +278,7 @@ func (s *PageService) checkSlugAvailable(ctx context.Context, slug string, exclu
 		return err
 	}
 	if occupied {
-		return errs.SlugAlreadyExists("page", slug)
+		return domainerr.Duplicate("page", "slug", slug)
 	}
 	return nil
 }
-
-// ============================================================================
-// Version History
-// ============================================================================
-
-// ListPageVersions returns a paginated list of version snapshots for a page.

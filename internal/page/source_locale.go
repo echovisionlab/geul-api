@@ -5,25 +5,21 @@ import (
 	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
 
-func resolveInitialSourceLocale(
+func (s *Service) resolveInitialSourceLocale(
 	ctx context.Context,
 	db *gorm.DB,
 	acceptLanguage string,
 ) string {
 	user := auth.GetUser(ctx)
 	if user != nil && user.Authenticated && db != nil {
-		var preferredLocale *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).
-			Select("preferred_locale").Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
-			Scan(&preferredLocale).Error; err == nil && preferredLocale != nil {
+		if preferredLocale, err := s.members.PreferredLocale(ctx, db, user.MemberID.String()); err == nil && preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
@@ -42,14 +38,14 @@ func resolveInitialSourceLocale(
 	return translation.DefaultLocale
 }
 
-func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, requestedLocale, acceptLanguage string) (string, error) {
+func (s *Service) resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, requestedLocale, acceptLanguage string) (string, error) {
 	if requestedLocale != "" {
 		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
 			return *locale, nil
 		}
-		return "", errs.InvalidArgument("source_locale", "must be a supported canonical locale")
+		return "", domainerr.InvalidField("source_locale", "must be a supported canonical locale")
 	}
-	return resolveInitialSourceLocale(ctx, db, acceptLanguage), nil
+	return s.resolveInitialSourceLocale(ctx, db, acceptLanguage), nil
 }
 
 func nullableStringEqual(left *string, right *string) bool {

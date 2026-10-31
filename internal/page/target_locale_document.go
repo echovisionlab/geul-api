@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -53,7 +53,7 @@ type pageTargetMetadataPatch struct {
 func normalizePageDocumentLocale(locale string) (string, error) {
 	normalized := localization.NormalizeExactSupportedLocale(locale)
 	if normalized == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalized, nil
 }
@@ -91,7 +91,7 @@ func loadOptionalPageLocaleMetadataRow(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return pageLocaleMetadataRow{}, false, nil
 		}
-		return pageLocaleMetadataRow{}, false, errs.Internal(err)
+		return pageLocaleMetadataRow{}, false, err
 	}
 	return row, true, nil
 }
@@ -133,7 +133,7 @@ func loadPageTargetLocaleState(
 		return pageTargetLocaleState{}, err
 	}
 	if lockedDocumentID != documentID {
-		return pageTargetLocaleState{}, errs.FailedPrecondition("Page content document changed; reload before saving")
+		return pageTargetLocaleState{}, domainerr.Precondition("Page content document changed; reload before saving")
 	}
 	domain, err := loadPageContentDomainContext(ctx, tx, pageID)
 	if err != nil {
@@ -144,14 +144,14 @@ func loadPageTargetLocaleState(
 		return pageTargetLocaleState{}, normalizePageContentBlockError(err)
 	}
 	if snapshot.SourceLocale != domain.SourceLocale || snapshot.Document.Profile != "page" {
-		return pageTargetLocaleState{}, errs.FailedPrecondition("Page content document source or profile is inconsistent")
+		return pageTargetLocaleState{}, domainerr.Precondition("Page content document source or profile is inconsistent")
 	}
 	sourceMetadata, sourceExists, err := loadOptionalPageLocaleMetadataRow(ctx, tx, pageID, domain.SourceLocale, forUpdate)
 	if err != nil {
 		return pageTargetLocaleState{}, err
 	}
 	if !sourceExists {
-		return pageTargetLocaleState{}, errs.FailedPrecondition("Page source locale metadata is missing")
+		return pageTargetLocaleState{}, domainerr.Precondition("Page source locale metadata is missing")
 	}
 	state := pageTargetLocaleState{Snapshot: snapshot, SourceLocale: domain.SourceLocale, SourceMetadata: sourceMetadata}
 	if locale == domain.SourceLocale {
@@ -164,14 +164,14 @@ func loadPageTargetLocaleState(
 	}
 	if !exists {
 		if targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return pageTargetLocaleState{}, errs.FailedPrecondition("Page target locale Blocks exist without owning metadata")
+			return pageTargetLocaleState{}, domainerr.Precondition("Page target locale Blocks exist without owning metadata")
 		}
 		return state, nil
 	}
 	state.TargetMetadata = &target
 	state.TargetRevision, err = derivePageTargetRevision(snapshot.Document.Revision.String(), target)
 	if err != nil {
-		return pageTargetLocaleState{}, errs.Internal(err)
+		return pageTargetLocaleState{}, err
 	}
 	return state, nil
 }
@@ -205,20 +205,20 @@ func applyPageTargetLocaleMutation(
 		return contentblock.Result{}, nil, err
 	}
 	if locale == state.SourceLocale {
-		return contentblock.Result{}, nil, errs.InvalidArgument("locale", "Page target locale must differ from source locale")
+		return contentblock.Result{}, nil, domainerr.InvalidField("locale", "Page target locale must differ from source locale")
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, nil, errs.FailedPrecondition("Page source locale changed; reload before saving")
+		return contentblock.Result{}, nil, domainerr.Precondition("Page source locale changed; reload before saving")
 	}
 	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(input.Batch.LocaleGroups) != 0) {
-		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "Page translation deletion must be exclusive")
+		return contentblock.Result{}, nil, domainerr.InvalidField("operations", "Page translation deletion must be exclusive")
 	}
 	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
 	if patch.DeleteLocale && state.TargetMetadata == nil {
-		return contentblock.Result{}, nil, errs.FailedPrecondition("Page target locale must exist before deletion")
+		return contentblock.Result{}, nil, domainerr.Precondition("Page target locale must exist before deletion")
 	}
 	now := targetlocale.WriteTime(input.Now)
 	if patch.DeleteLocale {
@@ -257,10 +257,10 @@ func (w *pageTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 	case w.patch.DeleteLocale:
 		deleted := tx.WithContext(ctx).Exec("DELETE FROM page_translation WHERE entity_id = ?::uuid AND locale = ?", w.pageID, w.locale)
 		if deleted.Error != nil {
-			return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+			return contentblock.MetadataEffect{}, deleted.Error
 		}
 		if deleted.RowsAffected != 1 {
-			return contentblock.MetadataEffect{}, errs.InternalMsg("Page target locale disappeared while deleting")
+			return contentblock.MetadataEffect{}, errors.New("Page target locale disappeared while deleting")
 		}
 	case w.state.TargetMetadata == nil:
 		if err := w.create(ctx, tx); err != nil {
@@ -284,10 +284,10 @@ func (w *pageTargetMetadataWrite) create(ctx context.Context, tx *gorm.DB) error
 		w.pageID, w.locale, w.patch.Title, w.patch.Summary, w.now, w.now,
 	).Scan(&inserted)
 	if created.Error != nil {
-		return errs.Internal(created.Error)
+		return created.Error
 	}
 	if created.RowsAffected != 1 || inserted.IncarnationID == uuid.Nil {
-		return errs.InternalMsg("Page target locale could not be created")
+		return errors.New("Page target locale could not be created")
 	}
 	w.final = pageLocaleMetadataRow{
 		Locale: w.locale, Title: cloneOptionalString(w.patch.Title), Summary: cloneOptionalString(w.patch.Summary),
@@ -314,10 +314,10 @@ func (w *pageTargetMetadataWrite) update(ctx context.Context, tx *gorm.DB, conte
 	updated := tx.WithContext(ctx).Table("page_translation").
 		Where("entity_id = ?::uuid AND locale = ?", w.pageID, w.locale).Updates(updates)
 	if updated.Error != nil {
-		return false, errs.Internal(updated.Error)
+		return false, updated.Error
 	}
 	if updated.RowsAffected != 1 {
-		return false, errs.InternalMsg("Page target locale disappeared while saving")
+		return false, errors.New("Page target locale disappeared while saving")
 	}
 	return true, nil
 }

@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -82,11 +83,11 @@ type WorkRelatedApplication interface {
 }
 
 type PageRelatedApplication interface {
-	SetPageFeaturedImage(context.Context, *connect.Request[managev1.SetPageFeaturedImageRequest]) (*connect.Response[managev1.SetPageFeaturedImageResponse], error)
-	DeletePageFeaturedImage(context.Context, *connect.Request[managev1.DeletePageFeaturedImageRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error)
-	ListPageVersions(context.Context, *connect.Request[managev1.ListPageVersionsRequest]) (*connect.Response[managev1.ListPageVersionsResponse], error)
-	RestorePageVersion(context.Context, *connect.Request[managev1.RestorePageVersionRequest]) (*connect.Response[managev1.Page], error)
-	CheckPageSlugAvailable(context.Context, *connect.Request[managev1.CheckPageSlugAvailableRequest]) (*connect.Response[managev1.CheckPageSlugAvailableResponse], error)
+	SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (*managev1.SetPageFeaturedImageResponse, error)
+	DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error)
+	ListPageVersions(context.Context, pagedomain.ListPageVersionsQuery) (*managev1.ListPageVersionsResponse, error)
+	RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (*managev1.Page, error)
+	CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (*managev1.CheckPageSlugAvailableResponse, error)
 }
 
 type ContentRelatedTools struct {
@@ -164,11 +165,11 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 			}
 			runID = response.Msg.OgGenerationRunId
 		case "page":
-			response, err := tools.pages.SetPageFeaturedImage(ctx, connect.NewRequest(&managev1.SetPageFeaturedImageRequest{PageId: input.DocumentID, FileId: input.FileID}))
+			response, err := tools.pages.SetPageFeaturedImage(ctx, pagedomain.SetPageFeaturedImageCommand{PageID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.Msg.OgGenerationRunId
+			runID = response.OgGenerationRunId
 		default:
 			return executionError(fmt.Errorf("document_type must be post, work, or page"))
 		}
@@ -182,7 +183,10 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 	case "work":
 		response, err = tools.works.DeleteWorkFeaturedImage(ctx, connect.NewRequest(&managev1.DeleteWorkFeaturedImageRequest{WorkId: input.DocumentID}))
 	case "page":
-		response, err = tools.pages.DeletePageFeaturedImage(ctx, connect.NewRequest(&managev1.DeletePageFeaturedImageRequest{PageId: input.DocumentID}))
+		var deleted *managev1.OgAssetDeleteResponse
+		if deleted, err = tools.pages.DeletePageFeaturedImage(ctx, pagedomain.DeletePageFeaturedImageCommand{PageID: input.DocumentID}); err == nil {
+			response = connect.NewResponse(deleted)
+		}
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}
@@ -483,12 +487,14 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, argu
 			}
 		}
 	case "page":
-		response, err := tools.pages.ListPageVersions(ctx, connect.NewRequest(&managev1.ListPageVersionsRequest{PageId: input.DocumentID, Pagination: pagination}))
+		response, err := tools.pages.ListPageVersions(ctx, pagedomain.ListPageVersionsQuery{
+			PageID: input.DocumentID, Page: pagedomain.Page{Limit: pagination.GetLimit(), Offset: pagination.GetOffset()},
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		page = response.Msg.Pagination
-		for _, version := range response.Msg.Versions {
+		page = response.Pagination
+		for _, version := range response.Versions {
 			if version != nil {
 				versions = append(versions, versionOutput(version.Id, version.Version, optionalString(version.Title), version.Summary, version.CanonicalHash, version.SourceLocale, version.CreatedAt, version.Contributors))
 			}
@@ -553,11 +559,11 @@ func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, ar
 		}
 		output["title"], output["document_revision"], output["status"] = response.Msg.Title, response.Msg.Revision, contentStatus(response.Msg.Status.String(), "WORK_STATUS_")
 	case "page":
-		response, err := tools.pages.RestorePageVersion(ctx, connect.NewRequest(&managev1.RestorePageVersionRequest{PageId: input.DocumentID, VersionId: input.VersionID}))
+		response, err := tools.pages.RestorePageVersion(ctx, pagedomain.RestorePageVersionCommand{PageID: input.DocumentID, VersionID: input.VersionID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["title"], output["document_revision"], output["status"] = response.Msg.Title, response.Msg.Revision, contentStatus(response.Msg.Status.String(), "PAGE_STATUS_")
+		output["title"], output["document_revision"], output["status"] = response.Title, response.Revision, contentStatus(response.Status.String(), "PAGE_STATUS_")
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}
@@ -590,11 +596,11 @@ func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, argumen
 		}
 		available = response.Msg.Available
 	case "page":
-		response, err := tools.pages.CheckPageSlugAvailable(ctx, connect.NewRequest(&managev1.CheckPageSlugAvailableRequest{Slug: input.Slug, ExcludeId: input.ExcludeDocumentID}))
+		response, err := tools.pages.CheckPageSlugAvailable(ctx, pagedomain.CheckPageSlugAvailableQuery{Slug: input.Slug, ExcludeID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Msg.Available
+		available = response.Available
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}

@@ -187,6 +187,25 @@ func TestAuditsAppendsEveryChangedRecord(t *testing.T) {
 	require.ErrorContains(t, err, "return Unchanged")
 }
 
+func TestVersionAuditAttributesTheRequestMemberOrSystem(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "checkpoint")
+	spec.Audit = func(note) Audit {
+		return VersionAudit(sharedtelemetry.AuditMemberTagCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), "tag")
+		})
+	}
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 1)
+
+	_, err = Run(context.Background(), runner, spec)
+	require.ErrorContains(t, err, "version domain audit requires request context")
+	require.Len(t, recorder.Records(), 1)
+}
+
 func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 	runner, _ := newTestRunner(t, &audittest.Recorder{})
 	var steps []string
@@ -251,6 +270,9 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 	require.False(t, IsUnauthenticated(errs.NoPermission("edit", "post")))
 	require.True(t, IsNotFound(fmt.Errorf("lock: %w", errs.NotFound("member", "id"))))
 	require.False(t, IsNotFound(errs.NoPermission("edit", "post")))
+	require.True(t, IsClassified(fmt.Errorf("lock: %w", errs.NotFound("member", "id"))))
+	require.True(t, IsClassified(domainerr.Precondition("changed")))
+	require.False(t, IsClassified(errors.New("database is down")))
 }
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {

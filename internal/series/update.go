@@ -20,7 +20,7 @@ import (
 
 type seriesUpdatePlan struct {
 	nextSlug   *string
-	nextStatus *string
+	nextStatus *model.SeriesStatus
 	now        time.Time
 }
 
@@ -72,10 +72,11 @@ func buildSeriesUpdatePlan(command UpdateSeriesCommand) (seriesUpdatePlan, error
 		plan.nextSlug = &normalized
 	}
 	if command.Status != nil {
-		if err := validateSeriesStatus(*command.Status); err != nil {
+		status, err := validateSeriesStatus(*command.Status)
+		if err != nil {
 			return seriesUpdatePlan{}, err
 		}
-		plan.nextStatus = command.Status
+		plan.nextStatus = &status
 	}
 	return plan, nil
 }
@@ -204,7 +205,7 @@ func applySeriesFields(tx *gorm.DB, series *model.Series, plan seriesUpdatePlan,
 		updates["slug"] = *plan.nextSlug
 	}
 	if lifecycleChanged {
-		updates["status"] = *plan.nextStatus
+		updates["status"] = string(*plan.nextStatus)
 	}
 	if len(updates) == 0 {
 		return nil

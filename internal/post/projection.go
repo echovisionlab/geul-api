@@ -578,7 +578,7 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*m
 			Id:           p.Series.ID,
 			SourceLocale: p.Series.SourceLocale,
 			Title:        p.Series.Title,
-			Status:       p.Series.Status,
+			Status:       string(p.Series.Status),
 			CreatedAt:    timestamppb.New(p.Series.CreatedAt),
 			Slug:         p.Series.Slug,
 		}

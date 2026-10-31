@@ -433,7 +433,7 @@ func (s *Service) createSeries(
 		return nil, err
 	}
 	series := &model.Series{
-		Slug: slug, Status: managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(),
+		Slug: slug, Status: model.SeriesStatusDraft,
 		SourceLocale: sourceLocale, ContentDocumentID: contentDocumentID.String(), CreatedAt: now, UpdatedAt: &now,
 	}
 	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {

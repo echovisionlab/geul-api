@@ -7,8 +7,14 @@ import (
 	"github.com/lib/pq"
 )
 
-// PageStatus represents the status of a page
+// PageStatus is the stored lifecycle state of a page. The values are the
+// strings the page table already holds.
 type PageStatus string
+
+const (
+	PageStatusDraft     PageStatus = "PAGE_STATUS_DRAFT"
+	PageStatusPublished PageStatus = "PAGE_STATUS_PUBLISHED"
+)
 
 // Page represents a CMS page (Domain Object)
 // Maps to: schema migrations - page table

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
@@ -29,16 +31,7 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := workIntegrationAdminCtx(identityID)
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
-	pageService := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		&recordingPageDeleteFileDeleter{},
-		noopAsyncPublisher{},
-		&fakeIdentityManager{identity: postIntegrationIdentity(identityID, "en")},
-		spiceDB,
-		WithPageContentBlockStore(store),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageService := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: &recordingPageDeleteFileDeleter{}, ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Page AI document exact mutation",
 	}))
@@ -47,34 +40,22 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 	assertCompilerBoundary := func(allowed bool) {
 		t.Helper()
 		checker := &countingPageAIDocumentPermissionChecker{allowed: allowed}
-		internal := NewInternalPageService(
-			db,
-			noopAsyncPublisher{},
-			checker,
-			newPageRuntimeForTest(db, "https://cdn.example.com"),
-			WithInternalPageContentBlockStore(store),
-			WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		)
-		application, err := NewAIDocumentService(internal)
-		require.NoError(t, err)
+		application := newIntegrationPageService(t, Deps{DB: db, ContentBlocks: store}, checker)
 		compilerFailure := errors.New("stop after authorized Page compiler")
 		compilerCalls := 0
-		_, err = application.ExecuteAIDocumentMutation(
-			ctx,
-			created.Msg.Id,
-			"en",
-			AIDocumentExecutionValidate,
-			func(state AIDocumentState) (AIDocumentMutation, error) {
+		_, err := application.ExecuteAIDocumentMutation(ctx, ExecuteAIDocumentMutationCommand{
+			PageID: created.Msg.Id, Locale: "en", Mode: AIDocumentExecutionValidate,
+			Compile: func(state AIDocumentState) (AIDocumentMutation, error) {
 				compilerCalls++
 				require.Equal(t, created.Msg.Id, state.Page.ID)
 				return AIDocumentMutation{}, compilerFailure
 			},
-		)
+		})
 		if allowed {
 			require.ErrorIs(t, err, compilerFailure)
 			require.Equal(t, 1, compilerCalls)
 		} else {
-			require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+			require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 			require.Zero(t, compilerCalls, "authorization denial reached the Page compiler")
 		}
 		require.Equal(t, []string{"edit"}, checker.actions)
@@ -85,16 +66,7 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 	assertCompilerBoundary(false)
 
 	checker := &countingPageAIDocumentPermissionChecker{allowed: true}
-	internal := NewInternalPageService(
-		db,
-		noopAsyncPublisher{},
-		checker,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		WithInternalPageContentBlockStore(store),
-		WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
-	application, err := NewAIDocumentService(internal)
-	require.NoError(t, err)
+	application := newIntegrationPageService(t, Deps{DB: db, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}, checker)
 	var beforeTitle string
 	var beforeRevision uuid.UUID
 	require.NoError(t, db.Raw(`
@@ -137,12 +109,9 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 			}, nil
 		}
 	}
-	result, err := application.ExecuteAIDocumentMutation(
-		ctx,
-		created.Msg.Id,
-		"en",
-		AIDocumentExecutionValidate,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+	result, err := application.ExecuteAIDocumentMutation(ctx, ExecuteAIDocumentMutationCommand{
+		PageID: created.Msg.Id, Locale: "en", Mode: AIDocumentExecutionValidate,
+		Compile: func(state AIDocumentState) (AIDocumentMutation, error) {
 			contributor := uuid.MustParse(state.ViewerMemberID)
 			return AIDocumentMutation{
 				PageID:               state.Page.ID,
@@ -159,7 +128,7 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 				},
 			}, nil
 		},
-	)
+	})
 	require.NoError(t, err)
 	require.True(t, result.Changed)
 	var afterTitle string
@@ -180,7 +149,7 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 
 	// An applied title requests that locale's OG image, as the editor does.
 	applied := "Page AI document title"
-	result, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply, titleMutation(&applied))
+	result, err = application.ExecuteAIDocumentMutation(ctx, ExecuteAIDocumentMutationCommand{PageID: created.Msg.Id, Locale: "en", Mode: AIDocumentExecutionApply, Compile: titleMutation(&applied)})
 	require.NoError(t, err)
 	require.True(t, result.Changed)
 	require.Equal(t, generationsBefore+1, ogGenerations())
@@ -195,18 +164,12 @@ func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := withPageAuditedRequestContext(t, workIntegrationAdminCtx(identityID))
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
-	pageService := NewPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"),
-		&recordingPageDeleteFileDeleter{}, noopAsyncPublisher{},
-		&fakeIdentityManager{identity: postIntegrationIdentity(identityID, "en")}, spiceDB,
-		WithPageContentBlockStore(store), WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}))
+	pageService := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: &recordingPageDeleteFileDeleter{}, ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Page layout AI document"}))
 	require.NoError(t, err)
 	checker := &countingPageAIDocumentPermissionChecker{allowed: true}
-	internal := NewInternalPageService(db, noopAsyncPublisher{}, checker, newPageRuntimeForTest(db, "https://cdn.example.com"),
-		WithInternalPageContentBlockStore(store), WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)))
-	application, err := NewAIDocumentService(internal)
-	require.NoError(t, err)
-	before, err := application.Load(ctx, created.Msg.Id, "en")
+	application := newIntegrationPageService(t, Deps{DB: db, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), ContentBlocks: store, Audit: apitelemetry.NewDurableWriter(db)}, checker)
+	before, err := application.LoadAIDocument(ctx, LoadAIDocumentQuery{PageID: created.Msg.Id, Locale: "en"})
 	require.NoError(t, err)
 	layout := model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned}
 	sectionID := uuid.NewString()
@@ -237,33 +200,33 @@ func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
 			Metadata: AIDocumentMetadataPatch{SetDocumentLayout: true, DocumentLayout: layout}, Batch: batch,
 		}, nil
 	}
-	result, err := application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionValidate,
-		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, true) })
+	result, err := application.ExecuteAIDocumentMutation(ctx, ExecuteAIDocumentMutationCommand{PageID: created.Msg.Id, Locale: "en", Mode: AIDocumentExecutionValidate, Compile: func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, true) }})
 	require.NoError(t, err)
 	require.True(t, result.Changed)
-	validated, err := application.Load(ctx, created.Msg.Id, "en")
+	validated, err := application.LoadAIDocument(ctx, LoadAIDocumentQuery{PageID: created.Msg.Id, Locale: "en"})
 	require.NoError(t, err)
 	require.Equal(t, before.Page.DocumentLayout, validated.Page.DocumentLayout)
 	require.Equal(t, before.Revision, validated.Revision)
 	require.Empty(t, validated.Document.Base.Nodes)
-	result, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, true) })
+	result, err = application.ExecuteAIDocumentMutation(ctx, ExecuteAIDocumentMutationCommand{PageID: created.Msg.Id, Locale: "en", Mode: AIDocumentExecutionApply, Compile: func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, true) }})
 	require.NoError(t, err)
 	require.True(t, result.Changed)
-	stored, err := application.Load(ctx, created.Msg.Id, "en")
+	stored, err := application.LoadAIDocument(ctx, LoadAIDocumentQuery{PageID: created.Msg.Id, Locale: "en"})
 	require.NoError(t, err)
 	require.Equal(t, layout, stored.Page.DocumentLayout)
 	require.NotEqual(t, before.Revision, stored.Revision)
 	require.Len(t, stored.Document.Base.Nodes, 1)
 	require.Equal(t, sectionID, stored.Document.Base.Nodes[0].Section.Id)
-	result, err = application.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, false) })
+	result, err = application.ExecuteAIDocumentMutation(ctx, ExecuteAIDocumentMutationCommand{PageID: created.Msg.Id, Locale: "en", Mode: AIDocumentExecutionApply, Compile: func(state AIDocumentState) (AIDocumentMutation, error) { return compile(state, false) }})
 	require.NoError(t, err)
 	require.False(t, result.Changed)
 	require.Equal(t, stored.Revision, result.DocumentRevision)
 	var auditCount int64
 	require.NoError(t, db.Table("public.domain_audit").Where("target_id = ? AND attributes->'changed_fields' @> '[\"document_layout\"]'::jsonb", created.Msg.Id).Count(&auditCount).Error)
 	require.EqualValues(t, 1, auditCount, "Validate rollback and no-op must not append layout audit")
+	// The source body change is recorded like a collaboration source save.
+	require.NoError(t, db.Table("public.domain_audit").Where("target_id = ? AND attributes->'changed_fields' @> '[\"locale_content\"]'::jsonb", created.Msg.Id).Count(&auditCount).Error)
+	require.EqualValues(t, 1, auditCount, "the applied source body change must append one locale content audit")
 }
 
 type countingPageAIDocumentPermissionChecker struct {

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -13,19 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
-
-// AsyncPublisher is the transport capability used by Page mutations.
-// content.updated is scheduled only through the transactional signal method.
-type AsyncPublisher interface {
-	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	NotifyProtobuf(context.Context, string, proto.Message) error
-	contentsignal.Publisher
-}
-
-// FileDeleter removes Page-owned File bindings during Page deletion.
-type FileDeleter interface {
-	DeleteFileByID(context.Context, string) error
-}
 
 // FileDeliveryResolver projects exact File IDs after Page authorization.
 type FileDeliveryResolver interface {
@@ -71,6 +57,30 @@ type ContentBlockMediaHydrator interface {
 		*auth.UserInfo,
 		[]*contentv1.ContentBlockMediaItem,
 	) ([]*contentv1.ContentBlockMediaItem, error)
+}
+
+// Members reads the Member and user tag rows Page authorization and
+// attribution need; Member owns them.
+type Members interface {
+	// LockMembers takes a KEY SHARE lock on each existing Member of
+	// memberIDs and returns the IDs it locked.
+	LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error)
+	// ActiveIdentities returns the linked Identity of each onboarded, live
+	// Member of memberIDs whose Identity is active and not banned.
+	ActiveIdentities(ctx context.Context, tx *gorm.DB, memberIDs []string) (map[string]string, error)
+	// Nicknames returns the nickname of each existing Member of memberIDs.
+	Nicknames(ctx context.Context, db *gorm.DB, memberIDs []string) (map[string]string, error)
+	// PreferredLocale returns the preferred locale of a live Member, or nil.
+	PreferredLocale(ctx context.Context, db *gorm.DB, memberID string) (*string, error)
+	// LockUserTags takes a SHARE lock on each existing user tag of tagIDs
+	// and returns the IDs it locked.
+	LockUserTags(ctx context.Context, tx *gorm.DB, tagIDs []string) ([]string, error)
+}
+
+// ShareLinks removes a deleted Page's share links in its transaction;
+// Share Link owns them.
+type ShareLinks interface {
+	DeletePageShareLinks(ctx context.Context, tx *gorm.DB, pageID string) error
 }
 
 // MenuTargets owns cross-domain Menu reference rewrites triggered by Page

@@ -35,27 +35,8 @@ func TestPageDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testin
 	writer := apitelemetry.NewDurableWriter(db)
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
-	pageService := NewAuditedPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.test"),
-		newPageIntegrationFiles(db, spiceDB),
-		noopAsyncPublisher{},
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminIdentityID, "en")},
-		writer,
-		spiceDB,
-		WithPageContentBlockStore(contentBlocks),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		WithPageMenuTargets(noopPageMenuTargets{}),
-	)
-	internalService := NewInternalPageService(
-		db,
-		noopAsyncPublisher{},
-		spiceDB,
-		newPageRuntimeForTest(db, "https://cdn.example.test"),
-		WithInternalPageDomainAuditWriter(writer),
-		WithInternalPageContentBlockStore(contentBlocks),
-		WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageService := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.test"), Files: newPageIntegrationFiles(db, spiceDB), ContentBlocks: contentBlocks, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, MenuTargets: noopPageMenuTargets{}, Audit: writer}))
+	internalService := NewInternalConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.test"), ContentBlocks: contentBlocks, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, Audit: writer}))
 
 	created, err := pageService.CreatePage(memberCtx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Audited page"}))
 	require.NoError(t, err)

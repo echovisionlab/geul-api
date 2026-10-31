@@ -9,7 +9,6 @@ import (
 
 // ManageFiles is the shared File capability used by Page after authorization.
 type ManageFiles interface {
-	DeleteFileByID(context.Context, string) error
 	ResolveAuthorizedPageFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error)
 }
 
@@ -23,10 +22,6 @@ func NewFiles(files ManageFiles) *Files {
 	return &Files{files: files}
 }
 
-func (a *Files) DeleteFileByID(ctx context.Context, fileID string) error {
-	return a.files.DeleteFileByID(ctx, fileID)
-}
-
 func (a *Files) ResolveAuthorizedPageFeaturedImage(
 	ctx context.Context,
 	pageID string,
@@ -35,7 +30,4 @@ func (a *Files) ResolveAuthorizedPageFeaturedImage(
 	return a.files.ResolveAuthorizedPageFeaturedImage(ctx, pageID, expectedFileID)
 }
 
-var (
-	_ pagedomain.FileDeleter          = (*Files)(nil)
-	_ pagedomain.FileDeliveryResolver = (*Files)(nil)
-)
+var _ pagedomain.FileDeliveryResolver = (*Files)(nil)

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"google.golang.org/protobuf/proto"
@@ -38,33 +40,14 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	ctx := workIntegrationAdminCtx(adminID)
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
 
-	pageService := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		&recordingPageDeleteFileDeleter{},
-		noopAsyncPublisher{},
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
-		spiceDB,
-		WithPageContentBlockStore(store),
-		// Production wires the same media hydrator into the editor-document read and room bootstrap.
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageService := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: &recordingPageDeleteFileDeleter{}, ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Typed Page",
 	}))
 	require.NoError(t, err)
 
 	sessionID := insertPageIntegrationSession(t, db, adminID)
-	internalService := NewInternalPageService(
-		db,
-		noopAsyncPublisher{},
-		spiceDB,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		WithInternalPageContentBlockStore(store),
-		WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	internalService := NewInternalConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, Audit: apitelemetry.NewDurableWriter(db)}))
 	loaded, err := internalService.LoadPageBlockDocument(
 		ctx,
 		connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
@@ -319,7 +302,7 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 			),
 		}),
 	)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	_, err = internalService.ApplyPageBlockBatch(
 		ctx,
@@ -335,7 +318,7 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 			),
 		}),
 	)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	unauthorizedIdentityID := testutil.IntegrationUUID()
 	unauthorizedMemberID := testutil.SeedPostIntegrationIdentity(
@@ -355,7 +338,7 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 			),
 		}),
 	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 
 	deleted, err := internalService.ApplyPageBlockBatch(
 		withPageAuditedCollabRequestContext(t, ctx),
@@ -398,31 +381,12 @@ func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withPageAuditedRequestContext(t, workIntegrationAdminCtx(adminID))
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
-	pageService := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		&recordingPageDeleteFileDeleter{},
-		noopAsyncPublisher{},
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
-		spiceDB,
-		WithPageContentBlockStore(store),
-		// Production wires the same media hydrator into the editor-document read and room bootstrap.
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageService := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: &recordingPageDeleteFileDeleter{}, ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Metadata Page"}))
 	require.NoError(t, err)
 
 	sessionID := insertPageIntegrationSession(t, db, adminID)
-	internalService := NewInternalPageService(
-		db,
-		noopAsyncPublisher{},
-		spiceDB,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		WithInternalPageContentBlockStore(store),
-		WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	internalService := NewInternalConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, Audit: apitelemetry.NewDurableWriter(db)}))
 	loaded, err := internalService.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
 		PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: "en",
 	}))
@@ -498,7 +462,7 @@ func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 		),
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	afterFailure, err := internalService.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
 		PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: "en",
 	}))

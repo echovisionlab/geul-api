@@ -9,14 +9,8 @@ import (
 )
 
 type pageManageFilesFixture struct {
-	deleted        string
 	pageID         string
 	expectedFileID string
-}
-
-func (f *pageManageFilesFixture) DeleteFileByID(_ context.Context, fileID string) error {
-	f.deleted = fileID
-	return nil
 }
 
 func (f *pageManageFilesFixture) ResolveAuthorizedPageFeaturedImage(
@@ -33,10 +27,8 @@ func TestFilesDelegatesPageManageCapabilities(t *testing.T) {
 	fixture := &pageManageFilesFixture{}
 	adapter := NewFiles(fixture)
 
-	require.NoError(t, adapter.DeleteFileByID(t.Context(), "file-1"))
 	_, err := adapter.ResolveAuthorizedPageFeaturedImage(t.Context(), "page-1", "file-2")
 	require.NoError(t, err)
-	require.Equal(t, "file-1", fixture.deleted)
 	require.Equal(t, "page-1", fixture.pageID)
 	require.Equal(t, "file-2", fixture.expectedFileID)
 }

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -129,72 +129,31 @@ func ApplyTranslationInterchange(
 	); err != nil {
 		var conflict *translation.TargetRevisionConflict
 		if errors.As(err, &conflict) {
-			return TranslationInterchangeResult{}, errs.FailedPrecondition(err.Error())
+			return TranslationInterchangeResult{}, domainerr.Precondition(err.Error())
 		}
-		return TranslationInterchangeResult{}, errs.Internal(err)
+		return TranslationInterchangeResult{}, err
 	}
 
-	desired := make(map[string]translation.UnitResult, len(state.targets)+len(mutation.Targets))
-	if mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
-		for handle, target := range state.targets {
-			desired[handle] = mutation.CloneResult(target)
-		}
-	}
-	for handle, target := range mutation.Targets {
-		desired[handle] = mutation.CloneResult(target)
-	}
+	desired := mergePageInterchangeTargets(mutation, state.targets)
 	candidate, err := BuildTranslationCandidate(mutation.Plan, mutation.Source, desired)
 	if err != nil {
-		return TranslationInterchangeResult{}, errs.InvalidArgument("file_id", err.Error())
+		return TranslationInterchangeResult{}, domainerr.InvalidField("file_id", err.Error())
 	}
 	setExactPageInterchangeMetadata(candidate, desired)
 	if err := patchPageRichTextInterchange(
 		candidate.PageDocument, mutation.Source.PageDocument, state.document,
 		mutation.Plan, mutation.Targets, mutation.Mode, mutation.BuildPatch,
 	); err != nil {
-		return TranslationInterchangeResult{}, errs.InvalidArgument("file_id", err.Error())
+		return TranslationInterchangeResult{}, domainerr.InvalidField("file_id", err.Error())
 	}
 	if err := patchPageContainerInterchange(
 		candidate.PageDocument, state.document, mutation.UnitHandles, mutation.Mode, mutation.CopyPath,
 	); err != nil {
-		return TranslationInterchangeResult{}, errs.InvalidArgument("file_id", err.Error())
+		return TranslationInterchangeResult{}, domainerr.InvalidField("file_id", err.Error())
 	}
-
-	selectedSections := pageInterchangeSelectedSectionIDs(mutation.UnitHandles)
-	document := candidate.PageDocument
-	filtered := make([]*contentv1.PageSectionLocale, 0, len(selectedSections))
-	for _, section := range document.GetLocaleOverlay().GetSections() {
-		if _, selected := selectedSections[section.GetSectionId()]; selected {
-			filtered = append(filtered, section)
-		}
-	}
-	document.LocaleOverlay.Sections = filtered
-	batch := contentblock.Batch{
-		DocumentID: state.snapshot.Document.ID, ExpectedRevision: state.snapshot.Document.Revision,
-	}
-	if len(filtered) != 0 || mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
-		mutations, mutationErr := pageTypedTranslationLocaleMutations(document)
-		if mutationErr != nil {
-			return TranslationInterchangeResult{}, normalizePageContentBlockError(mutationErr)
-		}
-		if mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
-			mutations = append(mutations, pageInterchangeReplacementDeletes(state.document, document)...)
-		}
-		if len(mutations) != 0 {
-			batch, err = contentblock.BatchFromPageSystemProto(
-				state.snapshot.Document.ID,
-				&contentv1.PageSectionMutationBatch{
-					BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
-					ExpectedRevision:        state.snapshot.Document.Revision.String(),
-					LocaleMutationGroups: []*contentv1.PageLocaleMutationGroup{{
-						Locale: mutation.TargetLocale, Mutations: mutations,
-					}},
-				},
-			)
-			if err != nil {
-				return TranslationInterchangeResult{}, normalizePageContentBlockError(err)
-			}
-		}
+	batch, err := pageInterchangeBatch(state, candidate.PageDocument, mutation)
+	if err != nil {
+		return TranslationInterchangeResult{}, normalizePageContentBlockError(err)
 	}
 
 	metadataPatch := pageInterchangeMetadataPatch(mutation.Plan, desired)
@@ -216,17 +175,15 @@ func ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, normalizePageContentBlockError(err)
 	}
 	if result.TranslationSourceChanged {
-		return TranslationInterchangeResult{}, errs.InternalMsg("target Page interchange changed the source-owned Block view")
+		return TranslationInterchangeResult{}, errors.New("target Page interchange changed the source-owned Block view")
 	}
 	if result.Changed {
-		if err := tx.WithContext(ctx).Model(&model.Page{}).
-			Where("id = ?", mutation.PageID).
-			UpdateColumn("updated_at", mutation.Now.UTC()).Error; err != nil {
-			return TranslationInterchangeResult{}, errs.Internal(err)
+		if err := touchPage(ctx, tx, mutation.PageID, mutation.Now.UTC()); err != nil {
+			return TranslationInterchangeResult{}, err
 		}
 	}
 	if targetRevision == nil {
-		return TranslationInterchangeResult{}, errs.InternalMsg("Page interchange apply did not create its target locale")
+		return TranslationInterchangeResult{}, errors.New("Page interchange apply did not create its target locale")
 	}
 	affected := changedPageInterchangeHandles(state.targets, mutation.Targets, mutation.UnitHandles)
 	if !result.Changed {
@@ -238,49 +195,102 @@ func ApplyTranslationInterchange(
 	}, nil
 }
 
+// mergePageInterchangeTargets returns the imported targets, over the
+// current ones when the import patches.
+func mergePageInterchangeTargets(
+	mutation TranslationInterchangeMutation,
+	current map[string]translation.UnitResult,
+) map[string]translation.UnitResult {
+	desired := make(map[string]translation.UnitResult, len(current)+len(mutation.Targets))
+	if mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+		for handle, target := range current {
+			desired[handle] = mutation.CloneResult(target)
+		}
+	}
+	for handle, target := range mutation.Targets {
+		desired[handle] = mutation.CloneResult(target)
+	}
+	return desired
+}
+
+// pageInterchangeBatch is the target locale batch of an import: the
+// sections its units select, and under REPLACE the deletes of every target
+// value the import leaves out.
+func pageInterchangeBatch(
+	state pageInterchangeState,
+	document *contentv1.LocalizedPageDocument,
+	mutation TranslationInterchangeMutation,
+) (contentblock.Batch, error) {
+	selectedSections := pageInterchangeSelectedSectionIDs(mutation.UnitHandles)
+	filtered := make([]*contentv1.PageSectionLocale, 0, len(selectedSections))
+	for _, section := range document.GetLocaleOverlay().GetSections() {
+		if _, selected := selectedSections[section.GetSectionId()]; selected {
+			filtered = append(filtered, section)
+		}
+	}
+	document.LocaleOverlay.Sections = filtered
+	snapshot := state.snapshot.Document
+	batch := contentblock.Batch{DocumentID: snapshot.ID, ExpectedRevision: snapshot.Revision}
+	replace := mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE
+	if len(filtered) == 0 && !replace {
+		return batch, nil
+	}
+	mutations, err := pageTypedTranslationLocaleMutations(document)
+	if err != nil {
+		return contentblock.Batch{}, err
+	}
+	if replace {
+		mutations = append(mutations, pageInterchangeReplacementDeletes(state.document, document)...)
+	}
+	if len(mutations) == 0 {
+		return batch, nil
+	}
+	return pageTranslationLocaleBatch(snapshot.ID, snapshot.Revision, mutation.TargetLocale, mutations)
+}
+
 func validatePageInterchangeMutation(mutation TranslationInterchangeMutation) error {
 	if mutation.PageID == "" || mutation.Source == nil || mutation.Plan == nil || mutation.Targets == nil ||
 		mutation.ProjectTargets == nil || mutation.BuildPatch == nil || mutation.PathPresent == nil ||
 		mutation.CloneResult == nil || mutation.EmptyInline == nil || mutation.CopyPath == nil {
-		return errs.InternalMsg("Page translation interchange mutation is incomplete")
+		return errors.New("Page translation interchange mutation is incomplete")
 	}
 	if mutation.Plan.EntityType != "page" || mutation.Plan.EntityID != mutation.PageID ||
 		mutation.Plan.SourceLocale != mutation.SourceLocale ||
 		mutation.Plan.TargetLocale != mutation.TargetLocale ||
 		mutation.Source.PageDocument == nil ||
 		mutation.Source.PageDocument.GetLocale() != mutation.SourceLocale {
-		return errs.InvalidArgument("file_id", "Page XLIFF identity does not match the current document")
+		return domainerr.InvalidField("file_id", "Page XLIFF identity does not match the current document")
 	}
 	if mutation.SourceLocale == mutation.TargetLocale {
-		return errs.InvalidArgument("target_locale", "Page source translation cannot be imported as a target")
+		return domainerr.InvalidField("target_locale", "Page source translation cannot be imported as a target")
 	}
 	if mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
 		mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
-		return errs.InvalidArgument("mode", "PATCH or REPLACE is required")
+		return domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	known := make(map[string]struct{}, len(mutation.Plan.Units))
 	for _, unit := range mutation.Plan.Units {
 		known[unit.UnitID] = struct{}{}
 	}
 	if len(mutation.Targets) != len(mutation.UnitHandles) {
-		return errs.InvalidArgument("file_id", "Page XLIFF target set does not match its stable unit manifest")
+		return domainerr.InvalidField("file_id", "Page XLIFF target set does not match its stable unit manifest")
 	}
 	seen := make(map[string]struct{}, len(mutation.UnitHandles))
 	for _, handle := range mutation.UnitHandles {
 		if _, duplicate := seen[handle]; duplicate {
-			return errs.InvalidArgument("file_id", "Page XLIFF stable units must be unique")
+			return domainerr.InvalidField("file_id", "Page XLIFF stable units must be unique")
 		}
 		seen[handle] = struct{}{}
 		if _, ok := known[handle]; !ok {
-			return errs.InvalidArgument("file_id", "Page XLIFF contains an unknown stable unit")
+			return domainerr.InvalidField("file_id", "Page XLIFF contains an unknown stable unit")
 		}
 		if target, ok := mutation.Targets[handle]; !ok || target.UnitID != handle {
-			return errs.InvalidArgument("file_id", "Page XLIFF target identity does not match its stable unit")
+			return domainerr.InvalidField("file_id", "Page XLIFF target identity does not match its stable unit")
 		}
 	}
 	for handle := range mutation.Targets {
 		if _, ok := seen[handle]; !ok {
-			return errs.InvalidArgument("file_id", "Page XLIFF target set does not match its stable unit manifest")
+			return domainerr.InvalidField("file_id", "Page XLIFF target set does not match its stable unit manifest")
 		}
 	}
 	return nil
@@ -302,7 +312,7 @@ func loadPageInterchangeState(
 	if tx == nil || store == nil || plan == nil || plan.EntityType != "page" ||
 		plan.EntityID != pageID || plan.TargetLocale != locale || project == nil ||
 		pathPresent == nil || cloneResult == nil || emptyInline == nil {
-		return pageInterchangeState{}, errs.InternalMsg("Page translation interchange load identity is invalid")
+		return pageInterchangeState{}, errors.New("Page translation interchange load identity is invalid")
 	}
 	_, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, lock)
 	if err != nil {
@@ -313,7 +323,7 @@ func loadPageInterchangeState(
 		return pageInterchangeState{}, err
 	}
 	if domain.SourceLocale != plan.SourceLocale || locale == domain.SourceLocale {
-		return pageInterchangeState{}, errs.InvalidArgument("target_locale", "Page XLIFF locale role no longer matches the owning document")
+		return pageInterchangeState{}, domainerr.InvalidField("target_locale", "Page XLIFF locale role no longer matches the owning document")
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
 	if err != nil {
@@ -423,7 +433,7 @@ func projectPageRichTextInterchangeTargets(
 		}
 		blockID, ok := pageInterchangeBlockID(rest)
 		if !ok {
-			return nil, errs.InvalidArgument("file_id", "Page XLIFF Rich Text stable unit is invalid")
+			return nil, domainerr.InvalidField("file_id", "Page XLIFF Rich Text stable unit is invalid")
 		}
 		scoped := unit
 		scoped.UnitID = rest
@@ -440,7 +450,7 @@ func projectPageRichTextInterchangeTargets(
 		}
 		baseSection := baseSections[sectionID]
 		if baseSection == nil || baseSection.GetRichText() == nil || baseSection.GetRichText().GetBlocks() == nil {
-			return nil, errs.InternalMsg("Page Rich Text target has no matching source graph")
+			return nil, errors.New("Page Rich Text target has no matching source graph")
 		}
 		scopedPlan := &translation.ExtractionPlan{
 			EntityType: plan.EntityType, EntityID: plan.EntityID,
@@ -832,13 +842,13 @@ func pageInterchangeTargetRevision(
 	result := tx.WithContext(ctx).Table("page_translation").Select("updated_at", "incarnation_id").
 		Where("entity_id = ? AND locale = ?", pageID, locale).Take(&row)
 	if result.Error != nil {
-		return "", errs.Internal(result.Error)
+		return "", result.Error
 	}
 	revision, err := derivePageTargetRevision(documentRevision, pageLocaleMetadataRow{
 		IncarnationID: row.IncarnationID, UpdatedAt: row.UpdatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }

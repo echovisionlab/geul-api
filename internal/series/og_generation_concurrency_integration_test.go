@@ -49,7 +49,7 @@ func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegrat
 	require.NoError(t, db.Create(&model.Series{
 		ID: seriesID, Slug: "series-" + seriesID, SourceLocale: "en",
 		ContentDocumentID: contentDocumentID,
-		Status:            managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String(), CreatedAt: now, UpdatedAt: &now,
+		Status:            model.SeriesStatusPublished, CreatedAt: now, UpdatedAt: &now,
 	}).Error)
 	require.NoError(t, db.Table("series_translation").Create(&model.SeriesTranslation{
 		EntityID: seriesID, Locale: "en",

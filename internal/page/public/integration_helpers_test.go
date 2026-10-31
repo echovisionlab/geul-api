@@ -13,6 +13,14 @@ import (
 	"testing"
 	"time"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
@@ -94,11 +102,52 @@ func seedPublicAdminMemberIdentityLink(
 	return memberID
 }
 
+// publicPrincipalContext is a member request, so Page mutations can name
+// their audit records.
 func publicPrincipalContext(memberID, identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	request, err := sharedtelemetry.NewPublicRequestContext("192.0.2.41")
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), request), &auth.UserInfo{
 		MemberID: auth.MemberID(memberID), IdentityID: auth.IdentityID(identityID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
+}
+
+// newPublicPageManagement returns the Page management use cases the public
+// tests seed Pages through.
+func newPublicPageManagement(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, blocks *contentblock.Store, files *publicPageFileGateway) (*pagedomain.ConnectHandler, *pagedomain.InternalConnectHandler) {
+	t.Helper()
+	pages, err := pagedomain.NewService(pagedomain.Deps{
+		DB: db, SpiceDB: spiceDB, Runtime: newPublicPageRuntimeForTest(db, "https://cdn.example.com"),
+		Files: files, Signals: publicReferenceAsyncPublisher{}, ContentBlocks: blocks, MediaHydrator: files,
+		MenuTargets: publicPageMenuTargets{}, Members: memberadapter.PageMembers{}, ShareLinks: sharelinkadapter.PageLinks{},
+		Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	return pagedomain.NewConnectHandler(pages), pagedomain.NewInternalConnectHandler(pages)
+}
+
+// newPublicPageHandler returns the public Page use cases behind their
+// Connect adapter.
+func newPublicPageHandler(t *testing.T, deps Deps) *ConnectHandler {
+	t.Helper()
+	pages, err := NewService(deps)
+	require.NoError(t, err)
+	return NewConnectHandler(pages)
+}
+
+// publicPageMenuTargets lets Page slug changes and deletion run; no Menu
+// points at the test Pages.
+type publicPageMenuTargets struct{}
+
+func (publicPageMenuTargets) UpdateSlug(context.Context, *gorm.DB, string, string, string, string) error {
+	return nil
+}
+
+func (publicPageMenuTargets) Remove(context.Context, *gorm.DB, string, string, string) error {
+	return nil
 }
 
 func publicLegalAdminCtx(memberID, identityID string) context.Context {
@@ -172,8 +221,6 @@ type publicPageFileGateway struct {
 func newPublicReferenceManageFileService(db *gorm.DB) *publicPageFileGateway {
 	return &publicPageFileGateway{db: db, cdnDomain: "https://cdn.example.com"}
 }
-
-func (*publicPageFileGateway) DeleteFileByID(context.Context, string) error { return nil }
 
 func (g *publicPageFileGateway) ResolveAuthorizedPageFeaturedImage(
 	_ context.Context,

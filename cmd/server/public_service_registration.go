@@ -85,15 +85,14 @@ func (r publicServiceRegistration) register() error {
 	slog.Info("Registered public service", "path", publicFilePath)
 
 	pagePublicAccess := pageruntime.NewPublicAccess(spicedbClient, postShareLinks)
-	publicPageService := pagepublic.NewPageService(
-		db,
-		pagePublicAccess,
-		pagePublicAccess,
-		pageruntime.NewPublicMedia(publicFileService),
-		pagepublic.WithPageContentBlockStore(contentBlockStore),
-		pagepublic.WithPageAccessPermissionChecker(spicedbClient),
-	)
-	publicPagePath, publicPageHandler := openv1connect.NewPageServiceHandler(publicPageService, publicHandlerOpts...)
+	publicPageService, err := pagepublic.NewService(pagepublic.Deps{
+		DB: db, DraftAccess: pagePublicAccess, ShareLinks: pagePublicAccess,
+		Media: pageruntime.NewPublicMedia(publicFileService), Blocks: contentBlockStore, Permissions: spicedbClient,
+	})
+	if err != nil {
+		return err
+	}
+	publicPagePath, publicPageHandler := openv1connect.NewPageServiceHandler(pagepublic.NewConnectHandler(publicPageService), publicHandlerOpts...)
 	mux.Handle(publicPagePath, publicPageHandler)
 	slog.Info("Registered public service", "path", publicPagePath)
 

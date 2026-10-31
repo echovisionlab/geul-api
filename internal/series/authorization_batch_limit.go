@@ -2,6 +2,7 @@ package series
 
 import (
 	"fmt"
+
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"

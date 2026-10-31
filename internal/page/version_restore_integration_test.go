@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
@@ -42,25 +44,8 @@ func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t 
 		NewContentBlockFileReuseAuthorizer(spiceDB),
 	)
 	require.NoError(t, err)
-	pageService := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		&recordingPageDeleteFileDeleter{},
-		noopAsyncPublisher{},
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
-		spiceDB,
-		WithPageContentBlockStore(store),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
-	internalService := NewInternalPageService(
-		db,
-		noopAsyncPublisher{},
-		spiceDB,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		WithInternalPageContentBlockStore(store),
-		WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageService := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: &recordingPageDeleteFileDeleter{}, ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
+	internalService := NewInternalConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, Audit: apitelemetry.NewDurableWriter(db)}))
 	created, err := pageService.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Typed Page Version Restore",
 	}))
@@ -276,7 +261,7 @@ func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t 
 			),
 		}),
 	)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 }
 
 func pageVersionExternalVideoBatch(

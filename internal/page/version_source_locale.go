@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -27,15 +27,15 @@ func switchBlockVersionRestoreSourceLocale(
 	now time.Time,
 ) error {
 	if tx == nil || store == nil {
-		return errs.FailedPrecondition("Page content document is not initialized")
+		return domainerr.Precondition("Page content document is not initialized")
 	}
 	if strings.TrimSpace(entityType) != "page" || strings.TrimSpace(pageID) == "" ||
 		strings.TrimSpace(previousLocale) == "" || strings.TrimSpace(requestedLocale) == "" ||
 		expectedDocumentRevision == uuid.Nil {
-		return errs.InvalidArgument("source_locale", "source-locale switch identity is required")
+		return domainerr.InvalidField("source_locale", "source-locale switch identity is required")
 	}
 	if previousLocale == requestedLocale {
-		return errs.FailedPrecondition("requested locale is already the source locale")
+		return domainerr.Precondition("requested locale is already the source locale")
 	}
 	var root struct {
 		ContentDocumentID *uuid.UUID `gorm:"column:content_document_id"`
@@ -43,10 +43,10 @@ func switchBlockVersionRestoreSourceLocale(
 	}
 	if err := tx.WithContext(ctx).Table("page").
 		Select("content_document_id", "source_locale").Where("id = ?", pageID).Take(&root).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-		return errs.FailedPrecondition("Page content document is not initialized")
+		return domainerr.Precondition("Page content document is not initialized")
 	}
 	if root.SourceLocale != previousLocale {
 		return translation.ErrSourceNoLongerCurrent
@@ -67,7 +67,7 @@ func switchBlockVersionRestoreSourceLocale(
 				requestedLocale, now, pageID, previousLocale,
 			)
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			if updated.RowsAffected != 1 {
 				return contentblock.MetadataEffect{}, translation.ErrSourceNoLongerCurrent

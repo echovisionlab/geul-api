@@ -47,8 +47,8 @@ func mockPageSignalDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 	targetRevision := "target-revision"
 	events := map[string]*managev1.ContentUpdatedEvent{
-		"manage update": buildManagePageContentUpdatedEvent(&managev1.UpdatePageRequest{
-			Id: "page-1", Slug: proto.String("about"),
+		"manage update": buildManagePageContentUpdatedEvent(UpdatePageCommand{
+			ID: "page-1", Slug: proto.String("about"),
 		}),
 		"lifecycle": buildManageStateTransitionContentUpdatedEvent(
 			"page-1", []string{"state.status"},
@@ -103,7 +103,7 @@ func TestPublishPageContentUpdatedRequiresOwningTransaction(t *testing.T) {
 		"page-1", []string{"state.status"},
 	)
 
-	require.Error(t, publishContentUpdatedEvent(context.Background(), db, &mq.Publisher{}, event))
+	require.Error(t, (&Service{signals: &mq.Publisher{}}).publish(context.Background(), db, event))
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT document.revision FROM page AS owner").WithArgs("page-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
@@ -113,7 +113,7 @@ func TestPublishPageContentUpdatedRequiresOwningTransaction(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return publishContentUpdatedEvent(context.Background(), tx, &mq.Publisher{}, event)
+		return (&Service{signals: &mq.Publisher{}}).publish(context.Background(), tx, event)
 	}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -129,7 +129,7 @@ func TestPublishPageContentUpdatedFailureRollsBackMutation(t *testing.T) {
 	mock.ExpectQuery("SELECT document.revision FROM page AS owner").WithArgs("page-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
 	mock.ExpectRollback()
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return publishContentUpdatedEvent(context.Background(), tx, failingPageSignalPublisher{err: failure}, event)
+		return (&Service{signals: failingPageSignalPublisher{err: failure}}).publish(context.Background(), tx, event)
 	})
 	require.ErrorIs(t, err, failure)
 	require.NoError(t, mock.ExpectationsWereMet())

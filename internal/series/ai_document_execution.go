@@ -139,7 +139,7 @@ func postSeriesAISetFieldIssue(
 			return nil, err
 		}
 	case postSeriesAIFieldStatus:
-		if err := validateSeriesStatus(set.Value.Text); err != nil {
+		if _, err := validateSeriesStatus(set.Value.Text); err != nil {
 			return issue(core.IssueValueKindMismatch, err.Error()), nil
 		}
 	default:

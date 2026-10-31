@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -95,12 +96,12 @@ type WorkManagementApplication interface {
 }
 
 type PageManagementApplication interface {
-	GetPage(context.Context, *connect.Request[managev1.GetPageRequest]) (*connect.Response[managev1.Page], error)
-	CreatePage(context.Context, *connect.Request[managev1.CreatePageRequest]) (*connect.Response[managev1.Page], error)
-	UpdatePage(context.Context, *connect.Request[managev1.UpdatePageRequest]) (*connect.Response[managev1.UpdatePageResponse], error)
-	PublishPage(context.Context, *connect.Request[managev1.PublishPageRequest]) (*connect.Response[managev1.PageLifecycleMutationResponse], error)
-	UnpublishPage(context.Context, *connect.Request[managev1.UnpublishPageRequest]) (*connect.Response[managev1.PageLifecycleMutationResponse], error)
-	DeletePage(context.Context, *connect.Request[managev1.DeletePageRequest]) (*connect.Response[managev1.DeleteResponse], error)
+	GetPage(context.Context, pagedomain.GetPageQuery) (*managev1.Page, error)
+	CreatePage(context.Context, pagedomain.CreatePageCommand) (*managev1.Page, error)
+	UpdatePage(context.Context, pagedomain.UpdatePageCommand) (*managev1.UpdatePageResponse, error)
+	PublishPage(context.Context, pagedomain.PublishPageCommand) (*managev1.PageLifecycleMutationResponse, error)
+	UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (*managev1.PageLifecycleMutationResponse, error)
+	DeletePage(context.Context, pagedomain.DeletePageCommand) error
 }
 
 type ContentManagementTools struct {
@@ -574,13 +575,14 @@ func (tools *ContentManagementTools) createPage(ctx context.Context, arguments m
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	request := connect.NewRequest(&managev1.CreatePageRequest{Title: input.Title, Slug: input.Slug, Summary: input.Summary, ShowTitle: input.ShowTitle, SourceLocale: input.SourceLocale})
-	request.Header().Set("Accept-Language", input.SourceLocale)
-	created, err := tools.pages.CreatePage(ctx, request)
+	created, err := tools.pages.CreatePage(ctx, pagedomain.CreatePageCommand{
+		Title: input.Title, Slug: input.Slug, Summary: input.Summary, ShowTitle: input.ShowTitle,
+		SourceLocale: input.SourceLocale, AcceptLanguage: input.SourceLocale,
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "page", "document_id": created.Msg.Id, "changed": true, "title": created.Msg.Title, "slug": optionalStringValue(created.Msg.Slug), "source_locale": created.Msg.SourceLocale, "status": contentStatus(created.Msg.Status.String(), "PAGE_STATUS_"), "document_revision": created.Msg.Revision})
+	return contentResult(map[string]any{"document_type": "page", "document_id": created.Id, "changed": true, "title": created.Title, "slug": optionalStringValue(created.Slug), "source_locale": created.SourceLocale, "status": contentStatus(created.Status.String(), "PAGE_STATUS_"), "document_revision": created.Revision})
 }
 
 type pageSettingsArguments struct {
@@ -685,11 +687,10 @@ func (tools *ContentManagementTools) getPageSettings(ctx context.Context, argume
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.pages.GetPage(ctx, connect.NewRequest(&managev1.GetPageRequest{Id: input.DocumentID}))
+	page, err := tools.pages.GetPage(ctx, pagedomain.GetPageQuery{ID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	page := response.Msg
 	output := map[string]any{
 		"document_type": "page", "document_id": page.Id, "title": page.Title, "summary": optionalStringValue(page.Summary),
 		"slug": optionalStringValue(page.Slug), "source_locale": page.SourceLocale, "status": contentStatus(page.Status.String(), "PAGE_STATUS_"),
@@ -719,21 +720,21 @@ func (tools *ContentManagementTools) updatePage(ctx context.Context, arguments m
 	if input.Slug == nil && input.ShowTitle == nil && input.AccessPolicy == nil {
 		return executionError(errors.New("at least one Page setting is required"))
 	}
-	request := &managev1.UpdatePageRequest{Id: input.DocumentID, Slug: input.Slug, ShowTitle: input.ShowTitle}
+	command := pagedomain.UpdatePageCommand{ID: input.DocumentID, Slug: input.Slug, ShowTitle: input.ShowTitle}
 	if input.AccessPolicy != nil {
 		policy, err := input.AccessPolicy.pageAccessPolicy()
 		if err != nil {
 			return executionError(err)
 		}
-		request.AccessPolicy = policy
+		command.AccessPolicy = policy
 	}
-	updated, err := tools.pages.UpdatePage(ctx, connect.NewRequest(request))
+	updated, err := tools.pages.UpdatePage(ctx, command)
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := map[string]any{"document_type": "page", "document_id": updated.Msg.Id, "changed": updated.Msg.Changed, "slug": optionalStringValue(updated.Msg.Slug), "show_title": updated.Msg.ShowTitle, "updated_at": timestampString(updated.Msg.UpdatedAt)}
-	if updated.Msg.AccessPolicy != nil {
-		output["access_policy"] = pageAccessPolicyOutput(updated.Msg.AccessPolicy)
+	output := map[string]any{"document_type": "page", "document_id": updated.Id, "changed": updated.Changed, "slug": optionalStringValue(updated.Slug), "show_title": updated.ShowTitle, "updated_at": timestampString(updated.UpdatedAt)}
+	if updated.AccessPolicy != nil {
+		output["access_policy"] = pageAccessPolicyOutput(updated.AccessPolicy)
 	}
 	return contentResult(output)
 }
@@ -744,23 +745,22 @@ func (tools *ContentManagementTools) mutatePage(ctx context.Context, name string
 		return executionError(err)
 	}
 	if name == ToolPageDelete {
-		deleted, err := tools.pages.DeletePage(ctx, connect.NewRequest(&managev1.DeletePageRequest{Id: input.DocumentID}))
-		if err != nil {
+		if err := tools.pages.DeletePage(ctx, pagedomain.DeletePageCommand{ID: input.DocumentID}); err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"document_type": "page", "document_id": input.DocumentID, "changed": deleted.Msg.Success, "deleted": deleted.Msg.Success})
+		return contentResult(map[string]any{"document_type": "page", "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
-	var result *connect.Response[managev1.PageLifecycleMutationResponse]
+	var result *managev1.PageLifecycleMutationResponse
 	var err error
 	if name == ToolPagePublish {
-		result, err = tools.pages.PublishPage(ctx, connect.NewRequest(&managev1.PublishPageRequest{Id: input.DocumentID}))
+		result, err = tools.pages.PublishPage(ctx, pagedomain.PublishPageCommand{ID: input.DocumentID})
 	} else {
-		result, err = tools.pages.UnpublishPage(ctx, connect.NewRequest(&managev1.UnpublishPageRequest{Id: input.DocumentID}))
+		result, err = tools.pages.UnpublishPage(ctx, pagedomain.UnpublishPageCommand{ID: input.DocumentID})
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "page", "document_id": result.Msg.Id, "changed": result.Msg.Changed, "status": contentStatus(result.Msg.Status.String(), "PAGE_STATUS_"), "updated_at": timestampString(result.Msg.UpdatedAt)})
+	return contentResult(map[string]any{"document_type": "page", "document_id": result.Id, "changed": result.Changed, "status": contentStatus(result.Status.String(), "PAGE_STATUS_"), "updated_at": timestampString(result.UpdatedAt)})
 }
 
 func emptyRichTextDocument(profile contentv1.RichTextProfile, locale string) *contentv1.RichTextDocument {

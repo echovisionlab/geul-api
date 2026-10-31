@@ -23,10 +23,9 @@ type exactPageDocumentAPI struct {
 	compilerCalls int
 }
 
-func (a *exactPageDocumentAPI) Load(
+func (a *exactPageDocumentAPI) LoadAIDocument(
 	context.Context,
-	string,
-	string,
+	pagedomain.LoadAIDocumentQuery,
 ) (pagedomain.AIDocumentState, error) {
 	a.loadCalls++
 	return a.state, nil
@@ -34,20 +33,17 @@ func (a *exactPageDocumentAPI) Load(
 
 func (a *exactPageDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
-	pageID string,
-	locale string,
-	_ pagedomain.AIDocumentExecutionMode,
-	compiler pagedomain.AIDocumentMutationCompiler,
+	command pagedomain.ExecuteAIDocumentMutationCommand,
 ) (pagedomain.AIDocumentMutationResult, error) {
 	a.executeCalls++
 	if a.authorizeErr != nil {
 		return pagedomain.AIDocumentMutationResult{}, a.authorizeErr
 	}
-	if pageID != a.state.Page.ID || locale != a.state.Locale {
+	if command.PageID != a.state.Page.ID || command.Locale != a.state.Locale {
 		return pagedomain.AIDocumentMutationResult{}, errors.New("unexpected Page identity or locale")
 	}
 	a.compilerCalls++
-	mutation, err := compiler(a.state)
+	mutation, err := command.Compile(a.state)
 	if err != nil {
 		return pagedomain.AIDocumentMutationResult{}, err
 	}

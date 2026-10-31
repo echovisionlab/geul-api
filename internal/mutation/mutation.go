@@ -249,6 +249,15 @@ func IsNotFound(err error) bool {
 	return ok && classified.Code() == connect.CodeNotFound
 }
 
+// IsClassified reports whether err already carries a client answer: a
+// Connect error from a shared helper or a use-case error. A domain that maps
+// only unclassified failures (a content store's sentinels) checks it first so
+// it never overrides an answer.
+func IsClassified(err error) bool {
+	_, ok := errs.Classified(err)
+	return ok
+}
+
 // PrincipalFence locks the authenticated principal's Identity without an
 // action check, for a principal's own lifecycle transition that Change
 // guards by state (onboarding, before the principal is onboarded).
@@ -270,6 +279,7 @@ type Audit struct {
 	action    sharedtelemetry.AuditAction
 	build     domainaudit.Builder
 	memberID  string
+	version   bool
 	unchanged bool
 	all       []Audit
 }
@@ -283,6 +293,13 @@ func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder)
 // request has no member actor yet (onboarding).
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
 	return Audit{action: action, build: build, memberID: memberID}
+}
+
+// VersionAudit attributes the record of a version checkpoint to the
+// request's member or system actor (domainaudit.AppendVersion), for an
+// internal service boundary that checkpoints on behalf of either.
+func VersionAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
+	return Audit{action: action, build: build, version: true}
 }
 
 // Audits names every record of a mutation that changes several audited
@@ -322,6 +339,8 @@ func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) erro
 		return errors.New("mutation audit record is required; return Unchanged when nothing changed")
 	case audit.memberID != "":
 		return domainaudit.AppendMember(ctx, tx, r.audit, audit.memberID, audit.action, audit.build)
+	case audit.version:
+		return domainaudit.AppendVersion(ctx, tx, r.audit, audit.action, audit.build)
 	default:
 		return domainaudit.AppendRequest(ctx, tx, r.audit, audit.action, audit.build)
 	}

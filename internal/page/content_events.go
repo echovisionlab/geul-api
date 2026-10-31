@@ -1,12 +1,10 @@
 package page
 
 import (
-	"context"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
@@ -35,17 +33,6 @@ var pageContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
 	"sourceLocale":        {path: "settings.source_locale", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 }
 
-// publishContentUpdatedEvent schedules content.updated in the caller's
-// mutation transaction so the signal commits or rolls back with the data.
-func publishContentUpdatedEvent(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
-
 func buildPageLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
 	if change.EntityID == "" {
 		return nil
@@ -62,23 +49,20 @@ func buildPageLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *mana
 	)
 }
 
-func buildManagePageContentUpdatedEvent(request *managev1.UpdatePageRequest) *managev1.ContentUpdatedEvent {
-	if request == nil {
-		return nil
-	}
+func buildManagePageContentUpdatedEvent(command UpdatePageCommand) *managev1.ContentUpdatedEvent {
 	fields := make([]string, 0, 3)
-	if request.Slug != nil {
+	if command.Slug != nil {
 		fields = append(fields, "slug")
 	}
-	if request.ShowTitle != nil {
+	if command.ShowTitle != nil {
 		fields = append(fields, "showTitle")
 	}
-	if request.AccessPolicy != nil {
+	if command.AccessPolicy != nil {
 		fields = append(fields, "accessPolicy")
 	}
 	return buildContentUpdatedEvent(
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-		request.Id,
+		command.ID,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 		buildContentUpdatedFields(fields, pageContentUpdatedFieldSpecs),
 		false, "", nil, nil,
