@@ -329,7 +329,7 @@ func (s *Service) start(
 		slog.ErrorContext(turnCtx, "AI editor operation failed", "domain", "ai_editor", "event", "ai_editor.provider.start_failed", failurecause.Attr(err, request.GetPrompt(), string(encodedContext)), "turn_id", turnID, "action", request.Action)
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_PROVIDER)
 	}
-	defer closeProviderSession(providerSession, turnID)
+	defer closeProviderSession(turnCtx, providerSession, turnID)
 
 	providerPrompt := initialProviderPrompt(request, encodedContext)
 	for toolIndex := 0; toolIndex <= maxToolCalls; toolIndex++ {
@@ -721,8 +721,10 @@ func emitTerminalFailure(terminal func(managev1.AIEditorTurnTerminalStatus, mana
 	return terminal(managev1.AIEditorTurnTerminalStatus_AI_EDITOR_TURN_TERMINAL_STATUS_FAILED, code)
 }
 
-func closeProviderSession(session llm.Session, turnID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+// closeProviderSession releases the provider session even after the turn
+// context ended, keeping the turn's trace for the close.
+func closeProviderSession(ctx context.Context, session llm.Session, turnID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 	defer cancel()
 	if err := session.Close(ctx); err != nil {
 		slog.ErrorContext(ctx, "AI editor provider session close failed", "domain", "ai_editor", "event", "ai_editor.provider.close_failed", "turn_id", turnID, "failure_cause", failurecause.Message(err))

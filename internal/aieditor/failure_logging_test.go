@@ -72,7 +72,29 @@ func (closeFailureSession) Close(context.Context) error {
 
 func TestEditorSessionCloseFailureIsLogged(t *testing.T) {
 	output := captureEditorFailures(t)
-	closeProviderSession(closeFailureSession{}, "turn-1")
+	closeProviderSession(t.Context(), closeFailureSession{}, "turn-1")
 	require.Contains(t, output.String(), "connection reset")
 	require.Contains(t, output.String(), `"turn_id":"turn-1"`)
+}
+
+type closeContextSession struct {
+	llm.Session
+	closed context.Context
+}
+
+func (s *closeContextSession) Close(ctx context.Context) error {
+	s.closed = ctx
+	return nil
+}
+
+func TestEditorSessionCloseKeepsTurnContextAfterCancellation(t *testing.T) {
+	type contextKey struct{}
+	turnCtx, cancel := context.WithCancel(context.WithValue(t.Context(), contextKey{}, "turn"))
+	cancel()
+	session := &closeContextSession{}
+
+	closeProviderSession(turnCtx, session, "turn-1")
+
+	require.NotNil(t, session.closed)
+	require.Equal(t, "turn", session.closed.Value(contextKey{}))
 }
