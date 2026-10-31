@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	contractcollaboration "github.com/echovisionlab/geul-event-contracts/go/collaboration"
@@ -150,7 +151,7 @@ func (e *InteractiveMutationRelayError) logAttrs() []any {
 	}
 	if e.Stage == relayStageRPC {
 		attrs = append(attrs,
-			"connect_code", connect.CodeOf(e.err).String(),
+			"connect_code", errs.CodeOf(e.err).String(),
 			"wire_error", connect.IsWireError(e.err),
 		)
 	}

@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -27,79 +27,86 @@ func checkMenuPermission(
 	principal *auth.UserInfo,
 ) error {
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	can, err := action(menuID)
 	if err != nil {
-		return errs.WithCause(errs.NotFound("menu", menuID), err)
+		return domainerr.ResourceNotFound("menu", menuID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Name(), "menu")
+		return domainerr.NoPermission(can.Action().Name(), "menu")
 	}
 	return nil
 }
 
-func (s *MenuService) requireExistingMenuPermission(
+func (s *Service) requireExistingMenuPermission(
 	ctx context.Context,
 	menuID string,
 	action menuAction,
 ) error {
 	err := checkMenuPermission(ctx, s.permissions, menuID, action, auth.GetUser(ctx))
-	if connect.CodeOf(err) == connect.CodePermissionDenied {
-		return errs.NotFound("menu", menuID)
+	if mutation.IsDenied(err) {
+		return domainerr.ResourceNotFound("menu", menuID)
 	}
 	return err
 }
 
-func (s *MenuService) requireMenuPermissionOrNotFound(
+func (s *Service) requireMenuPermissionOrNotFound(
 	ctx context.Context,
 	menuID string,
 	action menuAction,
 ) error {
 	err := checkMenuPermission(ctx, s.permissions, menuID, action, auth.GetUser(ctx))
-	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied {
+	if err == nil || !mutation.IsDenied(err) {
 		return err
 	}
 	var count int64
 	if dbErr := s.db.WithContext(ctx).Table("menu").Where("id = ?", menuID).Count(&count).Error; dbErr != nil {
-		return errs.Internal(dbErr)
+		return dbErr
 	}
 	if count == 0 {
-		return errs.NotFound("menu", menuID)
+		return domainerr.ResourceNotFound("menu", menuID)
 	}
 	return err
 }
 
+// requireFreshMenuPermission is the in-transaction Menu authority: an
+// inactive principal finds no Menu, and an active one needs action, read
+// with the principal fence require applies.
 func requireFreshMenuPermission(
 	ctx context.Context,
 	tx *gorm.DB,
-	checker menuPermissionChecker,
+	require mutation.Require,
 	menuID string,
 	action menuAction,
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !active {
-		return errs.NotFound("menu", menuID)
+		return domainerr.ResourceNotFound("menu", menuID)
 	}
-	return checkMenuPermission(ctx, checker, menuID, action, principal)
+	can, err := action(menuID)
+	if err != nil {
+		return domainerr.ResourceNotFound("menu", menuID).WithCause(err)
+	}
+	return require(can)
 }
 
 func requireMenuGlobalCan(
@@ -109,48 +116,41 @@ func requireMenuGlobalCan(
 ) error {
 	principal := auth.GetUser(ctx)
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Permission(), "platform")
+		return domainerr.NoPermission(can.Action().Permission(), "platform")
 	}
 	return nil
-}
-
-func requireFreshMenuGlobalCan(
-	ctx context.Context,
-	tx *gorm.DB,
-	checker menuPermissionChecker,
-	can policyv1.Can,
-) error {
-	return identitystate.RequireFreshAdminCan(ctx, tx, checker, can)
 }
 
 func requireMenuPermissionAndLock(
 	ctx context.Context,
 	tx *gorm.DB,
-	checker menuPermissionChecker,
+	spiceDB *auth.SpiceDBClient,
 	menuID string,
 	action menuAction,
 ) error {
 	if _, err := lockMenuForUpdate(ctx, tx, menuID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("menu", menuID)
+			return domainerr.ResourceNotFound("menu", menuID)
 		}
-		return errs.Internal(err)
+		return err
 	}
-	return requireFreshMenuPermission(ctx, tx, checker, menuID, action)
+	return requireFreshMenuPermission(ctx, tx, func(can policyv1.Can) error {
+		return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
+	}, menuID, action)
 }
 
 // RequireViewAndLockWithDB is the translation read boundary for one Menu.

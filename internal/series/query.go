@@ -2,7 +2,7 @@ package series
 
 import (
 	"context"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"errors"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -13,7 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
-func (s *SeriesService) loadSeriesListDetails(
+func (s *Service) loadSeriesListDetails(
 	ctx context.Context,
 	seriesList []model.Series,
 ) (map[string]SeriesListDetails, error) {
@@ -63,10 +63,10 @@ func loadSeriesManagerAttributions(ctx context.Context, db *gorm.DB, seriesID st
 	return rows, err
 }
 
-func (s *SeriesService) loadSeriesManagerProjections(ctx context.Context, seriesID string) ([]*managev1.SeriesManager, error) {
+func (s *Service) loadSeriesManagerProjections(ctx context.Context, seriesID string) ([]*managev1.SeriesManager, error) {
 	rows, err := loadSeriesManagerAttributions(ctx, s.db, seriesID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	result := make([]*managev1.SeriesManager, 0, len(rows))
 	if len(rows) == 0 {
@@ -78,12 +78,12 @@ func (s *SeriesService) loadSeriesManagerProjections(ctx context.Context, series
 	}
 	summaries, err := s.members.LoadSeriesManagers(ctx, memberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		summary := summaries[row.MemberID]
 		if summary == nil {
-			return nil, errs.InternalMsg("series manager member was not found")
+			return nil, errors.New("series manager member was not found")
 		}
 		manager := proto.Clone(summary).(*managev1.SeriesManager)
 		manager.CreatedAt = timestamppb.New(row.CreatedAt)

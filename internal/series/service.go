@@ -3,126 +3,166 @@ package series
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// SeriesService implements the SeriesService Connect handler
-type SeriesService struct {
-	managev1connect.UnimplementedSeriesServiceHandler
-	db           *gorm.DB
-	spiceDB      *auth.SpiceDBClient
-	permissions  seriesPermissionChecker
-	kratosClient auth.IdentityManager
-	menuTargets  MenuTargets
-	postAccess   PostAccess
-	members      MemberSummaries
-	auditWriter  domainaudit.Appender
-	media        MediaRuntime
-	ogRefresh    OGRefresh
-	reads        SeriesReadProjection
+// Deps are the collaborators of the Post Series use cases. Every field is
+// required; NewService rejects a missing one.
+type Deps struct {
+	DB       *gorm.DB
+	SpiceDB  *auth.SpiceDBClient
+	Identity auth.IdentityManager
+	Media    MediaRuntime
+	OG       OGRefresh
+	Reads    SeriesReadProjection
+	// MenuTargets keeps Menu links to a Series in step with its slug.
+	MenuTargets MenuTargets
+	Posts       PostAccess
+	Membership  PostMembership
+	Members     MemberSummaries
+	// Checkpoints authorize the contributors of a collaboration save.
+	Checkpoints PostSeriesCollaborationCheckpointFence
+	Audit       domainaudit.Appender
 }
 
-func NewAuditedSeriesService(
-	db *gorm.DB,
-	media MediaRuntime,
-	ogRefresh OGRefresh,
-	reads SeriesReadProjection,
-	spiceDB *auth.SpiceDBClient,
-	kratosClient auth.IdentityManager,
-	menuTargets MenuTargets,
-	postAccess PostAccess,
-	members MemberSummaries,
-	auditWriter domainaudit.Appender,
-) *SeriesService {
-	if auditWriter == nil {
-		panic("series audit writer is required")
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Identity": d.Identity == nil, "Media": d.Media == nil,
+		"OG": d.OG == nil, "Reads": d.Reads == nil, "MenuTargets": d.MenuTargets == nil, "Posts": d.Posts == nil,
+		"Membership": d.Membership == nil, "Members": d.Members == nil, "Checkpoints": d.Checkpoints == nil, "Audit": d.Audit == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
 	}
-	service := NewSeriesService(db, media, ogRefresh, reads, spiceDB, kratosClient, menuTargets, postAccess, members)
-	service.auditWriter = auditWriter
-	return service
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("series dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
 }
 
-// NewSeriesService creates a new SeriesService
-func NewSeriesService(
-	db *gorm.DB,
-	media MediaRuntime,
-	ogRefresh OGRefresh,
-	reads SeriesReadProjection,
-	spiceDB *auth.SpiceDBClient,
-	kratosClient auth.IdentityManager,
-	menuTargets MenuTargets,
-	postAccess PostAccess,
-	members MemberSummaries,
-) *SeriesService {
-	if db == nil {
-		panic("SeriesService: db is required")
-	}
-	if media == nil || ogRefresh == nil || reads == nil {
-		panic("SeriesService: media, OG, and read projection dependencies are required")
-	}
-	if spiceDB == nil {
-		panic("SeriesService: spiceDB is required")
-	}
-	if kratosClient == nil {
-		panic("SeriesService: kratosClient is required")
-	}
-	if menuTargets == nil || postAccess == nil || members == nil {
-		panic("SeriesService: domain dependencies are required")
-	}
-	return &SeriesService{
-		db:           db,
-		media:        media,
-		ogRefresh:    ogRefresh,
-		reads:        reads,
-		spiceDB:      spiceDB,
-		permissions:  spiceDB,
-		kratosClient: kratosClient,
-		menuTargets:  menuTargets,
-		postAccess:   postAccess,
-		members:      members,
-	}
+// Service holds the Post Series use cases: management, collaboration and
+// the AI document boundary. Adapters translate their requests into its
+// commands and queries.
+type Service struct {
+	db             *gorm.DB
+	spiceDB        *auth.SpiceDBClient
+	permissions    seriesPermissionChecker
+	kratosClient   auth.IdentityManager
+	menuTargets    MenuTargets
+	postAccess     PostAccess
+	postMembership PostMembership
+	members        MemberSummaries
+	media          MediaRuntime
+	ogRefresh      OGRefresh
+	reads          SeriesReadProjection
+	checkpoints    PostSeriesCollaborationCheckpointFence
+	// auditWriter serves the translation ports, which run in the
+	// translation application's transaction.
+	auditWriter domainaudit.Appender
+	mutations   *mutation.Runner
+	access      aiDocumentAccess
+	now         func() time.Time
 }
+
+// NewService validates deps and returns the Post Series use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		db: deps.DB, spiceDB: deps.SpiceDB, permissions: deps.SpiceDB, kratosClient: deps.Identity,
+		menuTargets: deps.MenuTargets, postAccess: deps.Posts, postMembership: deps.Membership, members: deps.Members,
+		media: deps.Media, ogRefresh: deps.OG, reads: deps.Reads, checkpoints: deps.Checkpoints, auditWriter: deps.Audit,
+		mutations: mutations, access: seriesAIDocumentAccess{}, now: time.Now,
+	}, nil
+}
+
+// readLocked runs read in one transaction after access, so the rows it
+// locks agree with each other.
+func (s *Service) readLocked(ctx context.Context, access mutation.Access, read func(context.Context, *gorm.DB) error) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Access: access,
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) { return struct{}{}, read(ctx, tx) },
+		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
+	})
+	return err
+}
+
+// Page selects a page of a list. A zero Limit reads the list's default.
+type Page struct {
+	Limit  int32
+	Offset int32
+}
+
+func (p Page) limitOr(fallback int32) int32 {
+	if p.Limit > 0 {
+		return p.Limit
+	}
+	return fallback
+}
+
+type ListSeriesPostsQuery struct{ SeriesID string }
+type ListMySeriesQuery struct{ Page Page }
+type ListSeriesAdminQuery struct {
+	Page    Page
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+type ListSeriesSimpleQuery struct{}
+type CheckSeriesSlugAvailableQuery struct {
+	Slug      string
+	ExcludeID *string
+}
+
+// CreateSeriesCommand creates a draft Series. AcceptLanguage picks its
+// source locale when the creator has no preference.
+type CreateSeriesCommand struct {
+	Title          string
+	Slug           *string
+	Description    *string
+	AcceptLanguage string
+}
+type DeleteSeriesCommand struct{ ID string }
+type SetSeriesFeaturedImageCommand struct{ SeriesID, FileID string }
+type DeleteSeriesFeaturedImageCommand struct{ SeriesID string }
 
 // ListSeriesPosts returns the full ordered Post set to an exact Manager/Admin.
 // Public readers use the open Post list, which exposes only public lifecycle states.
-func (s *SeriesService) ListSeriesPosts(
-	ctx context.Context,
-	req *connect.Request[managev1.ListSeriesPostsRequest],
-) (*connect.Response[managev1.ListSeriesPostsResponse], error) {
-	var posts []seriesPostRow
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.requireSeriesViewAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
-			return err
-		}
-		return tx.WithContext(ctx).
-			Table("post").
-			Select("id, "+s.postAccess.PostSourceTitleSQL()+" AS title, source_locale, slug, status, series_order, published_at").
-			Where("series_id = ?", req.Msg.SeriesId).
-			Order("series_order ASC NULLS LAST, created_at ASC").
-			Find(&posts).Error
+func (s *Service) ListSeriesPosts(ctx context.Context, query ListSeriesPostsQuery) (*managev1.ListSeriesPostsResponse, error) {
+	var posts []SeriesPost
+	if err := s.readLocked(ctx, lockedSeries(query.SeriesID, policyv1.PostSeries.View), func(ctx context.Context, tx *gorm.DB) error {
+		var err error
+		posts, err = s.postMembership.ListSeriesPosts(ctx, tx, query.SeriesID)
+		return err
 	}); err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	// Convert to proto
@@ -131,23 +171,20 @@ func (s *SeriesService) ListSeriesPosts(
 		protoPosts[i] = toProtoSeriesPost(&posts[i])
 	}
 
-	return connect.NewResponse(&managev1.ListSeriesPostsResponse{
+	return &managev1.ListSeriesPostsResponse{
 		Posts: protoPosts,
-	}), nil
+	}, nil
 }
 
 // ListMySeries returns series where current user is a member
-func (s *SeriesService) ListMySeries(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMySeriesRequest],
-) (*connect.Response[managev1.ListMySeriesResponse], error) {
+func (s *Service) ListMySeries(ctx context.Context, query ListMySeriesQuery) (*managev1.ListMySeriesResponse, error) {
 	seriesIDs, err := s.lookupSeriesResources(ctx, policyv1.PostSeries.LookupView())
 	if err != nil {
 		return nil, err
 	}
 
 	if len(seriesIDs) == 0 {
-		return connect.NewResponse(&managev1.ListMySeriesResponse{
+		return &managev1.ListMySeriesResponse{
 			Series: []*managev1.SeriesWithStats{},
 			Pagination: &commonv1.PaginationResponse{
 				Total:   0,
@@ -155,34 +192,26 @@ func (s *SeriesService) ListMySeries(
 				Offset:  0,
 				HasMore: false,
 			},
-		}), nil
+		}, nil
 	}
 
 	var seriesList []model.Series
 	var total int64
 
-	query := s.db.WithContext(ctx).Model(&model.Series{}).
+	stored := s.db.WithContext(ctx).Model(&model.Series{}).
 		Where("id IN ?", seriesIDs)
 
 	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Count(&total).Error; err != nil {
+		return nil, err
 	}
 
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
+	limit, offset := query.Page.limitOr(20), query.Page.Offset
 
-	query = query.Order("created_at DESC, id ASC")
+	stored = stored.Order("created_at DESC, id ASC")
 
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&seriesList).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Limit(int(limit)).Offset(int(offset)).Find(&seriesList).Error; err != nil {
+		return nil, err
 	}
 	if err := s.overlaySeriesSourceLocaleDocuments(ctx, seriesList); err != nil {
 		return nil, err
@@ -208,7 +237,7 @@ func (s *SeriesService) ListMySeries(
 		}
 	}
 
-	return connect.NewResponse(&managev1.ListMySeriesResponse{
+	return &managev1.ListMySeriesResponse{
 		Series: seriesWithStats,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
@@ -216,17 +245,14 @@ func (s *SeriesService) ListMySeries(
 			Offset:  offset,
 			HasMore: offset+limit < int32(total),
 		},
-	}), nil
+	}, nil
 }
 
 // ListSeriesAdmin returns all series with stats (admin only)
-func (s *SeriesService) ListSeriesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListSeriesAdminRequest],
-) (*connect.Response[managev1.ListSeriesAdminResponse], error) {
+func (s *Service) ListSeriesAdmin(ctx context.Context, query ListSeriesAdminQuery) (*managev1.ListSeriesAdminResponse, error) {
 	listCan, err := policyv1.PostSeries.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := requireSeriesPlatformPermission(ctx, s.permissions, listCan); err != nil {
 		return nil, err
@@ -235,38 +261,30 @@ func (s *SeriesService) ListSeriesAdmin(
 	var seriesList []model.Series
 	var total int64
 
-	query := s.db.WithContext(ctx).Model(&model.Series{})
+	stored := s.db.WithContext(ctx).Model(&model.Series{})
 
 	// Apply filters using FilterConfig
-	query, err = SeriesFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	stored, err = SeriesFilterConfig.ApplyFilters(stored, query.Filters)
 	if err != nil {
 		return nil, err
 	}
 
 	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Count(&total).Error; err != nil {
+		return nil, err
 	}
 
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
+	limit, offset := query.Page.limitOr(20), query.Page.Offset
 
 	// Apply sorting
-	query, err = seriesSortConfig.ApplySort(query, req.Msg.Sorts)
+	stored, err = seriesSortConfig.ApplySort(stored, query.Sorts)
 	if err != nil {
 		return nil, err
 	}
-	query = query.Order("id ASC")
+	stored = stored.Order("id ASC")
 
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&seriesList).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Limit(int(limit)).Offset(int(offset)).Find(&seriesList).Error; err != nil {
+		return nil, err
 	}
 	if err := s.overlaySeriesSourceLocaleDocuments(ctx, seriesList); err != nil {
 		return nil, err
@@ -292,7 +310,7 @@ func (s *SeriesService) ListSeriesAdmin(
 		}
 	}
 
-	return connect.NewResponse(&managev1.ListSeriesAdminResponse{
+	return &managev1.ListSeriesAdminResponse{
 		Series: seriesWithStats,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
@@ -300,30 +318,27 @@ func (s *SeriesService) ListSeriesAdmin(
 			Offset:  offset,
 			HasMore: offset+limit < int32(total),
 		},
-	}), nil
+	}, nil
 }
 
 // ListSeriesSimple returns all series for dropdowns
-func (s *SeriesService) ListSeriesSimple(
-	ctx context.Context,
-	req *connect.Request[managev1.ListSeriesSimpleRequest],
-) (*connect.Response[managev1.ListSeriesSimpleResponse], error) {
+func (s *Service) ListSeriesSimple(ctx context.Context, query ListSeriesSimpleQuery) (*managev1.ListSeriesSimpleResponse, error) {
 	seriesIDs, err := s.lookupSeriesResources(ctx, policyv1.PostSeries.LookupManage())
 	if err != nil {
 		return nil, err
 	}
 	if len(seriesIDs) == 0 {
-		return connect.NewResponse(&managev1.ListSeriesSimpleResponse{Series: []*managev1.SeriesSimple{}}), nil
+		return &managev1.ListSeriesSimpleResponse{Series: []*managev1.SeriesSimple{}}, nil
 	}
 
 	var seriesList []model.Series
 
-	query := s.db.WithContext(ctx).Model(&model.Series{}).
+	stored := s.db.WithContext(ctx).Model(&model.Series{}).
 		Where("id IN ?", seriesIDs).
 		Order("created_at ASC")
 
-	if err := query.Find(&seriesList).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Find(&seriesList).Error; err != nil {
+		return nil, err
 	}
 	if err := s.overlaySeriesSourceLocaleDocuments(ctx, seriesList); err != nil {
 		return nil, err
@@ -336,34 +351,26 @@ func (s *SeriesService) ListSeriesSimple(
 		simpleSeries[i] = toProtoSeriesSimple(&seriesList[i])
 	}
 
-	return connect.NewResponse(&managev1.ListSeriesSimpleResponse{
+	return &managev1.ListSeriesSimpleResponse{
 		Series: simpleSeries,
-	}), nil
+	}, nil
 }
 
-// CreateSeries creates a new series
-func (s *SeriesService) CreateSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateSeriesRequest],
-) (*connect.Response[managev1.Series], error) {
-	// Validate required fields
-	title := strings.TrimSpace(req.Msg.Title)
+// CreateSeries creates a draft Series. Publishing is an explicit later
+// transition.
+func (s *Service) CreateSeries(ctx context.Context, command CreateSeriesCommand) (*managev1.Series, error) {
+	title := strings.TrimSpace(command.Title)
 	if title == "" {
-		return nil, errs.Required("title")
+		return nil, domainerr.Required("title")
 	}
-
-	// Creation is always a draft. Publishing is an explicit later transition.
 	slug := seriesSlugFromTitle(title)
-	if req.Msg.Slug != nil {
-		slug = *req.Msg.Slug
+	if command.Slug != nil {
+		slug = *command.Slug
 	}
-	var err error
-	slug, err = validateSeriesSlug(slug)
+	slug, err := validateSeriesSlug(slug)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check slug uniqueness
 	if err := ensureSlugAvailable(ctx, s.db, &model.Series{}, "series", slug, ""); err != nil {
 		return nil, err
 	}
@@ -372,106 +379,103 @@ func (s *SeriesService) CreateSeries(
 	}
 
 	now := dbtime.Now()
-	sourceLocale := resolveInitialSourceLocale(ctx, s.db, s.kratosClient, req.Header().Get("Accept-Language"))
-	series := &model.Series{
-		Slug: slug, Status: managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(),
-		SourceLocale: sourceLocale, CreatedAt: now, UpdatedAt: &now,
-	}
-
-	createCan, err := policyv1.PostSeries.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := requireFreshSeriesPlatformPermission(ctx, tx, s.permissions, createCan); err != nil {
-			return err
-		}
-		if err := ensureSlugAvailable(ctx, tx, &model.Series{}, "series", slug, ""); err != nil {
-			return err
-		}
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "series", "series", slug); err != nil {
-			return err
-		}
-		contentDocumentID, err := createSeriesContentDocument(ctx, tx, now.UTC())
-		if err != nil {
-			return err
-		}
-		series.ContentDocumentID = contentDocumentID.String()
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
-			return err
-		}
-		if err := SaveSourceLocaleDocument(
-			ctx, tx, series.ID, sourceLocale,
-			&title, req.Msg.Description, now.UTC(),
-		); err != nil {
-			return err
-		}
-		if _, err := s.ogRefresh.RequestCurrent(
-			ctx, tx, series.ID, sourceLocale, false, "series_created",
-		); err != nil {
-			return err
-		}
-		series.SourceLocale = sourceLocale
-		series.Title = title
-		series.Description = req.Msg.Description
-		if err := s.appendPostSeriesCreatedAudit(ctx, tx, series.ID); err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.PostSeries.TouchPolicy(series.ID)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.PostSeries.DeletePolicy(series.ID)
-		if err != nil {
-			return err
-		}
-		return write([]policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete})
+	sourceLocale := resolveInitialSourceLocale(ctx, s.db, s.kratosClient, command.AcceptLanguage)
+	var audits seriesAudits
+	series, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.Series]{
+		Access: mutation.FreshCan(policyv1.PostSeries.Create()),
+		Change: func(ctx context.Context, tx *gorm.DB) (*model.Series, error) {
+			return s.createSeries(ctx, tx, command, title, slug, sourceLocale, now, &audits)
+		},
+		Audit: func(*model.Series) mutation.Audit { return audits.audit() },
+		Relationships: func(series *model.Series) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			touch, err := policyv1.PostSeries.TouchPolicy(series.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			remove, err := policyv1.PostSeries.DeletePolicy(series.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			return []policyv1.RelationshipMutation{touch}, []policyv1.RelationshipMutation{remove}, nil
+		},
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			return nil, errs.WithCause(errs.SlugAlreadyExists("series", slug), err)
+			return nil, domainerr.Duplicate("series", "slug", slug).WithCause(err)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	ogAsset, err := s.media.ReadyAsset(ctx, series.OgAssetID)
 	if err != nil {
 		return nil, err
 	}
 	protoSeries := s.toProtoSeries(series, ogAsset)
 	s.setSeriesFeaturedImageAsset(ctx, protoSeries)
-	return connect.NewResponse(protoSeries), nil
+	return protoSeries, nil
 }
 
-// CheckSeriesSlugAvailable checks if a slug is available.
-// If exclude_id is set, caller must have edit access to the series.
-func (s *SeriesService) CheckSeriesSlugAvailable(
+func (s *Service) createSeries(
 	ctx context.Context,
-	req *connect.Request[managev1.CheckSeriesSlugAvailableRequest],
-) (*connect.Response[managev1.CheckSeriesSlugAvailableResponse], error) {
-	slug, err := validateSeriesSlug(req.Msg.Slug)
+	tx *gorm.DB,
+	command CreateSeriesCommand,
+	title, slug, sourceLocale string,
+	now time.Time,
+	audits *seriesAudits,
+) (*model.Series, error) {
+	if err := ensureSlugAvailable(ctx, tx, &model.Series{}, "series", slug, ""); err != nil {
+		return nil, err
+	}
+	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "series", "series", slug); err != nil {
+		return nil, err
+	}
+	contentDocumentID, err := createSeriesContentDocument(ctx, tx, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	series := &model.Series{
+		Slug: slug, Status: managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(),
+		SourceLocale: sourceLocale, ContentDocumentID: contentDocumentID.String(), CreatedAt: now, UpdatedAt: &now,
+	}
+	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
+		return nil, err
+	}
+	if err := SaveSourceLocaleDocument(ctx, tx, series.ID, sourceLocale, &title, command.Description, now.UTC()); err != nil {
+		return nil, err
+	}
+	if _, err := s.ogRefresh.RequestCurrent(ctx, tx, series.ID, sourceLocale, false, "series_created"); err != nil {
+		return nil, err
+	}
+	series.SourceLocale = sourceLocale
+	series.Title = title
+	series.Description = command.Description
+	audits.created(series.ID)
+	return series, nil
+}
+
+// CheckSeriesSlugAvailable checks if a slug is available. With ExcludeID
+// the caller must be able to edit that Series.
+func (s *Service) CheckSeriesSlugAvailable(ctx context.Context, query CheckSeriesSlugAvailableQuery) (*managev1.CheckSeriesSlugAvailableResponse, error) {
+	slug, err := validateSeriesSlug(query.Slug)
 	if err != nil {
 		return nil, err
 	}
 	excludeID := ""
-	if req.Msg.ExcludeId != nil {
-		excludeID = *req.Msg.ExcludeId
+	if query.ExcludeID != nil {
+		excludeID = *query.ExcludeID
 	}
-
 	if excludeID != "" {
 		if err := s.requireSeriesPermissionOrNotFound(ctx, excludeID, policyv1.PostSeries.Edit); err != nil {
 			return nil, err
 		}
 	} else {
-		createCan, canErr := policyv1.PostSeries.Create()
-		if canErr != nil {
-			return nil, errs.Internal(canErr)
+		createCan, err := policyv1.PostSeries.Create()
+		if err != nil {
+			return nil, err
 		}
 		if err := requireSeriesPlatformPermission(ctx, s.permissions, createCan); err != nil {
 			return nil, err
 		}
 	}
-
 	available, err := isSlugAvailable(ctx, s.db, &model.Series{}, slug, excludeID)
 	if err != nil {
 		return nil, err
@@ -482,189 +486,189 @@ func (s *SeriesService) CheckSeriesSlugAvailable(
 			return nil, err
 		}
 	}
-
-	return connect.NewResponse(&managev1.CheckSeriesSlugAvailableResponse{
-		Available: available,
-	}), nil
+	return &managev1.CheckSeriesSlugAvailableResponse{Available: available}, nil
 }
 
-// DeleteSeries deletes a series
-func (s *SeriesService) DeleteSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteSeriesRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		var series model.Series
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.Id, policyv1.PostSeries.Delete); err != nil {
-			return err
+// seriesDeletion is a locked Series about to be deleted and the policy
+// relationships its deletion removes and would restore.
+type seriesDeletion struct {
+	series               model.Series
+	deleteRelationships  []policyv1.RelationshipMutation
+	restoreRelationships []policyv1.RelationshipMutation
+}
+
+func (s *Service) DeleteSeries(ctx context.Context, command DeleteSeriesCommand) error {
+	var audits seriesAudits
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[seriesDeletion]{
+		Access: lockedSeries(command.ID, policyv1.PostSeries.Delete),
+		Change: func(ctx context.Context, tx *gorm.DB) (seriesDeletion, error) {
+			return s.deleteSeries(ctx, tx, command.ID, &audits)
+		},
+		Audit: func(seriesDeletion) mutation.Audit { return audits.audit() },
+		Relationships: func(deletion seriesDeletion) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return deletion.deleteRelationships, deletion.restoreRelationships, nil
+		},
+	})
+	return err
+}
+
+func (s *Service) deleteSeries(ctx context.Context, tx *gorm.DB, seriesID string, audits *seriesAudits) (seriesDeletion, error) {
+	var deletion seriesDeletion
+	if err := tx.First(&deletion.series, "id = ?", seriesID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return seriesDeletion{}, domainerr.ResourceNotFound("series", seriesID)
 		}
-		if err := tx.First(&series, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("series", req.Msg.Id)
+		return seriesDeletion{}, err
+	}
+	series := deletion.series
+	if err := s.seriesDeletionRelationships(ctx, &deletion); err != nil {
+		return seriesDeletion{}, err
+	}
+	postIDs, err := s.postMembership.SeriesPostIDs(ctx, tx, series.ID)
+	if err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := lockSeriesOrderPosts(ctx, tx, s.postMembership, postIDs); err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := s.postMembership.ClearAllSeries(ctx, tx, series.ID, dbtime.Now()); err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := s.media.ReleaseFeaturedImage(ctx, tx, series.ID); err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := s.media.CancelAndReleaseOG(ctx, tx, series.ID); err != nil {
+		return seriesDeletion{}, err
+	}
+	// Delete cascades the manager attribution rows. Post relation columns are
+	// cleared together above so the paired series/order invariant is preserved.
+	if err := tx.Delete(&series).Error; err != nil {
+		return seriesDeletion{}, err
+	}
+	contentDocumentID, err := parseSeriesContentDocumentUUID(series.ContentDocumentID, "content_document_id")
+	if err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := deleteSeriesContentDocument(ctx, tx, contentDocumentID); err != nil {
+		return seriesDeletion{}, err
+	}
+	if err := s.menuTargets.Remove(ctx, tx, "series", series.ID, series.Slug); err != nil {
+		return seriesDeletion{}, err
+	}
+	audits.deleted(series.ID)
+	return deletion, nil
+}
+
+// seriesDeletionRelationships reads the Series policy relationships its
+// deletion removes and their exact restore.
+func (s *Service) seriesDeletionRelationships(ctx context.Context, deletion *seriesDeletion) error {
+	snapshotPlan, err := policyv1.PostSeries.Snapshot(deletion.series.ID)
+	if err != nil {
+		return err
+	}
+	snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
+	if err != nil {
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
+	}
+	if deletion.deleteRelationships, deletion.restoreRelationships, err = seriesAuthorizationSnapshotMutations(deletion.series.ID, snapshots); err != nil {
+		return err
+	}
+	if err := validateResourceDeletionAuthorizationBatchSize("series", deletion.deleteRelationships, deletion.restoreRelationships); err != nil {
+		return err
+	}
+	if len(deletion.deleteRelationships) == 0 {
+		return errors.New("series authorization relationships are missing")
+	}
+	return nil
+}
+
+// seriesFeaturedImage is the outcome of a featured image change.
+type seriesFeaturedImage struct {
+	asset             *commonv1.AssetRef
+	ogGenerationRunID *string
+}
+
+func (s *Service) SetSeriesFeaturedImage(ctx context.Context, command SetSeriesFeaturedImageCommand) (*managev1.SetSeriesFeaturedImageResponse, error) {
+	var audits seriesAudits
+	image, err := mutation.Run(ctx, s.mutations, mutation.Spec[seriesFeaturedImage]{
+		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.Edit),
+		Change: func(ctx context.Context, tx *gorm.DB) (seriesFeaturedImage, error) {
+			series, err := loadLockedSeries(tx, command.SeriesID)
+			if err != nil {
+				return seriesFeaturedImage{}, err
 			}
-			return errs.Internal(err)
-		}
-		snapshotPlan, err := policyv1.PostSeries.Snapshot(series.ID)
-		if err != nil {
-			return err
-		}
-		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
-		if err != nil {
-			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
-		}
-		deleteRelationships, restoreRelationships, err := seriesAuthorizationSnapshotMutations(series.ID, snapshots)
-		if err != nil {
-			return errs.Internal(err)
-		}
-		if err := validateResourceDeletionAuthorizationBatchSize("series", deleteRelationships, restoreRelationships); err != nil {
-			return err
-		}
-		if len(deleteRelationships) == 0 {
-			return errs.InternalMsg("series authorization relationships are missing")
-		}
-		var postIDs []string
-		if err := tx.Table("post").
-			Where("series_id = ?", series.ID).
-			Order("id ASC").
-			Pluck("id", &postIDs).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := lockSeriesOrderPosts(ctx, tx, postIDs); err != nil {
-			return err
-		}
-		if err := tx.Table("post").
-			Where("series_id = ?", series.ID).
-			Updates(structured.Fields{"series_id": nil, "series_order": nil}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := s.media.ReleaseFeaturedImage(ctx, tx, series.ID); err != nil {
-			return err
-		}
-		if err := s.media.CancelAndReleaseOG(ctx, tx, series.ID); err != nil {
-			return err
-		}
-		// Delete cascades the manager attribution rows. Post relation columns are
-		// cleared together above so the paired series/order invariant is preserved.
-		if err := tx.Delete(&series).Error; err != nil {
-			return errs.Internal(err)
-		}
-		contentDocumentID, err := parseSeriesContentDocumentUUID(series.ContentDocumentID, "content_document_id")
-		if err != nil {
-			return err
-		}
-		if err := deleteSeriesContentDocument(ctx, tx, contentDocumentID); err != nil {
-			return err
-		}
-		if err := s.menuTargets.Remove(ctx, tx, "series", series.ID, series.Slug); err != nil {
-			return err
-		}
-		if err := s.appendPostSeriesDeletedAudit(ctx, tx, series.ID); err != nil {
-			return err
-		}
-		return write(deleteRelationships, restoreRelationships)
+			if err := s.media.RequireAttachableFile(ctx, tx, command.FileID); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return seriesFeaturedImage{}, domainerr.ResourceNotFound("file", command.FileID)
+				}
+				return seriesFeaturedImage{}, err
+			}
+			if sameOptionalString(series.FeaturedImageFileID, &command.FileID) {
+				return seriesFeaturedImage{}, nil
+			}
+			if err := tx.Model(&series).Updates(structured.Fields{
+				"featured_image_file_id": command.FileID, "updated_at": time.Now().UTC(),
+			}).Error; err != nil {
+				return seriesFeaturedImage{}, err
+			}
+			var image seriesFeaturedImage
+			if image.asset, err = s.media.BindFeaturedImage(ctx, tx, command.FileID, series.ID); err != nil {
+				return seriesFeaturedImage{}, err
+			}
+			if image.ogGenerationRunID, err = s.ogRefresh.RequestCurrent(ctx, tx, series.ID, "", true, "series_featured_image_updated"); err != nil {
+				return seriesFeaturedImage{}, err
+			}
+			audits.featuredImage(series.ID, sharedtelemetry.AuditCollectionOperationAdded, command.FileID)
+			return image, nil
+		},
+		Audit: func(seriesFeaturedImage) mutation.Audit { return audits.audit() },
 	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return &managev1.SetSeriesFeaturedImageResponse{ImageAsset: image.asset, OgGenerationRunId: image.ogGenerationRunID}, nil
 }
 
-// SetSeriesFeaturedImage sets the featured image for a series.
-func (s *SeriesService) SetSeriesFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.SetSeriesFeaturedImageRequest],
-) (*connect.Response[managev1.SetSeriesFeaturedImageResponse], error) {
-	var imageAsset *commonv1.AssetRef
-	var ogGenerationRunID *string
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var series model.Series
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.SeriesId, policyv1.PostSeries.Edit); err != nil {
-			return err
-		}
-		if err := tx.First(&series, "id = ?", req.Msg.SeriesId).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("series", req.Msg.SeriesId)
+func (s *Service) DeleteSeriesFeaturedImage(ctx context.Context, command DeleteSeriesFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error) {
+	var audits seriesAudits
+	image, err := mutation.Run(ctx, s.mutations, mutation.Spec[seriesFeaturedImage]{
+		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.Edit),
+		Change: func(ctx context.Context, tx *gorm.DB) (seriesFeaturedImage, error) {
+			series, err := loadLockedSeries(tx, command.SeriesID)
+			if err != nil || series.FeaturedImageFileID == nil {
+				return seriesFeaturedImage{}, err
 			}
-			return errs.Internal(err)
-		}
-		if err := s.media.RequireAttachableFile(ctx, tx, req.Msg.FileId); err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("file", req.Msg.FileId)
+			oldFileID := *series.FeaturedImageFileID
+			if err := tx.Model(&series).Updates(structured.Fields{
+				"featured_image_file_id": nil, "updated_at": time.Now().UTC(),
+			}).Error; err != nil {
+				return seriesFeaturedImage{}, err
 			}
-			return err
-		}
-		if sameOptionalString(series.FeaturedImageFileID, &req.Msg.FileId) {
-			return nil
-		}
-		if err := tx.Model(&series).Updates(structured.Fields{
-			"featured_image_file_id": req.Msg.FileId, "updated_at": time.Now().UTC(),
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		ref, err := s.media.BindFeaturedImage(ctx, tx, req.Msg.FileId, series.ID)
-		if err != nil {
-			return err
-		}
-		imageAsset = ref
-		ogPlan, err := s.ogRefresh.RequestCurrent(
-			ctx, tx, series.ID, "", true, "series_featured_image_updated",
-		)
-		if err != nil {
-			return err
-		}
-		ogGenerationRunID = ogPlan
-		return s.appendPostSeriesFeaturedImageAudit(ctx, tx, series.ID, sharedtelemetry.AuditCollectionOperationAdded, req.Msg.FileId)
-	}); err != nil {
+			if err := s.media.ReleaseFeaturedImage(ctx, tx, series.ID); err != nil {
+				return seriesFeaturedImage{}, err
+			}
+			var image seriesFeaturedImage
+			if image.ogGenerationRunID, err = s.ogRefresh.RequestCurrent(ctx, tx, series.ID, "", true, "series_featured_image_removed"); err != nil {
+				return seriesFeaturedImage{}, err
+			}
+			audits.featuredImage(series.ID, sharedtelemetry.AuditCollectionOperationRemoved, oldFileID)
+			return image, nil
+		},
+		Audit: func(seriesFeaturedImage) mutation.Audit { return audits.audit() },
+	})
+	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.SetSeriesFeaturedImageResponse{
-		ImageAsset: imageAsset, OgGenerationRunId: ogGenerationRunID,
-	}), nil
+	return &managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: image.ogGenerationRunID}, nil
 }
 
-// DeleteSeriesFeaturedImage removes the featured image from a series.
-func (s *SeriesService) DeleteSeriesFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteSeriesFeaturedImageRequest],
-) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
-	var ogGenerationRunID *string
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var series model.Series
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.SeriesId, policyv1.PostSeries.Edit); err != nil {
-			return err
+func loadLockedSeries(tx *gorm.DB, seriesID string) (model.Series, error) {
+	var series model.Series
+	if err := tx.First(&series, "id = ?", seriesID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.Series{}, domainerr.ResourceNotFound("series", seriesID)
 		}
-		if err := tx.First(&series, "id = ?", req.Msg.SeriesId).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("series", req.Msg.SeriesId)
-			}
-			return errs.Internal(err)
-		}
-		if series.FeaturedImageFileID == nil {
-			return nil
-		}
-		oldFileID := *series.FeaturedImageFileID
-		if err := tx.Model(&series).Updates(structured.Fields{
-			"featured_image_file_id": nil, "updated_at": time.Now().UTC(),
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := s.media.ReleaseFeaturedImage(ctx, tx, series.ID); err != nil {
-			return err
-		}
-		ogPlan, err := s.ogRefresh.RequestCurrent(
-			ctx, tx, series.ID, "", true, "series_featured_image_removed",
-		)
-		if err != nil {
-			return err
-		}
-		ogGenerationRunID = ogPlan
-		return s.appendPostSeriesFeaturedImageAudit(ctx, tx, series.ID, sharedtelemetry.AuditCollectionOperationRemoved, oldFileID)
-	}); err != nil {
-		return nil, err
+		return model.Series{}, err
 	}
-	return connect.NewResponse(&managev1.OgAssetDeleteResponse{
-		Success: true, OgGenerationRunId: ogGenerationRunID,
-	}), nil
+	return series, nil
 }
-
-// GetSeriesWithManagers returns series with its members in one call

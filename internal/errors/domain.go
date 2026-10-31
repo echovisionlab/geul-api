@@ -2,6 +2,7 @@ package errors
 
 import (
 	stderrors "errors"
+	"fmt"
 
 	"connectrpc.com/connect"
 
@@ -23,8 +24,8 @@ var domainCodes = map[domainerr.Kind]connect.Code{
 // classification: a Connect error or a use-case error in its chain. Adapters
 // that are not Connect handlers (MCP tools) read use-case outcomes through it.
 func Classified(err error) (*connect.Error, bool) {
-	var connectErr *connect.Error
-	if stderrors.As(err, &connectErr) && connectErr != nil {
+	connectErr, domainErr := outermostClassification(err)
+	if connectErr != nil {
 		if err == connectErr { //nolint:errorlint // identity: an unwrapped Connect error needs no added context
 			return connectErr, true
 		}
@@ -32,8 +33,7 @@ func Classified(err error) (*connect.Error, bool) {
 		// without reaching the client.
 		return WithCause(connectErr, err), true
 	}
-	domainErr, ok := stderrors.AsType[*domainerr.Error](err)
-	if !ok || domainErr == nil {
+	if domainErr == nil {
 		return nil, false
 	}
 	code, known := domainCodes[domainErr.Kind]
@@ -41,6 +41,13 @@ func Classified(err error) (*connect.Error, bool) {
 		return nil, false
 	}
 	client := connect.NewError(code, stderrors.New(domainErr.Message))
+	if domainErr.Detail != nil {
+		detail, err := connect.NewErrorDetail(domainErr.Detail)
+		if err != nil {
+			return Internal(fmt.Errorf("encode use-case error detail: %w", err)), true
+		}
+		client.AddDetail(detail)
+	}
 	if err == error(domainErr) { //nolint:errorlint // identity: only the use-case error's own cause needs keeping
 		if cause := domainErr.Unwrap(); cause != nil {
 			return WithCause(client, cause), true
@@ -50,3 +57,39 @@ func Classified(err error) (*connect.Error, bool) {
 	return WithCause(client, err), true
 }
 
+// outermostClassification returns the first Connect or use-case error in
+// err's chain. A use case that answers a denial as not found keeps the
+// denial as its cause; the outer answer is the one the client sees.
+func outermostClassification(err error) (*connect.Error, *domainerr.Error) {
+	for err != nil {
+		switch classified := err.(type) { //nolint:errorlint // the chain is walked one link at a time
+		case *connect.Error:
+			return classified, nil
+		case *domainerr.Error:
+			return nil, classified
+		}
+		switch wrapped := err.(type) { //nolint:errorlint // the chain is walked one link at a time
+		case interface{ Unwrap() error }:
+			err = wrapped.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, branch := range wrapped.Unwrap() {
+				if connectErr, domainErr := outermostClassification(branch); connectErr != nil || domainErr != nil {
+					return connectErr, domainErr
+				}
+			}
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	return nil, nil
+}
+
+// CodeOf is connect.CodeOf for a chain that may carry a use-case error.
+// Code that branches on an outcome a use case reports reads it here.
+func CodeOf(err error) connect.Code {
+	if classified, ok := Classified(err); ok {
+		return classified.Code()
+	}
+	return connect.CodeOf(err)
+}

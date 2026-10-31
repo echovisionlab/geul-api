@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -19,7 +19,7 @@ func isSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Value, s
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	return count == 0, nil
 }
@@ -30,7 +30,7 @@ func ensureSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Valu
 		return err
 	}
 	if !available {
-		return errs.SlugAlreadyExists(entity, slug)
+		return domainerr.Duplicate(entity, "slug", slug)
 	}
 	return nil
 }

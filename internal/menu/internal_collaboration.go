@@ -2,31 +2,23 @@ package menu
 
 import (
 	"context"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
-// InternalMenuService owns persistence for one resident Menu source or
-// existing target locale room. The collaboration document is only a transient
-// projection of this aggregate.
-type InternalMenuService struct {
-	menus       *MenuService
-	checkpoints MenuCollaborationCheckpointFence
-}
-
+// MenuCollaborationCheckpointFence authorizes the contributors of a
+// collaboration save inside its transaction.
 type MenuCollaborationCheckpointFence interface {
 	RequireCurrentContributorsForPermission(
 		context.Context,
@@ -38,219 +30,208 @@ type MenuCollaborationCheckpointFence interface {
 	) error
 }
 
-func NewInternalMenuService(
-	menus *MenuService,
-	checkpoints MenuCollaborationCheckpointFence,
-) *InternalMenuService {
-	if menus == nil || checkpoints == nil {
-		panic("Menu collaboration dependencies are required")
-	}
-	return &InternalMenuService{menus: menus, checkpoints: checkpoints}
+// LoadMenuDocumentQuery reads one Menu source or existing target locale room.
+// The collaboration document is only a transient projection of the Menu.
+type LoadMenuDocumentQuery struct {
+	MenuID string
+	Locale string
 }
 
-func (s *InternalMenuService) LoadDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.LoadMenuDocumentRequest],
-) (*connect.Response[intrav1.LoadMenuDocumentResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	locale, err := canonicalMenuRoomLocale(req.Msg.Locale)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireCanonicalMenuCollaborationUUID(req.Msg.MenuId, "menu_id"); err != nil {
-		return nil, err
-	}
-
-	var response *connect.Response[intrav1.LoadMenuDocumentResponse]
-	err = s.menus.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		snapshot, err := loadMenuAIDocumentSnapshot(ctx, tx, req.Msg.MenuId, locale, false)
-		if err != nil {
-			return err
-		}
-		response = connect.NewResponse(&intrav1.LoadMenuDocumentResponse{
-			SourceLocale:     snapshot.SourceLocale,
-			Locale:           snapshot.Locale,
-			LocaleExists:     snapshot.LocaleExists,
-			Name:             snapshot.Name,
-			Items:            menuCollaborationItems(snapshot.Items),
-			SourceLabels:     cloneMenuLabels(snapshot.sourceLabels),
-			RequestedLabels:  cloneMenuLabels(snapshot.Labels),
-			DocumentRevision: snapshot.DocumentRevision,
-			TargetRevision:   optional.Clone(snapshot.TargetRevision),
-		})
-		return nil
-	})
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return response, nil
+// SaveMenuDocumentCommand saves one collaboration room. Items carry the
+// collaboration item tree; ContributorMemberIDs name the one origin Member
+// editor-collab derived from admitted frames.
+type SaveMenuDocumentCommand struct {
+	MenuID                   string
+	Locale                   string
+	ExpectedDocumentRevision string
+	ExpectedTargetRevision   *string
+	Name                     string
+	Items                    []*intrav1.MenuCollaborationItem
+	RequestedLabels          map[string]string
+	ContributorMemberIDs     []string
 }
 
-func (s *InternalMenuService) SaveDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.SaveMenuDocumentRequest],
-) (*connect.Response[intrav1.SaveMenuDocumentResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	r := req.Msg
-	locale, err := canonicalMenuRoomLocale(r.Locale)
+func (s *Service) LoadMenuDocument(ctx context.Context, query LoadMenuDocumentQuery) (*intrav1.LoadMenuDocumentResponse, error) {
+	locale, err := canonicalMenuRoomLocale(query.Locale)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireCanonicalMenuCollaborationUUID(r.MenuId, "menu_id"); err != nil {
+	if err := requireCanonicalMenuCollaborationUUID(query.MenuID, "menu_id"); err != nil {
 		return nil, err
 	}
-	if err := requireCanonicalMenuCollaborationUUID(r.ExpectedDocumentRevision, "expected_document_revision"); err != nil {
-		return nil, err
-	}
-	contributor, err := canonicalMenuCollaborationContributor(r.ContributorMemberIds)
+	snapshot, err := loadMenuAIDocumentSnapshot(ctx, s.db, query.MenuID, locale, false)
 	if err != nil {
 		return nil, err
 	}
-	nextItems := menuAIDocumentItems(r.Items)
-	targetReferences := collectMenuTargetReferences(
-		s.menus.modelItemsToProto(aiDocumentItemsToModel(nextItems)),
-	)
+	return &intrav1.LoadMenuDocumentResponse{
+		SourceLocale:     snapshot.SourceLocale,
+		Locale:           snapshot.Locale,
+		LocaleExists:     snapshot.LocaleExists,
+		Name:             snapshot.Name,
+		Items:            menuCollaborationItems(snapshot.Items),
+		SourceLabels:     cloneMenuLabels(snapshot.sourceLabels),
+		RequestedLabels:  cloneMenuLabels(snapshot.Labels),
+		DocumentRevision: snapshot.DocumentRevision,
+		TargetRevision:   optional.Clone(snapshot.TargetRevision),
+	}, nil
+}
 
-	var result AIDocumentApplyResult
-	err = s.menus.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Keep the domain-wide lock order used by direct Menu writes: concrete
-		// targets first, then the owning Menu root and locale rows.
-		if err := s.menus.targets.ValidateAndLock(ctx, tx, targetReferences); err != nil {
-			return err
-		}
-		previous, err := loadMenuAIDocumentSnapshot(ctx, tx, r.MenuId, locale, true)
-		if err != nil {
-			return err
-		}
-		if previous.DocumentRevision != r.ExpectedDocumentRevision {
-			return errs.CollaborationConflict(
-				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-				"Menu document changed; reload before saving", errs.CollaborationState{Document: previous.DocumentRevision},
+// menuRoomSave is a validated collaboration save against the locked Menu.
+type menuRoomSave struct {
+	previous AIDocumentSnapshot
+	compiled compiledMenuAIDocument
+}
+
+func (s *Service) SaveMenuDocument(ctx context.Context, command SaveMenuDocumentCommand) (*intrav1.SaveMenuDocumentResponse, error) {
+	locale, err := canonicalMenuRoomLocale(command.Locale)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireCanonicalMenuCollaborationUUID(command.MenuID, "menu_id"); err != nil {
+		return nil, err
+	}
+	if err := requireCanonicalMenuCollaborationUUID(command.ExpectedDocumentRevision, "expected_document_revision"); err != nil {
+		return nil, err
+	}
+	contributor, err := canonicalMenuCollaborationContributor(command.ContributorMemberIDs)
+	if err != nil {
+		return nil, err
+	}
+	nextItems := menuAIDocumentItems(command.Items)
+	targetReferences := collectMenuTargetReferences(modelItemsToProto(aiDocumentItemsToModel(nextItems)))
+
+	var save menuRoomSave
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[AIDocumentApplyResult]{
+		// editor-collab calls as itself: the save is authorized by the
+		// contributors' current permission, which the checkpoint fence reads
+		// once the room is locked and the change is known.
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+			// Keep the domain-wide lock order used by direct Menu writes:
+			// concrete targets first, then the owning Menu root and locale rows.
+			if err := s.targets.ValidateAndLock(ctx, tx, targetReferences); err != nil {
+				return err
+			}
+			var err error
+			if save, err = lockMenuRoomSave(ctx, tx, command, locale, nextItems); err != nil || !save.compiled.changed {
+				return err
+			}
+			return s.checkpoints.RequireCurrentContributorsForPermission(
+				ctx, tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MENU,
+				command.MenuID, command.ContributorMemberIDs, menuRoomPermission(save.previous, save.compiled),
 			)
-		}
-		if locale != previous.SourceLocale {
-			if !previous.LocaleExists {
-				return errs.FailedPrecondition("Menu target locale document does not exist")
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (AIDocumentApplyResult, error) {
+			if !save.compiled.changed {
+				return AIDocumentApplyResult{
+					DocumentRevision: save.previous.DocumentRevision,
+					TargetRevision:   optional.Clone(save.previous.TargetRevision),
+				}, nil
 			}
-			if !optional.Equal(previous.TargetRevision, r.ExpectedTargetRevision) {
-				return errs.CollaborationConflict(
-					intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-					"Menu target changed; reload before saving", errs.CollaborationState{Document: previous.DocumentRevision, Target: *previous.TargetRevision, TargetExists: &previous.LocaleExists},
-				)
+			if err := s.persistAIDocument(ctx, tx, save.previous, save.compiled, time.Now().UTC()); err != nil {
+				return AIDocumentApplyResult{}, err
 			}
-		} else if r.ExpectedTargetRevision != nil {
-			return errs.InvalidArgument("expected_target_revision", "source locale has no target revision")
-		}
-
-		carryMenuRootLabels(nextItems, previous.Items)
-		next := cloneMenuAIDocumentSnapshot(previous)
-		next.Name = r.Name
-		next.Items = nextItems
-		next.Labels = cloneMenuLabels(r.RequestedLabels)
-
-		isSource := locale == previous.SourceLocale
-		if !isSource {
-			if r.Name != previous.Name || !equalAIDocumentItems(previous.Items, nextItems) {
-				return errs.CollaborationMutationRejection(
-					intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-					"Menu target room cannot change shared structure",
-				)
-			}
-		}
-		if err := validateMenuCollaborationSnapshot(s.menus, previous, next, isSource); err != nil {
-			return err
-		}
-
-		sourceChanged := isSource &&
-			(previous.Name != next.Name || !equalAIDocumentItems(previous.Items, next.Items))
-		labelsChanged := !menuLabelsEqual(previous.Labels, next.Labels)
-		changed := sourceChanged || labelsChanged
-		if !changed {
-			result = AIDocumentApplyResult{
-				DocumentRevision: previous.DocumentRevision,
-				TargetRevision:   optional.Clone(previous.TargetRevision),
-			}
-			return nil
-		}
-
-		permission := intrav1.CollaborationPermission_COLLABORATION_PERMISSION_EDIT
-		if sourceChanged && !menuAIDocumentTopologyEqual(previous.Items, next.Items) {
-			permission = intrav1.CollaborationPermission_COLLABORATION_PERMISSION_MANAGE
-		}
-		if err := s.checkpoints.RequireCurrentContributorsForPermission(
-			ctx, tx,
-			intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MENU,
-			r.MenuId, r.ContributorMemberIds, permission,
-		); err != nil {
-			return err
-		}
-
-		now := time.Now().UTC()
-		compiled := compiledMenuAIDocument{
-			snapshot: next, changed: true,
-			sourceChanged:       sourceChanged,
-			sourceValuesChanged: isSource && labelsChanged,
-			targetChanged:       !isSource && labelsChanged,
-		}
-		if sourceChanged {
-			if err := s.menus.persistAIDocumentSource(ctx, tx, previous, next, now); err != nil {
-				return err
-			}
-		}
-		if compiled.sourceValuesChanged {
-			if err := persistMenuAIDocumentSourceValues(ctx, tx, previous, next, now); err != nil {
-				return err
-			}
-		}
-		if sourceChanged || compiled.sourceValuesChanged {
-			expected, err := parseMenuContentDocumentUUID(previous.DocumentRevision, "content_document.revision")
+			reloaded, err := loadMenuAIDocumentSnapshot(ctx, tx, command.MenuID, locale, true)
 			if err != nil {
-				return err
+				return AIDocumentApplyResult{}, err
 			}
-			if err := advanceMenuContentDocument(
-				ctx, tx, previous.ID, previous.contentDocumentID, expected, now,
-			); err != nil {
-				return err
+			return AIDocumentApplyResult{
+				DocumentRevision: reloaded.DocumentRevision,
+				TargetRevision:   optional.Clone(reloaded.TargetRevision),
+				Changed:          true,
+			}, nil
+		},
+		Audit: func(result AIDocumentApplyResult) mutation.Audit {
+			if !result.Changed {
+				return mutation.Unchanged()
 			}
-		}
-		if compiled.targetChanged {
-			if err := persistMenuAIDocumentTarget(ctx, tx, previous, next, false, now); err != nil {
-				return err
-			}
-		}
-		if err := appendMenuCollaborationAudit(
-			ctx, tx, s.menus.auditWriter, contributor, previous, compiled,
-		); err != nil {
-			return err
-		}
-		reloaded, err := loadMenuAIDocumentSnapshot(ctx, tx, r.MenuId, locale, true)
-		if err != nil {
-			return err
-		}
-		result = AIDocumentApplyResult{
-			DocumentRevision: reloaded.DocumentRevision,
-			TargetRevision:   optional.Clone(reloaded.TargetRevision),
-			Changed:          true,
-		}
-		return nil
+			return mutation.MemberAudit(contributor, sharedtelemetry.AuditMenuUpdated, menuDocumentAuditRecord(save.previous, save.compiled, false))
+		},
 	})
 	if err != nil {
-		return nil, errs.Wrap(err)
+		return nil, err
 	}
-	return connect.NewResponse(&intrav1.SaveMenuDocumentResponse{
+	return &intrav1.SaveMenuDocumentResponse{
 		Locale: locale, DocumentRevision: result.DocumentRevision, TargetRevision: result.TargetRevision,
-	}), nil
+	}, nil
+}
+
+// lockMenuRoomSave locks the room, rejects a save against stale revisions
+// or one a target room may not make, and compiles what the save changes.
+func lockMenuRoomSave(ctx context.Context, tx *gorm.DB, command SaveMenuDocumentCommand, locale string, nextItems []AIDocumentItem) (menuRoomSave, error) {
+	previous, err := loadMenuAIDocumentSnapshot(ctx, tx, command.MenuID, locale, true)
+	if err != nil {
+		return menuRoomSave{}, err
+	}
+	if err := requireCurrentMenuRoom(previous, command, locale); err != nil {
+		return menuRoomSave{}, err
+	}
+	carryMenuRootLabels(nextItems, previous.Items)
+	next := cloneMenuAIDocumentSnapshot(previous)
+	next.Name = command.Name
+	next.Items = nextItems
+	next.Labels = cloneMenuLabels(command.RequestedLabels)
+
+	isSource := locale == previous.SourceLocale
+	if !isSource && (command.Name != previous.Name || !equalAIDocumentItems(previous.Items, nextItems)) {
+		return menuRoomSave{}, domainerr.CollaborationRejection(
+			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+			"Menu target room cannot change shared structure",
+		)
+	}
+	if err := validateMenuCollaborationSnapshot(previous, next, isSource); err != nil {
+		return menuRoomSave{}, err
+	}
+	sourceChanged := isSource && (previous.Name != next.Name || !equalAIDocumentItems(previous.Items, next.Items))
+	labelsChanged := !menuLabelsEqual(previous.Labels, next.Labels)
+	return menuRoomSave{previous: previous, compiled: compiledMenuAIDocument{
+		snapshot: next, changed: sourceChanged || labelsChanged,
+		sourceChanged:       sourceChanged,
+		sourceValuesChanged: isSource && labelsChanged,
+		targetChanged:       !isSource && labelsChanged,
+	}}, nil
+}
+
+// requireCurrentMenuRoom rejects a save whose expected revisions no longer
+// match the locked room.
+func requireCurrentMenuRoom(previous AIDocumentSnapshot, command SaveMenuDocumentCommand, locale string) error {
+	if previous.DocumentRevision != command.ExpectedDocumentRevision {
+		return domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
+			"Menu document changed; reload before saving", domainerr.CollaborationRevisions{Document: previous.DocumentRevision},
+		)
+	}
+	if locale == previous.SourceLocale {
+		if command.ExpectedTargetRevision != nil {
+			return domainerr.InvalidField("expected_target_revision", "source locale has no target revision")
+		}
+		return nil
+	}
+	if !previous.LocaleExists {
+		return domainerr.Precondition("Menu target locale document does not exist")
+	}
+	if !optional.Equal(previous.TargetRevision, command.ExpectedTargetRevision) {
+		return domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+			"Menu target changed; reload before saving", domainerr.CollaborationRevisions{Document: previous.DocumentRevision, Target: *previous.TargetRevision, TargetExists: &previous.LocaleExists},
+		)
+	}
+	return nil
+}
+
+// menuRoomPermission is Edit, or Manage when the save changes the item
+// topology.
+func menuRoomPermission(previous AIDocumentSnapshot, compiled compiledMenuAIDocument) intrav1.CollaborationPermission {
+	if compiled.sourceChanged && !menuAIDocumentTopologyEqual(previous.Items, compiled.snapshot.Items) {
+		return intrav1.CollaborationPermission_COLLABORATION_PERMISSION_MANAGE
+	}
+	return intrav1.CollaborationPermission_COLLABORATION_PERMISSION_EDIT
 }
 
 func canonicalMenuRoomLocale(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	normalized := localization.NormalizeSupportedLocale(trimmed)
 	if value != trimmed || normalized == nil || *normalized != trimmed {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return trimmed, nil
 }
@@ -259,14 +240,14 @@ func requireCanonicalMenuCollaborationUUID(value, field string) error {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(trimmed)
 	if err != nil || parsed == uuid.Nil || parsed.String() != trimmed || value != trimmed {
-		return errs.InvalidArgument(field, "must be a canonical UUID")
+		return domainerr.InvalidField(field, "must be a canonical UUID")
 	}
 	return nil
 }
 
 func canonicalMenuCollaborationContributor(values []string) (string, error) {
 	if len(values) != 1 {
-		return "", errs.InvalidArgument("contributor_member_ids", "requires exactly one origin Member")
+		return "", domainerr.InvalidField("contributor_member_ids", "requires exactly one origin Member")
 	}
 	if err := requireCanonicalMenuCollaborationUUID(values[0], "contributor_member_ids"); err != nil {
 		return "", err
@@ -330,25 +311,24 @@ func carryMenuRootLabels(next, current []AIDocumentItem) {
 }
 
 func validateMenuCollaborationSnapshot(
-	service *MenuService,
 	previous, next AIDocumentSnapshot,
 	isSource bool,
 ) error {
 	if isSource {
-		if err := service.validateMenuName(next.Name); err != nil {
+		if err := validateMenuName(next.Name); err != nil {
 			return err
 		}
 		if err := validateAIDocumentItemConfiguration(next.Items); err != nil {
-			return errs.InvalidArgument("items", err.Error())
+			return domainerr.InvalidField("items", err.Error())
 		}
 		validationItems := aiDocumentItemsToModel(next.Items)
 		fillMissingMenuLabelsForStructuralValidation(validationItems)
-		if err := service.validateMenuItems(service.modelItemsToProto(validationItems), 0); err != nil {
+		if err := validateMenuItems(modelItemsToProto(validationItems), 0); err != nil {
 			return err
 		}
 	}
 	if err := validateAIDocumentLocaleLabels(next.Labels); err != nil {
-		return errs.InvalidArgument("requested_labels", err.Error())
+		return domainerr.InvalidField("requested_labels", err.Error())
 	}
 	items := make(map[string]AIDocumentItem)
 	var collect func([]AIDocumentItem)
@@ -362,11 +342,11 @@ func validateMenuCollaborationSnapshot(
 	for id := range next.Labels {
 		item, exists := items[id]
 		if !exists || !item.OwnsLabel(next.Locale) {
-			return errs.InvalidArgument("requested_labels", "contains a label not owned by this locale")
+			return domainerr.InvalidField("requested_labels", "contains a label not owned by this locale")
 		}
 	}
 	if !isSource && !previous.LocaleExists {
-		return errs.FailedPrecondition("Menu target locale document does not exist")
+		return domainerr.Precondition("Menu target locale document does not exist")
 	}
 	return nil
 }
@@ -403,33 +383,4 @@ func menuAIDocumentTopologyEqual(left, right []AIDocumentItem) bool {
 		}
 	}
 	return true
-}
-
-func appendMenuCollaborationAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	memberID string,
-	previous AIDocumentSnapshot,
-	compiled compiledMenuAIDocument,
-) error {
-	return domainaudit.AppendMember(
-		ctx, tx, writer, memberID, sharedtelemetry.AuditMenuUpdated,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			if compiled.targetChanged {
-				return sharedtelemetry.NewMenuLocaleContentAuditRecord(
-					metadata, previous.ID, previous.Locale, sharedtelemetry.AuditItemOperationUpdated,
-				)
-			}
-			fields := make([]string, 0, 2)
-			if previous.Name != compiled.snapshot.Name {
-				fields = append(fields, "name")
-			}
-			if !equalAIDocumentItems(previous.Items, compiled.snapshot.Items) || compiled.sourceValuesChanged {
-				fields = append(fields, "items")
-			}
-			sort.Strings(fields)
-			return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, previous.ID, fields)
-		},
-	)
 }

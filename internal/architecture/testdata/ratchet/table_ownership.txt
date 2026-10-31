@@ -281,7 +281,6 @@
 1 internal/routeregistry -> page
 4 internal/series -> content_document
 1 internal/series -> member
-16 internal/series -> post
 2 internal/transcode/application -> file
 10 internal/transcode/application -> file_derivative
 2 internal/transcode/application -> media_generation

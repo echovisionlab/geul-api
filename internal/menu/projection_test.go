@@ -8,7 +8,7 @@ import (
 )
 
 func TestMenuResponsePreservesSourceLocale(t *testing.T) {
-	response, err := new(MenuService).toProtoMenu(&model.Menu{SourceLocale: "pt-BR"})
+	response, err := toProtoMenu(&model.Menu{SourceLocale: "pt-BR"})
 	require.NoError(t, err)
 	require.Equal(t, "pt-BR", response.SourceLocale)
 }

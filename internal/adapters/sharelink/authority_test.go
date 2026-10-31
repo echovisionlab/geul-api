@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -41,19 +41,19 @@ func TestAuthorityChecksOrdinaryShareLinkActionExactlyOnceForEveryTarget(t *test
 
 	targets := []struct {
 		name           string
-		entityType     managev1.ShareLinkEntityType
+		entityType     sharelink.EntityType
 		expectedAction auth.ResourceAction
 	}{
-		{name: "post", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, expectedAction: policyv1.Post.ManageShareLinks},
-		{name: "page", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, expectedAction: policyv1.Page.ManageShareLinks},
-		{name: "work", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, expectedAction: policyv1.Work.ManageShareLinks},
-		{name: "release", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, expectedAction: policyv1.Release.ManageShareLinks},
-		{name: "form", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, expectedAction: policyv1.Form.ManageShareLinks},
-		{name: "form dashboard", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD, expectedAction: policyv1.Form.ManageShareLinks},
-		{name: "artist", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, expectedAction: policyv1.Artist.ManageShareLinks},
-		{name: "label", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, expectedAction: policyv1.Label.ManageShareLinks},
-		{name: "privacy", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY, expectedAction: policyv1.PrivacyHistory.ManageShareLinks},
-		{name: "terms", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS, expectedAction: policyv1.TermsHistory.ManageShareLinks},
+		{name: "post", entityType: sharelink.EntityPost, expectedAction: policyv1.Post.ManageShareLinks},
+		{name: "page", entityType: sharelink.EntityPage, expectedAction: policyv1.Page.ManageShareLinks},
+		{name: "work", entityType: sharelink.EntityWork, expectedAction: policyv1.Work.ManageShareLinks},
+		{name: "release", entityType: sharelink.EntityRelease, expectedAction: policyv1.Release.ManageShareLinks},
+		{name: "form", entityType: sharelink.EntityForm, expectedAction: policyv1.Form.ManageShareLinks},
+		{name: "form dashboard", entityType: sharelink.EntityFormDashboard, expectedAction: policyv1.Form.ManageShareLinks},
+		{name: "artist", entityType: sharelink.EntityArtist, expectedAction: policyv1.Artist.ManageShareLinks},
+		{name: "label", entityType: sharelink.EntityLabel, expectedAction: policyv1.Label.ManageShareLinks},
+		{name: "privacy", entityType: sharelink.EntityPrivacy, expectedAction: policyv1.PrivacyHistory.ManageShareLinks},
+		{name: "terms", entityType: sharelink.EntityTerms, expectedAction: policyv1.TermsHistory.ManageShareLinks},
 	}
 	operations := []authorityTestOperation{authorityOperationList, authorityOperationCreate, authorityOperationDelete}
 
@@ -68,12 +68,14 @@ func TestAuthorityChecksOrdinaryShareLinkActionExactlyOnceForEveryTarget(t *test
 				entityID := uuid.NewString()
 				seedAuthorityTarget(t, db, target.entityType, entityID, false)
 				checker := &recordingPermissionChecker{allowed: true}
-				authority := newAuthority(db, checker, nil)
+				authority := newAuthority(db, checker)
 
-				continued, err := executeAuthorityOperation(t, authority, target.entityType, entityID, operation)
+				locked, err := executeAuthorityOperation(t, authority, target.entityType, entityID, operation)
 				require.NoError(t, err)
-				require.Equal(t, operation != authorityOperationList, continued)
-				requirePermissionCheck(t, checker, target.expectedAction, entityID)
+				requireOperationAction(t, checker, locked, operation, target.expectedAction, entityID)
+				if operation != authorityOperationList {
+					require.NoError(t, locked.Lifecycle)
+				}
 			})
 		}
 	}
@@ -84,15 +86,15 @@ func TestAuthoritySelectsArchivedReadAndMutationPermissionsExactlyOnce(t *testin
 
 	targets := []struct {
 		name         string
-		entityType   managev1.ShareLinkEntityType
+		entityType   sharelink.EntityType
 		viewArchived auth.ResourceAction
 		editArchived auth.ResourceAction
 		legal        bool
 	}{
-		{name: "post", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, viewArchived: policyv1.Post.ViewArchived, editArchived: policyv1.Post.EditArchived},
-		{name: "work", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK, viewArchived: policyv1.Work.ViewArchived, editArchived: policyv1.Work.EditArchived},
-		{name: "privacy", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY, viewArchived: policyv1.PrivacyHistory.ViewArchived, editArchived: policyv1.PrivacyHistory.EditArchived, legal: true},
-		{name: "terms", entityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS, viewArchived: policyv1.TermsHistory.ViewArchived, editArchived: policyv1.TermsHistory.EditArchived, legal: true},
+		{name: "post", entityType: sharelink.EntityPost, viewArchived: policyv1.Post.ViewArchived, editArchived: policyv1.Post.EditArchived},
+		{name: "work", entityType: sharelink.EntityWork, viewArchived: policyv1.Work.ViewArchived, editArchived: policyv1.Work.EditArchived},
+		{name: "privacy", entityType: sharelink.EntityPrivacy, viewArchived: policyv1.PrivacyHistory.ViewArchived, editArchived: policyv1.PrivacyHistory.EditArchived, legal: true},
+		{name: "terms", entityType: sharelink.EntityTerms, viewArchived: policyv1.TermsHistory.ViewArchived, editArchived: policyv1.TermsHistory.EditArchived, legal: true},
 	}
 	operations := []authorityTestOperation{authorityOperationList, authorityOperationCreate, authorityOperationDelete}
 
@@ -107,109 +109,100 @@ func TestAuthoritySelectsArchivedReadAndMutationPermissionsExactlyOnce(t *testin
 				entityID := uuid.NewString()
 				seedAuthorityTarget(t, db, target.entityType, entityID, true)
 				checker := &recordingPermissionChecker{allowed: true}
-				authority := newAuthority(db, checker, nil)
+				authority := newAuthority(db, checker)
 
-				continued, err := executeAuthorityOperation(t, authority, target.entityType, entityID, operation)
+				locked, err := executeAuthorityOperation(t, authority, target.entityType, entityID, operation)
 				expectedAction := target.editArchived
 				if operation == authorityOperationList {
 					expectedAction = target.viewArchived
 				}
-				requirePermissionCheck(t, checker, expectedAction, entityID)
-				if target.legal {
+				if target.legal && operation == authorityOperationList {
+					requirePermissionCheck(t, checker, expectedAction, entityID)
 					require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-					require.False(t, continued)
 					return
 				}
 				require.NoError(t, err)
-				require.Equal(t, operation != authorityOperationList, continued)
+				requireOperationAction(t, checker, locked, operation, expectedAction, entityID)
+				if target.legal {
+					require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(locked.Lifecycle))
+				}
 			})
 		}
 	}
 }
 
-func TestAuthorityMasksMissingAndDeniedPrivateTargets(t *testing.T) {
+func TestAuthorityMasksMissingAndDeniedListTargets(t *testing.T) {
 	t.Parallel()
 
-	operations := []authorityTestOperation{authorityOperationList, authorityOperationCreate, authorityOperationDelete}
-	for _, operation := range operations {
-		operation := operation
-		for _, existing := range []bool{false, true} {
-			existing := existing
-			name := "missing"
-			if existing {
-				name = "denied"
-			}
-			t.Run(name+"/"+string(operation), func(t *testing.T) {
-				t.Parallel()
-
-				db := newAuthorityUnitDB(t)
-				entityID := uuid.NewString()
-				if existing {
-					seedAuthorityTarget(t, db, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, entityID, false)
-				}
-				checker := &recordingPermissionChecker{}
-				authority := newAuthority(db, checker, nil)
-
-				continued, err := executeAuthorityOperation(t, authority, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, entityID, operation)
-				require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-				require.False(t, continued)
-				if !existing {
-					require.Empty(t, checker.calls)
-					return
-				}
-				requirePermissionCheck(t, checker, policyv1.Page.ManageShareLinks, entityID)
-			})
+	for _, existing := range []bool{false, true} {
+		existing := existing
+		name := "missing"
+		if existing {
+			name = "denied"
 		}
-	}
-}
-
-func TestAuthorityChecksPermissionBeforeLegalPreviewInvariant(t *testing.T) {
-	t.Parallel()
-
-	for _, allowed := range []bool{false, true} {
-		allowed := allowed
-		t.Run(map[bool]string{false: "denied", true: "allowed"}[allowed], func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			db := newAuthorityUnitDB(t)
 			entityID := uuid.NewString()
-			require.NoError(t, db.Exec(
-				`INSERT INTO privacy_history (id, status, effective_from) VALUES (?, ?, ?)`,
-				entityID,
-				managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(),
-				time.Now().UTC().Add(time.Hour),
-			).Error)
-			checker := &recordingPermissionChecker{allowed: allowed}
-			authority := newAuthority(db, checker, nil)
+			if existing {
+				seedAuthorityTarget(t, db, sharelink.EntityPage, entityID, false)
+			}
+			checker := &recordingPermissionChecker{}
+			authority := newAuthority(db, checker)
 
-			continued, err := executeAuthorityOperation(
-				t, authority, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY, entityID, authorityOperationCreate,
-			)
-			requirePermissionCheck(t, checker, policyv1.PrivacyHistory.ManageShareLinks, entityID)
-			require.False(t, continued)
-			if allowed {
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+			_, err := executeAuthorityOperation(t, authority, sharelink.EntityPage, entityID, authorityOperationList)
+			require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+			if !existing {
+				require.Empty(t, checker.calls)
 				return
 			}
-			require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+			requirePermissionCheck(t, checker, policyv1.Page.ManageShareLinks, entityID)
 		})
 	}
 }
 
-func TestAuthorityMapsSpiceDBFailureWithoutRunningMutation(t *testing.T) {
+func TestAuthorityRejectsLockingAMissingTarget(t *testing.T) {
+	t.Parallel()
+
+	checker := &recordingPermissionChecker{}
+	_, err := executeAuthorityOperation(t, newAuthority(newAuthorityUnitDB(t), checker), sharelink.EntityPage, uuid.NewString(), authorityOperationCreate)
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Empty(t, checker.calls)
+}
+
+// The use case checks the selected action before the lifecycle, so the
+// legal preview invariant reveals nothing to a caller without it.
+func TestAuthorityReportsTheLegalPreviewInvariantSeparately(t *testing.T) {
 	t.Parallel()
 
 	db := newAuthorityUnitDB(t)
 	entityID := uuid.NewString()
-	seedAuthorityTarget(t, db, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, entityID, false)
-	checker := &recordingPermissionChecker{err: errors.New("spicedb unavailable")}
-	authority := newAuthority(db, checker, nil)
+	require.NoError(t, db.Exec(
+		`INSERT INTO privacy_history (id, status, effective_from, version) VALUES (?, ?, ?, 7)`,
+		entityID,
+		managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(),
+		time.Now().UTC().Add(time.Hour),
+	).Error)
+	checker := &recordingPermissionChecker{}
 
-	continued, err := executeAuthorityOperation(
-		t, authority, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, entityID, authorityOperationDelete,
-	)
+	locked, err := executeAuthorityOperation(t, newAuthority(db, checker), sharelink.EntityPrivacy, entityID, authorityOperationCreate)
+	require.NoError(t, err)
+	requireOperationAction(t, checker, locked, authorityOperationCreate, policyv1.PrivacyHistory.ManageShareLinks, entityID)
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(locked.Lifecycle))
+}
+
+func TestAuthorityMapsSpiceDBFailureOfAList(t *testing.T) {
+	t.Parallel()
+
+	db := newAuthorityUnitDB(t)
+	entityID := uuid.NewString()
+	seedAuthorityTarget(t, db, sharelink.EntityLabel, entityID, false)
+	checker := &recordingPermissionChecker{err: errors.New("spicedb unavailable")}
+	authority := newAuthority(db, checker)
+
+	_, err := executeAuthorityOperation(t, authority, sharelink.EntityLabel, entityID, authorityOperationList)
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
-	require.False(t, continued)
 	requirePermissionCheck(t, checker, policyv1.Label.ManageShareLinks, entityID)
 }
 
@@ -224,32 +217,49 @@ const (
 func executeAuthorityOperation(
 	t *testing.T,
 	authority *Authority,
-	entityType managev1.ShareLinkEntityType,
+	entityType sharelink.EntityType,
 	entityID string,
 	operation authorityTestOperation,
-) (bool, error) {
+) (sharelink.LockedTarget, error) {
 	t.Helper()
-	continued := false
-	link := model.ShareLink{ID: uuid.NewString(), EntityType: entityType.String(), EntityID: entityID}
 	switch operation {
 	case authorityOperationList:
-		return false, authority.AuthorizeList(authorityTestContext(), entityType, entityID)
-	case authorityOperationCreate:
-		err := authority.Create(authorityTestContext(), entityType, entityID, &link, func(context.Context, *gorm.DB, *model.ShareLink) error {
-			continued = true
-			return nil
+		return sharelink.LockedTarget{}, authority.AuthorizeList(authorityTestContext(), entityType, entityID)
+	case authorityOperationCreate, authorityOperationDelete:
+		var locked sharelink.LockedTarget
+		err := authority.db.Transaction(func(tx *gorm.DB) error {
+			var err error
+			locked, err = authority.LockTarget(authorityTestContext(), tx, entityType, entityID)
+			return err
 		})
-		return continued, err
-	case authorityOperationDelete:
-		err := authority.Delete(authorityTestContext(), entityType, link, func(context.Context, *gorm.DB, model.ShareLink) error {
-			continued = true
-			return nil
-		})
-		return continued, err
+		return locked, err
 	default:
 		t.Fatalf("unsupported authority test operation %q", operation)
-		return false, nil
+		return sharelink.LockedTarget{}, nil
 	}
+}
+
+// requireOperationAction asserts the one action an operation requires: a
+// list asks SpiceDB once, a mutation returns the action for the use case's
+// fresh check and asks nothing itself.
+func requireOperationAction(
+	t *testing.T,
+	checker *recordingPermissionChecker,
+	locked sharelink.LockedTarget,
+	operation authorityTestOperation,
+	expectedAction auth.ResourceAction,
+	resourceID string,
+) {
+	t.Helper()
+	if operation == authorityOperationList {
+		requirePermissionCheck(t, checker, expectedAction, resourceID)
+		return
+	}
+	require.Empty(t, checker.calls)
+	expectedCan, err := expectedAction(resourceID)
+	require.NoError(t, err)
+	require.Equal(t, expectedCan.EngineKey(), locked.Can.EngineKey())
+	require.NotNil(t, locked.Audit)
 }
 
 func requirePermissionCheck(
@@ -293,8 +303,8 @@ func newAuthorityUnitDB(t *testing.T) *gorm.DB {
 		CREATE TABLE form (id TEXT PRIMARY KEY);
 		CREATE TABLE label (id TEXT PRIMARY KEY);
 		CREATE TABLE artist (id TEXT PRIMARY KEY);
-		CREATE TABLE privacy_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME);
-		CREATE TABLE terms_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME);
+		CREATE TABLE privacy_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME, version INTEGER NOT NULL DEFAULT 1);
+		CREATE TABLE terms_history (id TEXT PRIMARY KEY, status TEXT NOT NULL, effective_from DATETIME, version INTEGER NOT NULL DEFAULT 1);
 	`).Error)
 	return db
 }
@@ -302,25 +312,25 @@ func newAuthorityUnitDB(t *testing.T) *gorm.DB {
 func seedAuthorityTarget(
 	t *testing.T,
 	db *gorm.DB,
-	entityType managev1.ShareLinkEntityType,
+	entityType sharelink.EntityType,
 	entityID string,
 	archived bool,
 ) {
 	t.Helper()
 	switch entityType {
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST:
+	case sharelink.EntityPost:
 		status := managev1.PostStatus_POST_STATUS_DRAFT.String()
 		if archived {
 			status = managev1.PostStatus_POST_STATUS_ARCHIVED.String()
 		}
 		require.NoError(t, db.Exec(`INSERT INTO post (id, status) VALUES (?, ?)`, entityID, status).Error)
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK:
+	case sharelink.EntityWork:
 		status := managev1.WorkStatus_WORK_STATUS_DRAFT.String()
 		if archived {
 			status = managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()
 		}
 		require.NoError(t, db.Exec(`INSERT INTO work (id, status) VALUES (?, ?)`, entityID, status).Error)
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
+	case sharelink.EntityPrivacy:
 		status := managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String()
 		if archived {
 			status = managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String()
@@ -329,7 +339,7 @@ func seedAuthorityTarget(
 			`INSERT INTO privacy_history (id, status, effective_from) VALUES (?, ?, ?)`,
 			entityID, status, time.Now().UTC().Add(time.Hour),
 		).Error)
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
+	case sharelink.EntityTerms:
 		status := managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String()
 		if archived {
 			status = managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String()

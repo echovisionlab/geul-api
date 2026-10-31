@@ -8,11 +8,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
-	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -28,9 +27,7 @@ func TestCategoryTargetRewriteWaitsForMenuWriterIntegration(t *testing.T) {
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	menuService := menudomain.NewMenuService(
-		db, menuadapter.NewSiteSettingsReferences(nil), menuadapter.NewTargetReferences(), spiceDB,
-	)
+	menuService := newMenuIntegrationService(db, apitelemetry.NewDurableWriter(db), spiceDB)
 	categoryService := referencecatalog.NewCategoryService(
 		db, referencecatalogmenuadapter.NewTargets(nil), spiceDB,
 	)

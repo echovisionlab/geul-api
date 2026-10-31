@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/optional"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/optional"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -146,7 +146,7 @@ var errRollbackMenuAIDocumentValidation = errors.New("rollback Menu AI document 
 
 // LoadAIDocument enforces Menu's exact object read boundary and projects one
 // source or target locale without read-time fallback values.
-func (s *MenuService) LoadAIDocument(
+func (s *Service) LoadAIDocument(
 	ctx context.Context,
 	menuID string,
 	locale string,
@@ -162,7 +162,7 @@ func (s *MenuService) LoadAIDocument(
 // exposes the authorized snapshot to the adapter compiler. Validate executes
 // this identical path, deliberately rolls the transaction back and returns an
 // empty result.
-func (s *MenuService) ExecuteAIDocumentMutation(
+func (s *Service) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	menuID string,
 	locale string,
@@ -170,153 +170,61 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentMutationCompiler,
 ) (AIDocumentApplyResult, error) {
-	if s == nil || s.db == nil || s.permissions == nil || s.targets == nil {
-		return AIDocumentApplyResult{}, errs.DependencyUnavailable("Menu AI document")
-	}
 	menuID, locale = strings.TrimSpace(menuID), strings.TrimSpace(locale)
 	if menuID == "" || locale == "" {
-		return AIDocumentApplyResult{}, errs.InvalidArgument("document", "Menu ID and locale are required")
+		return AIDocumentApplyResult{}, domainerr.InvalidField("document", "Menu ID and locale are required")
 	}
 	authorizationAction, err := action.authorizationAction()
 	if err != nil {
-		return AIDocumentApplyResult{}, errs.WithCause(errs.InvalidArgument("action", "is not supported"), err)
+		return AIDocumentApplyResult{}, domainerr.InvalidField("action", "is not supported").WithCause(err)
 	}
 	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
-		return AIDocumentApplyResult{}, errs.InvalidArgument("mode", "is not supported")
+		return AIDocumentApplyResult{}, domainerr.InvalidField("mode", "is not supported")
 	}
 	if compiler == nil {
-		return AIDocumentApplyResult{}, errs.DependencyUnavailable("Menu AI document compiler")
+		return AIDocumentApplyResult{}, domainerr.DependencyUnavailable("Menu AI document compiler")
 	}
 
-	var result AIDocumentApplyResult
-	var command AIDocumentApply
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := lockMenuForUpdate(ctx, tx, menuID)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("menu", menuID)
-		}
-		if err != nil {
-			return errs.Internal(err)
-		}
-		if err := requireFreshMenuPermission(ctx, tx, s.permissions, menuID, authorizationAction); err != nil {
-			switch connect.CodeOf(err) {
-			case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-				return errs.WithCause(errs.NotFound("menu", menuID), err)
-			default:
+	var root *model.Menu
+	var mutated menuAIDocumentMutation
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[AIDocumentApplyResult]{
+		// The root is locked before the one exact Edit or Manage decision; a
+		// caller without it learns nothing about the Menu.
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+			var err error
+			if root, err = lockMenuForUpdate(ctx, tx, menuID); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domainerr.ResourceNotFound("menu", menuID)
+				}
 				return err
 			}
-		}
-		locked, err := loadMenuAIDocumentSnapshotFromRoot(ctx, tx, *root, locale, true)
-		if err != nil {
-			return err
-		}
-		command, err = compiler(locked)
-		if err != nil {
-			return &menuAIDocumentCompilerError{cause: err}
-		}
-		if command.MenuID != locked.ID || command.Locale != locked.Locale {
-			return errs.InvalidArgument(
-				"mutation",
-				"compiled Menu identity and locale must match the locked state",
-			)
-		}
-		if menuAIDocumentAction(command.Operations) != action {
-			return errs.InvalidArgument(
-				"mutation",
-				"compiled Menu operations must match the authorized mutation action",
-			)
-		}
-		if locked.DocumentRevision != command.ExpectedDocumentRevision {
-			return &AIDocumentRevisionConflict{
-				CurrentDocumentRevision: locked.DocumentRevision,
-				CurrentTargetRevision:   optional.Clone(locked.TargetRevision),
-				AffectedHandles:         append([]string(nil), command.AffectedHandles...),
-			}
-		}
-		if !optional.Equal(locked.TargetRevision, command.ExpectedTargetRevision) {
-			return &AIDocumentRevisionConflict{
-				Target: true, CurrentDocumentRevision: locked.DocumentRevision,
-				CurrentTargetRevision: optional.Clone(locked.TargetRevision),
-				AffectedHandles:       append([]string(nil), command.AffectedHandles...),
-			}
-		}
-		compiled, lockedIssues := s.compileAIDocument(locked, command.Operations)
-		if len(lockedIssues) != 0 {
-			return &AIDocumentValidationError{Issues: append([]AIDocumentIssue(nil), lockedIssues...)}
-		}
-		if compiled.sourceChanged {
-			protoItems := s.modelItemsToProto(aiDocumentItemsToModel(compiled.snapshot.Items))
-			if err := s.targets.ValidateAndLock(ctx, tx, collectMenuTargetReferences(protoItems)); err != nil {
+			if err := requireFreshMenuPermission(ctx, tx, require, menuID, authorizationAction); err != nil {
+				if mutation.IsDenied(err) || mutation.IsUnauthenticated(err) {
+					return domainerr.ResourceNotFound("menu", menuID).WithCause(err)
+				}
 				return err
 			}
-		}
-		if !compiled.changed {
-			result = AIDocumentApplyResult{
-				DocumentRevision: locked.DocumentRevision,
-				TargetRevision:   optional.Clone(locked.TargetRevision),
+			return nil
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (AIDocumentApplyResult, error) {
+			var err error
+			if mutated, err = s.mutateAIDocument(ctx, tx, *root, locale, action, compiler); err != nil {
+				return AIDocumentApplyResult{}, err
 			}
-		} else {
-			now := time.Now().UTC()
-			if compiled.sourceChanged {
-				if err := s.persistAIDocumentSource(ctx, tx, locked, compiled.snapshot, now); err != nil {
-					return err
-				}
+			if mode == AIDocumentExecutionValidate {
+				return AIDocumentApplyResult{}, errRollbackMenuAIDocumentValidation
 			}
-			if compiled.sourceValuesChanged {
-				if err := persistMenuAIDocumentSourceValues(ctx, tx, locked, compiled.snapshot, now); err != nil {
-					return err
-				}
+			return mutated.result, nil
+		},
+		Audit: func(AIDocumentApplyResult) mutation.Audit {
+			if !mutated.compiled.changed {
+				return mutation.Unchanged()
 			}
-			if compiled.sourceChanged || compiled.sourceValuesChanged {
-				expectedRevision, err := parseMenuContentDocumentUUID(
-					locked.DocumentRevision,
-					"content_document.revision",
-				)
-				if err != nil {
-					return err
-				}
-				if err := advanceMenuContentDocument(
-					ctx,
-					tx,
-					locked.ID,
-					locked.contentDocumentID,
-					expectedRevision,
-					now,
-				); err != nil {
-					return err
-				}
-			}
-			if compiled.targetChanged {
-				if err := persistMenuAIDocumentTarget(ctx, tx, locked, compiled.snapshot, compiled.deleteTranslation, now); err != nil {
-					return err
-				}
-			}
-			if err := appendMenuAIDocumentAudit(
-				ctx,
-				tx,
-				s.auditWriter,
-				locked,
-				compiled,
-			); err != nil {
-				return err
-			}
-			next, err := loadMenuAIDocumentSnapshot(ctx, tx, command.MenuID, command.Locale, true)
-			if err != nil {
-				return err
-			}
-			if next.DocumentRevision == locked.DocumentRevision && optional.Equal(next.TargetRevision, locked.TargetRevision) {
-				return errs.Internal(errors.New("menu AI document mutation did not advance its authoritative revision"))
-			}
-			result = AIDocumentApplyResult{
-				DocumentRevision: next.DocumentRevision,
-				TargetRevision:   optional.Clone(next.TargetRevision),
-				Changed:          true,
-			}
-		}
-		if mode == AIDocumentExecutionValidate {
-			return errRollbackMenuAIDocumentValidation
-		}
-		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_MENU, command.MenuID, command.Locale, result.DocumentRevision, result.TargetRevision, result.Changed, compiled.deleteTranslation, contentsignal.InteractiveMemberID(ctx))
+			return menuAIDocumentAudit(mutated.locked, mutated.compiled)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, result AIDocumentApplyResult) error {
+			return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_MENU, mutated.command.MenuID, mutated.command.Locale, result.DocumentRevision, result.TargetRevision, result.Changed, mutated.compiled.deleteTranslation, contentsignal.InteractiveMemberID(ctx))
+		},
 	})
 	if errors.Is(err, errRollbackMenuAIDocumentValidation) {
 		// The rolled-back revision never becomes current. Like every AI
@@ -331,6 +239,126 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		return AIDocumentApplyResult{}, err
 	}
 	return result, nil
+}
+
+// menuAIDocumentMutation is one compiled and persisted AI document mutation.
+type menuAIDocumentMutation struct {
+	locked   AIDocumentSnapshot
+	command  AIDocumentApply
+	compiled compiledMenuAIDocument
+	result   AIDocumentApplyResult
+}
+
+// mutateAIDocument exposes the authorized root to the adapter compiler,
+// checks the compiled command against the locked state and persists it.
+func (s *Service) mutateAIDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	root model.Menu,
+	locale string,
+	action AIDocumentMutationAction,
+	compiler AIDocumentMutationCompiler,
+) (menuAIDocumentMutation, error) {
+	locked, err := loadMenuAIDocumentSnapshotFromRoot(ctx, tx, root, locale, true)
+	if err != nil {
+		return menuAIDocumentMutation{}, err
+	}
+	command, err := compiler(locked)
+	if err != nil {
+		return menuAIDocumentMutation{}, &menuAIDocumentCompilerError{cause: err}
+	}
+	if err := requireCompiledMenuCommand(locked, command, action); err != nil {
+		return menuAIDocumentMutation{}, err
+	}
+	compiled, lockedIssues := s.compileAIDocument(locked, command.Operations)
+	if len(lockedIssues) != 0 {
+		return menuAIDocumentMutation{}, &AIDocumentValidationError{Issues: append([]AIDocumentIssue(nil), lockedIssues...)}
+	}
+	if compiled.sourceChanged {
+		protoItems := modelItemsToProto(aiDocumentItemsToModel(compiled.snapshot.Items))
+		if err := s.targets.ValidateAndLock(ctx, tx, collectMenuTargetReferences(protoItems)); err != nil {
+			return menuAIDocumentMutation{}, err
+		}
+	}
+	mutated := menuAIDocumentMutation{locked: locked, command: command, compiled: compiled}
+	if !compiled.changed {
+		mutated.result = AIDocumentApplyResult{
+			DocumentRevision: locked.DocumentRevision,
+			TargetRevision:   optional.Clone(locked.TargetRevision),
+		}
+		return mutated, nil
+	}
+	if err := s.persistAIDocument(ctx, tx, locked, compiled, time.Now().UTC()); err != nil {
+		return menuAIDocumentMutation{}, err
+	}
+	next, err := loadMenuAIDocumentSnapshot(ctx, tx, command.MenuID, command.Locale, true)
+	if err != nil {
+		return menuAIDocumentMutation{}, err
+	}
+	if next.DocumentRevision == locked.DocumentRevision && optional.Equal(next.TargetRevision, locked.TargetRevision) {
+		return menuAIDocumentMutation{}, errors.New("menu AI document mutation did not advance its authoritative revision")
+	}
+	mutated.result = AIDocumentApplyResult{
+		DocumentRevision: next.DocumentRevision,
+		TargetRevision:   optional.Clone(next.TargetRevision),
+		Changed:          true,
+	}
+	return mutated, nil
+}
+
+// requireCompiledMenuCommand rejects a compiled command for another Menu,
+// locale or action, or one compiled against stale revisions.
+func requireCompiledMenuCommand(locked AIDocumentSnapshot, command AIDocumentApply, action AIDocumentMutationAction) error {
+	if command.MenuID != locked.ID || command.Locale != locked.Locale {
+		return domainerr.InvalidField("mutation", "compiled Menu identity and locale must match the locked state")
+	}
+	if menuAIDocumentAction(command.Operations) != action {
+		return domainerr.InvalidField("mutation", "compiled Menu operations must match the authorized mutation action")
+	}
+	if locked.DocumentRevision != command.ExpectedDocumentRevision {
+		return &AIDocumentRevisionConflict{
+			CurrentDocumentRevision: locked.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(locked.TargetRevision),
+			AffectedHandles:         append([]string(nil), command.AffectedHandles...),
+		}
+	}
+	if !optional.Equal(locked.TargetRevision, command.ExpectedTargetRevision) {
+		return &AIDocumentRevisionConflict{
+			Target: true, CurrentDocumentRevision: locked.DocumentRevision,
+			CurrentTargetRevision: optional.Clone(locked.TargetRevision),
+			AffectedHandles:       append([]string(nil), command.AffectedHandles...),
+		}
+	}
+	return nil
+}
+
+// persistAIDocument writes a changed compiled document: the source items,
+// the source label values and the content document revision they advance,
+// or the target locale labels. A collaboration save shares it.
+func (s *Service) persistAIDocument(ctx context.Context, tx *gorm.DB, previous AIDocumentSnapshot, compiled compiledMenuAIDocument, now time.Time) error {
+	if compiled.sourceChanged {
+		if err := s.persistAIDocumentSource(ctx, tx, previous, compiled.snapshot, now); err != nil {
+			return err
+		}
+	}
+	if compiled.sourceValuesChanged {
+		if err := persistMenuAIDocumentSourceValues(ctx, tx, previous, compiled.snapshot, now); err != nil {
+			return err
+		}
+	}
+	if compiled.sourceChanged || compiled.sourceValuesChanged {
+		expected, err := parseMenuContentDocumentUUID(previous.DocumentRevision, "content_document.revision")
+		if err != nil {
+			return err
+		}
+		if err := advanceMenuContentDocument(ctx, tx, previous.ID, previous.contentDocumentID, expected, now); err != nil {
+			return err
+		}
+	}
+	if compiled.targetChanged {
+		return persistMenuAIDocumentTarget(ctx, tx, previous, compiled.snapshot, compiled.deleteTranslation, now)
+	}
+	return nil
 }
 
 func menuAIDocumentAction(operations []AIDocumentOperation) AIDocumentMutationAction {

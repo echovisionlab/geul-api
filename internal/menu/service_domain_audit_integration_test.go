@@ -16,6 +16,7 @@ import (
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -300,18 +301,44 @@ func menuDocumentState(t *testing.T, db *gorm.DB, menuID string) (string, string
 	return document.ID, document.Revision
 }
 
+// menuIntegrationService serves the Menu RPCs and exposes the use cases
+// other adapters call.
+type menuIntegrationService struct {
+	*menudomain.ConnectHandler
+	domain *menudomain.Service
+}
+
 func newMenuIntegrationService(
 	db *gorm.DB,
 	auditWriter domainaudit.Appender,
 	spiceDB *auth.SpiceDBClient,
-) *menudomain.MenuService {
-	return menudomain.NewAuditedMenuService(
-		db,
-		auditWriter,
-		menuadapter.NewSiteSettingsReferences(auditWriter),
-		menuadapter.NewTargetReferences(),
-		spiceDB,
-	)
+) menuIntegrationService {
+	return newMenuIntegrationServiceWith(db, auditWriter, spiceDB, menuadapter.NewSiteSettingsReferences(auditWriter), menuadapter.NewTargetReferences())
+}
+
+func newMenuIntegrationServiceWith(
+	db *gorm.DB,
+	auditWriter domainaudit.Appender,
+	spiceDB *auth.SpiceDBClient,
+	siteSettings menudomain.SiteSettingsReferences,
+	targets menudomain.TargetReferences,
+) menuIntegrationService {
+	service, err := menudomain.NewService(menudomain.Deps{
+		DB: db, SpiceDB: spiceDB, SiteSettings: siteSettings, Targets: targets,
+		Checkpoints: unreachableMenuCheckpoints{}, Audit: auditWriter,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return menuIntegrationService{ConnectHandler: menudomain.NewConnectHandler(service), domain: service}
+}
+
+// unreachableMenuCheckpoints stands in for the collaboration checkpoint
+// fence in tests that make no collaboration save.
+type unreachableMenuCheckpoints struct{}
+
+func (unreachableMenuCheckpoints) RequireCurrentContributorsForPermission(context.Context, *gorm.DB, intrav1.CollaborationResourceType, string, []string, intrav1.CollaborationPermission) error {
+	return errors.New("menu collaboration checkpoint is not part of this test")
 }
 
 type failingMenuDomainAuditAppender struct{}

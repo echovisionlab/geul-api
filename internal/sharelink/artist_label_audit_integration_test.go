@@ -7,11 +7,9 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
-	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
-	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/artistlabelpublic"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -21,14 +19,7 @@ func TestArtistAndLabelShareLinkAuditTargetsDoNotCrossIntegration(t *testing.T) 
 	t.Parallel()
 	fixture := artistlabelpublic.New(t)
 	ctx := testutil.NewAuditContext(t, fixture.AdminID, testutil.PostIntegrationMemberID(fixture.AdminID))
-	links := sharelinkdomain.NewService(
-		fixture.DB,
-		sharelinkadapter.NewAuthority(
-			fixture.DB,
-			fixture.SpiceDB,
-			telemetry.NewDurableWriter(fixture.DB),
-		),
-	)
+	links := sharelinktest.NewHandler(t, fixture.DB, fixture.SpiceDB)
 
 	artistLink, err := links.CreateShareLink(ctx, connect.NewRequest(&managev1.CreateShareLinkRequest{
 		EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST,

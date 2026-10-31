@@ -10,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -112,14 +111,13 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 	currentJSON, err := json.Marshal(currentItems)
 	require.NoError(t, err)
 	current := model.Menu{ID: "menu-action-test", Items: currentJSON}
-	request := &managev1.UpdateMenuRequest{Items: &managev1.MenuItemsUpdate{}}
 
 	labelOnly, err := json.Marshal([]model.MenuItem{{ID: "home", Label: "Start", LinkType: "custom"}})
 	require.NoError(t, err)
 	labelAction := menuUpdateAction(
 		t.Context(),
 		current,
-		request,
+		true,
 		menuUpdate{items: json.RawMessage(labelOnly)},
 	)
 	labelCan, err := labelAction(current.ID)
@@ -137,7 +135,7 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 	structuralAction := menuUpdateAction(
 		t.Context(),
 		current,
-		request,
+		true,
 		menuUpdate{items: json.RawMessage(structural)},
 	)
 	structuralCan, err := structuralAction(current.ID)

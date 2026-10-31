@@ -8,7 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/menu"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -21,7 +21,7 @@ const (
 // Menu discovery delegates authorization to the owning Menu and Site Settings
 // services. It exposes selection metadata only; DCDP owns reads and mutations.
 type MenuDiscovery interface {
-	ListMenus(context.Context, *connect.Request[managev1.ListMenusRequest]) (*connect.Response[managev1.ListMenusResponse], error)
+	ListMenus(context.Context, menu.ListMenusQuery) (*managev1.ListMenusResponse, error)
 }
 
 type MenuLocationReader interface {
@@ -73,19 +73,17 @@ func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Princ
 		if input.Offset < 0 {
 			return executionError(errors.New("offset must be between 0 and 2147483647"))
 		}
-		response, err := tools.menus.ListMenus(ctx, connect.NewRequest(&managev1.ListMenusRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: limit, Offset: input.Offset},
-		}))
+		response, err := tools.menus.ListMenus(ctx, menu.ListMenusQuery{Limit: limit, Offset: input.Offset})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		items := make([]map[string]any, 0, len(response.Msg.Menus))
-		for _, menu := range response.Msg.Menus {
-			if menu != nil {
-				items = append(items, map[string]any{"id": menu.Id, "name": menu.Name, "source_locale": menu.SourceLocale})
+		items := make([]map[string]any, 0, len(response.Menus))
+		for _, listed := range response.Menus {
+			if listed != nil {
+				items = append(items, map[string]any{"id": listed.Id, "name": listed.Name, "source_locale": listed.SourceLocale})
 			}
 		}
-		pagination := response.Msg.Pagination
+		pagination := response.Pagination
 		output := map[string]any{"items": items, "total": pagination.GetTotal(), "limit": limit, "offset": input.Offset, "has_more": pagination.GetHasMore()}
 		if pagination.GetHasMore() {
 			output["next_offset"] = int64(input.Offset) + int64(limit)

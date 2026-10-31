@@ -3,10 +3,13 @@ package mutation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/glebarez/sqlite"
@@ -157,6 +160,33 @@ func TestRunRequiresAnExplicitAuditDecision(t *testing.T) {
 	require.EqualValues(t, 1, noteCount(t, db))
 }
 
+func TestAuditsAppendsEveryChangedRecord(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "two facets")
+	record := func(action sharedtelemetry.AuditAction) Audit {
+		return RequestAudit(action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), "tag")
+		})
+	}
+	spec.Audit = func(note) Audit {
+		return Audits(record(sharedtelemetry.AuditMemberTagCreated), Unchanged(), record(sharedtelemetry.AuditMemberTagCreated))
+	}
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 2)
+
+	spec.Audit = func(note) Audit { return Audits(Unchanged(), Unchanged()) }
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 2)
+
+	spec.Audit = func(note) Audit { return Audits(Audit{}) }
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorContains(t, err, "return Unchanged")
+}
+
 func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 	runner, _ := newTestRunner(t, &audittest.Recorder{})
 	var steps []string
@@ -168,6 +198,7 @@ func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 		"audit":      func(spec *Spec[note]) { spec.Audit = nil },
 		"subject":    func(spec *Spec[note]) { spec.Subjects = []string{" "} },
 		"descriptor": func(spec *Spec[note]) { spec.Access = FreshAdminCan(policyv1.Can{}, descriptorErr) },
+		"locked":     func(spec *Spec[note]) { spec.Access = Locked(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			spec := complete
@@ -177,6 +208,49 @@ func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 			require.Empty(t, steps)
 		})
 	}
+}
+
+func TestLockedChecksTheTargetInTheChangeTransaction(t *testing.T) {
+	runner, db := newTestRunner(t, &audittest.Recorder{})
+	var steps []string
+	spec := noteSpec(&steps, "after check")
+	spec.Access = Locked(func(_ context.Context, tx *gorm.DB, _ Require) error {
+		steps = append(steps, "access")
+		return tx.Create(&note{Text: "locked target"}).Error
+	})
+
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Equal(t, []string{"access", "change", "audit", "outbox"}, steps)
+	require.EqualValues(t, 2, noteCount(t, db))
+
+	missing := errors.New("target not found")
+	steps = nil
+	spec.Access = Locked(func(_ context.Context, tx *gorm.DB, _ Require) error {
+		steps = append(steps, "access")
+		if err := tx.Create(&note{Text: "rolled back"}).Error; err != nil {
+			return err
+		}
+		return missing
+	})
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorIs(t, err, missing)
+	require.Equal(t, []string{"access"}, steps)
+	require.EqualValues(t, 2, noteCount(t, db))
+}
+
+func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
+	require.True(t, IsDenied(fmt.Errorf("authorize: %w", errs.NoPermission("edit", "post"))))
+	require.True(t, IsDenied(domainerr.Denied("not yours")))
+	require.False(t, IsDenied(errs.NotFound("post", "id")))
+	require.False(t, IsDenied(domainerr.ResourceNotFound("post", "id")))
+	require.False(t, IsDenied(errors.New("database is down")))
+	require.False(t, IsDenied(domainerr.ResourceNotFound("post", "id").WithCause(errs.NoPermission("edit", "post"))))
+	require.True(t, IsUnauthenticated(fmt.Errorf("authorize: %w", errs.AuthenticationRequired())))
+	require.True(t, IsUnauthenticated(domainerr.AuthenticationRequired()))
+	require.False(t, IsUnauthenticated(errs.NoPermission("edit", "post")))
+	require.True(t, IsNotFound(fmt.Errorf("lock: %w", errs.NotFound("member", "id"))))
+	require.False(t, IsNotFound(errs.NoPermission("edit", "post")))
 }
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {

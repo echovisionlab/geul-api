@@ -42,9 +42,6 @@ func (seriesTestMenuTargets) Remove(context.Context, *gorm.DB, string, string, s
 
 type seriesTestPostAccess struct{}
 
-func (seriesTestPostAccess) PostSourceTitleSQL() string {
-	return "COALESCE((SELECT translation.title FROM post_translation AS translation WHERE translation.entity_id = post.id AND translation.locale = post.source_locale LIMIT 1), '')"
-}
 func (seriesTestPostAccess) RequireLockedEdit(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error {
 	return nil
 }
@@ -102,7 +99,7 @@ func seedSeriesPost(t *testing.T, db *gorm.DB, authorMemberID string) string {
 	return postID
 }
 
-func grantSeriesPostAuthorRelation(t *testing.T, service *SeriesService, postID, identityID string) {
+func grantSeriesPostAuthorRelation(t *testing.T, service seriesIntegrationService, postID, identityID string) {
 	t.Helper()
 	actor, err := policyv1.NewAccountIdentityActor(identityID)
 	require.NoError(t, err)

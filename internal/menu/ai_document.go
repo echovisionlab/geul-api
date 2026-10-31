@@ -13,8 +13,9 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -69,7 +70,7 @@ type compiledMenuAIDocument struct {
 	deleteTranslation   bool
 }
 
-func (s *MenuService) compileAIDocument(
+func (s *Service) compileAIDocument(
 	snapshot AIDocumentSnapshot,
 	operations []AIDocumentOperation,
 ) (compiledMenuAIDocument, []AIDocumentIssue) {
@@ -307,12 +308,12 @@ func (c *menuCompiler) applyTranslationLifecycle(operation AIDocumentOperation) 
 
 // validateCompiledSource checks the whole compiled source aggregate, which no
 // single operation can, when the source changed.
-func (s *MenuService) validateCompiledSource(result compiledMenuAIDocument) *AIDocumentIssue {
+func (s *Service) validateCompiledSource(result compiledMenuAIDocument) *AIDocumentIssue {
 	if !result.sourceChanged {
 		return nil
 	}
 	working := result.snapshot
-	if err := s.validateMenuName(working.Name); err != nil {
+	if err := validateMenuName(working.Name); err != nil {
 		return invalidOperation(menuHandle(working.ID, "name"), err.Error())
 	}
 	if err := validateAIDocumentItemConfiguration(working.Items); err != nil {
@@ -320,7 +321,7 @@ func (s *MenuService) validateCompiledSource(result compiledMenuAIDocument) *AID
 	}
 	validationItems := aiDocumentItemsToModel(working.Items)
 	fillMissingMenuLabelsForStructuralValidation(validationItems)
-	if err := s.validateMenuItems(s.modelItemsToProto(validationItems), 0); err != nil {
+	if err := validateMenuItems(modelItemsToProto(validationItems), 0); err != nil {
 		return invalidOperation(menuHandle(working.ID, "items"), err.Error())
 	}
 	return nil
@@ -389,7 +390,7 @@ func lastMenuAIDocumentMutationIndex(operations []AIDocumentOperation) int {
 	return -1
 }
 
-func (s *MenuService) persistAIDocumentSource(
+func (s *Service) persistAIDocumentSource(
 	ctx context.Context,
 	tx *gorm.DB,
 	previous AIDocumentSnapshot,
@@ -408,7 +409,7 @@ func (s *MenuService) persistAIDocumentSource(
 	if itemsChanged {
 		itemsJSON, err := json.Marshal(aiDocumentItemsToModel(next.Items))
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		change.items = itemsJSON
 	}
@@ -436,11 +437,11 @@ func persistMenuAIDocumentSourceValues(
 	now time.Time,
 ) error {
 	if !previous.SourceValuesStored || previous.Locale != previous.SourceLocale {
-		return errs.FailedPrecondition("Menu source locale values are not initialized")
+		return domainerr.Precondition("Menu source locale values are not initialized")
 	}
 	body, err := EncodeTranslationLabelValues(next.Labels)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	result := tx.WithContext(ctx).Exec(
 		`UPDATE menu_translation
@@ -449,10 +450,10 @@ func persistMenuAIDocumentSourceValues(
 		string(body), translation.NextTargetUpdatedAt(now, previous.LocaleUpdatedAt), previous.ID, previous.Locale,
 	)
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("Menu source locale values are not initialized")
+		return domainerr.Precondition("Menu source locale values are not initialized")
 	}
 	return nil
 }
@@ -471,17 +472,17 @@ func persistMenuAIDocumentTarget(
 			previous.ID, previous.Locale,
 		)
 		if result.Error != nil {
-			return errs.Internal(result.Error)
+			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("Menu translation no longer exists")
+			return domainerr.Precondition("Menu translation no longer exists")
 		}
 		return nil
 	}
 	labels := canonicalMenuAIDocumentLabels(next.Items, previous.Locale, next.Labels)
 	body, err := EncodeTranslationLabelValues(labels)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	nextUpdatedAt := now.UTC().Truncate(time.Microsecond)
 	if previous.LocaleExists {
@@ -490,7 +491,7 @@ func persistMenuAIDocumentTarget(
 		}
 		if err := tx.WithContext(ctx).Table("menu_translation").Select("updated_at").
 			Where("entity_id = ? AND locale = ?", previous.ID, previous.Locale).Take(&row).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		nextUpdatedAt = translation.NextTargetUpdatedAt(nextUpdatedAt, row.UpdatedAt)
 	}
@@ -502,7 +503,7 @@ func persistMenuAIDocumentTarget(
 		previous.ID, previous.Locale, string(body), nextUpdatedAt, nextUpdatedAt,
 	)
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	return nil
 }
@@ -529,45 +530,38 @@ func canonicalMenuAIDocumentLabels(
 	return canonical
 }
 
-func appendMenuAIDocumentAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	auditWriter domainaudit.Appender,
-	previous AIDocumentSnapshot,
-	compiled compiledMenuAIDocument,
-) error {
-	if compiled.targetChanged {
-		operation := sharedtelemetry.AuditItemOperationUpdated
-		switch {
-		case !previous.LocaleExists && compiled.snapshot.LocaleExists:
-			operation = sharedtelemetry.AuditItemOperationCreated
-		case previous.LocaleExists && !compiled.snapshot.LocaleExists:
-			operation = sharedtelemetry.AuditItemOperationDeleted
-		}
-		return domainaudit.AppendOptionalRequest(
-			ctx, tx, auditWriter, sharedtelemetry.AuditMenuUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMenuLocaleContentAuditRecord(
-					metadata, previous.ID, previous.Locale, operation,
-				)
-			},
-		)
-	}
+// menuAIDocumentAudit names the record of a changed AI document: the
+// target locale's lifecycle, or the changed source fields.
+func menuAIDocumentAudit(previous AIDocumentSnapshot, compiled compiledMenuAIDocument) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditMenuUpdated, menuDocumentAuditRecord(previous, compiled, true))
+}
 
-	fields := make([]string, 0, 2)
-	if previous.Name != compiled.snapshot.Name {
-		fields = append(fields, "name")
+// menuDocumentAuditRecord builds the record of a changed Menu document.
+// A collaboration save records a target locale update without its
+// lifecycle (trackLifecycle false), as rooms never create or delete one.
+func menuDocumentAuditRecord(previous AIDocumentSnapshot, compiled compiledMenuAIDocument, trackLifecycle bool) domainaudit.Builder {
+	return func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		if compiled.targetChanged {
+			operation := sharedtelemetry.AuditItemOperationUpdated
+			switch {
+			case !trackLifecycle:
+			case !previous.LocaleExists && compiled.snapshot.LocaleExists:
+				operation = sharedtelemetry.AuditItemOperationCreated
+			case previous.LocaleExists && !compiled.snapshot.LocaleExists:
+				operation = sharedtelemetry.AuditItemOperationDeleted
+			}
+			return sharedtelemetry.NewMenuLocaleContentAuditRecord(metadata, previous.ID, previous.Locale, operation)
+		}
+		fields := make([]string, 0, 2)
+		if previous.Name != compiled.snapshot.Name {
+			fields = append(fields, "name")
+		}
+		if !equalAIDocumentItems(previous.Items, compiled.snapshot.Items) || compiled.sourceValuesChanged {
+			fields = append(fields, "items")
+		}
+		sort.Strings(fields)
+		return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, previous.ID, fields)
 	}
-	if !equalAIDocumentItems(previous.Items, compiled.snapshot.Items) || compiled.sourceValuesChanged {
-		fields = append(fields, "items")
-	}
-	sort.Strings(fields)
-	return domainaudit.AppendOptionalRequest(
-		ctx, tx, auditWriter, sharedtelemetry.AuditMenuUpdated,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, previous.ID, fields)
-		},
-	)
 }
 
 func loadMenuAIDocumentSnapshot(
@@ -579,7 +573,7 @@ func loadMenuAIDocumentSnapshot(
 ) (AIDocumentSnapshot, error) {
 	menuID, locale = strings.TrimSpace(menuID), strings.TrimSpace(locale)
 	if menuID == "" || locale == "" {
-		return AIDocumentSnapshot{}, errs.InvalidArgument("document", "Menu ID and locale are required")
+		return AIDocumentSnapshot{}, domainerr.InvalidField("document", "Menu ID and locale are required")
 	}
 	query := db.WithContext(ctx)
 	if lock {
@@ -588,9 +582,9 @@ func loadMenuAIDocumentSnapshot(
 	var root model.Menu
 	if err := query.First(&root, "id = ?", menuID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return AIDocumentSnapshot{}, errs.NotFound("menu", menuID)
+			return AIDocumentSnapshot{}, domainerr.ResourceNotFound("menu", menuID)
 		}
-		return AIDocumentSnapshot{}, errs.Internal(err)
+		return AIDocumentSnapshot{}, err
 	}
 	return loadMenuAIDocumentSnapshotFromRoot(ctx, db, root, locale, lock)
 }
@@ -604,7 +598,7 @@ func loadMenuAIDocumentSnapshotFromRoot(
 ) (AIDocumentSnapshot, error) {
 	menuID, locale := strings.TrimSpace(root.ID), strings.TrimSpace(locale)
 	if menuID == "" || locale == "" {
-		return AIDocumentSnapshot{}, errs.InvalidArgument("document", "Menu ID and locale are required")
+		return AIDocumentSnapshot{}, domainerr.InvalidField("document", "Menu ID and locale are required")
 	}
 
 	document, err := loadMenuContentDocumentStateFromRoot(ctx, db, root, lock)
@@ -614,7 +608,7 @@ func loadMenuAIDocumentSnapshotFromRoot(
 
 	items, err := modelItemsToAIDocument(root.Items)
 	if err != nil {
-		return AIDocumentSnapshot{}, errs.Internal(err)
+		return AIDocumentSnapshot{}, err
 	}
 	snapshot := AIDocumentSnapshot{
 		ID: root.ID, Name: root.Name, SourceLocale: document.SourceLocale, Locale: locale,
@@ -628,7 +622,7 @@ func loadMenuAIDocumentSnapshotFromRoot(
 		return AIDocumentSnapshot{}, err
 	}
 	if !sourceExists {
-		return AIDocumentSnapshot{}, errs.FailedPrecondition("Menu source locale values are not initialized")
+		return AIDocumentSnapshot{}, domainerr.Precondition("Menu source locale values are not initialized")
 	}
 	snapshot.sourceLabels = cloneMenuLabels(sourceRow.Labels)
 	if locale == document.SourceLocale {
@@ -653,7 +647,7 @@ func loadMenuAIDocumentSnapshotFromRoot(
 			LocaleUpdatedAt: &snapshot.LocaleUpdatedAt,
 		})
 		if err != nil {
-			return AIDocumentSnapshot{}, errs.Internal(err)
+			return AIDocumentSnapshot{}, err
 		}
 		snapshot.TargetRevision = &targetRevision
 	}
@@ -685,11 +679,11 @@ func loadMenuAIDocumentLocaleRow(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return menuAIDocumentLocaleRow{}, false, nil
 		}
-		return menuAIDocumentLocaleRow{}, false, errs.Internal(err)
+		return menuAIDocumentLocaleRow{}, false, err
 	}
 	labels, err := DecodeTranslationLabelValues(stored.ItemsJSON)
 	if err != nil {
-		return menuAIDocumentLocaleRow{}, false, errs.Internal(err)
+		return menuAIDocumentLocaleRow{}, false, err
 	}
 	return menuAIDocumentLocaleRow{Labels: labels, UpdatedAt: stored.UpdatedAt}, true, nil
 }

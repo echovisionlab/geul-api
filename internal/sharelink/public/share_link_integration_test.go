@@ -10,49 +10,15 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/model"
-	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
-
-type integrationTargetAuthority struct{ db *gorm.DB }
-
-func (integrationTargetAuthority) AuthorizeList(
-	context.Context,
-	managev1.ShareLinkEntityType,
-	string,
-) error {
-	return nil
-}
-
-func (a integrationTargetAuthority) Create(
-	ctx context.Context,
-	_ managev1.ShareLinkEntityType,
-	_ string,
-	link *model.ShareLink,
-	create sharelinkdomain.CreateRecord,
-) error {
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return create(ctx, tx, link)
-	})
-}
-
-func (a integrationTargetAuthority) Delete(
-	ctx context.Context,
-	_ managev1.ShareLinkEntityType,
-	link model.ShareLink,
-	deleteRecord sharelinkdomain.DeleteRecord,
-) error {
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return deleteRecord(ctx, tx, link)
-	})
-}
 
 type integrationTargetResolver struct {
 	targets map[string]sharelinkpublic.Target
@@ -92,8 +58,9 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	resolver := &integrationTargetResolver{targets: map[string]sharelinkpublic.Target{}}
-	manageService := sharelinkdomain.NewService(db, integrationTargetAuthority{db: db})
-	publicService := sharelinkpublic.NewService(db, resolver)
+	validation, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: resolver})
+	require.NoError(t, err)
+	publicService := sharelinkpublic.NewConnectHandler(validation)
 
 	empty, err := publicService.Validate(
 		context.Background(),
@@ -128,18 +95,11 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 		t.Run(tc.name+" resolves the bounded target", func(t *testing.T) {
 			entityID := uuid.NewString()
 			resolver.set(tc.entityType, entityID, sharelinkpublic.Target{Exists: true, Slug: tc.slug})
-			link, err := manageService.CreateShareLink(
-				context.Background(),
-				connect.NewRequest(&managev1.CreateShareLinkRequest{
-					EntityType: tc.entityType,
-					EntityId:   entityID,
-				}),
-			)
-			require.NoError(t, err)
+			link := seedShareLink(t, db, tc.entityType, entityID, nil, nil)
 
 			validated, err := publicService.Validate(
 				context.Background(),
-				connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: link.Msg.ShareLink.Token}),
+				connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: link.Token}),
 			)
 			require.NoError(t, err)
 			require.True(t, validated.Msg.Valid)
@@ -158,20 +118,12 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 			sharelinkpublic.Target{Exists: true, Slug: shareLinkStringPointer("protected-page")},
 		)
 		password := "page-share-password"
-		link, err := manageService.CreateShareLink(
-			context.Background(),
-			connect.NewRequest(&managev1.CreateShareLinkRequest{
-				EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE,
-				EntityId:   entityID,
-				Password:   &password,
-			}),
-		)
-		require.NoError(t, err)
+		link := seedShareLink(t, db, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, entityID, &password, nil)
 		for _, supplied := range []*string{nil, shareLinkStringPointer("wrong-password")} {
 			validated, err := publicService.Validate(
 				context.Background(),
 				connect.NewRequest(&openv1.ValidateShareLinkRequest{
-					Token: link.Msg.ShareLink.Token, Password: supplied,
+					Token: link.Token, Password: supplied,
 				}),
 			)
 			require.NoError(t, err)
@@ -181,7 +133,7 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 		validated, err := publicService.Validate(
 			context.Background(),
 			connect.NewRequest(&openv1.ValidateShareLinkRequest{
-				Token: link.Msg.ShareLink.Token, Password: &password,
+				Token: link.Token, Password: &password,
 			}),
 		)
 		require.NoError(t, err)
@@ -193,19 +145,11 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 		entityType := managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY
 		entityID := uuid.NewString()
 		resolver.set(entityType, entityID, sharelinkpublic.Target{Exists: true})
-		link, err := manageService.CreateShareLink(
-			context.Background(),
-			connect.NewRequest(&managev1.CreateShareLinkRequest{EntityType: entityType, EntityId: entityID}),
-		)
-		require.NoError(t, err)
-		_, err = manageService.DeleteShareLink(
-			context.Background(),
-			connect.NewRequest(&managev1.DeleteShareLinkRequest{Id: link.Msg.ShareLink.Id}),
-		)
-		require.NoError(t, err)
+		link := seedShareLink(t, db, entityType, entityID, nil, nil)
+		require.NoError(t, db.Delete(&model.ShareLink{}, "id = ?", link.ID).Error)
 		validated, err := publicService.Validate(
 			context.Background(),
-			connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: link.Msg.ShareLink.Token}),
+			connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: link.Token}),
 		)
 		require.NoError(t, err)
 		require.False(t, validated.Msg.Valid)
@@ -215,26 +159,37 @@ func TestPublicShareLinkValidateIntegration(t *testing.T) {
 		entityType := managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST
 		entityID := uuid.NewString()
 		resolver.set(entityType, entityID, sharelinkpublic.Target{Exists: true})
-		link, err := manageService.CreateShareLink(
-			context.Background(),
-			connect.NewRequest(&managev1.CreateShareLinkRequest{
-				EntityType: entityType,
-				EntityId:   entityID,
-				ExpiresAt:  timestamppb.New(time.Now().Add(time.Hour)),
-			}),
-		)
-		require.NoError(t, err)
 		past := time.Now().Add(-time.Hour)
-		require.NoError(t, db.Model(&model.ShareLink{}).
-			Where("id = ?", link.Msg.ShareLink.Id).
-			Updates(map[string]any{"created_at": past.Add(-time.Hour), "expires_at": past}).Error)
+		link := seedShareLink(t, db, entityType, entityID, nil, &past)
 		validated, err := publicService.Validate(
 			context.Background(),
-			connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: link.Msg.ShareLink.Token}),
+			connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: link.Token}),
 		)
 		require.NoError(t, err)
 		require.False(t, validated.Msg.Valid)
 	})
+}
+
+// seedShareLink stores a link as the management use case does; these tests
+// cover what the public validation answers for it.
+func seedShareLink(t *testing.T, db *gorm.DB, entityType managev1.ShareLinkEntityType, entityID string, password *string, expiresAt *time.Time) model.ShareLink {
+	t.Helper()
+	token, err := crypto.GenerateSecureToken()
+	require.NoError(t, err)
+	now := time.Now()
+	expires := now.Add(time.Hour)
+	if expiresAt != nil {
+		expires = *expiresAt
+		now = expires.Add(-time.Hour)
+	}
+	link := model.ShareLink{Token: token, EntityType: entityType.String(), EntityID: entityID, CreatedAt: now, ExpiresAt: &expires}
+	if password != nil {
+		hash, err := crypto.NewPasswordHasher(nil).Hash(*password)
+		require.NoError(t, err)
+		link.PasswordHash = &hash
+	}
+	require.NoError(t, db.Create(&link).Error)
+	return link
 }
 
 func shareLinkStringPointer(value string) *string { return &value }

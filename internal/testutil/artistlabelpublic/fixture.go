@@ -19,7 +19,6 @@ import (
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
@@ -35,6 +34,7 @@ import (
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -57,7 +57,7 @@ type ArtistLabelPublicFixture struct {
 	ArtistService    *artistpublic.ArtistService
 	ArtistMedia      artistpublic.MediaProjection
 	LabelService     *labelpublic.LabelService
-	ShareLinkService *sharelinkdomain.Service
+	ShareLinkService *sharelinkdomain.ConnectHandler
 
 	ParentLabel          *managev1.Label
 	MainLabel            *managev1.Label
@@ -101,7 +101,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	adminID := uuid.NewString()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
 	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := testutil.PostIntegrationContext(adminID)
+	ctx := testutil.NewAuditContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	identityManager := testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en"))
 	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
@@ -141,7 +141,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		workdomain.WithWorkContentBlockMediaHydrator(artistLabelMediaHydrator{}),
 		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, artistLabelPublicCDN)),
 	)
-	shareLinks := sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, spiceDB, nil))
+	shareLinks := sharelinktest.NewHandler(t, db, spiceDB)
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
 	publicArtist := artistpublic.NewArtistService(
 		db, spiceDB, artistMedia,

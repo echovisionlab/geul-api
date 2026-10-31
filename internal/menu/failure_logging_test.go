@@ -68,7 +68,7 @@ func TestMenuPermissionFailureKeepsCauseForTheRequestRecord(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			output := captureMenuLogs(t)
 			err := checkMenuPermission(t.Context(), tc.checker, uuid.NewString(), tc.action, principal)
-			require.Equal(t, tc.code, connect.CodeOf(err))
+			require.Equal(t, tc.code, errs.CodeOf(err))
 			require.ErrorIs(t, err, tc.cause)
 			require.Contains(t, failurecause.Message(err), tc.cause.Error())
 			require.Empty(t, output.String())
@@ -79,10 +79,8 @@ func TestMenuPermissionFailureKeepsCauseForTheRequestRecord(t *testing.T) {
 func TestInvalidTranslationLabelDocumentKeepsCauseWithoutLogging(t *testing.T) {
 	output := captureMenuLogs(t)
 	_, err := DecodeTranslationLabelValues([]byte(`[{"id":"private-label",`))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	var connectErr *connect.Error
-	require.ErrorAs(t, err, &connectErr)
-	require.Equal(t, errs.InvalidArgument("content_json", "must be a valid Menu label document").Message(), connectErr.Message())
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
+	require.Equal(t, errs.InvalidArgument("content_json", "must be a valid Menu label document").Message(), errs.Wrap(err).Message())
 	require.Contains(t, failurecause.Message(err), "unexpected end of JSON input")
 	require.Empty(t, output.String())
 }

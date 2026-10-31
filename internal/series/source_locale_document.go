@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -68,7 +68,7 @@ func LoadSourceLocaleDocumentStates(
 		ids,
 	).Scan(&rows)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 
 	documents := make(map[string]*SourceLocaleDocument, len(rows))
@@ -101,7 +101,7 @@ func LoadRequiredSourceLocaleDocument(
 	}
 	document := documents[seriesID]
 	if document == nil {
-		return nil, errs.NotFound("series_translation", seriesID)
+		return nil, domainerr.ResourceNotFound("series_translation", seriesID)
 	}
 	return document, nil
 }

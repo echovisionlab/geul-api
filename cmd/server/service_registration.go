@@ -538,19 +538,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(pagePath, pageHandler)
 	slog.Info("Registered service", "path", pagePath)
 
-	menuService := menu.NewAuditedMenuService(
-		db,
-		telemetryWriter,
-		menuadapter.NewSiteSettingsReferences(telemetryWriter),
-		menuadapter.NewTargetReferences(),
-		spicedbClient,
-	)
-	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menuService, handlerOpts...)
+	menuService, err := menu.NewService(menu.Deps{
+		DB: db, SpiceDB: spicedbClient,
+		SiteSettings: menuadapter.NewSiteSettingsReferences(telemetryWriter),
+		Targets:      menuadapter.NewTargetReferences(),
+		Checkpoints:  collaborationRuntime.Checkpoints,
+		Audit:        telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, err
+	}
+	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menu.NewConnectHandler(menuService), handlerOpts...)
 	mux.Handle(menuPath, menuHandler)
 	slog.Info("Registered service", "path", menuPath)
-	internalMenuService := menu.NewInternalMenuService(menuService, collaborationRuntime.Checkpoints)
 	internalMenuPath, internalMenuHandler := intrav1connect.NewInternalMenuServiceHandler(
-		internalMenuService, internalHandlerOpts...,
+		menu.NewInternalConnectHandler(menuService), internalHandlerOpts...,
 	)
 	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
 	slog.Info("Registered internal service", "path", internalMenuPath)
@@ -564,32 +566,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
 	seriesMenuTargets := menu.NewTargetLifecycle(telemetryWriter)
 	seriesPostAccess := seriesadapter.PostAccess{}
-	seriesService := series.NewAuditedSeriesService(
-		db,
-		seriesRuntime,
-		seriesRuntime,
-		seriesRuntime,
-		spicedbClient,
-		kratosClient,
-		seriesMenuTargets,
-		seriesPostAccess,
-		seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
-		telemetryWriter,
-	)
-	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(seriesService, handlerOpts...)
+	seriesService, err := series.NewService(series.Deps{
+		DB: db, SpiceDB: spicedbClient, Identity: kratosClient,
+		Media: seriesRuntime, OG: seriesRuntime, Reads: seriesRuntime,
+		MenuTargets: seriesMenuTargets, Posts: seriesPostAccess, Membership: postadapter.SeriesMembership{},
+		Members:     seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
+		Checkpoints: collaborationRuntime.Checkpoints, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post Series service: %w", err)
+	}
+	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(series.NewConnectHandler(seriesService), handlerOpts...)
 	mux.Handle(seriesPath, seriesHandler)
 	slog.Info("Registered service", "path", seriesPath)
-	postSeriesDocuments, err := series.NewAIDocumentService(
-		db, spicedbClient, seriesMenuTargets, seriesPostAccess, seriesRuntime, telemetryWriter,
-	)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post Series document service: %w", err)
-	}
-	internalPostSeriesService := series.NewInternalPostSeriesService(
-		postSeriesDocuments, collaborationRuntime.Checkpoints,
-	)
 	internalPostSeriesPath, internalPostSeriesHandler := intrav1connect.NewInternalPostSeriesServiceHandler(
-		internalPostSeriesService, internalHandlerOpts...,
+		series.NewInternalConnectHandler(seriesService), internalHandlerOpts...,
 	)
 	mux.Handle(internalPostSeriesPath, internalRPCTrust.collab(internalPostSeriesHandler))
 	slog.Info("Registered internal service", "path", internalPostSeriesPath)
@@ -728,11 +719,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(adminPath, adminHandler)
 	slog.Info("Registered service", "path", adminPath)
 
-	shareLinkService := sharelink.NewService(
-		db,
-		sharelinkadapter.NewAuthority(db, spicedbClient, telemetryWriter),
-	)
-	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(shareLinkService, handlerOpts...)
+	shareLinkService, err := sharelink.NewService(sharelink.Deps{
+		DB: db, SpiceDB: spicedbClient, Targets: sharelinkadapter.NewAuthority(db, spicedbClient), Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, err
+	}
+	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(sharelink.NewConnectHandler(shareLinkService), handlerOpts...)
 	mux.Handle(shareLinkPath, shareLinkHandler)
 	slog.Info("Registered service", "path", shareLinkPath)
 
@@ -820,7 +813,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, fmt.Errorf("register Terms AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.postSeries, err = aidocumentadapter.NewPostSeriesRegistration(
-		postSeriesDocuments,
+		seriesService,
 	); err != nil {
 		return registeredServices{}, fmt.Errorf("register Post Series AI document domain: %w", err)
 	}
@@ -902,7 +895,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)
-	(publicServiceRegistration{
+	if err := (publicServiceRegistration{
 		dependencies:     deps,
 		handlerOptions:   publicHandlerOpts,
 		fileService:      publicFileService,
@@ -911,7 +904,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workRuntime:      workRuntime,
 		legalRuntime:     legalRuntime,
 		formDependencies: formDependencies,
-	}).register()
+	}).register(); err != nil {
+		return registeredServices{}, err
+	}
 
 	return registeredServices{
 		authInterceptor:             authInterceptor,

@@ -39,11 +39,7 @@ type publicSeriesRow struct {
 	FeaturedImageFileID *string `gorm:"column:featured_image_file_id"`
 }
 
-func (r *PublicReader) List(
-	ctx context.Context,
-	req *openv1.ListSeriesRequest,
-	acceptLanguage string,
-) (seriespublic.Page, error) {
+func (r *PublicReader) List(ctx context.Context, request seriespublic.ListSeriesQuery) (seriespublic.Page, error) {
 	var rows []publicSeriesRow
 	var total int64
 	query := r.db.WithContext(ctx).Table("series AS s").
@@ -52,24 +48,24 @@ func (r *PublicReader) List(
 		Where("s.status = ?", managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
 
 	var err error
-	query, err = seriespublic.SeriesFilterConfig.ApplyFilters(query, req.Filters)
+	query, err = seriespublic.SeriesFilterConfig.ApplyFilters(query, request.Filters)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return seriespublic.Page{}, errs.Internal(err)
 	}
-	query, err = seriespublic.SeriesSortConfig.ApplySort(query, req.Sorts)
+	query, err = seriespublic.SeriesSortConfig.ApplySort(query, request.Sorts)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
 	query = query.Order("s.id ASC")
-	pagination := queryutil.GetPaginationParams(req.Pagination.GetLimit(), req.Pagination.GetOffset(), 100)
+	pagination := queryutil.GetPaginationParams(request.Limit, request.Offset, 100)
 	if err := queryutil.ApplyPagination(query, pagination).Find(&rows).Error; err != nil {
 		return seriespublic.Page{}, errs.Internal(err)
 	}
 
-	items, err := r.projectSeriesRows(ctx, rows, acceptLanguage)
+	items, err := r.projectSeriesRows(ctx, rows, request.AcceptLanguage)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}

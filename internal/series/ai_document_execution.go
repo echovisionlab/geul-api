@@ -6,13 +6,13 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -31,7 +31,7 @@ func (e *postSeriesAIAdapterValidationError) Error() string {
 
 var errRollbackPostSeriesAIValidation = errors.New("rollback Post Series AI document validation")
 
-func (s *AIDocumentService) Load(
+func (s *Service) Load(
 	ctx context.Context,
 	identity core.DocumentIdentity,
 	locale core.Locale,
@@ -40,10 +40,10 @@ func (s *AIDocumentService) Load(
 		return core.Document{}, err
 	}
 	var document core.Document
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.access.RequirePermissionAndLock(ctx, tx, string(identity.Reference), policyv1.PostSeries.View); err != nil {
-			return err
-		}
+	access := mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+		return s.access.RequirePermissionAndLock(ctx, tx, require, string(identity.Reference), policyv1.PostSeries.View)
+	})
+	err := s.readLocked(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
 		state, err := s.loadAIDocumentState(ctx, tx, string(identity.Reference), string(locale))
 		if err != nil {
 			return err
@@ -54,7 +54,7 @@ func (s *AIDocumentService) Load(
 	return document, err
 }
 
-func (s *AIDocumentService) validateAIDocumentDomain(
+func (s *Service) validateAIDocumentDomain(
 	ctx context.Context,
 	db *gorm.DB,
 	loaded core.Document,
@@ -64,90 +64,114 @@ func (s *AIDocumentService) validateAIDocumentDomain(
 		return nil, err
 	}
 	issues := make([]core.OperationIssue, 0)
-	issue := func(index int, code core.IssueCode, handle, message string) {
-		issues = append(issues, core.OperationIssue{Operation: index, Code: code, Handle: handle, Message: message})
-	}
 	for index, operation := range operations {
-		switch operation.Kind {
-		case core.OperationSetField:
-			field := operation.SetField.Target.Field
-			handle := postSeriesAIOperationHandles(operation)[0]
-			switch field {
-			case postSeriesAIFieldTitle:
-				if loaded.Role() == core.LocaleRoleSource && strings.TrimSpace(operation.SetField.Value.Text) == "" {
-					issue(index, core.IssueValueKindMismatch, handle, "Post Series source title is required")
-				}
-			case postSeriesAIFieldSummary:
-			case postSeriesAIFieldSlug:
-				normalized, err := validateSeriesSlug(operation.SetField.Value.Text)
-				if err != nil {
-					issue(index, core.IssueValueKindMismatch, handle, err.Error())
-					continue
-				}
-				if err := validateSeriesUpdateSlug(ctx, db, string(loaded.Identity.Reference), &normalized); err != nil {
-					return nil, err
-				}
-			case postSeriesAIFieldStatus:
-				if err := validateSeriesStatus(operation.SetField.Value.Text); err != nil {
-					issue(index, core.IssueValueKindMismatch, handle, err.Error())
-				}
-			default:
-				issue(index, core.IssueUnknownField, handle, "unsupported Post Series field")
-			}
-		case core.OperationUnsetField:
-			handle := postSeriesAIOperationHandles(operation)[0]
-			switch operation.UnsetField.Target.Field {
-			case postSeriesAIFieldTitle:
-				if loaded.Role() == core.LocaleRoleSource {
-					issue(index, core.IssueValueKindMismatch, handle, "Post Series source title is required")
-				} else {
-					issue(index, core.IssueInvalidOperation, handle, "Post Series target fields use explicit empty instead of unset")
-				}
-			case postSeriesAIFieldSummary:
-				if loaded.Role() == core.LocaleRoleNonSource {
-					issue(index, core.IssueInvalidOperation, handle, "Post Series target fields use explicit empty instead of unset")
-				}
-			case postSeriesAIFieldSlug, postSeriesAIFieldStatus:
-				issue(index, core.IssueInvalidOperation, handle, "Post Series slug and status cannot be unset")
-			default:
-				issue(index, core.IssueUnknownField, handle, "unsupported Post Series field")
-			}
-		case core.OperationInsertRelationItem:
-			op := operation.InsertRelationItem
-			if err := validatePostSeriesAIRelation(op.Block, op.Relation, op.Item, op.Kind); err != nil {
-				issue(index, core.IssueInvalidOperation, postSeriesAIOperationHandles(operation)[0], err.Error())
-				continue
-			}
-		case core.OperationDeleteRelationItem:
-			op := operation.DeleteRelationItem
-			if err := validatePostSeriesAIRelation(op.Block, op.Relation, op.Item, postSeriesAIDocumentPostKind); err != nil {
-				issue(index, core.IssueInvalidOperation, postSeriesAIOperationHandles(operation)[0], err.Error())
-			}
-		case core.OperationMoveRelationItem:
-			op := operation.MoveRelationItem
-			if op.TargetBlock != postSeriesAIDocumentBlock || op.Target != postSeriesAIDocumentPosts {
-				issue(index, core.IssueInvalidRelationItemMove, postSeriesAIOperationHandles(operation)[0], "Post can only move inside the Post Series order")
-				continue
-			}
-			if err := validatePostSeriesAIRelation(op.Block, op.Relation, op.Item, postSeriesAIDocumentPostKind); err != nil {
-				issue(index, core.IssueInvalidOperation, postSeriesAIOperationHandles(operation)[0], err.Error())
-			}
-		case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock,
-			core.OperationReplaceBlockKind, core.OperationAttachFile, core.OperationDetachFile:
-			issue(index, core.IssueInvalidOperation, postSeriesAIOperationHandles(operation)[0], "Post Series does not support this structural operation")
-		default:
-			issue(index, core.IssueInvalidOperation, "", "unsupported Post Series operation")
+		issue, err := postSeriesAIOperationIssue(ctx, db, loaded, operation)
+		if err != nil {
+			return nil, err
+		}
+		if issue != nil {
+			issue.Operation = index
+			issues = append(issues, *issue)
 		}
 	}
 	return issues, nil
+}
+
+// postSeriesAIOperationIssue is the Series rule an operation breaks, if
+// any.
+func postSeriesAIOperationIssue(ctx context.Context, db *gorm.DB, loaded core.Document, operation core.Operation) (*core.OperationIssue, error) {
+	handle := func() string { return postSeriesAIOperationHandles(operation)[0] }
+	issue := func(code core.IssueCode, message string) *core.OperationIssue {
+		return &core.OperationIssue{Code: code, Handle: handle(), Message: message}
+	}
+	switch operation.Kind {
+	case core.OperationSetField:
+		return postSeriesAISetFieldIssue(ctx, db, loaded, operation.SetField, issue)
+	case core.OperationUnsetField:
+		return postSeriesAIUnsetFieldIssue(loaded, operation.UnsetField.Target.Field, issue), nil
+	case core.OperationInsertRelationItem:
+		op := operation.InsertRelationItem
+		if err := validatePostSeriesAIRelation(op.Block, op.Relation, op.Item, op.Kind); err != nil {
+			return issue(core.IssueInvalidOperation, err.Error()), nil
+		}
+	case core.OperationDeleteRelationItem:
+		op := operation.DeleteRelationItem
+		if err := validatePostSeriesAIRelation(op.Block, op.Relation, op.Item, postSeriesAIDocumentPostKind); err != nil {
+			return issue(core.IssueInvalidOperation, err.Error()), nil
+		}
+	case core.OperationMoveRelationItem:
+		op := operation.MoveRelationItem
+		if op.TargetBlock != postSeriesAIDocumentBlock || op.Target != postSeriesAIDocumentPosts {
+			return issue(core.IssueInvalidRelationItemMove, "Post can only move inside the Post Series order"), nil
+		}
+		if err := validatePostSeriesAIRelation(op.Block, op.Relation, op.Item, postSeriesAIDocumentPostKind); err != nil {
+			return issue(core.IssueInvalidOperation, err.Error()), nil
+		}
+	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
+	case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock,
+		core.OperationReplaceBlockKind, core.OperationAttachFile, core.OperationDetachFile:
+		return issue(core.IssueInvalidOperation, "Post Series does not support this structural operation"), nil
+	default:
+		return &core.OperationIssue{Code: core.IssueInvalidOperation, Message: "unsupported Post Series operation"}, nil
+	}
+	return nil, nil
+}
+
+func postSeriesAISetFieldIssue(
+	ctx context.Context,
+	db *gorm.DB,
+	loaded core.Document,
+	set *core.SetField,
+	issue func(core.IssueCode, string) *core.OperationIssue,
+) (*core.OperationIssue, error) {
+	switch set.Target.Field {
+	case postSeriesAIFieldTitle:
+		if loaded.Role() == core.LocaleRoleSource && strings.TrimSpace(set.Value.Text) == "" {
+			return issue(core.IssueValueKindMismatch, "Post Series source title is required"), nil
+		}
+	case postSeriesAIFieldSummary:
+	case postSeriesAIFieldSlug:
+		normalized, err := validateSeriesSlug(set.Value.Text)
+		if err != nil {
+			return issue(core.IssueValueKindMismatch, err.Error()), nil
+		}
+		if err := validateSeriesUpdateSlug(ctx, db, string(loaded.Identity.Reference), &normalized); err != nil {
+			return nil, err
+		}
+	case postSeriesAIFieldStatus:
+		if err := validateSeriesStatus(set.Value.Text); err != nil {
+			return issue(core.IssueValueKindMismatch, err.Error()), nil
+		}
+	default:
+		return issue(core.IssueUnknownField, "unsupported Post Series field"), nil
+	}
+	return nil, nil
+}
+
+func postSeriesAIUnsetFieldIssue(loaded core.Document, field core.FieldID, issue func(core.IssueCode, string) *core.OperationIssue) *core.OperationIssue {
+	switch field {
+	case postSeriesAIFieldTitle:
+		if loaded.Role() == core.LocaleRoleSource {
+			return issue(core.IssueValueKindMismatch, "Post Series source title is required")
+		}
+		return issue(core.IssueInvalidOperation, "Post Series target fields use explicit empty instead of unset")
+	case postSeriesAIFieldSummary:
+		if loaded.Role() == core.LocaleRoleNonSource {
+			return issue(core.IssueInvalidOperation, "Post Series target fields use explicit empty instead of unset")
+		}
+		return nil
+	case postSeriesAIFieldSlug, postSeriesAIFieldStatus:
+		return issue(core.IssueInvalidOperation, "Post Series slug and status cannot be unset")
+	default:
+		return issue(core.IssueUnknownField, "unsupported Post Series field")
+	}
 }
 
 // ValidateMutation and ExecuteMutation are the hard-cut owning-domain seam
 // used by the DCDP application. Both lock the Series root, choose one exact
 // action from the requested operation batch, authorize it once, and only then
 // normalize and compile against the current aggregate.
-func (s *AIDocumentService) ValidateMutation(
+func (s *Service) ValidateMutation(
 	ctx context.Context,
 	request core.ApplyRequest,
 ) (core.ValidationResult, error) {
@@ -155,7 +179,7 @@ func (s *AIDocumentService) ValidateMutation(
 	return validation, err
 }
 
-func (s *AIDocumentService) ExecuteMutation(
+func (s *Service) ExecuteMutation(
 	ctx context.Context,
 	request core.ApplyRequest,
 ) (core.ApplyResult, error) {
@@ -163,7 +187,7 @@ func (s *AIDocumentService) ExecuteMutation(
 	return result, err
 }
 
-func (s *AIDocumentService) executeMutation(
+func (s *Service) executeMutation(
 	ctx context.Context,
 	request core.ApplyRequest,
 	mode postSeriesAIExecutionMode,
@@ -173,52 +197,43 @@ func (s *AIDocumentService) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 	if mode != postSeriesAIExecutionValidate && mode != postSeriesAIExecutionApply {
-		return core.ValidationResult{}, core.ApplyResult{}, errs.InvalidArgument("mode", "is not supported")
+		return core.ValidationResult{}, core.ApplyResult{}, domainerr.InvalidField("mode", "is not supported")
 	}
 
 	var validation core.ValidationResult
 	var command core.ValidatedApply
-	var result core.ApplyResult
+	var audits seriesAudits
 	seriesID := string(identity.Reference)
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.access.RequirePermissionAndLock(
-			ctx, tx, seriesID, postSeriesAIDocumentAction(request.Operations),
-		); err != nil {
-			switch connect.CodeOf(err) {
-			case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-				return errs.NotFound("series", seriesID)
-			default:
-				return err
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[core.ApplyResult]{
+		// The root is locked before one exact action chosen from the batch;
+		// a caller without it learns nothing about the Series.
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+			err := s.access.RequirePermissionAndLock(ctx, tx, require, seriesID, postSeriesAIDocumentAction(request.Operations))
+			if mutation.IsDenied(err) || mutation.IsUnauthenticated(err) {
+				return domainerr.ResourceNotFound("series", seriesID)
 			}
-		}
-		state, err := s.loadAIDocumentState(ctx, tx, seriesID, string(request.Locale))
-		if err != nil {
 			return err
-		}
-		current := state.document(identity, request.Locale)
-		command, validation = core.ValidateLoadedApply(current, request)
-		if !validation.Valid() {
-			return &postSeriesAIAdapterValidationError{result: validation}
-		}
-		issues, err := s.validateAIDocumentDomain(ctx, tx, current, command.Operations)
-		if err != nil {
-			return err
-		}
-		if len(issues) != 0 {
-			validation.Issues = append(validation.Issues, issues...)
-			return &postSeriesAIAdapterValidationError{result: validation}
-		}
-		result, err = s.applyAIDocumentCommand(ctx, tx, state, command)
-		if err != nil {
-			return err
-		}
-		if mode == postSeriesAIExecutionValidate {
-			return errRollbackPostSeriesAIValidation
-		}
-		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST_SERIES, seriesID, string(request.Locale), string(result.DocumentRevision), postSeriesSignalTarget(result.TargetRevision), result.Changed, len(command.Operations) == 1 && command.Operations[0].Kind == core.OperationDeleteTranslation, contentsignal.InteractiveMemberID(ctx))
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (core.ApplyResult, error) {
+			var result core.ApplyResult
+			var err error
+			command, validation, result, err = s.compileAndApplyAIDocument(ctx, tx, request, &audits)
+			if err != nil {
+				return core.ApplyResult{}, err
+			}
+			if mode == postSeriesAIExecutionValidate {
+				return core.ApplyResult{}, errRollbackPostSeriesAIValidation
+			}
+			return result, nil
+		},
+		Audit: func(core.ApplyResult) mutation.Audit { return audits.audit() },
+		Outbox: func(ctx context.Context, tx *gorm.DB, result core.ApplyResult) error {
+			deletesTranslation := len(command.Operations) == 1 && command.Operations[0].Kind == core.OperationDeleteTranslation
+			return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST_SERIES, seriesID, string(request.Locale), string(result.DocumentRevision), postSeriesSignalTarget(result.TargetRevision), result.Changed, deletesTranslation, contentsignal.InteractiveMemberID(ctx))
+		},
 	})
 	if errors.Is(err, errRollbackPostSeriesAIValidation) {
-		return validation, result, nil
+		return validation, core.ApplyResult{}, nil
 	}
 	if err != nil {
 		var invalid *postSeriesAIAdapterValidationError
@@ -236,20 +251,47 @@ func (s *AIDocumentService) executeMutation(
 	return validation, result, nil
 }
 
-func (s *AIDocumentService) applyAIDocumentCommand(
+// compileAndApplyAIDocument validates the request against the locked
+// document and the Series rules, then applies it.
+func (s *Service) compileAndApplyAIDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	request core.ApplyRequest,
+	audits *seriesAudits,
+) (core.ValidatedApply, core.ValidationResult, core.ApplyResult, error) {
+	identity := request.Identity()
+	state, err := s.loadAIDocumentState(ctx, tx, string(identity.Reference), string(request.Locale))
+	if err != nil {
+		return core.ValidatedApply{}, core.ValidationResult{}, core.ApplyResult{}, err
+	}
+	current := state.document(identity, request.Locale)
+	command, validation := core.ValidateLoadedApply(current, request)
+	if !validation.Valid() {
+		return command, validation, core.ApplyResult{}, &postSeriesAIAdapterValidationError{result: validation}
+	}
+	issues, err := s.validateAIDocumentDomain(ctx, tx, current, command.Operations)
+	if err != nil {
+		return command, validation, core.ApplyResult{}, err
+	}
+	if len(issues) != 0 {
+		validation.Issues = append(validation.Issues, issues...)
+		return command, validation, core.ApplyResult{}, &postSeriesAIAdapterValidationError{result: validation}
+	}
+	result, err := s.applyAIDocumentCommand(ctx, tx, state, command, audits)
+	return command, validation, result, err
+}
+
+func (s *Service) applyAIDocumentCommand(
 	ctx context.Context,
 	tx *gorm.DB,
 	state postSeriesAIDocumentState,
 	command core.ValidatedApply,
+	audits *seriesAudits,
 ) (core.ApplyResult, error) {
 	mutation := postSeriesAIMutation{state: state}
-	service := &SeriesService{
-		db: s.db, spiceDB: s.spiceDB, permissions: s.spiceDB, menuTargets: s.menuTargets,
-		postAccess: s.postAccess,
-		ogRefresh:  s.ogRefresh, auditWriter: s.auditWriter,
-	}
+	defer func() { audits.records = append(audits.records, mutation.audits.records...) }()
 	for index, operation := range command.Operations {
-		changed, err := s.applyAIDocumentOperation(ctx, tx, service, &mutation, command, index, operation)
+		changed, err := s.applyAIDocumentOperation(ctx, tx, &mutation, command, index, operation)
 		if err != nil {
 			return core.ApplyResult{}, err
 		}
@@ -279,7 +321,7 @@ func (s *AIDocumentService) applyAIDocumentCommand(
 			TargetRevision:   clonePostSeriesRevision(state.targetRevision),
 		})
 	}
-	if err := s.persistAIDocumentMutation(ctx, tx, service, &mutation, command); err != nil {
+	if err := s.persistAIDocumentMutation(ctx, tx, &mutation, command); err != nil {
 		return core.ApplyResult{}, err
 	}
 	next, err := s.loadAIDocumentState(
@@ -290,7 +332,7 @@ func (s *AIDocumentService) applyAIDocumentCommand(
 	}
 	if next.documentRevision == state.documentRevision &&
 		equalPostSeriesRevision(next.targetRevision, state.targetRevision) {
-		return core.ApplyResult{}, errs.InternalMsg("Post Series AI document mutation did not advance an authoritative revision")
+		return core.ApplyResult{}, errors.New("Post Series AI document mutation did not advance an authoritative revision")
 	}
 	return core.AcceptValidatedApply(command, core.ApplyResult{
 		DocumentRevision: next.documentRevision,

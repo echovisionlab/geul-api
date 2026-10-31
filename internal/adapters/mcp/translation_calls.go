@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -152,7 +153,7 @@ func translationCallError(err error) (mcpserver.ToolResult, error) {
 	if err == nil {
 		return mcpserver.ToolResult{}, nil
 	}
-	switch connect.CodeOf(err) {
+	switch errs.CodeOf(err) {
 	case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeAlreadyExists,
 		connect.CodePermissionDenied, connect.CodeUnauthenticated,
 		connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:

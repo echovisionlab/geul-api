@@ -5,40 +5,35 @@ import (
 	"errors"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// SeriesService implements the SeriesService Connect handler
-func (s *SeriesService) GetSeriesWithManagers(
-	ctx context.Context,
-	req *connect.Request[managev1.GetSeriesWithManagersRequest],
-) (*connect.Response[managev1.GetSeriesWithManagersResponse], error) {
-	if err := s.requireSeriesPermissionOrNotFound(ctx, req.Msg.Id, policyv1.PostSeries.View); err != nil {
+func (s *Service) GetSeriesWithManagers(ctx context.Context, query GetSeriesWithManagersQuery) (*managev1.GetSeriesWithManagersResponse, error) {
+	if err := s.requireSeriesPermissionOrNotFound(ctx, query.ID, policyv1.PostSeries.View); err != nil {
 		return nil, err
 	}
 
 	// Get series (admin/manager can see any status)
 	var series model.Series
-	if err := s.db.WithContext(ctx).First(&series, "id = ?", req.Msg.Id).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&series, "id = ?", query.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("series", req.Msg.Id)
+			return nil, domainerr.ResourceNotFound("series", query.ID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := s.overlaySeriesSourceLocaleDocument(ctx, &series); err != nil {
 		return nil, err
 	}
 
-	protoMembers, err := s.loadSeriesManagerProjections(ctx, req.Msg.Id)
+	protoMembers, err := s.loadSeriesManagerProjections(ctx, query.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,158 +45,147 @@ func (s *SeriesService) GetSeriesWithManagers(
 	protoSeries := s.toProtoSeries(&series, ogAsset)
 	s.setSeriesFeaturedImageAsset(ctx, protoSeries)
 
-	return connect.NewResponse(&managev1.GetSeriesWithManagersResponse{
+	return &managev1.GetSeriesWithManagersResponse{
 		Series:   protoSeries,
 		Managers: protoMembers,
-	}), nil
+	}, nil
 }
 
 // ListSeriesManagers returns members of a series
-func (s *SeriesService) ListSeriesManagers(
-	ctx context.Context,
-	req *connect.Request[managev1.ListSeriesManagersRequest],
-) (*connect.Response[managev1.ListSeriesManagersResponse], error) {
-	if err := s.requireSeriesPermissionOrNotFound(ctx, req.Msg.SeriesId, policyv1.PostSeries.View); err != nil {
+func (s *Service) ListSeriesManagers(ctx context.Context, query ListSeriesManagersQuery) (*managev1.ListSeriesManagersResponse, error) {
+	if err := s.requireSeriesPermissionOrNotFound(ctx, query.SeriesID, policyv1.PostSeries.View); err != nil {
 		return nil, err
 	}
 
 	// Verify series exists
 	var series model.Series
-	if err := s.db.WithContext(ctx).First(&series, "id = ?", req.Msg.SeriesId).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&series, "id = ?", query.SeriesID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("series", req.Msg.SeriesId)
+			return nil, domainerr.ResourceNotFound("series", query.SeriesID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
-	protoMembers, err := s.loadSeriesManagerProjections(ctx, req.Msg.SeriesId)
+	protoMembers, err := s.loadSeriesManagerProjections(ctx, query.SeriesID)
 	if err != nil {
 		return nil, err
 	}
 
-	return connect.NewResponse(&managev1.ListSeriesManagersResponse{
+	return &managev1.ListSeriesManagersResponse{
 		Managers: protoMembers,
-	}), nil
+	}, nil
 }
 
-// AddSeriesManager adds a member to a series
-func (s *SeriesService) AddSeriesManager(
-	ctx context.Context,
-	req *connect.Request[managev1.AddSeriesManagerRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.SeriesId, policyv1.PostSeries.ManageParticipants); err != nil {
-			return err
-		}
-		present, err := seriesManagerAttributionExists(ctx, tx, req.Msg.SeriesId, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		target, err := authorizationtarget.RequireLocked(ctx, tx, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		if !present {
-			if err := upsertSeriesManagerAttribution(ctx, tx, req.Msg.SeriesId, req.Msg.MemberId, time.Now().UTC()); err != nil {
-				return err
+// seriesManagerChange is the policy relationship batch of a manager change
+// and its exact inverse.
+type seriesManagerChange struct {
+	apply, compensate []policyv1.RelationshipMutation
+}
+
+func (s *Service) AddSeriesManager(ctx context.Context, command AddSeriesManagerCommand) error {
+	var audits seriesAudits
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[seriesManagerChange]{
+		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.ManageParticipants),
+		Change: func(ctx context.Context, tx *gorm.DB) (seriesManagerChange, error) {
+			present, err := seriesManagerAttributionExists(ctx, tx, command.SeriesID, command.MemberID)
+			if err != nil {
+				return seriesManagerChange{}, err
 			}
-			if err := s.appendPostSeriesManagerAudit(ctx, tx, req.Msg.SeriesId, req.Msg.MemberId, sharedtelemetry.AuditRelationshipNone, sharedtelemetry.AuditRelationshipManager); err != nil {
-				return err
+			target, err := authorizationtarget.RequireLocked(ctx, tx, command.MemberID)
+			if err != nil {
+				return seriesManagerChange{}, err
 			}
-		}
-		apply, compensate, err := seriesManagerAuthorizationMutations(req.Msg.SeriesId, target.IdentityID, true, present)
-		if err != nil {
-			return err
-		}
-		return write(apply, compensate)
+			if !present {
+				if err := upsertSeriesManagerAttribution(ctx, tx, command.SeriesID, command.MemberID, time.Now().UTC()); err != nil {
+					return seriesManagerChange{}, err
+				}
+				audits.manager(command.SeriesID, command.MemberID, sharedtelemetry.AuditRelationshipNone, sharedtelemetry.AuditRelationshipManager)
+			}
+			var change seriesManagerChange
+			change.apply, change.compensate, err = seriesManagerAuthorizationMutations(command.SeriesID, target.IdentityID, true, present)
+			return change, err
+		},
+		Audit: func(seriesManagerChange) mutation.Audit { return audits.audit() },
+		Relationships: func(change seriesManagerChange) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return change.apply, change.compensate, nil
+		},
 	})
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return err
 }
 
-// RemoveSeriesManager removes a member from a series
-func (s *SeriesService) RemoveSeriesManager(
-	ctx context.Context,
-	req *connect.Request[managev1.RemoveSeriesManagerRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
+func (s *Service) RemoveSeriesManager(ctx context.Context, command RemoveSeriesManagerCommand) error {
 	// A retired target has no remaining SpiceDB identity relationship. Keep
 	// that cleanup on a transaction which performs the same one exact Series
 	// permission check but deliberately performs no authorization write.
-	if _, linkedErr := authorizationtarget.RequireLinkedMember(ctx, s.db, req.Msg.MemberId, false); linkedErr != nil {
-		if connect.CodeOf(linkedErr) != connect.CodeNotFound {
-			return nil, linkedErr
+	if _, linkedErr := authorizationtarget.RequireLinkedMember(ctx, s.db, command.MemberID, false); linkedErr != nil {
+		if !mutation.IsNotFound(linkedErr) {
+			return linkedErr
 		}
-		if err := s.removeRetiredSeriesManagerAttribution(ctx, req.Msg.SeriesId, req.Msg.MemberId); err != nil {
-			return nil, err
-		}
-		return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+		return s.removeRetiredSeriesManagerAttribution(ctx, command.SeriesID, command.MemberID)
 	}
-
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, req.Msg.SeriesId, policyv1.PostSeries.ManageParticipants); err != nil {
-			return err
-		}
-		present, err := seriesManagerAttributionExists(ctx, tx, req.Msg.SeriesId, req.Msg.MemberId)
-		if err != nil {
-			return err
-		}
-		if !present {
-			return errs.NotFoundMsg("series manager relation not found")
-		}
-		target, targetErr := authorizationtarget.RequireLockedLinked(ctx, tx, req.Msg.MemberId)
-		if targetErr != nil {
-			if connect.CodeOf(targetErr) == connect.CodeNotFound {
-				return errs.WithCause(errs.FailedPrecondition("series manager target changed; retry"), targetErr)
+	var audits seriesAudits
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[seriesManagerChange]{
+		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.ManageParticipants),
+		Change: func(ctx context.Context, tx *gorm.DB) (seriesManagerChange, error) {
+			present, err := seriesManagerAttributionExists(ctx, tx, command.SeriesID, command.MemberID)
+			if err != nil {
+				return seriesManagerChange{}, err
 			}
-			return targetErr
-		}
-		if err := deleteSeriesManagerAttribution(ctx, tx, req.Msg.SeriesId, req.Msg.MemberId); err != nil {
-			return err
-		}
-		if err := s.appendPostSeriesManagerAudit(ctx, tx, req.Msg.SeriesId, req.Msg.MemberId, sharedtelemetry.AuditRelationshipManager, sharedtelemetry.AuditRelationshipNone); err != nil {
-			return err
-		}
-		apply, compensate, err := seriesManagerAuthorizationMutations(req.Msg.SeriesId, target.IdentityID, false, true)
-		if err != nil {
-			return err
-		}
-		return write(apply, compensate)
+			if !present {
+				return seriesManagerChange{}, domainerr.New(domainerr.NotFound, "", "series manager relation not found")
+			}
+			target, err := authorizationtarget.RequireLockedLinked(ctx, tx, command.MemberID)
+			if err != nil {
+				if mutation.IsNotFound(err) {
+					return seriesManagerChange{}, domainerr.Precondition("series manager target changed; retry").WithCause(err)
+				}
+				return seriesManagerChange{}, err
+			}
+			if err := deleteSeriesManagerAttribution(ctx, tx, command.SeriesID, command.MemberID); err != nil {
+				return seriesManagerChange{}, err
+			}
+			audits.manager(command.SeriesID, command.MemberID, sharedtelemetry.AuditRelationshipManager, sharedtelemetry.AuditRelationshipNone)
+			var change seriesManagerChange
+			change.apply, change.compensate, err = seriesManagerAuthorizationMutations(command.SeriesID, target.IdentityID, false, true)
+			return change, err
+		},
+		Audit: func(seriesManagerChange) mutation.Audit { return audits.audit() },
+		Relationships: func(change seriesManagerChange) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return change.apply, change.compensate, nil
+		},
 	})
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return err
 }
 
 // removeRetiredSeriesManagerAttribution clears the product-owned record after
 // account deletion has already removed every identity relationship from
 // SpiceDB. There is deliberately no authorization write to compensate.
-func (s *SeriesService) removeRetiredSeriesManagerAttribution(ctx context.Context, seriesID, memberID string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, seriesID, policyv1.PostSeries.ManageParticipants); err != nil {
-			return err
-		}
-		present, err := seriesManagerAttributionExists(ctx, tx, seriesID, memberID)
-		if err != nil {
-			return err
-		}
-		if !present {
-			return errs.NotFoundMsg("series manager relation not found")
-		}
-		if _, err := authorizationtarget.RequireLockedLinked(ctx, tx, memberID); err != nil {
-			if connect.CodeOf(err) != connect.CodeNotFound {
-				return err
+func (s *Service) removeRetiredSeriesManagerAttribution(ctx context.Context, seriesID, memberID string) error {
+	var audits seriesAudits
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Access: lockedSeries(seriesID, policyv1.PostSeries.ManageParticipants),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			present, err := seriesManagerAttributionExists(ctx, tx, seriesID, memberID)
+			if err != nil {
+				return struct{}{}, err
 			}
-		} else {
-			return errs.FailedPrecondition("series manager target is still linked; retry")
-		}
-		if err := deleteSeriesManagerAttribution(ctx, tx, seriesID, memberID); err != nil {
-			return err
-		}
-		return s.appendPostSeriesManagerAudit(ctx, tx, seriesID, memberID, sharedtelemetry.AuditRelationshipManager, sharedtelemetry.AuditRelationshipNone)
+			if !present {
+				return struct{}{}, domainerr.New(domainerr.NotFound, "", "series manager relation not found")
+			}
+			if _, err := authorizationtarget.RequireLockedLinked(ctx, tx, memberID); err == nil {
+				return struct{}{}, domainerr.Precondition("series manager target is still linked; retry")
+			} else if !mutation.IsNotFound(err) {
+				return struct{}{}, err
+			}
+			if err := deleteSeriesManagerAttribution(ctx, tx, seriesID, memberID); err != nil {
+				return struct{}{}, err
+			}
+			audits.manager(seriesID, memberID, sharedtelemetry.AuditRelationshipManager, sharedtelemetry.AuditRelationshipNone)
+			return struct{}{}, nil
+		},
+		Audit: func(struct{}) mutation.Audit { return audits.audit() },
 	})
+	return err
 }
 
 func seriesManagerAuthorizationMutations(
@@ -233,3 +217,8 @@ func seriesManagerAuthorizationState(seriesID string, actor policyv1.Actor, pres
 }
 
 // AssignPostToSeries assigns a post to a series
+
+type GetSeriesWithManagersQuery struct{ ID string }
+type ListSeriesManagersQuery struct{ SeriesID string }
+type AddSeriesManagerCommand struct{ SeriesID, MemberID string }
+type RemoveSeriesManagerCommand struct{ SeriesID, MemberID string }

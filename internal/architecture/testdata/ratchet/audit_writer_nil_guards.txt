@@ -2,7 +2,6 @@
 # -update.
 19 internal/account
 1 internal/account/public
-1 internal/adapters/sharelink
 11 internal/adapters/translation
 6 internal/artist
 1 internal/audience
@@ -16,13 +15,13 @@
 7 internal/legal
 6 internal/maptheme
 2 internal/member/public
-3 internal/menu
+2 internal/menu
 12 internal/page
 13 internal/post
 5 internal/programevent
 3 internal/referencecatalog
 14 internal/release
-12 internal/series
+2 internal/series
 1 internal/sitesettings
 5 internal/translation/application
 6 internal/work

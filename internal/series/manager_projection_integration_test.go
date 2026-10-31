@@ -11,6 +11,7 @@ import (
 
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -54,17 +55,13 @@ func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *test
 	).Error)
 
 	runtime := seriesadapter.NewRuntime(db, "", newOGRefresherForTest(db, ""))
-	service := NewSeriesService(
-		db,
-		runtime,
-		runtime,
-		runtime,
-		stack.SpiceDBClient,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
-		seriesIntegrationMenuTargets(),
-		seriesadapter.PostAccess{},
-		seriesadapter.NewMemberSummaries(db, ""),
-	)
+	service := newSeriesIntegrationHandler(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient,
+		Identity: testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
+		Media:    runtime, OG: runtime, Reads: runtime, MenuTargets: seriesIntegrationMenuTargets(),
+		Posts: seriesadapter.PostAccess{}, Members: seriesadapter.NewMemberSummaries(db, ""),
+		Audit: apitelemetry.NewDurableWriter(db),
+	})
 
 	// Identity deletion removes its authorization relationships but leaves the
 	// product's series_manager attribution row intact.
@@ -82,7 +79,7 @@ func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *test
 	require.NoError(t, err)
 	require.Empty(t, response.Msg.Series, "removed SpiceDB authority must stop ListMySeries effectiveness")
 
-	adminCtx := seriesIntegrationAdminCtx(adminID)
+	adminCtx := seriesIntegrationAdminCtx(t, adminID)
 	detail, err := service.GetSeriesWithManagers(adminCtx, connect.NewRequest(&managev1.GetSeriesWithManagersRequest{Id: seriesID}))
 	require.NoError(t, err)
 	require.Len(t, detail.Msg.Managers, 1)

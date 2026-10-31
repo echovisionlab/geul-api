@@ -31,7 +31,7 @@ func TestSeriesManagerResponseUsesRelationCreationTimeAndKeepsOrder(t *testing.T
 		"member-1": {MemberId: "member-1", Nickname: "First"},
 		"member-2": {MemberId: "member-2", Nickname: "Second"},
 	}
-	service := &SeriesService{db: db, members: summaries}
+	service := &Service{db: db, members: summaries}
 	managers, err := service.loadSeriesManagerProjections(t.Context(), "series-1")
 	require.NoError(t, err)
 	require.Len(t, managers, 2)

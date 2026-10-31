@@ -30,7 +30,7 @@ func TestMenuAIDocumentTargetCompilerPreservesExplicitEmptyAndProtectsFixedLocal
 			{ID: "fixed", Label: "고정", LinkType: "custom", URL: stringTestPointer("/fixed"), LocalizationMode: &fixedMode, FixedLocale: &japanese},
 		},
 	}
-	service := &MenuService{}
+	service := &Service{}
 
 	compiled, issues := service.compileAIDocument(snapshot, []AIDocumentOperation{{
 		Kind: AIDocumentSetItemField, ItemID: "translated", Field: "label",
@@ -95,7 +95,7 @@ func TestMenuAIDocumentSourceCompilerUsesStableTreeIDsAndValidatesFinalTree(t *t
 		LocaleExists: true, SourceValuesStored: true, DocumentRevision: "revision-1", Labels: map[string]string{"home": "홈"},
 		Items: []AIDocumentItem{{ID: "home", Label: "홈", LinkType: "custom", URL: stringTestPointer("/")}},
 	}
-	service := &MenuService{}
+	service := &Service{}
 	compiled, issues := service.compileAIDocument(snapshot, []AIDocumentOperation{
 		{Kind: AIDocumentInsertItem, ItemID: "about", ParentID: "menu-1", AfterID: "home"},
 		{Kind: AIDocumentSetItemField, ItemID: "about", Field: "label", Value: AIDocumentValue{Kind: AIDocumentText, Text: "소개"}},
@@ -158,7 +158,7 @@ func TestLoadMenuAIDocumentSnapshotUsesStoredSourceValuesWithoutRootFallback(t *
 	require.Empty(t, snapshot.Labels["home"], "explicit empty source value must remain present")
 	require.NotContains(t, snapshot.Labels, "about", "missing source value must not borrow the root label")
 
-	compiled, issues := (&MenuService{}).compileAIDocument(snapshot, []AIDocumentOperation{{
+	compiled, issues := (&Service{}).compileAIDocument(snapshot, []AIDocumentOperation{{
 		Kind: AIDocumentSetItemField, ItemID: "about", Field: "label",
 		Value: AIDocumentValue{Kind: AIDocumentText, Text: "About"},
 	}})
@@ -291,7 +291,7 @@ func TestMenuAIDocumentTargetMutationIsLocaleExactAndSourceInvalidatesEveryTarge
 		).Error)
 	}
 
-	service := &MenuService{}
+	service := &Service{}
 	enBefore, err := loadMenuAIDocumentSnapshot(t.Context(), db, "menu-1", "en", false)
 	require.NoError(t, err)
 	jaBefore, err := loadMenuAIDocumentSnapshot(t.Context(), db, "menu-1", "ja", false)

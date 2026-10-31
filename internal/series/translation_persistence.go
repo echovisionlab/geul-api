@@ -3,11 +3,12 @@ package series
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -29,18 +30,18 @@ func ApplyProviderTranslationCandidateWithDB(
 	auditWriter domainaudit.Appender,
 ) error {
 	if tx == nil || job == nil || job.EntityType != "series" || candidate == nil || !candidate.HasProviderUnitPatch() {
-		return errs.Internal(errors.New("post Series provider translation candidate is required"))
+		return errors.New("post Series provider translation candidate is required")
 	}
 	if auditWriter == nil {
-		return errs.Internal(errors.New("post Series provider translation Audit writer is required"))
+		return errors.New("post Series provider translation Audit writer is required")
 	}
 	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-		return errs.WithCause(errs.InternalMsg("Post Series provider translation requires canonical requester Member"), err)
+		return fmt.Errorf("post Series provider translation requires canonical requester Member, got %q", job.RequestedByMemberID)
 	}
 	now := input.Now.UTC()
 	if now.IsZero() {
-		return errs.InternalMsg("Post Series provider translation time is required")
+		return errors.New("Post Series provider translation time is required")
 	}
 	current, err := loadSeriesInterchangeState(ctx, tx, job.EntityID, job.TargetLocale, true)
 	if err != nil {
@@ -78,21 +79,21 @@ func ApplyProviderTranslationCandidateWithDB(
 				"title": nextTitle, "summary": nextSummary, "content_text": nextContentText, "updated_at": nextUpdatedAt,
 			})
 		if updated.Error != nil {
-			return errs.Internal(updated.Error)
+			return updated.Error
 		}
 		if updated.RowsAffected != 1 {
-			return errs.FailedPrecondition("Post Series locale changed; retry")
+			return domainerr.Precondition("Post Series locale changed; retry")
 		}
 	} else {
 		if job.TargetLocale == current.sourceLocale {
-			return errs.FailedPrecondition("Post Series source locale copy is missing")
+			return domainerr.Precondition("Post Series source locale copy is missing")
 		}
 		operation = sharedtelemetry.AuditItemOperationCreated
 		if err := tx.WithContext(ctx).Table("series_translation").Create(&model.SeriesTranslation{
 			EntityID: job.EntityID, Locale: job.TargetLocale, Title: nextTitle, Summary: nextSummary,
 			ContentText: nextContentText, CreatedAt: nextUpdatedAt, UpdatedAt: nextUpdatedAt,
 		}).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 	}
 	if job.TargetLocale == current.sourceLocale {
@@ -162,7 +163,7 @@ func SaveSourceLocaleDocument(
 	now time.Time,
 ) error {
 	if title == nil || strings.TrimSpace(*title) == "" {
-		return errs.Required("title")
+		return domainerr.Required("title")
 	}
 	if err := UpsertTranslationEntry(ctx, db, seriesID, locale, translation.EntryWrite{
 		Title:       title,

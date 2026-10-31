@@ -10,7 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -87,7 +86,7 @@ func (l TargetLifecycle) rewriteMenusForTarget(
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Order("id ASC").
 		Find(&menus).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 
 	for index := range menus {
@@ -97,7 +96,7 @@ func (l TargetLifecycle) rewriteMenusForTarget(
 				// Target rename/delete and every affected menu are one product
 				// transaction. Silently skipping malformed source JSON would commit
 				// a dangling menu reference with no recovery authority.
-				return errs.Internal(err)
+				return err
 			}
 		}
 
@@ -107,7 +106,7 @@ func (l TargetLifecycle) rewriteMenusForTarget(
 		}
 		nextJSON, err := json.Marshal(nextItems)
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		document, err := loadMenuContentDocumentStateFromRoot(ctx, tx, menus[index], true)
 		if err != nil {
@@ -119,7 +118,7 @@ func (l TargetLifecycle) rewriteMenusForTarget(
 				"items":      nextJSON,
 				"updated_at": now,
 			}).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if err := ReconcileTranslationRowsWithSourceItems(ctx, tx, menus[index].ID, nextItems, now); err != nil {
 			return err

@@ -108,7 +108,7 @@ func (s *Service) AuthorizeCollaboration(
 		subject,
 	)
 	if err != nil {
-		if connect.CodeOf(err) == connect.CodeInvalidArgument {
+		if errs.CodeOf(err) == connect.CodeInvalidArgument {
 			return nil, err
 		}
 		return nil, errs.Internal(fmt.Errorf("check collaboration permission: %w", err))

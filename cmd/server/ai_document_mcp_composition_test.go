@@ -22,7 +22,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/menu"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -509,10 +511,6 @@ type compositionFormReferences struct {
 	managev1connect.UnimplementedFormServiceHandler
 }
 
-type compositionPostSeriesReferences struct {
-	managev1connect.UnimplementedSeriesServiceHandler
-}
-
 type compositionTrackReferences struct {
 	managev1connect.UnimplementedTrackServiceHandler
 }
@@ -543,10 +541,10 @@ func compositionContentApplications() contentMCPApplications {
 		styles:       &compositionStyleReferences{},
 		formats:      &compositionFormatReferences{},
 		forms:        &compositionFormReferences{},
-		postSeries:   &compositionPostSeriesReferences{},
+		postSeries:   &series.Service{},
 		tracks:       &compositionTrackReferences{},
 		mapThemes:    &compositionMapThemeReferences{},
-		menus:        managev1connect.UnimplementedMenuServiceHandler{},
+		menus:        &menu.Service{},
 		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
 		siteSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
 		mailAdapters: &emaildelivery.MailAdapterService{},

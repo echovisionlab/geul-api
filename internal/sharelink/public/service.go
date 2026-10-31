@@ -5,21 +5,18 @@ import (
 	"errors"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-// ShareLinkService implements the public ShareLinkService
-type ShareLinkService struct {
-	openv1connect.UnimplementedShareLinkServiceHandler
+// Service holds the public Share Link use case.
+type Service struct {
 	db      *gorm.DB
 	targets TargetResolver
 }
@@ -35,46 +32,56 @@ type TargetResolver interface {
 	IsAutomaticPublicHistoryToken(context.Context, string, managev1.ShareLinkEntityType, string) (bool, error)
 }
 
-func NewService(db *gorm.DB, targets TargetResolver) *ShareLinkService {
-	if db == nil {
-		panic("sharelink public service: db is required")
+// Deps are the collaborators of the public Share Link use case. Both are
+// required.
+type Deps struct {
+	DB      *gorm.DB
+	Targets TargetResolver
+}
+
+// NewService validates deps and returns the public Share Link use case.
+func NewService(deps Deps) (*Service, error) {
+	if deps.DB == nil {
+		return nil, errors.New("public share link database is required")
 	}
-	if targets == nil {
-		panic("sharelink public service: target resolver is required")
+	if deps.Targets == nil {
+		return nil, errors.New("public share link target resolver is required")
 	}
-	return &ShareLinkService{db: db, targets: targets}
+	return &Service{db: deps.DB, targets: deps.Targets}, nil
+}
+
+// ValidateShareLinkQuery presents a token and its optional password.
+type ValidateShareLinkQuery struct {
+	Token    string
+	Password *string
 }
 
 // Validate validates a share link token and returns entity info if valid
-func (s *ShareLinkService) Validate(
-	ctx context.Context,
-	req *connect.Request[openv1.ValidateShareLinkRequest],
-) (*connect.Response[openv1.ValidateShareLinkResponse], error) {
+func (s *Service) ValidateShareLink(ctx context.Context, query ValidateShareLinkQuery) (*openv1.ValidateShareLinkResponse, error) {
 	var link model.ShareLink
-	token := req.Msg.Token
+	token := query.Token
 	if token == "" {
-		return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
+		return &openv1.ValidateShareLinkResponse{Valid: false}, nil
 	}
 
 	if err := s.db.WithContext(ctx).First(&link, "token = ?", token).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
+			return &openv1.ValidateShareLinkResponse{Valid: false}, nil
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	now := time.Now()
-	entityTypeValue, ok := managev1.ShareLinkEntityType_value[link.EntityType]
-	if !ok {
-		return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
+	entityType := sharelink.EntityTypeToProto(sharelink.EntityType(link.EntityType))
+	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_UNSPECIFIED {
+		return &openv1.ValidateShareLinkResponse{Valid: false}, nil
 	}
-	entityType := managev1.ShareLinkEntityType(entityTypeValue)
 	target, err := s.targets.Resolve(ctx, entityType, link.EntityID, now)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if !target.Exists {
-		return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
+		return &openv1.ValidateShareLinkResponse{Valid: false}, nil
 	}
 	// Expired automatic legal preview tokens never retain private authority.
 	// Only a token sealed into the exact scheduled update notice may resolve the
@@ -82,7 +89,7 @@ func (s *ShareLinkService) Validate(
 	// password contract.
 	if link.ExpiresAt == nil || !link.ExpiresAt.After(now) {
 		if link.ExpiresAt == nil || !target.PublicHistory || link.PasswordHash != nil {
-			return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
+			return &openv1.ValidateShareLinkResponse{Valid: false}, nil
 		}
 		automatic, err := s.targets.IsAutomaticPublicHistoryToken(
 			ctx,
@@ -91,18 +98,18 @@ func (s *ShareLinkService) Validate(
 			link.EntityID,
 		)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		if !automatic {
-			return connect.NewResponse(&openv1.ValidateShareLinkResponse{Valid: false}), nil
+			return &openv1.ValidateShareLinkResponse{Valid: false}, nil
 		}
-		return connect.NewResponse(&openv1.ValidateShareLinkResponse{
+		return &openv1.ValidateShareLinkResponse{
 			Valid:            true,
 			EntityType:       &entityType,
 			EntityId:         &link.EntityID,
 			Slug:             target.Slug,
 			PasswordRequired: false,
-		}), nil
+		}, nil
 	}
 	if link.PasswordHash != nil {
 		response := &openv1.ValidateShareLinkResponse{
@@ -112,23 +119,23 @@ func (s *ShareLinkService) Validate(
 			Slug:             target.Slug,
 			PasswordRequired: true,
 		}
-		if req.Msg.Password == nil || req.Msg.GetPassword() == "" {
-			return connect.NewResponse(response), nil
+		if query.Password == nil || *query.Password == "" {
+			return response, nil
 		}
-		match, err := crypto.NewPasswordHasher(nil).Verify(req.Msg.GetPassword(), *link.PasswordHash)
+		match, err := crypto.NewPasswordHasher(nil).Verify(*query.Password, *link.PasswordHash)
 		if err != nil {
-			return nil, errs.Internal(failurecause.WithPrivate(err, *link.PasswordHash))
+			return nil, failurecause.WithPrivate(err, *link.PasswordHash)
 		}
 		if !match {
-			return connect.NewResponse(response), nil
+			return response, nil
 		}
 	}
 
-	return connect.NewResponse(&openv1.ValidateShareLinkResponse{
+	return &openv1.ValidateShareLinkResponse{
 		Valid:            true,
 		EntityType:       &entityType,
 		EntityId:         &link.EntityID,
 		Slug:             target.Slug,
 		PasswordRequired: link.PasswordHash != nil,
-	}), nil
+	}, nil
 }

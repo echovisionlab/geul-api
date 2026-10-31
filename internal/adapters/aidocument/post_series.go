@@ -10,7 +10,7 @@ import (
 // NewPostSeriesRegistration binds the shared DCDP registry to the Post
 // Series-owned authorization, lifecycle, projection and mutation facade.
 func NewPostSeriesRegistration(
-	port *seriesdomain.AIDocumentService,
+	port *seriesdomain.Service,
 ) (DomainRegistration, error) {
 	if port == nil {
 		return DomainRegistration{}, errors.New("post series AI document port is required")

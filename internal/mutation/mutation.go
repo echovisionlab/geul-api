@@ -22,9 +22,12 @@ import (
 	"slices"
 	"strings"
 
+	"connectrpc.com/connect"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -195,6 +198,46 @@ func FreshAdminCan(can policyv1.Can, err error) Access {
 	}}
 }
 
+// Require runs FreshCan's check for can in the mutation's transaction.
+type Require func(can policyv1.Can) error
+
+// Locked authorizes against the target state Change will see: check locks
+// the target row in tx, picks the action its locked state requires (Edit or
+// EditArchived), and calls require with it. Change runs after check returns,
+// in the same transaction, so the state cannot move between the two.
+func Locked(check func(ctx context.Context, tx *gorm.DB, require Require) error) Access {
+	if check == nil {
+		return Access{err: errors.New("mutation locked access check is required")}
+	}
+	return Access{check: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
+		return check(ctx, tx, func(can policyv1.Can) error {
+			return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
+		})
+	}}
+}
+
+// IsDenied reports whether err is the permission denial of a fresh check,
+// for a domain that answers it differently (a masked target answers not
+// found).
+func IsDenied(err error) bool {
+	classified, ok := errs.Classified(err)
+	return ok && classified.Code() == connect.CodePermissionDenied
+}
+
+// IsUnauthenticated reports whether err rejects a missing or stale session,
+// for a domain that masks it like a denial.
+func IsUnauthenticated(err error) bool {
+	classified, ok := errs.Classified(err)
+	return ok && classified.Code() == connect.CodeUnauthenticated
+}
+
+// IsNotFound reports whether err answers a missing resource, for a domain
+// that reads a shared helper's answer (a retired authorization target).
+func IsNotFound(err error) bool {
+	classified, ok := errs.Classified(err)
+	return ok && classified.Code() == connect.CodeNotFound
+}
+
 // PrincipalFence locks the authenticated principal's Identity without an
 // action check, for a principal's own lifecycle transition that Change
 // guards by state (onboarding, before the principal is onboarded).
@@ -217,6 +260,7 @@ type Audit struct {
 	build     domainaudit.Builder
 	memberID  string
 	unchanged bool
+	all       []Audit
 }
 
 // RequestAudit attributes the record to the request's member actor.
@@ -230,6 +274,23 @@ func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build doma
 	return Audit{action: action, build: build, memberID: memberID}
 }
 
+// Audits names every record of a mutation that changes several audited
+// facets at once, such as a Series update that edits metadata and moves its
+// lifecycle. Unchanged entries are skipped; when every entry is unchanged
+// the mutation declines its record.
+func Audits(audits ...Audit) Audit {
+	changed := make([]Audit, 0, len(audits))
+	for _, audit := range audits {
+		if !audit.unchanged {
+			changed = append(changed, audit)
+		}
+	}
+	if len(changed) == 0 {
+		return Unchanged()
+	}
+	return Audit{all: changed}
+}
+
 // Unchanged declines the record because the mutation changed nothing.
 func Unchanged() Audit {
 	return Audit{unchanged: true}
@@ -237,6 +298,13 @@ func Unchanged() Audit {
 
 func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) error {
 	switch {
+	case len(audit.all) != 0:
+		for _, each := range audit.all {
+			if err := r.appendAudit(ctx, tx, each); err != nil {
+				return err
+			}
+		}
+		return nil
 	case audit.unchanged:
 		return nil
 	case audit.action == "" || audit.build == nil:

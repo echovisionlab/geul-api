@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -29,7 +29,7 @@ func loadMenuContentDocumentStateFromRoot(
 	lock bool,
 ) (menuContentDocumentState, error) {
 	if db == nil {
-		return menuContentDocumentState{}, errs.Internal(errors.New("menu content document database is required"))
+		return menuContentDocumentState{}, errors.New("menu content document database is required")
 	}
 	documentID, err := parseMenuContentDocumentUUID(root.ContentDocumentID, "content_document_id")
 	if err != nil {
@@ -37,7 +37,7 @@ func loadMenuContentDocumentStateFromRoot(
 	}
 	sourceLocale := strings.TrimSpace(root.SourceLocale)
 	if sourceLocale == "" {
-		return menuContentDocumentState{}, errs.FailedPrecondition("Menu source locale is not initialized")
+		return menuContentDocumentState{}, domainerr.Precondition("Menu source locale is not initialized")
 	}
 
 	query := db.WithContext(ctx).Table("content_document").
@@ -51,12 +51,12 @@ func loadMenuContentDocumentStateFromRoot(
 	}
 	if err := query.Take(&document).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return menuContentDocumentState{}, errs.FailedPrecondition("Menu content document is missing")
+			return menuContentDocumentState{}, domainerr.Precondition("Menu content document is missing")
 		}
-		return menuContentDocumentState{}, errs.Internal(err)
+		return menuContentDocumentState{}, err
 	}
 	if strings.TrimSpace(document.Profile) != menuContentDocumentProfile {
-		return menuContentDocumentState{}, errs.FailedPrecondition("Menu content document profile is invalid")
+		return menuContentDocumentState{}, domainerr.Precondition("Menu content document profile is invalid")
 	}
 	revision, err := parseMenuContentDocumentUUID(document.Revision, "content_document.revision")
 	if err != nil {
@@ -69,17 +69,17 @@ func parseMenuContentDocumentUUID(value, field string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil {
-		return uuid.Nil, errs.Internal(fmt.Errorf("invalid Menu %s: %s: %w", field, normalized, err))
+		return uuid.Nil, fmt.Errorf("invalid Menu %s: %s: %w", field, normalized, err)
 	}
 	if parsed == uuid.Nil || parsed.String() != normalized {
-		return uuid.Nil, errs.Internal(fmt.Errorf("invalid Menu %s: %s", field, normalized))
+		return uuid.Nil, fmt.Errorf("invalid Menu %s: %s", field, normalized)
 	}
 	return parsed, nil
 }
 
 func createMenuContentDocument(ctx context.Context, tx *gorm.DB, now time.Time) (uuid.UUID, error) {
 	if tx == nil {
-		return uuid.Nil, errs.Internal(errors.New("menu content document transaction is required"))
+		return uuid.Nil, errors.New("menu content document transaction is required")
 	}
 	documentID := uuid.New()
 	revision := uuid.New()
@@ -88,7 +88,7 @@ func createMenuContentDocument(ctx context.Context, tx *gorm.DB, now time.Time) 
 		 VALUES (?, ?, ?, ?, ?)`,
 		documentID, menuContentDocumentProfile, revision, now.UTC(), now.UTC(),
 	).Error; err != nil {
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	return documentID, nil
 }
@@ -102,7 +102,7 @@ func advanceMenuContentDocument(
 	now time.Time,
 ) error {
 	if tx == nil || documentID == uuid.Nil || expectedRevision == uuid.Nil {
-		return errs.InvalidArgument(
+		return domainerr.InvalidField(
 			"expected_document_revision",
 			"Menu content document identity and revision are required",
 		)
@@ -119,24 +119,24 @@ func advanceMenuContentDocument(
 		nextRevision, now.UTC(), documentID, expectedRevision, menuID, documentID,
 	)
 	if updated.Error != nil {
-		return errs.Internal(updated.Error)
+		return updated.Error
 	}
 	if updated.RowsAffected != 1 {
-		return errs.FailedPrecondition("Menu content document revision changed; reload before saving")
+		return domainerr.Precondition("Menu content document revision changed; reload before saving")
 	}
 	return nil
 }
 
 func deleteMenuContentDocument(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) error {
 	if tx == nil || documentID == uuid.Nil {
-		return errs.InvalidArgument("content_document_id", "Menu content document is required")
+		return domainerr.InvalidField("content_document_id", "Menu content document is required")
 	}
 	result := tx.WithContext(ctx).Exec("DELETE FROM content_document WHERE id = ?", documentID)
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("Menu content document is missing")
+		return domainerr.Precondition("Menu content document is missing")
 	}
 	return nil
 }

@@ -4,7 +4,13 @@
 // handlers and MCP tools map it at their boundary through internal/errors.
 package domainerr
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"google.golang.org/protobuf/proto"
+)
 
 // Kind classifies an outcome by what the client can do about it.
 type Kind uint8
@@ -32,7 +38,10 @@ type Error struct {
 	Kind    Kind
 	Field   string
 	Message string
-	cause   error
+	// Detail is a machine-readable reason the client branches on, such as
+	// a collaboration conflict.
+	Detail proto.Message
+	cause  error
 }
 
 func (e *Error) Error() string {
@@ -95,4 +104,83 @@ func InvalidSession() *Error {
 // DependencyUnavailable reports an unavailable dependency.
 func DependencyUnavailable(dependency string) *Error {
 	return New(Unavailable, "", dependency+" unavailable")
+}
+
+// AuthenticationRequired rejects a request without an authenticated
+// principal.
+func AuthenticationRequired() *Error {
+	return New(Unauthenticated, "", "authentication required")
+}
+
+// AccountBanned rejects a principal whose account is banned.
+func AccountBanned() *Error {
+	return New(PermissionDenied, "", "account is banned")
+}
+
+// NoPermission rejects a caller without action on resource.
+func NoPermission(action, resource string) *Error {
+	return New(PermissionDenied, "", fmt.Sprintf("no permission to %s this %s", action, resource))
+}
+
+// AdminRequired rejects a caller without administrator authority.
+func AdminRequired() *Error {
+	return New(PermissionDenied, "", "admin access required")
+}
+
+// AuthorRequired rejects a caller without author authority.
+func AuthorRequired() *Error {
+	return New(PermissionDenied, "", "author access required")
+}
+
+// InvalidEntityType rejects an unsupported entity type.
+func InvalidEntityType(entityType string) *Error {
+	return New(Invalid, "entity_type", "unsupported entity type: "+entityType)
+}
+
+// InvalidEntityID rejects an entity ID that is not a UUID.
+func InvalidEntityID() *Error {
+	return New(Invalid, "entity_id", "invalid entity_id format: must be a valid UUID")
+}
+
+// CollaborationRevisions are the revisions a collaboration save found under
+// the owning resource lock.
+type CollaborationRevisions struct {
+	Document     string
+	Target       string
+	TargetExists *bool
+}
+
+// CollaborationRevisionsOf returns the revisions a collaboration state
+// error in err's chain carries (translation.WithDocumentRevision), or none.
+func CollaborationRevisionsOf(err error) CollaborationRevisions {
+	var state interface {
+		CollaborationRevisions() (string, string, *bool)
+	}
+	if !errors.As(err, &state) {
+		return CollaborationRevisions{}
+	}
+	document, target, exists := state.CollaborationRevisions()
+	return CollaborationRevisions{Document: document, Target: target, TargetExists: exists}
+}
+
+// CollaborationConflict rejects a collaboration save whose expected
+// revisions changed. Consumers branch on the reason detail rather than the
+// message.
+func CollaborationConflict(reason intrav1.CollaborationConflictReason, message string, current CollaborationRevisions) *Error {
+	detail := &intrav1.CollaborationConflictDetail{Reason: reason, CurrentTargetExists: current.TargetExists}
+	if current.Document != "" {
+		detail.CurrentDocumentRevision = &current.Document
+	}
+	if current.Target != "" {
+		detail.CurrentTargetRevision = &current.Target
+	}
+	conflict := Precondition(message)
+	conflict.Detail = detail
+	return conflict
+}
+
+// CollaborationRejection rejects a collaboration save the room may not make;
+// persistence was never attempted.
+func CollaborationRejection(reason intrav1.CollaborationMutationRejectionReason, message string) *Error {
+	return &Error{Kind: Invalid, Message: message, Detail: &intrav1.CollaborationMutationRejectionDetail{Reason: reason}}
 }
