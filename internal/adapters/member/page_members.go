@@ -10,21 +10,8 @@ import (
 )
 
 // PageMembers reads the Member and user tag rows Page authorization and
-// attribution need.
-type PageMembers struct{}
-
-// LockMembers takes a KEY SHARE lock on each existing Member of memberIDs,
-// so a concurrent Member deletion waits for the write, and returns the IDs
-// it locked.
-func (PageMembers) LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error) {
-	locked := []string{}
-	err := tx.WithContext(ctx).
-		Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Where("id IN ?", memberIDs).
-		Pluck("id::text", &locked).Error
-	return locked, err
-}
+// attribution need, and locks the Members a Page write credits.
+type PageMembers struct{ ContributorMembers }
 
 // ActiveIdentities returns the linked Identity of each onboarded, live
 // Member of memberIDs whose Identity is active and not banned.
