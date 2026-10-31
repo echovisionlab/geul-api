@@ -53,7 +53,7 @@ func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[manag
 		if s.testAfterFileMutationPrincipal != nil {
 			s.testAfterFileMutationPrincipal([]string{*fileID})
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "file_name", "extension", "delete_requested_at").Where("id = ?", *fileID).First(&file).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id", "file_name", "extension", "delete_requested_at").Where("id = ?", *fileID).First(&file).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("file", *fileID)
 			}
@@ -121,7 +121,7 @@ func (s *FileService) MoveFiles(ctx context.Context, req *connect.Request[manage
 			s.testAfterFileMutationPrincipal(append([]string(nil), fileIDs...))
 		}
 		var files []model.File
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "folder_id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id").Find(&files).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id", "folder_id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id").Find(&files).Error; err != nil {
 			return err
 		}
 		if len(files) != len(fileIDs) {

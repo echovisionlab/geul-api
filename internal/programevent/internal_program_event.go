@@ -528,7 +528,7 @@ func applyProgramEventLocaleMetadataMutation(
 ) (bool, bool, programEventSourceState, error) {
 	var root model.ProgramEvent
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "title", "source_locale").
 		Where("id = ?", eventID).
 		Take(&root).Error; err != nil {
@@ -547,7 +547,7 @@ func applyProgramEventLocaleMetadataMutation(
 	var localeRow model.ProgramEventTranslation
 	loadLocaleRow := func() error {
 		return tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("entity_id = ? AND locale = ?", eventID, locale).
 			Take(&localeRow).Error
 	}

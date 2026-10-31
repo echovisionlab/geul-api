@@ -105,7 +105,7 @@ func loadEmailTemplateAIDocumentSubject(
 	query := db.WithContext(ctx).Table("email_template_translation").
 		Select("subject").Where("entity_id = ? AND locale = ?", templateID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {

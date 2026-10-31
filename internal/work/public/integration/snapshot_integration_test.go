@@ -263,7 +263,7 @@ func replacePublicWorkSnapshotDocument(
 		var root struct {
 			ContentDocumentID string `gorm:"column:content_document_id"`
 		}
-		if err := tx.Table("work").Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Table("work").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("content_document_id").Where("id = ?::uuid", workID).Take(&root).Error; err != nil {
 			return err
 		}

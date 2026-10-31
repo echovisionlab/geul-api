@@ -57,7 +57,7 @@ func loadLabelContentSnapshot(ctx context.Context, tx *gorm.DB, store *contentbl
 	var row struct {
 		DocumentID *uuid.UUID `gorm:"column:content_document_id"`
 	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "SHARE"}).Select("content_document_id").Where("id = ?", labelID).Take(&row).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Select("content_document_id").Where("id = ?", labelID).Take(&row).Error; err != nil {
 		return contentblock.Snapshot{}, labelSourceAuthority{}, errs.Internal(err)
 	}
 	if row.DocumentID == nil || *row.DocumentID == uuid.Nil {

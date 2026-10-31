@@ -90,7 +90,7 @@ func loadOptionalArtistLocaleMetadataRow(
 		Select("locale", "title", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", artistID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row artistLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {

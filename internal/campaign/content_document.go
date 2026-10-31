@@ -74,7 +74,7 @@ func loadCampaignEmailContentDocumentRoot(
 		Select("id", "content_document_id").
 		Where("id = ?", entityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var root campaignEmailContentRoot
 	if err := query.Take(&root).Error; err != nil {
@@ -273,7 +273,7 @@ func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string
 		Select("source_locale").
 		Where("id = ?", entityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	if err := query.Take(&state).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -383,7 +383,7 @@ func updateCampaignEmailLocaleSubject(
 	}
 	result := tx.WithContext(ctx).
 		Table("campaign_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("subject").
 		Where("entity_id = ? AND locale = ?", entityID, locale).
 		Take(&current)

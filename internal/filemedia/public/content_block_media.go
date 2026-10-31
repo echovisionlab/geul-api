@@ -341,7 +341,7 @@ func validateContentDownloadShareLinkWitness(
 	var link model.ShareLink
 	query := db.WithContext(ctx).Where("id = ?", witness.ID)
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Take(&link).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -458,7 +458,7 @@ func lockContentBlockDownloadOwners(
 		query := tx.WithContext(ctx).Table(target.ResourceType).
 			Select("? AS resource_type, id AS resource_id, status, content_document_id AS document_id", target.ResourceType).
 			Where("id = ?", target.ResourceID).
-			Clauses(clause.Locking{Strength: "SHARE"}).Take(&current)
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&current)
 		if query.Error != nil {
 			if errors.Is(query.Error, gorm.ErrRecordNotFound) {
 				continue
@@ -503,7 +503,7 @@ func loadContentBlockMediaRelations(
 		Where("attachment.block_id IN ? AND attachment.selector_kind = 'active' AND file.delete_requested_at IS NULL", blockIDs).
 		Order("attachment.block_id, attachment.reference_path")
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "SHARE", Table: clause.Table{Name: "attachment"}})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare, Table: clause.Table{Name: "attachment"}})
 	}
 	if err := query.Find(&rows).Error; err != nil {
 		return nil, err

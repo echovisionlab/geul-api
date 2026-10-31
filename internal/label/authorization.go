@@ -112,7 +112,7 @@ func lockLabelParticipantRoot(ctx context.Context, tx *gorm.DB, labelID string) 
 	var row struct {
 		ID string `gorm:"column:id"`
 	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?::uuid", labelID).Take(&row).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?::uuid", labelID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("label", labelID)
 		}

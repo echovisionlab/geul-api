@@ -45,7 +45,7 @@ func loadMenuContentDocumentStateFromRoot(
 	query := db.WithContext(ctx).Table("content_document").
 		Select("profile, revision").Where("id = ?", documentID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var document struct {
 		Profile  string `gorm:"column:profile"`

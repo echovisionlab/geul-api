@@ -29,7 +29,7 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 	require.NoError(t, blocker.Error)
 	t.Cleanup(func() { _ = blocker.Rollback().Error })
 	var locked model.PublicAsset
-	require.NoError(t, blocker.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, blocker.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").
 		Where("id = ?", asset.ID).
 		Take(&locked).Error)
@@ -80,7 +80,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 	require.NoError(t, blocker.Error)
 	t.Cleanup(func() { _ = blocker.Rollback().Error })
 	var locked []model.PublicAsset
-	require.NoError(t, blocker.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, blocker.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").
 		Where("id IN ?", []string{oldAsset.ID, newAsset.ID}).
 		Order("id ASC").

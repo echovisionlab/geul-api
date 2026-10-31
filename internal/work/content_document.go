@@ -109,7 +109,7 @@ func loadWorkContentDocumentIDForRead(
 	var row lockedWorkContentRoot
 	result := tx.WithContext(ctx).
 		Table("work").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id", "status", "content_document_id", "source_locale").
 		Where("id = ?", workID).
 		Take(&row)
@@ -205,7 +205,7 @@ func lockWorkForContentDocument(
 	var work lockedWorkContentRoot
 	result := tx.WithContext(ctx).
 		Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status", "content_document_id", "source_locale").
 		Where("content_document_id = ?", documentID).
 		Take(&work)

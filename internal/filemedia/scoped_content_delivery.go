@@ -336,7 +336,7 @@ func lockScopedDeliveryFiles(
 		Where("id IN ?", fileIDs).
 		Order("id ASC")
 	if tx.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Find(&files).Error; err != nil {
 		return nil, errs.Internal(fmt.Errorf("lock scoped delivery Files: %w", err))
@@ -374,7 +374,7 @@ func lockScopedContentAttachments(
 		Where("owner.id = ? AND owner.content_document_id = ? AND attachment.selector_kind = 'active' AND attachment.block_id IN ?", ownerID, documentID, blockIDs).
 		Order("attachment.block_id ASC, attachment.reference_path ASC")
 	if tx.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: "SHARE", Table: clause.Table{Name: "attachment"}})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare, Table: clause.Table{Name: "attachment"}})
 	}
 	if err := query.Find(&rows).Error; err != nil {
 		return nil, errs.Internal(fmt.Errorf("lock exact scoped content attachments: %w", err))

@@ -470,7 +470,7 @@ func LockFileDownloadPolicySegments(
 		Select("id").
 		Where("id IN ?", segmentIDs).
 		Order("id").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Find(&locked).Error
 }
 
@@ -530,7 +530,7 @@ func LockFileDownloadViewerFacts(
 		Joins("JOIN user_tag AS tag ON tag.id = mapping.tag_id").
 		Where("mapping.member_id = ?", user.MemberID.String()).
 		Order("mapping.tag_id").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Find(&rows).Error
 	return err == nil, err
 }

@@ -154,7 +154,7 @@ func (s *LabelService) overlayLabelSourceLocaleDocument(ctx context.Context, lab
 		func(ctx context.Context, tx *gorm.DB) error {
 			var current model.Label
 			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "SHARE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 				Where("id = ?", labelID).
 				Take(&current).Error; err != nil {
 				return err

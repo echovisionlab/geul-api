@@ -70,7 +70,7 @@ func legalSourceLocaleAudit(
 			Version int64 `gorm:"column:version"`
 		}
 		if err := tx.WithContext(ctx).Table(table).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound(entityType, entityID)
@@ -161,7 +161,7 @@ func genericInterchangeView(
 			columns = "id, status"
 		}
 		if err := tx.WithContext(ctx).Table(definition.RootTable).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select(columns).Where("id = ?", entityID).Take(&root).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound(string(domain), entityID)

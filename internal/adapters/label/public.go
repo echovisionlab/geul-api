@@ -80,7 +80,7 @@ func (runtime *PublicRuntime) LoadDocument(ctx context.Context, tx *gorm.DB, lab
 	var root struct {
 		DocumentID *uuid.UUID `gorm:"column:content_document_id"`
 	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "SHARE"}).Select("content_document_id").Where("id = ?", labelID).Take(&root).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Select("content_document_id").Where("id = ?", labelID).Take(&root).Error; err != nil {
 		return labelpublic.ContentDocument{}, err
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
@@ -89,7 +89,7 @@ func (runtime *PublicRuntime) LoadDocument(ctx context.Context, tx *gorm.DB, lab
 	var source struct {
 		Locale string `gorm:"column:source_locale"`
 	}
-	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: "SHARE"}).
+	if err := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("source_locale").Where("id = ?", labelID).Take(&source).Error; err != nil {
 		return labelpublic.ContentDocument{}, err
 	}

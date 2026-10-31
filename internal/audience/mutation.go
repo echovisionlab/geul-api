@@ -283,7 +283,7 @@ func (s *AudienceService) applySegmentUpdate(
 
 func lockSegmentForUpdate(ctx context.Context, tx *gorm.DB, segmentID string, segment *model.AudienceSegment) error {
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(segment, "id = ?", segmentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("segment not found")

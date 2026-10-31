@@ -277,7 +277,7 @@ func loadPublicLegalContentProjection(
 			SourceLocale      string     `gorm:"column:source_locale"`
 		}
 		if err := tx.Table(entityType+"_history").
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("content_document_id", "source_locale").
 			Where("id = ?", entityID).
 			Take(&root).Error; err != nil {

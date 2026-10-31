@@ -706,7 +706,7 @@ func (s *PostService) PublishPost(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
@@ -772,7 +772,7 @@ func (s *PostService) UnpublishPost(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
@@ -827,7 +827,7 @@ func (s *PostService) ArchivePost(
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("post", req.Msg.Id)
@@ -913,7 +913,7 @@ func (s *PostService) SetPostFeaturedImage(
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status", "featured_image_file_id").
 			First(&current, "id = ?", req.Msg.PostId).Error; err != nil {
 			return err
@@ -997,7 +997,7 @@ func (s *PostService) DeletePostFeaturedImage(
 
 	// Clear the reference and its binding atomically.
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status", "featured_image_file_id").
 			First(&post, "id = ?", req.Msg.PostId).Error; err != nil {
 			return err

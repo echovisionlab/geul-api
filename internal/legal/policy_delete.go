@@ -18,7 +18,7 @@ func cancelLegalNoticeDeliveryForPolicyDeletion(ctx context.Context, tx *gorm.DB
 		return err
 	}
 	var runs []model.CampaignDeliveryRun
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where(kind+"_id = ?", id).Order("id ASC").Find(&runs).Error; err != nil {
 		return err
 	}

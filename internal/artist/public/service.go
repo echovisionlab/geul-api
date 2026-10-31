@@ -559,7 +559,7 @@ func (s *ArtistService) buildArtistResponseInTransaction(
 	artistID := artist.ID
 	var current model.Artist
 	if err := s.db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Where("id = ?", artistID).
 		Take(&current).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

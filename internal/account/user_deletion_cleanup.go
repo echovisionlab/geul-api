@@ -220,7 +220,7 @@ func scheduleImmediateUserDeletion(
 		}
 		previousState := "none"
 		var currentRequest model.UserDeletionRequest
-		loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		loadErr := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("member_id = ?::uuid AND identity_id = ?::uuid", memberID, identityID).
 			Take(&currentRequest).Error
 		if loadErr == nil {

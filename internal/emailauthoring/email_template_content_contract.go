@@ -53,7 +53,7 @@ func loadCampaignEmailContentDocumentRoot(
 		Select("id", "content_document_id", "source_locale").
 		Where("id = ?", entityID)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Take(&root)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -79,7 +79,7 @@ func lockCampaignEmailTranslationSource(ctx context.Context, tx *gorm.DB, entity
 	var state struct {
 		SourceLocale string `gorm:"column:source_locale"`
 	}
-	result := tx.WithContext(ctx).Table("email_template").Clauses(clause.Locking{Strength: "UPDATE"}).Select("source_locale").Where("id = ?", entityID).Take(&state)
+	result := tx.WithContext(ctx).Table("email_template").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("source_locale").Where("id = ?", entityID).Take(&state)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return contentblock.DomainContext{}, errs.NotFound("email template", entityID)
 	}

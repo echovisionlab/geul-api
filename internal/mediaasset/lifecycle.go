@@ -212,7 +212,7 @@ func (s *Lifecycle) CompletePublicAsset(
 	now := s.now().UTC()
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", assetID).
 			Take(&asset).Error; err != nil {
 			return err
@@ -508,7 +508,7 @@ func (s *Lifecycle) RequestPublicAssetDeletion(ctx context.Context, assetID stri
 	assetID = strings.TrimSpace(assetID)
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status").
 			Where("id = ?", assetID).
 			Take(&asset).Error; err != nil {
@@ -643,7 +643,7 @@ func releaseExactPublicAssetBindings(
 
 	var current []model.PublicAssetBinding
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("owner_type = ? AND owner_id = ? AND binding_key IN ?", ownerType, ownerID, bindingKeys).
 		Order("binding_key ASC").
 		Find(&current).Error; err != nil {
@@ -684,7 +684,7 @@ func loadPublicAssetBinding(
 	query := tx.WithContext(ctx).
 		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", ownerType, ownerID, bindingKey)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Limit(1).Find(&binding)
 	if result.Error != nil {
@@ -721,7 +721,7 @@ func lockPublicAssetsForUpdate(
 	}
 	var assets []model.PublicAsset
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").
 		Where("id IN ?", assetIDs).
 		Order("id ASC").
@@ -746,7 +746,7 @@ func lockPublicAssetBindingsForAssets(
 	}
 	var bindings []model.PublicAssetBinding
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("asset_id").
 		Where("asset_id IN ?", assetIDs).
 		Order("asset_id ASC").
@@ -826,7 +826,7 @@ func (s *Lifecycle) CompleteMediaGeneration(
 	now := s.now().UTC()
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var generation model.MediaGeneration
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", generationID).
 			Take(&generation).Error; err != nil {
 			return err

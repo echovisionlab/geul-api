@@ -596,7 +596,7 @@ func lockPostParticipantRoot(ctx context.Context, tx *gorm.DB, postID string) (m
 	}
 	if err := tx.WithContext(ctx).
 		Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").
 		Where("id = ?::uuid", postID).
 		Take(&row).Error; err != nil {

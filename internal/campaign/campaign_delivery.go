@@ -458,7 +458,7 @@ func lockEmailDeliveryRunForMutation(
 		return lockedEmailDeliveryRun{}, false, err
 	}
 
-	lock := clause.Locking{Strength: "UPDATE", Options: lockOptions}
+	lock := clause.Locking{Strength: clause.LockingStrengthUpdate, Options: lockOptions}
 	locked := lockedEmailDeliveryRun{}
 	campaignID := strings.TrimSpace(ptrStringValue(identity.CampaignID))
 	campaign, skipped, err := lockEmailDeliveryCampaign(

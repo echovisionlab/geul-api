@@ -334,7 +334,7 @@ func applyWorkAIDocumentMetadata(
 	}
 	if err := tx.WithContext(ctx).
 		Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("source_locale").
 		Where("id = ?", workID).
 		Take(&source).Error; err != nil {
@@ -389,7 +389,7 @@ func loadWorkAIDocumentLocaleForUpdate(ctx context.Context, tx *gorm.DB, workID,
 	}
 	result := tx.WithContext(ctx).
 		Table("work_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("title", "summary").
 		Where("entity_id = ? AND locale = ?", workID, locale).
 		Take(&row)

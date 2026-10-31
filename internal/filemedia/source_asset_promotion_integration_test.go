@@ -186,7 +186,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 	deleteTx := db.WithContext(t.Context()).Begin()
 	require.NoError(t, deleteTx.Error)
 	var locked model.File
-	require.NoError(t, deleteTx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	require.NoError(t, deleteTx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "delete_requested_at").Where("id = ?", fileID).Take(&locked).Error)
 	require.NoError(t, deleteTx.Model(&model.File{}).Where("id = ?", fileID).
 		Update("delete_requested_at", now).Error)

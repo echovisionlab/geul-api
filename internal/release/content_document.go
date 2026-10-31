@@ -431,7 +431,7 @@ func lockReleaseTranslationSourceContext(
 		SourceLocale string `gorm:"column:source_locale"`
 	}
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("release").
 		Select("source_locale").
 		Where("id = ?", releaseID).

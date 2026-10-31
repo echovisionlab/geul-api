@@ -227,7 +227,7 @@ func (s *TranslationService) UpdateTranslationProvider(
 	providerID := strings.TrimSpace(req.Msg.Id)
 	var provider model.TranslationProviderConfig
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&provider, "id = ?", providerID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&provider, "id = ?", providerID).Error; err != nil {
 			return err
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, providerCan); err != nil {
@@ -379,7 +379,7 @@ func (s *TranslationService) DeleteTranslationProvider(
 	providerID := strings.TrimSpace(req.Msg.Id)
 	var provider model.TranslationProviderConfig
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&provider, "id = ?", providerID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&provider, "id = ?", providerID).Error; err != nil {
 			return err
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, providerCan); err != nil {

@@ -136,7 +136,7 @@ func lockTranslationEntityRootWithDB(ctx context.Context, db *gorm.DB, entityTyp
 	result := db.WithContext(ctx).
 		Table(definition.RootTable).
 		Select("id").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", entityID).
 		Take(&root)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {

@@ -134,7 +134,7 @@ func layoutMigrationShape(content string) string {
 // The caller supplies transaction-scoped backups and post-rewrite validation.
 func MigrateLayoutMarkers(ctx context.Context, tx *gorm.DB, layoutID, expectedSource string, expectedLocales map[string]string, rewrite func() error) error {
 	var root struct{ SourceLocale string }
-	if err := tx.WithContext(ctx).Table("email_layout").Clauses(clause.Locking{Strength: "UPDATE"}).Select("source_locale").Where("id = ?", layoutID).Take(&root).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("email_layout").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("source_locale").Where("id = ?", layoutID).Take(&root).Error; err != nil {
 		return err
 	}
 	if root.SourceLocale != expectedSource {
@@ -145,7 +145,7 @@ func MigrateLayoutMarkers(ctx context.Context, tx *gorm.DB, layoutID, expectedSo
 		Locale      string
 		HTMLContent *string
 	}
-	if err := tx.WithContext(ctx).Table("email_layout_translation").Clauses(clause.Locking{Strength: "UPDATE"}).Select("locale, html_content").Where("entity_id = ?", layoutID).Order("locale").Find(&rows).Error; err != nil {
+	if err := tx.WithContext(ctx).Table("email_layout_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("locale, html_content").Where("entity_id = ?", layoutID).Order("locale").Find(&rows).Error; err != nil {
 		return err
 	}
 	if len(rows) != len(expectedLocales) {

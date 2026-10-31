@@ -274,7 +274,7 @@ func (s *LabelService) buildLabelResponseInTransaction(
 	labelID := label.ID
 	var current model.Label
 	if err := s.db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Where("id = ?", labelID).
 		Take(&current).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

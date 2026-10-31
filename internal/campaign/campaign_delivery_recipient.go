@@ -266,7 +266,7 @@ func ClaimCampaignDeliveryRecipient(
 			return err
 		}
 		var recipient model.CampaignDeliveryRecipient
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "run_id", "status", "delivery_claim_id", "delivery_claim_expires_at").
 			First(&recipient, "id = ?", recipientID).Error; err != nil {
 			return err
@@ -334,7 +334,7 @@ func ReleaseCampaignDeliveryRecipientClaim(
 			return err
 		}
 		var recipient model.CampaignDeliveryRecipient
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "run_id", "status", "delivery_claim_id").
 			First(&recipient, "id = ?", recipientID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -441,7 +441,7 @@ func markCampaignDeliveryRecipientResultWithAudit(
 			return err
 		}
 		var recipient model.CampaignDeliveryRecipient
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "run_id", "status", "provider_message_id", "error_type", "terminal_at", "delivery_claim_id", "delivery_claim_expires_at").
 			First(&recipient, "id = ?", recipientID).Error; err != nil {
 			return err

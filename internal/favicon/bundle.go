@@ -296,7 +296,7 @@ func RequestDeletion(ctx context.Context, tx *gorm.DB, sourceFileID string) erro
 	derivativeAssetIDs := tx.Table("file_derivative").Select("asset_id").
 		Where("file_id = ? AND type LIKE ? AND asset_id IS NOT NULL", sourceFileID, "FILE_DERIVATIVE_TYPE_FAVICON_%")
 	var assets []model.PublicAsset
-	assetQuery := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN (?)", derivativeAssetIDs)
+	assetQuery := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id IN (?)", derivativeAssetIDs)
 	if hasSourceAssetColumn {
 		assetQuery = assetQuery.Or("source_file_id = ? AND kind = ?", sourceFileID, "favicon")
 	}

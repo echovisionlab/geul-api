@@ -212,7 +212,7 @@ func (s *ProgramEventTypeService) DeleteProgramEventType(
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var eventType model.ProgramEventType
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&eventType, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&eventType, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event type", req.Msg.Id)
 			}

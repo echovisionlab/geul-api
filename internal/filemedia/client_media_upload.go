@@ -176,7 +176,7 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 
 func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
 	var session model.UploadSession
-	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
 		level := slog.LevelError
 		if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -49,7 +49,7 @@ func (s *TrackService) replaceTrackCredits(
 ) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var track model.Track
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&track, "id = ?", trackID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&track, "id = ?", trackID).Error; err != nil {
 			return err
 		}
 		if err := requireActiveTrackAction(ctx, tx, s.spiceDB, trackID, trackActionEdit); err != nil {

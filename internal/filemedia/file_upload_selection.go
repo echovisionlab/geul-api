@@ -62,7 +62,7 @@ func findActiveUploadSessionsForSurfaceWithDB(
 		query = query.Where("expected_current_file_id = ?", *target.expectedCurrentFileID)
 	}
 	if lockRows {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 
 	var sessions []model.UploadSession

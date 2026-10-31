@@ -268,7 +268,7 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 		// document is open. Lock the aggregate again at the final save boundary;
 		// no snapshot may be accepted for a deleted theme.
 		var current model.MapTheme
-		if loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if loadErr := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", themeID).
 			Take(&current).Error; loadErr != nil {
 			return loadErr

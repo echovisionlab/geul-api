@@ -206,7 +206,7 @@ func (s *PostService) loadPublicPostSnapshot(
 	var snapshot publicPostSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Preload("Categories").
 			Preload("Tags").
 			Preload("Series").

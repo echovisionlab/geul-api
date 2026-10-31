@@ -94,7 +94,7 @@ func NewAuditedMenuService(
 func lockMenuForUpdate(ctx context.Context, tx *gorm.DB, menuID string) (*model.Menu, error) {
 	var menu model.Menu
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&menu, "id = ?", menuID).Error; err != nil {
 		return nil, err
 	}

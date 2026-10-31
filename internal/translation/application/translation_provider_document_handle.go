@@ -130,7 +130,7 @@ func lockTranslationProviderDocumentJob(
 ) (*model.TranslationJob, error) {
 	var job model.TranslationJob
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status", "provider", "model", "provider_document_id", "provider_document_key", "provider_document_submitted_at").
 		First(&job, "id = ?", jobID).Error
 	if err != nil {

@@ -72,7 +72,7 @@ func loadPageContentDocumentIDForRead(
 	var root pageContentDocumentRoot
 	if err := tx.WithContext(ctx).
 		Table("page").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id", "content_document_id").
 		Where("id = ?", pageID).
 		Take(&root).Error; err != nil {
@@ -160,7 +160,7 @@ func lockPageContentDocumentRoot(
 ) error {
 	var root pageContentDocumentRoot
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("page").
 		Select("id", "content_document_id").
 		Where("id = ?", pageID).

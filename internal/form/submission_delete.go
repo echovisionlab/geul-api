@@ -36,7 +36,7 @@ func (s *FormService) DeleteFormSubmission(
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var form model.Form
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id").
 			First(&form, "id = ?", submission.FormID).Error; err != nil {
 			return err

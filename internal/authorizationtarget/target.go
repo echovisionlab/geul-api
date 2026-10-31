@@ -115,7 +115,7 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 	}
 	result := tx.WithContext(ctx).
 		Table("member").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id").
 		Where("id = ?::uuid AND account_identity_id = ?::uuid", memberID, target.IdentityID).
 		Take(&member)
@@ -132,7 +132,7 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 	}
 	result = tx.WithContext(ctx).
 		Table("kratos.identities").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Select("id").
 		Where("id = ?::uuid AND external_id = ?", target.IdentityID, target.MemberID).
 		Take(&identity)
@@ -302,7 +302,7 @@ func LockActivePairForCredentialMutation(ctx context.Context, tx *gorm.DB, membe
 	result := tx.WithContext(ctx).
 		Table("public.member AS member").
 		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text").
-		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "member"}}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "member"}}).
 		Select("member.id::text AS id").
 		Where(`member.id = ?::uuid
 			AND identity.id = ?::uuid

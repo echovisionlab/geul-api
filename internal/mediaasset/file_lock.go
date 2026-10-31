@@ -26,7 +26,7 @@ func LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []st
 	}
 	var files []model.File
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "delete_requested_at").
 		Where("id IN ?", ids).
 		Order("id ASC").

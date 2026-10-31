@@ -63,7 +63,7 @@ func (DeletionLifecycle) FinalizeTombstone(ctx context.Context, db *gorm.DB, req
 			return fmt.Errorf("exact Kratos identity still exists after deletion")
 		}
 		var member model.Member
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?::uuid", request.MemberID).Take(&member).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?::uuid", request.MemberID).Take(&member).Error; err != nil {
 			return err
 		}
 		if member.AccountIdentityID != nil {

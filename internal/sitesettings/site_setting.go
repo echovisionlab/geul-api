@@ -145,7 +145,7 @@ func (s *SiteSettingService) loadSettingsRow(tx *gorm.DB) (*model.SiteSettings, 
 
 func (s *SiteSettingService) loadSettingsRowForUpdate(tx *gorm.DB) (*model.SiteSettings, error) {
 	var settings model.SiteSettings
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&settings, "id = 1").Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&settings, "id = 1").Error; err != nil {
 		return nil, err
 	}
 	return &settings, nil

@@ -501,7 +501,7 @@ func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, 
 			if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
 				return err
 			}
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Model(&model.Track{}).
 				Where("release_id = ?", releaseID).
 				Pluck("id", &trackIDs).Error; err != nil {
@@ -581,7 +581,7 @@ func (s *ReleaseService) DeleteRelease(
 				return err
 			}
 			trackIDs = nil
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Model(&model.Track{}).
 				Where("release_id = ?", req.Msg.Id).
 				Pluck("id", &trackIDs).Error; err != nil {

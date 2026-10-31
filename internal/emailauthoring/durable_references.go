@@ -41,7 +41,7 @@ func RequireTranslationSourceMutable(
 		ID string `gorm:"column:id"`
 	}
 	result := tx.WithContext(ctx).Table(table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").Where("id = ?", entityID).Take(&root)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {

@@ -329,7 +329,7 @@ func (s *FileService) lockContentDownloadOwner(
 	}
 	result := tx.WithContext(ctx).Table(ownerTable).
 		Select("status").Where("id = ?", entityID).
-		Clauses(clause.Locking{Strength: "SHARE"}).Take(&owner)
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&owner)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return "", false, nil
 	}
@@ -349,7 +349,7 @@ func (s *FileService) lockReleaseDownloadOwner(
 	}
 	result := tx.WithContext(ctx).Table("release").
 		Select("status").Where("id = ?", releaseID).
-		Clauses(clause.Locking{Strength: "SHARE"}).Take(&owner)
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&owner)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return "", false, nil
 	}
@@ -398,7 +398,7 @@ func (s *FileService) resolveContentBlockDownloadSource(
 		Joins("JOIN "+ownerTable+" AS owner ON owner.content_document_id = cb.document_id").
 		Where("owner.id = ? AND cb.id = ? AND cb.kind = 'file' AND cbf.reference_path = ? AND cbf.selector_kind = 'active'", entityID, blockID, referencePath)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	result := query.Take(&owner)
 	if result.Error != nil {
@@ -433,7 +433,7 @@ func (s *FileService) resolveReleaseTrackDownloadSource(
 		Joins("JOIN release ON release.id = track.release_id").
 		Where("track.id = ? AND release.id = ? AND track.audio_original_file_id IS NOT NULL", trackID, releaseID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	result := query.Take(&owner)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {

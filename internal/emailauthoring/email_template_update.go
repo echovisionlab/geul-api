@@ -216,7 +216,7 @@ func lockEmailTemplateForUpdate(
 	template *model.EmailTemplate,
 ) error {
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(template, "id = ?", templateID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("email template", templateID)

@@ -202,7 +202,7 @@ func loadTargetState(ctx context.Context, db *gorm.DB, target target, entityID s
 	var state targetState
 	query := db.WithContext(ctx).Table(target.table).Select(columns).Where("id = ?", entityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	if err := query.Take(&state).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -326,7 +326,7 @@ func (a *Authority) appendLegalAudit(ctx context.Context, tx *gorm.DB, entityTyp
 	var row struct {
 		Version int64 `gorm:"column:version"`
 	}
-	if err := tx.WithContext(ctx).Table(table).Clauses(clause.Locking{Strength: "UPDATE"}).Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
+	if err := tx.WithContext(ctx).Table(table).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound(name, entityID)
 		}

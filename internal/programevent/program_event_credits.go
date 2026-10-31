@@ -407,7 +407,7 @@ func replaceProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string
 		return result, err
 	}
 	var existing []model.ProgramEventCredit
-	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("event_id = ?", eventID).Order("sort_order ASC, created_at ASC").Find(&existing).Error; err != nil {
+	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("event_id = ?", eventID).Order("sort_order ASC, created_at ASC").Find(&existing).Error; err != nil {
 		return result, errs.Internal(err)
 	}
 	previousIDs := make([]string, len(existing))

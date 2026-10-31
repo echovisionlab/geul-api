@@ -142,7 +142,7 @@ func queryMultipartUploadCandidate(
 	}
 	query = applyMultipartCandidateRequestFilters(query, search)
 	if lockRows {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	err = query.
 		Order("CASE WHEN status = 'finalizing' THEN 0 ELSE 1 END").

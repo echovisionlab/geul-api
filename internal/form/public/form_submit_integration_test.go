@@ -112,7 +112,7 @@ func TestSubmitRevalidatesMutableAccessPolicyAfterFormLock(t *testing.T) {
 				}
 			})
 			var locked model.Form
-			require.NoError(t, holder.Clauses(clause.Locking{Strength: "UPDATE"}).
+			require.NoError(t, holder.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				First(&locked, "id = ?", formID).Error)
 			require.NoError(t, holder.Model(&model.Form{}).
 				Where("id = ?", formID).

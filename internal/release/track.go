@@ -458,7 +458,7 @@ func (s *TrackService) UpdateTrack(
 			return err
 		}
 		var locked model.Track
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", track.ID).Error; err != nil {
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&locked, "id = ?", track.ID).Error; err != nil {
 			return err
 		}
 		if err := requireActiveTrackAction(ctx, tx, s.spiceDB, track.ID, trackActionEdit); err != nil {
@@ -556,7 +556,7 @@ func (s *TrackService) DeleteTrack(
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var locked model.Track
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", track.ID).Error; err != nil {
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&locked, "id = ?", track.ID).Error; err != nil {
 			return err
 		}
 		return requireActiveTrackAction(ctx, tx, s.spiceDB, track.ID, trackActionDelete)

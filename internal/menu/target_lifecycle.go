@@ -84,7 +84,7 @@ func (l TargetLifecycle) rewriteMenusForTarget(
 ) error {
 	now := time.Now().UTC()
 	var menus []model.Menu
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Order("id ASC").
 		Find(&menus).Error; err != nil {
 		return errs.Internal(err)

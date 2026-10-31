@@ -109,7 +109,7 @@ func lockPostRootForLocaleWrite(
 		ID string `gorm:"column:id"`
 	}
 	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("post").
 		Select("id").
 		Where("id = ?", postID).

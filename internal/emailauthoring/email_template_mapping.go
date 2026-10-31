@@ -159,7 +159,7 @@ func lockEmailEventMappingTemplates(
 ) ([]model.EmailTemplate, error) {
 	var templates []model.EmailTemplate
 	query := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("event_key = ?", eventKey)
 	if targetTemplateID != "" {
 		query = query.Or("id = ?", targetTemplateID)

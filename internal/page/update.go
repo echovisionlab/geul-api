@@ -163,7 +163,7 @@ func validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *comm
 	}
 	var ids []string
 	if err := tx.WithContext(ctx).Model(&model.UserTag{}).
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Where("id IN ?", policy.UserTagIds).Pluck("id", &ids).Error; err != nil {
 		return errs.Internal(err)
 	}

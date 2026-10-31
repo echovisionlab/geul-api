@@ -111,7 +111,7 @@ func SuppressEmailAddress(
 		}
 
 		var existing model.EmailSuppression
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("LOWER(email) = ? AND released_at IS NULL", normalized).
 			First(&existing).Error
 		if err == nil {

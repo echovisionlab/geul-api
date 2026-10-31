@@ -297,7 +297,7 @@ func (s *PageService) buildPageResponse(
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var err error
 			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "SHARE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 				Where(read.column+" = ?", read.value).
 				Take(&page).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {

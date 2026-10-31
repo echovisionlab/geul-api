@@ -41,7 +41,7 @@ func loadProgramEventContentDocumentID(
 		Select("content_document_id").
 		Where("id = ?", eventID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var root programEventContentDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
@@ -69,7 +69,7 @@ func programEventContentDocumentFence(
 			Table("program_event").
 			Select("content_document_id").
 			Where("id = ?", eventID).
-			Clauses(clause.Locking{Strength: "UPDATE"})
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 		var root programEventContentDocumentRoot
 		if err := query.Take(&root).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

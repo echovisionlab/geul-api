@@ -256,7 +256,7 @@ func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 			return err
 		}
 		var affectedEvents []model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("series_id = ?", req.Msg.Id).
 			Find(&affectedEvents).Error; err != nil {
 			return errs.Internal(err)

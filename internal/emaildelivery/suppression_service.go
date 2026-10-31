@@ -117,7 +117,7 @@ func (s *EmailSuppressionService) releaseEmailSuppression(
 		findErr := gorm.ErrRecordNotFound
 		if normalized != "" {
 			findErr = tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Where("LOWER(email) = ? AND released_at IS NULL", normalized).
 				First(&suppression).Error
 		}

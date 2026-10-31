@@ -149,7 +149,7 @@ func (s *ArtistService) overlayArtistSourceLocaleDocument(
 		func(ctx context.Context, tx *gorm.DB) error {
 			var current model.Artist
 			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "SHARE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 				Where("id = ?", artistID).
 				Take(&current).Error; err != nil {
 				return err

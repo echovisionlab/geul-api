@@ -132,7 +132,7 @@ func (a *DownloadAccess) Resolve(
 			ContentDocumentID *string `gorm:"column:content_document_id"`
 		}
 		releaseQuery := tx.WithContext(ctx).Table("release").Select("status, content_document_id").Where("id = ?", releaseID).
-			Clauses(clause.Locking{Strength: "SHARE"}).Take(&releaseRow)
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&releaseRow)
 		if errors.Is(releaseQuery.Error, gorm.ErrRecordNotFound) || releaseRow.Status != expectedReleaseStatus {
 			return nil
 		}
@@ -157,7 +157,7 @@ func (a *DownloadAccess) Resolve(
 		}
 		if lockErr := tx.WithContext(ctx).Table("track").Select("id").
 			Where("release_id = ? AND id IN ? AND audio_original_file_id IS NOT NULL", releaseID, trackIDs).
-			Order("id").Clauses(clause.Locking{Strength: "SHARE"}).Find(&lockedTracks).Error; lockErr != nil {
+			Order("id").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Find(&lockedTracks).Error; lockErr != nil {
 			return lockErr
 		}
 		currentSources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, tx, trackIDs)
@@ -216,7 +216,7 @@ func (a *DownloadAccess) validateReleaseDownloadOwnerAuthorization(
 	}
 	query := db.WithContext(ctx).Table("release").Select("status, content_document_id").Where("id = ?", releaseID)
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -292,7 +292,7 @@ func validateReleaseDownloadShareLink(
 	var link model.ShareLink
 	query := db.WithContext(ctx).Where("id = ?", witness.ID)
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Take(&link).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

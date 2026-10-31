@@ -39,7 +39,7 @@ func (testTranslationDomains) LockRoot(ctx context.Context, tx *gorm.DB, entityT
 		return errs.InvalidArgument("target.entity_type", "unsupported translation entity type")
 	}
 	var row struct{ ID string }
-	return tx.WithContext(ctx).Table(definition.RootTable).Clauses(clause.Locking{Strength: "UPDATE"}).
+	return tx.WithContext(ctx).Table(definition.RootTable).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").Where("id = ?", entityID).Take(&row).Error
 }
 

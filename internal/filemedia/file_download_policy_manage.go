@@ -377,7 +377,7 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 			Where("block.id = ? AND block.kind = 'file'", *selector.BlockID).
 			Where("attachment.reference_path = ? AND attachment.selector_kind = 'active'", *selector.ReferencePath)
 		if lock {
-			query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "attachment"}})
+			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "attachment"}})
 		}
 		if err := query.Take(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -395,7 +395,7 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 		Joins("JOIN file ON file.id = track.audio_original_file_id AND file.delete_requested_at IS NULL").
 		Where("track.id = ?", selector.EntityID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "track"}})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "track"}})
 	}
 	if err := query.Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

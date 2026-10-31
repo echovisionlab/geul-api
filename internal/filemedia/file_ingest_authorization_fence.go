@@ -87,7 +87,7 @@ func (authority multipartFileIngestAuthority) revalidate(
 	}
 	var session model.UploadSession
 	result := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", authority.uploadID, authority.fileID).
 		Take(&session)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -181,7 +181,7 @@ func lockFileIngestAuthorizationTarget(
 	}
 	result := tx.WithContext(ctx).
 		Table(table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("id = ?", entityID).
 		Take(&row)

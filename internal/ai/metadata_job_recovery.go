@@ -30,7 +30,7 @@ func (m *MetadataJobManager) RecoverExpiredJobs(ctx context.Context, limit int) 
 	republished := 0
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var jobs []metadataJobRecord
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Options: clause.LockingOptionsSkipLocked}).
 			Where(
 				"(status = ? AND updated_at <= ?) OR (status = ? AND updated_at <= ? AND (started_at IS NULL OR started_at <= ?))",
 				metadataAIJobStatusQueued,

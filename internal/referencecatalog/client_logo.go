@@ -74,7 +74,7 @@ func (s *ClientService) SetClientLogo(
 		}
 		if err := tx.Table("client").
 			Select(logoColumn+" AS selected_file_id").
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.ClientId).
 			Take(&current).Error; err != nil {
 			return err
@@ -186,7 +186,7 @@ func (s *ClientService) DeleteClientLogo(
 		}
 		if err := tx.Table("client").
 			Select(logoColumn+" AS selected_file_id").
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.ClientId).
 			Take(&current).Error; err != nil {
 			return err

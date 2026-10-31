@@ -65,7 +65,7 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 
 func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventType, error) {
 	var eventType model.ProgramEventType
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&eventType, "id = ?", id).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&eventType, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return eventType, errs.NotFound("program event type", id)
 		}

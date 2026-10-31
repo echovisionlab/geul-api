@@ -225,7 +225,7 @@ func claimLockedMultipartCompletion(
 ) (model.UploadSession, []model.UploadPart, bool, error) {
 	var locked model.UploadSession
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", session.UploadID, session.FileID).
 		Take(&locked).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

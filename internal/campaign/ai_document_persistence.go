@@ -116,7 +116,7 @@ func loadCampaignAIDocumentSubject(
 	query := db.WithContext(ctx).Table("campaign_translation").
 		Select("subject").Where("entity_id = ? AND locale = ?", campaignID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	result := query.Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {

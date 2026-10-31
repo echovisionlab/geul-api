@@ -101,7 +101,7 @@ func lockTrackDownloadAudienceSegments(ctx context.Context, tx *gorm.DB, trackID
 		Joins("JOIN track_download_audience_segment AS association ON association.audience_segment_id = segment.id").
 		Where("association.track_id = ?", trackID).
 		Order("segment.id").
-		Clauses(clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: "segment"}}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "segment"}}).
 		Find(&rows).Error
 }
 
@@ -175,5 +175,5 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 
 func lockTrackForUploadMutation(tx *gorm.DB, trackID string) error {
 	var track model.Track
-	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", trackID).Take(&track).Error
+	return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?", trackID).Take(&track).Error
 }

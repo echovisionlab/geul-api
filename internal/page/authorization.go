@@ -151,7 +151,7 @@ func lockPageAuthorizationRoot(ctx context.Context, tx *gorm.DB, pageID string) 
 		ID string `gorm:"column:id"`
 	}
 	if err := tx.WithContext(ctx).Table("page").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").Where("id = ?", pageID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("page", pageID)

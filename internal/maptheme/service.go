@@ -119,7 +119,7 @@ func (s *MapThemeService) requireLockedMapThemeCan(
 func lockMapThemeRoot(ctx context.Context, tx *gorm.DB, themeID string) (*model.MapTheme, error) {
 	var theme model.MapTheme
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", themeID).
 		Take(&theme).Error; err != nil {
 		if stderrors.Is(err, gorm.ErrRecordNotFound) {

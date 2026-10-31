@@ -148,7 +148,7 @@ func RequireEditableTranslationMutationWithDB(
 		Status string `gorm:"column:status"`
 	}
 	if err := db.WithContext(ctx).Table(policy.table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound(entityType, entityID)
@@ -219,7 +219,7 @@ func RequireLockedSourceLocaleEdit(
 		Status string `gorm:"column:status"`
 	}
 	if err := tx.WithContext(ctx).Table(policy.table).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound(entityType, entityID)

@@ -39,7 +39,7 @@ func (s *PageService) SetPageFeaturedImage(
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Lock and get page with current featured_image_file_id
 		var page model.Page
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&page, "id = ?", req.Msg.PageId).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.PageId)
@@ -137,7 +137,7 @@ func (s *PageService) DeletePageFeaturedImage(
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Lock and get page with current featured_image_file_id
 		var page model.Page
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&page, "id = ?", req.Msg.PageId).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.PageId)

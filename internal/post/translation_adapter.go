@@ -333,7 +333,7 @@ func applyPostTranslatedMetadata(
 		Summary *string `gorm:"column:summary"`
 	}
 	result := tx.WithContext(ctx).Table("post_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("title", "summary").
 		Where("entity_id = ? AND locale = ?", job.EntityID, job.TargetLocale).
 		Take(&current)

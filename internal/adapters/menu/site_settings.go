@@ -34,7 +34,7 @@ func (a SiteSettingsReferences) ClearMenuReferences(
 	menuID string,
 ) error {
 	var settings model.SiteSettings
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&settings, "id = ?", 1).Error; err != nil {
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&settings, "id = ?", 1).Error; err != nil {
 		return errs.Internal(err)
 	}
 

@@ -134,7 +134,7 @@ func loadRegistrationMember(
 	plan registrationProvisioningPlan,
 	member *model.Member,
 ) (bool, error) {
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("account_identity_id = ?", plan.input.IdentityID).
 		First(member).Error
 	if err == nil {

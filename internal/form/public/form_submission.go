@@ -194,7 +194,7 @@ func (s *FormService) createFormSubmissionWithDB(
 
 func lockFormForSubmission(tx *gorm.DB, formID string) (model.Form, error) {
 	var form model.Form
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&form, "id = ?", formID).Error
+	err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&form, "id = ?", formID).Error
 	return form, err
 }
 

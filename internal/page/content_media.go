@@ -103,7 +103,7 @@ func RequireIndexedContentBlockAttachmentsReadyForPublication(
 	}
 	sort.Strings(fileIDs)
 	var files []publicationFileRow
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Table("file").Select("id, mime_type, duration_seconds, delete_requested_at").
 		Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
 		return errs.Internal(err)

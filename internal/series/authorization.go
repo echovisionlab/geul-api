@@ -232,7 +232,7 @@ func lockSeriesRoot(ctx context.Context, tx *gorm.DB, seriesID string) error {
 		ID string `gorm:"column:id"`
 	}
 	if err := tx.WithContext(ctx).Table("series").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("id = ?", seriesID).
 		Take(&row).Error; err != nil {
@@ -249,7 +249,7 @@ func lockPostSeriesRelation(ctx context.Context, tx *gorm.DB, postID string) (*s
 		SeriesID *string `gorm:"column:series_id"`
 	}
 	if err := tx.WithContext(ctx).Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("series_id").
 		Where("id = ?", postID).
 		Take(&row).Error; err != nil {
@@ -271,7 +271,7 @@ func lockSeriesOrderPosts(ctx context.Context, tx *gorm.DB, postIDs []string) er
 		ID string `gorm:"column:id"`
 	}
 	if err := tx.WithContext(ctx).Table("post").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("id IN ?", orderedIDs).
 		Order("id ASC").

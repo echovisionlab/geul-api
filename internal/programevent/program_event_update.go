@@ -215,7 +215,7 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 	changed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", event.ID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&current, "id = ?", event.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", event.ID)
 			}
@@ -432,7 +432,7 @@ func validateProgramEventSeriesRelation(ctx context.Context, tx *gorm.DB, eventI
 		return errs.InvalidArgument("series_order", "must be non-negative")
 	}
 	var series model.ProgramEventSeries
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&series, "id = ?", *seriesID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").First(&series, "id = ?", *seriesID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.InvalidArgument("series_id", "program event series does not exist")
 		}

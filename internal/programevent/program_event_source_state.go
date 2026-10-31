@@ -51,7 +51,7 @@ func (s *ProgramEventService) loadProgramEvent(ctx context.Context, id string) (
 	var output *managev1.ProgramEvent
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var event model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&event, "id = ?", id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", id)
 			}
@@ -74,7 +74,7 @@ func (s *ProgramEventService) loadAuthorizedProgramEvent(ctx context.Context, id
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var event model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&event, "id = ?", id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&event, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("program event", id)
 			}

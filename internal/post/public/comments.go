@@ -32,7 +32,7 @@ func (s *PostService) withCommentPost(
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var post model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("post not found")

@@ -305,7 +305,7 @@ func (s *WorkService) UpdateWorkCreditGroup(
 		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit_group", group.ID)
 			}
@@ -362,7 +362,7 @@ func (s *WorkService) DeleteWorkCreditGroup(
 		if err := s.lockWorkAdmin(ctx, tx, group.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&group, "id = ? AND work_id = ?", group.ID, group.WorkID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit_group", group.ID)
 			}
@@ -520,7 +520,7 @@ func (s *WorkService) UpdateWorkCredit(
 		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit", credit.ID)
 			}
@@ -606,7 +606,7 @@ func (s *WorkService) DeleteWorkCredit(
 		if err := s.lockWorkAdmin(ctx, tx, credit.WorkID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&credit, "id = ? AND work_id = ?", credit.ID, credit.WorkID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("credit", credit.ID)
 			}

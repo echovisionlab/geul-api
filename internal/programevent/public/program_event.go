@@ -204,7 +204,7 @@ func (s *ProgramEventService) Get(
 		var event model.ProgramEvent
 		query := tx.
 			Model(&model.ProgramEvent{}).
-			Clauses(clause.Locking{Strength: "SHARE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Where("status IN ?", publicProgramEventStatuses())
 		if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
 			query = query.Where("id = ?", slugOrID)

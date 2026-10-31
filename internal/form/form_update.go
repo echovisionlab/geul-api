@@ -53,7 +53,7 @@ func (s *FormService) UpdateForm(
 	var form model.Form
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&form, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}

@@ -53,7 +53,7 @@ func (h *Deletion) ValidatePending(
 	var exists bool
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var file model.File
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "extension", "mime_type", "delete_requested_at").
 			Where("id = ?", event.GetFileId()).
 			First(&file).Error; err != nil {
@@ -183,7 +183,7 @@ func (h *Deletion) Finalize(ctx context.Context, event *managev1.FileDeleteEvent
 			return err
 		}
 		var file model.File
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "extension", "mime_type", "delete_requested_at").
 			Where("id = ?", event.GetFileId()).
 			First(&file).Error; err != nil {

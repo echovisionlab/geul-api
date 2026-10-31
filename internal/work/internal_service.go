@@ -620,7 +620,7 @@ func (s *InternalWorkService) CreateWorkVersionCheckpoint(
 
 		var previous model.WorkVersion
 		previousResult := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("work_id = ?", req.Msg.WorkId).
 			Order("version DESC").
 			First(&previous)

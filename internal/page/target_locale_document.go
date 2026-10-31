@@ -75,7 +75,7 @@ func loadOptionalPageLocaleMetadataRow(
 		Select("locale", "title", "summary", "incarnation_id", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", pageID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row pageLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {

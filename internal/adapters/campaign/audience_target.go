@@ -27,7 +27,7 @@ func (AudienceTargets) LockTarget(
 ) (campaigndomain.CampaignAudienceTarget, error) {
 	var segment model.AudienceSegment
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&segment, "id = ?", segmentID).Error; err != nil {
 		return campaigndomain.CampaignAudienceTarget{}, err
 	}

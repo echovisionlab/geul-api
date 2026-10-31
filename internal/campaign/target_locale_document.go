@@ -54,7 +54,7 @@ func loadCampaignExactLocaleMetadata(
 		Select("locale", "subject", "updated_at").
 		Where("entity_id = ? AND locale = ?", campaignID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row campaignExactLocaleMetadata
 	if err := query.Take(&row).Error; err != nil {

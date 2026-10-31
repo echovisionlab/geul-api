@@ -29,7 +29,7 @@ func (References) Validate(ctx context.Context, db *gorm.DB, key string, value *
 	switch key {
 	case "homepage_page_id":
 		var page model.Page
-		if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("id", "status").Where("id = ?", id).Take(&page).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.InvalidArgument(key, "must reference a published page")
@@ -42,7 +42,7 @@ func (References) Validate(ctx context.Context, db *gorm.DB, key string, value *
 		return nil
 	case "menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id":
 		var menu model.Menu
-		if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			Select("id").Where("id = ?", id).Take(&menu).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.InvalidArgument(key, "must reference an existing menu")

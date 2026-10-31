@@ -243,7 +243,7 @@ func prepareSourceAssetPromotion(
 ) (*model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
 	var existing model.PublicAsset
 	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("source_file_id = ? AND status <> ?", file.ID, model.PublicAssetStatusDeleted).
 		Order("created_at DESC").
 		Take(&existing).Error
@@ -434,7 +434,7 @@ func (s *FileService) completeSourceAssetPromotion(
 				return err
 			}
 			var asset model.PublicAsset
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
 				return err
 			}
 			if asset.SourceFileID == nil || *asset.SourceFileID != sourceFileID {

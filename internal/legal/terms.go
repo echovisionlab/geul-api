@@ -122,7 +122,7 @@ func (s *TermsService) GetTermsVersion(
 	var response *connect.Response[managev1.Terms]
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var terms model.Terms
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
@@ -343,7 +343,7 @@ func (s *TermsService) ScheduleTerms(
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
@@ -441,7 +441,7 @@ func (s *TermsService) CancelTermsSchedule(
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
 			}
@@ -659,7 +659,7 @@ func (s *TermsService) DeleteTerms(
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&terms, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", req.Msg.Id)
@@ -809,7 +809,7 @@ func (s *TermsService) toProtoTermsWithDocument(
 	var sourceLocale string
 	var snapshot contentblock.Snapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			First(&persisted, "id = ?", t.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("terms", t.ID)

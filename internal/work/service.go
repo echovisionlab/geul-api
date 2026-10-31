@@ -793,7 +793,7 @@ func (s *WorkService) PublishWork(
 		if _, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, work.ID, policyv1.Work.Publish, workAuthorizationMutation); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&work, "id = ?", work.ID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&work, "id = ?", work.ID).Error; err != nil {
 			return err
 		}
 		if work.Status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() {
@@ -876,7 +876,7 @@ func (s *WorkService) UnpublishWork(
 		if lockedWork.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
 			return errs.FailedPrecondition("archived works must be published before they can be unpublished")
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&work, "id = ?", work.ID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&work, "id = ?", work.ID).Error; err != nil {
 			return err
 		}
 		if work.Status == managev1.WorkStatus_WORK_STATUS_DRAFT.String() {
@@ -945,7 +945,7 @@ func (s *WorkService) SetWorkFeaturedImage(
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.Work
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "featured_image_file_id", "status").
 			First(&current, "id = ?", req.Msg.WorkId).Error; err != nil {
 			return err
@@ -1033,7 +1033,7 @@ func (s *WorkService) DeleteWorkFeaturedImage(
 			FeaturedImageFileID *string `gorm:"column:featured_image_file_id"`
 			Status              string  `gorm:"column:status"`
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Table("work").
 			Select("featured_image_file_id", "status").
 			Where("id = ?", req.Msg.WorkId).

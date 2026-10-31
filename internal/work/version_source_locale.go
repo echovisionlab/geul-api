@@ -43,7 +43,7 @@ func switchWorkVersionRestoreSourceLocale(
 	}
 	result := tx.WithContext(ctx).
 		Table("work").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("content_document_id", "source_locale").
 		Where("id = ?", workID).
 		Take(&root)

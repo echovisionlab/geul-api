@@ -118,7 +118,7 @@ func lockPageMenuTargetStateForUpdate(
 ) (*lockedPageMenuTargetState, error) {
 	var state lockedPageMenuTargetState
 	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("page").
 		Select("slug", "show_title", "content_document_id", "updated_at", "access_policy").
 		Where("id = ?", pageID).
@@ -620,7 +620,7 @@ func (s *PageService) PublishPage(
 	var page model.Page
 	lifecycleChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&page, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.Id)
@@ -716,7 +716,7 @@ func (s *PageService) UnpublishPage(
 	var page model.Page
 	lifecycleChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&page, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("page", req.Msg.Id)
 			}

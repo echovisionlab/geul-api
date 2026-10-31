@@ -143,7 +143,7 @@ func (s *MemberService) DeleteMemberTag(
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var tag model.UserTag
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tag, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&tag, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("member tag", req.Msg.Id)
 			}

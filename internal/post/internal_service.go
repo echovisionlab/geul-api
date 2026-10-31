@@ -771,7 +771,7 @@ func (s *InternalPostService) CreatePostVersionCheckpoint(
 
 		var last model.PostVersion
 		lastResult := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("post_id = ?", req.Msg.PostId).
 			Order("version DESC").
 			First(&last)
@@ -932,7 +932,7 @@ func updatePostLocaleMetadataRow(
 		return false, false, err
 	}
 	current, err := loadPostLocaleMetadataRow(
-		ctx, tx.Clauses(clause.Locking{Strength: "UPDATE"}), postID, locale,
+		ctx, tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}), postID, locale,
 	)
 	if err != nil {
 		return false, false, err

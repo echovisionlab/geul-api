@@ -49,9 +49,9 @@ func loadLegalContentDocumentRoot(
 		Select("id", "title", "status", "version", "source_locale", "content_document_id").
 		Where("id = ?", entityID)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	} else {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	var root legalContentDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
@@ -339,7 +339,7 @@ func loadLegalDocumentRevisionWithDB(ctx context.Context, db *gorm.DB, documentI
 	if err := db.WithContext(ctx).
 		Table("content_document").
 		Select("revision").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Where("id = ?", documentID).
 		Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

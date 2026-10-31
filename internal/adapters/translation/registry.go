@@ -284,7 +284,7 @@ func (*DomainRegistry) LockRoot(ctx context.Context, tx *gorm.DB, entityType str
 	}
 	var row struct{ ID string }
 	result := tx.WithContext(ctx).Table(definition.RootTable).
-		Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", entityID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return errs.NotFound(entityType, entityID)

@@ -261,7 +261,7 @@ func (s *ReleaseService) overlayReleaseSourceLocaleDocument(
 		func(ctx context.Context, tx *gorm.DB) error {
 			var current model.Release
 			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: "SHARE"}).
+				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 				Where("id = ?", releaseID).
 				Take(&current).Error; err != nil {
 				return err

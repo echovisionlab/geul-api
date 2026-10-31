@@ -90,7 +90,7 @@ func loadLabelTargetLocaleState(
 	if forUpdate {
 		var document contentblock.Document
 		if err := tx.WithContext(ctx).Table("content_document").
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", documentID).Take(&document).Error; err != nil {
 			return labelTargetLocaleState{}, normalizeLabelContentBlockError(err)
 		}
@@ -145,7 +145,7 @@ func loadOptionalLabelLocaleMetadata(
 		Select("locale", "title", "created_at", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", labelID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row labelLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {

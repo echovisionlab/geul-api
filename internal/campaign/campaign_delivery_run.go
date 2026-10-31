@@ -42,7 +42,7 @@ func createCampaignDeliveryRun(
 	}
 	var lockedCampaign model.Campaign
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&lockedCampaign, "id = ?", campaign.ID).Error; err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}

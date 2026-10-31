@@ -86,7 +86,7 @@ func (c referenceCRUD[T]) lockForMutation(
 	id string,
 ) (*T, error) {
 	record := new(T)
-	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(record, "id = ?", id).Error; err != nil {
+	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(record, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound(c.resource, id)
 		}

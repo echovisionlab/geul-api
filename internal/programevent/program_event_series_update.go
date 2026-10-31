@@ -185,7 +185,7 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 
 func lockProgramEventSeriesForUpdate(tx *gorm.DB, seriesID string) (model.ProgramEventSeries, error) {
 	var series model.ProgramEventSeries
-	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&series, "id = ?", seriesID).Error
+	err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&series, "id = ?", seriesID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return series, errs.NotFound("program event series", seriesID)
 	}

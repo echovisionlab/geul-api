@@ -593,7 +593,7 @@ func applyPageLocaleMetadataMutation(
 		SourceLocale string `gorm:"column:source_locale"`
 	}
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Table("page").Select("source_locale").Where("id = ?", pageID).
 		Take(&root).Error; err != nil {
 		return pageLocaleMetadataMutationResult{}, err
@@ -813,7 +813,7 @@ func (s *InternalPageService) CreatePageVersionCheckpoint(
 
 		var previous model.PageVersion
 		previousResult := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("page_id = ?", req.Msg.PageId).
 			Order("version DESC").
 			First(&previous)

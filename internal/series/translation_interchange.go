@@ -190,7 +190,7 @@ func loadSeriesInterchangeState(
 	query := tx.WithContext(ctx).Table("series_translation").
 		Where("entity_id = ? AND locale = ?", seriesID, locale)
 	if update {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var target model.SeriesTranslation
 	result := query.Take(&target)

@@ -109,7 +109,7 @@ func (s *LabelService) SetLabelImage(
 	// Use transaction to ensure atomicity
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the label to update.
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
 			return err
 		}
@@ -206,7 +206,7 @@ func (s *LabelService) DeleteLabelImage(
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the label to update.
 		var label model.Label
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
 			return err
 		}

@@ -198,7 +198,7 @@ func sameArtistImageFileIDs(images []ArtistImageProjection, fileIDs []string) bo
 
 func lockEditableArtistImages(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) error {
 	var artist model.Artist
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&artist, "id = ?", artistID).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").First(&artist, "id = ?", artistID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFound("artist", artistID)
 		}

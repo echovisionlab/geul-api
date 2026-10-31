@@ -73,7 +73,7 @@ func lockEmailLayoutsForRelationMutation(
 
 	var layouts []model.EmailLayout
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		Where("id IN ?", normalized).
 		Order("id ASC").
@@ -622,7 +622,7 @@ func lockMutableEmailLayout(
 ) (model.EmailLayout, error) {
 	var layout model.EmailLayout
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&layout, "id = ?", layoutID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.EmailLayout{}, errs.NotFound("email layout", layoutID)
@@ -694,7 +694,7 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		var layout model.EmailLayout
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("email layout", req.Msg.Id)

@@ -116,7 +116,7 @@ func (r *CampaignDeliveryRuntime) StartRun(
 	}
 	var run model.CampaignDeliveryRun
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&run, "id = ?", strings.TrimSpace(runID)).Error; err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func (*CampaignDeliveryRuntime) CancelActiveRuns(
 	campaignID = strings.TrimSpace(campaignID)
 	var campaign model.Campaign
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		First(&campaign, "id = ?", campaignID).Error; err != nil {
 		return errs.Internal(err)
@@ -144,7 +144,7 @@ func (*CampaignDeliveryRuntime) CancelActiveRuns(
 
 	var activeRuns []model.CampaignDeliveryRun
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where(
 			"campaign_id = ? AND status IN ?",
 			campaignID,
@@ -382,7 +382,7 @@ func resolveCampaignDeliveryExcludedMemberPairs(
 		Where("member.deleted_at IS NULL").
 		Where("member.onboarded = TRUE").
 		Order("member.id ASC").
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 		Scan(&pairs).Error; err != nil {
 		return nil, err
 	}

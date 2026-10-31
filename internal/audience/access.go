@@ -29,7 +29,7 @@ func ValidateAuthenticatedAccessSegmentIDs(ctx context.Context, db *gorm.DB, seg
 	}
 	var segments []model.AudienceSegment
 	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id IN ?", segmentIDs).
 		Order("id ASC").
 		Find(&segments).Error; err != nil {

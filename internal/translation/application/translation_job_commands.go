@@ -117,7 +117,7 @@ func loadTranslationJobForCommand(
 	}
 	query := db.WithContext(ctx)
 	if locked {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var job model.TranslationJob
 	if err := query.First(&job, "id = ?", jobID).Error; err != nil {

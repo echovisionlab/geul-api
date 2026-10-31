@@ -483,7 +483,7 @@ func loadPostAIDocumentMetadataForUpdate(
 	var row aiDocumentMetadataRow
 	err := tx.WithContext(ctx).
 		Table("post_translation").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("title", "summary").
 		Where("entity_id = ?::uuid AND locale = ?", postID, locale).
 		Take(&row).Error

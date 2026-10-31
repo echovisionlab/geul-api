@@ -58,7 +58,7 @@ func (s *FileService) finalizeFileManagerDeliveries(
 			Where("id IN ?", fileIDs).
 			Order("id ASC")
 		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
+			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 		}
 		if err := query.Find(&locked).Error; err != nil {
 			return err
@@ -161,7 +161,7 @@ func lockFileManagerMeshDeliveryWitnesses(
 			witness.candidateID, witness.sourceFileID, model.MeshOptimizationCandidateStatusReady, witness.outputFileID,
 		)
 		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
+			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 		}
 		result := query.Take(&row)
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -374,7 +374,7 @@ func (s *FileService) finalizeStrongManageFileURLResponses(
 			Where("id IN ?", fileIDs).
 			Order("id ASC")
 		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
+			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 		}
 		if err := query.Find(&locked).Error; err != nil {
 			return err
@@ -399,7 +399,7 @@ func (s *FileService) finalizeStrongManageFileURLResponses(
 					fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(), grant.expectedAvatarOwner,
 				)
 				if tx.Dialector.Name() == "postgres" {
-					bindingQuery = bindingQuery.Clauses(clause.Locking{Strength: "SHARE"})
+					bindingQuery = bindingQuery.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 				}
 				if err := bindingQuery.Take(&binding).Error; err != nil {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -482,7 +482,7 @@ func (s *FileService) finalizeUsageManageFileURLResponse(
 			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "delete_requested_at", "client_media_bundle_id").
 			Where("id = ?", fileID)
 		if tx.Dialector.Name() == "postgres" {
-			fileQuery = fileQuery.Clauses(clause.Locking{Strength: "SHARE"})
+			fileQuery = fileQuery.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 		}
 		if err := fileQuery.Take(&file).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -552,7 +552,7 @@ func lockManageDeliveryUsageOwners(
 		}
 		query := tx.WithContext(ctx).Table(table).Select(selectFields).Where("id = ?", witness.resourceID)
 		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: "SHARE"})
+			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 		}
 		result := query.Take(&row)
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -593,7 +593,7 @@ func lockExactManageDeliveryUsage(
 ) (bool, error) {
 	query := tx.WithContext(ctx)
 	if tx.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	var row struct{ ID string }
 	switch witness.kind {

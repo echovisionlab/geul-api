@@ -151,7 +151,7 @@ func (s *FileService) loadMultipartResumeSessionState(
 	var current model.UploadSession
 	var cachedParts []model.UploadPart
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("upload_id = ? AND file_id = ?", expected.UploadID, expected.FileID).
 			Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -259,7 +259,7 @@ func (s *FileService) reconcileMultipartResumePartCache(
 ) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.UploadSession
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where(
 				"upload_id = ? AND file_id = ? AND status IN ?",
 				expected.UploadID,

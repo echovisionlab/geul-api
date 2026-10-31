@@ -38,7 +38,7 @@ func (s *FormService) SetFormFeaturedImage(
 	)
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "featured_image_file_id").
 			First(&current, "id = ?", req.Msg.FormId).Error; err != nil {
 			return err
@@ -128,7 +128,7 @@ func (s *FormService) DeleteFormFeaturedImage(
 	var current model.Form
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "featured_image_file_id").
 			First(&current, "id = ?", req.Msg.FormId).Error; err != nil {
 			return err

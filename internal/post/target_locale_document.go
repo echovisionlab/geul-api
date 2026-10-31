@@ -144,7 +144,7 @@ func loadOptionalPostLocaleMetadataRow(
 		Select("locale", "title", "summary", "updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", postID, locale)
 	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row postLocaleMetadataRow
 	if err := query.Take(&row).Error; err != nil {

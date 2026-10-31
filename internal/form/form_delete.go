@@ -41,7 +41,7 @@ func (s *FormService) DeleteForm(
 		s.db,
 		s.spiceDB,
 		func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Select("id").
 				First(&form, "id = ?", req.Msg.Id).Error; err != nil {
 				return err

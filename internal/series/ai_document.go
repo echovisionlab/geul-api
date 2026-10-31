@@ -495,7 +495,7 @@ func (s *AIDocumentService) loadAIDocumentState(
 	state.contentDocumentID = contentDocument.ID
 	state.contentRevision = contentDocument.Revision
 	state.documentRevision = core.Revision(contentDocument.Revision.String())
-	if err := tx.WithContext(ctx).Table("series_translation").Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Table("series_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("entity_id = ? AND locale = ?", seriesID, state.root.SourceLocale).
 		Take(&state.source).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -508,7 +508,7 @@ func (s *AIDocumentService) loadAIDocumentState(
 		state.localeExists = true
 	} else {
 		var target model.SeriesTranslation
-		err := tx.WithContext(ctx).Table("series_translation").Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.WithContext(ctx).Table("series_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("entity_id = ? AND locale = ?", seriesID, locale).Take(&target).Error
 		switch {
 		case err == nil:

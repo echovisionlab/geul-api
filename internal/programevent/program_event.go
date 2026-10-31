@@ -659,7 +659,7 @@ func (s *ProgramEventService) setProgramEventStatus(
 	var current model.ProgramEvent
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "status", "published_at", "updated_at").
 			First(&current, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

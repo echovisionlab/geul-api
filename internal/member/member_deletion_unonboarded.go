@@ -87,7 +87,7 @@ func (DeletionLifecycle) FinalizeUnonboardedHardDelete(
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current model.Member
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?::uuid", target.MemberID).Take(&current).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?::uuid", target.MemberID).Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}

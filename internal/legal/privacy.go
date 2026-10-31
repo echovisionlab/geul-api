@@ -122,7 +122,7 @@ func (s *PrivacyService) GetPrivacyVersion(
 	var response *connect.Response[managev1.Privacy]
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var privacy model.Privacy
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
@@ -344,7 +344,7 @@ func (s *PrivacyService) SchedulePrivacy(
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
@@ -442,7 +442,7 @@ func (s *PrivacyService) CancelPrivacySchedule(
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
 			}
@@ -660,7 +660,7 @@ func (s *PrivacyService) DeletePrivacy(
 		if err := s.legalOG.LockActivation(ctx, tx, "privacy"); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			First(&privacy, "id = ?", req.Msg.Id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy policy", req.Msg.Id)
@@ -810,7 +810,7 @@ func (s *PrivacyService) toProtoPrivacyWithDocument(
 	var sourceLocale string
 	var snapshot contentblock.Snapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
 			First(&persisted, "id = ?", p.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFound("privacy", p.ID)

@@ -725,7 +725,7 @@ func (s *LabelService) DeleteLabel(
 		`).Error; err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id").
 			First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
@@ -819,7 +819,7 @@ func (s *LabelService) PublishLabel(
 	transitioned := false
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {
@@ -875,7 +875,7 @@ func (s *LabelService) UnpublishLabel(
 	transitioned := false
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {

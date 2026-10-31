@@ -49,7 +49,7 @@ func loadSeriesContentDocumentState(
 		Select("id, source_locale, content_document_id").
 		Where("id = ?", seriesID)
 	if lock {
-		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var root seriesContentDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
@@ -69,7 +69,7 @@ func loadSeriesContentDocumentState(
 	documentQuery := db.WithContext(ctx).Table("content_document").
 		Select("id, profile, revision").Where("id = ?", documentID)
 	if lock {
-		documentQuery = documentQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		documentQuery = documentQuery.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var document seriesContentDocumentRow
 	if err := documentQuery.Take(&document).Error; err != nil {

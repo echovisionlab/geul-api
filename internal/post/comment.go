@@ -456,7 +456,7 @@ func (s *CommentService) createCommentWithDB(
 
 func lockCommentablePost(ctx context.Context, tx *gorm.DB, postID string) error {
 	var post model.Post
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id, status, comments_enabled").Where("id = ?", postID).First(&post).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return errs.NotFoundMsg("post not found")
@@ -493,7 +493,7 @@ func (s *CommentService) resolveCommentParentWithDB(
 		return nil, nil
 	}
 	var parent model.Comment
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ? AND post_id = ?", *requestedParentID, postID).First(&parent).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFoundMsg("parent comment not found")
@@ -561,7 +561,7 @@ func (s *CommentService) UpdateComment(
 		}
 		var comment model.Comment
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.Id).
 			First(&comment).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -649,7 +649,7 @@ func (s *CommentService) DeleteComment(
 		}
 		var comment model.Comment
 		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Where("id = ?", req.Msg.Id).
 			First(&comment).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -682,7 +682,7 @@ func (s *CommentService) DeleteComment(
 func (s *CommentService) withReadablePost(ctx context.Context, postID string, read func(*CommentService) error) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var post model.Post
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Select("id, status, comments_enabled").First(&post, "id = ?", postID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errs.NotFoundMsg("post not found")
 			}

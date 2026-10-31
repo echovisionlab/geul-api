@@ -58,7 +58,7 @@ func (s *Cleanup) MarkUnboundReadyAsset(
 	changed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "kind", "status", "ready_at").Where("id = ?", assetID).Take(&asset).Error; err != nil {
 			if stderrors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
@@ -123,7 +123,7 @@ func (s *Cleanup) MarkExpiredTerminalGenerationAsset(
 	changed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var asset model.PublicAsset
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "kind", "status", "created_at").Where("id = ?", assetID).Take(&asset).Error; err != nil {
 			if stderrors.Is(err, gorm.ErrRecordNotFound) {
 				return nil

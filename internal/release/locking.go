@@ -12,7 +12,7 @@ import (
 func lockReleaseForUpdate(ctx context.Context, tx *gorm.DB, releaseID string) (*model.Release, error) {
 	var release model.Release
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&release, "id = ?", releaseID).Error; err != nil {
 		return nil, err
 	}

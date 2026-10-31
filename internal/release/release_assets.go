@@ -55,7 +55,7 @@ func (s *ReleaseService) SetReleaseArtwork(
 	// Use transaction to ensure atomicity and prevent race conditions
 	var artworkAsset *commonv1.AssetRef
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id").
 			First(&release, "id = ?", req.Msg.ReleaseId).Error; err != nil {
 			return err
@@ -151,7 +151,7 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 	// Use transaction to ensure atomicity and prevent race conditions
 	var removedFileID string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id").
 			First(&release, "id = ?", req.Msg.ReleaseId).Error; err != nil {
 			return err
