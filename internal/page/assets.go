@@ -25,13 +25,7 @@ func (s *PageService) SetPageFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetPageFeaturedImageRequest],
 ) (_ *connect.Response[managev1.SetPageFeaturedImageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.SetPageFeaturedImage", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	var ogRunID *string
 
@@ -122,13 +116,7 @@ func (s *PageService) DeletePageFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePageFeaturedImageRequest],
 ) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.DeletePageFeaturedImage", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	var oldFileID *string
 	var ogRunID *string

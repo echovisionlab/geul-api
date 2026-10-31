@@ -122,14 +122,7 @@ func (s *ProgramEventService) LoadAIDocumentState(
 	ctx context.Context,
 	eventID string,
 	requestedLocale string,
-) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (AIDocumentState, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentState{}, errs.DependencyUnavailable("Program Event AI document")
 	}
@@ -270,22 +263,7 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 	requestedLocale string,
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentCommandCompiler,
-) (_ AIDocumentResult, terminalErr error) {
-	defer func() {
-		var conflict *AIDocumentConflict
-		expected := errors.As(terminalErr, &conflict)
-		if expected {
-			if terminalErr != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "ExecuteAIDocumentCommand", failurecause.Attr(terminalErr))
-			}
-		} else {
-			if terminalErr != nil {
-				level := errs.OperationLogLevel(terminalErr)
-				slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ExecuteAIDocumentCommand", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-			}
-		}
-	}()
-
+) (AIDocumentResult, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentResult{}, errs.DependencyUnavailable("Program Event AI document")
 	}

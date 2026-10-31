@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
@@ -189,15 +190,7 @@ func NewPageService(
 func (s *PageService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetPageRequest],
-) (_ *connect.Response[openv1.GetPageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
-	}()
-
+) (*connect.Response[openv1.GetPageResponse], error) {
 	slug := req.Msg.Slug
 	shareToken := req.Msg.ShareToken
 	sharePassword := ""

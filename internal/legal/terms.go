@@ -111,14 +111,7 @@ func NewTermsService(
 func (s *TermsService) GetTermsVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.GetTermsVersionRequest],
-) (rpcResponse *connect.Response[managev1.Terms], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "GetTermsVersion", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.Terms], error) {
 	var response *connect.Response[managev1.Terms]
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var terms model.Terms
@@ -144,14 +137,7 @@ func (s *TermsService) GetTermsVersion(
 func (s *TermsService) ListTermsVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTermsVersionsRequest],
-) (rpcResponse *connect.Response[managev1.ListTermsVersionsResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ListTermsVersions", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.ListTermsVersionsResponse], error) {
 	can, err := policyv1.TermsHistory.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -213,14 +199,7 @@ func (s *TermsService) ListTermsVersions(
 func (s *TermsService) CreateTermsVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateTermsVersionRequest],
-) (rpcResponse *connect.Response[managev1.Terms], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "CreateTermsVersion", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.Terms], error) {
 	termsCan, err := policyv1.TermsHistory.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -314,14 +293,7 @@ func (s *TermsService) CreateTermsVersion(
 func (s *TermsService) ScheduleTerms(
 	ctx context.Context,
 	req *connect.Request[managev1.ScheduleTermsRequest],
-) (rpcResponse *connect.Response[managev1.TermsLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ScheduleTerms", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.TermsLifecycleMutationResponse], error) {
 	// Validate effective_from is provided
 	if req.Msg.EffectiveFrom == nil {
 		return nil, errs.Required("effective_from")
@@ -427,14 +399,7 @@ func (s *TermsService) ScheduleTerms(
 func (s *TermsService) CancelTermsSchedule(
 	ctx context.Context,
 	req *connect.Request[managev1.CancelTermsScheduleRequest],
-) (rpcResponse *connect.Response[managev1.TermsLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "CancelTermsSchedule", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.TermsLifecycleMutationResponse], error) {
 	var terms model.Terms
 	var documentRevision string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -552,14 +517,7 @@ func (s *TermsService) CancelTermsSchedule(
 func (s *TermsService) ActivateTermsNow(
 	ctx context.Context,
 	req *connect.Request[managev1.ActivateTermsNowRequest],
-) (rpcResponse *connect.Response[managev1.TermsLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ActivateTermsNow", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.TermsLifecycleMutationResponse], error) {
 	now := time.Now()
 	var terms model.Terms
 	var effectiveRun *model.CampaignDeliveryRun
@@ -646,14 +604,7 @@ func (s *TermsService) ActivateTermsNow(
 func (s *TermsService) DeleteTerms(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteTermsRequest],
-) (rpcResponse *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "DeleteTerms", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.DeleteResponse], error) {
 	var terms model.Terms
 	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		if err := s.legalOG.LockActivation(ctx, tx, "terms"); err != nil {
@@ -742,14 +693,7 @@ func (s *TermsService) DeleteTerms(
 func (s *TermsService) RegenerateTermsDerivedContent(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateTermsDerivedContentRequest],
-) (rpcResponse *connect.Response[managev1.RegenerateTermsDerivedContentResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			cause := failurecause.Message(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "RegenerateTermsDerivedContent", "failure_cause", cause)
-		}
-	}()
+) (*connect.Response[managev1.RegenerateTermsDerivedContentResponse], error) {
 	snapshotDigest, err := regenerateLegalDerivedContent(
 		ctx, s.db, s.contentBlocks, s.spiceDB, s.legalOG,
 		"terms", req.Msg.Id, req.Msg.ExpectedSnapshotDigest,

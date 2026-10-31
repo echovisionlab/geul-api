@@ -32,14 +32,7 @@ type programEventUpdate struct {
 func (s *ProgramEventService) UpdateProgramEvent(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventRequest],
-) (_ *connect.Response[managev1.UpdateProgramEventResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEvent", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.UpdateProgramEventResponse], error) {
 	event, err := s.loadProgramEventForUpdate(ctx, req.Msg.Id)
 	if err != nil {
 		return nil, err

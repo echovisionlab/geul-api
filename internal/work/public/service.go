@@ -164,14 +164,7 @@ func applyPublicWorkFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*go
 func (s *WorkService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetWorkRequest],
-) (_ *connect.Response[openv1.GetWorkResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetWorkResponse], error) {
 	return s.buildWorkResponse(ctx, req)
 }
 
@@ -179,14 +172,7 @@ func (s *WorkService) Get(
 func (s *WorkService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListWorksRequest],
-) (_ *connect.Response[openv1.ListWorksResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListWorksResponse], error) {
 	var works []model.Work
 	var total int64
 
@@ -256,14 +242,7 @@ func (s *WorkService) List(
 func (s *WorkService) ListMapFeatures(
 	ctx context.Context,
 	req *connect.Request[openv1.ListWorkMapFeaturesRequest],
-) (_ *connect.Response[openv1.ListWorkMapFeaturesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListMapFeatures", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListWorkMapFeaturesResponse], error) {
 	viewport, err := normalizeWorkMapViewport(req.Msg.Viewport)
 	if err != nil {
 		return nil, err

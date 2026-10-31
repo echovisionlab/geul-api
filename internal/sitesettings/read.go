@@ -19,15 +19,7 @@ import (
 func (s *SiteSettingService) GetSettings(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSettingsRequest],
-) (_ *connect.Response[managev1.GetSettingsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSettings", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.GetSettingsResponse], error) {
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -126,15 +118,7 @@ func (s *SiteSettingService) GetSettings(
 func (s *SiteSettingService) GetSetting(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSettingRequest],
-) (_ *connect.Response[managev1.GetSettingResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.GetSetting", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.GetSettingResponse], error) {
 	can, err := policyv1.SiteSetting.View(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)

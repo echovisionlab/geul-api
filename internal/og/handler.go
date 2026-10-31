@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -13,7 +12,6 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -46,13 +44,7 @@ func NewInternalService(db *gorm.DB, cdnDomain string, projections ...Projection
 func (s *InternalService) ClaimOgGeneration(
 	ctx context.Context,
 	req *connect.Request[intrav1.ClaimOgGenerationRequest],
-) (_ *connect.Response[intrav1.ClaimOgGenerationResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ClaimOgGeneration", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[intrav1.ClaimOgGenerationResponse], error) {
 	claim, err := s.lifecycle.Claim(ctx, req.Msg.GetGenerationId())
 	if err != nil {
 		return nil, mapOgLifecycleError(err)
@@ -86,13 +78,7 @@ func (s *InternalService) ClaimOgGeneration(
 func (s *InternalService) CompleteOgGeneration(
 	ctx context.Context,
 	req *connect.Request[intrav1.CompleteOgGenerationRequest],
-) (_ *connect.Response[intrav1.CompleteOgGenerationResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "CompleteOgGeneration", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[intrav1.CompleteOgGenerationResponse], error) {
 	status, asset, err := s.lifecycle.Complete(
 		ctx,
 		req.Msg.GetGenerationId(),
@@ -118,13 +104,7 @@ func (s *InternalService) CompleteOgGeneration(
 func (s *InternalService) FailOgGeneration(
 	ctx context.Context,
 	req *connect.Request[intrav1.FailOgGenerationRequest],
-) (_ *connect.Response[intrav1.FailOgGenerationResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "FailOgGeneration", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[intrav1.FailOgGenerationResponse], error) {
 	if err := s.lifecycle.Fail(
 		ctx,
 		req.Msg.GetGenerationId(),

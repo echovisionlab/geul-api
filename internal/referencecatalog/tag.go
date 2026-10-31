@@ -84,15 +84,7 @@ func NewTagService(db *gorm.DB, menuTargets MenuTargets, spiceDB *auth.SpiceDBCl
 func (s *TagService) ListTags(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTagsRequest],
-) (_ *connect.Response[managev1.ListTagsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListTags", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListTagsResponse], error) {
 	tags, total, page, err := tagListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -112,15 +104,7 @@ func (s *TagService) ListTags(
 func (s *TagService) ListTagsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTagsAdminRequest],
-) (_ *connect.Response[managev1.ListTagsAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListTagsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListTagsAdminResponse], error) {
 	can, err := policyv1.Tag.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -162,15 +146,7 @@ func (s *TagService) ListTagsAdmin(
 func (s *TagService) CreateTag(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateTagRequest],
-) (_ *connect.Response[managev1.Tag], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateTag", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Tag], error) {
 	can, err := policyv1.Tag.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -216,13 +192,7 @@ func (s *TagService) UpdateTag(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateTagRequest],
 ) (_ *connect.Response[managev1.Tag], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateTag", "outcome", "failed", "tag_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("tag_id", req.Msg.GetId()))
 
 	can, err := policyv1.Tag.Edit(req.Msg.Id)
 	if err != nil {
@@ -271,13 +241,7 @@ func (s *TagService) DeleteTag(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteTagRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteTag", "outcome", "failed", "tag_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("tag_id", req.Msg.GetId()))
 
 	can, err := policyv1.Tag.Delete(req.Msg.Id)
 	if err != nil {

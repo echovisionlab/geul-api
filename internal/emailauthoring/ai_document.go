@@ -1,16 +1,17 @@
 package emailauthoring
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
+
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"log/slog"
-	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -129,11 +130,7 @@ func (s *AIDocumentService) Load(ctx context.Context, templateID, locale string)
 		)
 		return err
 	})
-	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "AI document load failed", "domain", "emailauthoring", "event", "emailauthoring.document_load_failed", "outcome", "failed", "entity_id", templateID, "locale", locale, failurecause.Attr(err))
-	}
-	return state, err
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "email_template"), slog.String("entity_id", templateID), slog.String("locale", locale))
 }
 
 var errRollbackEmailTemplateAIDocumentValidation = errors.New("rollback Email Template AI document validation")

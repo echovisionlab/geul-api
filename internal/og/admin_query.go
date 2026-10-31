@@ -3,7 +3,6 @@ package og
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -12,20 +11,13 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *AdminService) GetOgGeneration(ctx context.Context, req *connect.Request[managev1.GetOgGenerationRequest]) (_ *connect.Response[managev1.GetOgGenerationResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetOgGeneration", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+func (s *AdminService) GetOgGeneration(ctx context.Context, req *connect.Request[managev1.GetOgGenerationRequest]) (*connect.Response[managev1.GetOgGenerationResponse], error) {
 	if err := s.authorizer.RequireAuthenticated(ctx); err != nil {
 		return nil, err
 	}
@@ -46,13 +38,7 @@ func (s *AdminService) GetOgGeneration(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&managev1.GetOgGenerationResponse{Generation: view}), nil
 }
 
-func (s *AdminService) GetLatestOgGeneration(ctx context.Context, req *connect.Request[managev1.GetLatestOgGenerationRequest]) (_ *connect.Response[managev1.GetLatestOgGenerationResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetLatestOgGeneration", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+func (s *AdminService) GetLatestOgGeneration(ctx context.Context, req *connect.Request[managev1.GetLatestOgGenerationRequest]) (*connect.Response[managev1.GetLatestOgGenerationResponse], error) {
 	if err := s.authorizer.RequireAuthenticated(ctx); err != nil {
 		return nil, err
 	}
@@ -97,13 +83,7 @@ func (s *AdminService) GetLatestOgGeneration(ctx context.Context, req *connect.R
 	return connect.NewResponse(&managev1.GetLatestOgGenerationResponse{Generation: view}), nil
 }
 
-func (s *AdminService) GetOgGenerationRun(ctx context.Context, req *connect.Request[managev1.GetOgGenerationRunRequest]) (_ *connect.Response[managev1.GetOgGenerationRunResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetOgGenerationRun", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+func (s *AdminService) GetOgGenerationRun(ctx context.Context, req *connect.Request[managev1.GetOgGenerationRunRequest]) (*connect.Response[managev1.GetOgGenerationRunResponse], error) {
 	if err := s.authorizer.RequireAdmin(ctx); err != nil {
 		return nil, err
 	}

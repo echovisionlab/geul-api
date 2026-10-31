@@ -25,14 +25,7 @@ import (
 func (s *WorkService) GetWorkCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.GetWorkCreditsRequest],
-) (_ *connect.Response[managev1.GetWorkCreditsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "GetWorkCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.GetWorkCreditsResponse], error) {
 	// Verify work exists
 	var work model.Work
 	if err := s.db.WithContext(ctx).
@@ -80,14 +73,7 @@ func (s *WorkService) GetWorkCredits(
 func (s *WorkService) MoveWorkCreditItem(
 	ctx context.Context,
 	req *connect.Request[managev1.MoveWorkCreditItemRequest],
-) (_ *connect.Response[managev1.MoveWorkCreditItemResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "MoveWorkCreditItem", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.MoveWorkCreditItemResponse], error) {
 	if strings.TrimSpace(req.Msg.ItemId) == "" {
 		return nil, errs.InvalidArgument("item_id", "cannot be empty")
 	}
@@ -212,14 +198,7 @@ func hasWorkCredit(credits []model.WorkCredit, creditID string) bool {
 func (s *WorkService) CreateWorkCreditGroup(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateWorkCreditGroupRequest],
-) (_ *connect.Response[managev1.WorkCreditGroup], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CreateWorkCreditGroup", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.WorkCreditGroup], error) {
 	// Verify work exists
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
@@ -272,14 +251,7 @@ func (s *WorkService) CreateWorkCreditGroup(
 func (s *WorkService) UpdateWorkCreditGroup(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateWorkCreditGroupRequest],
-) (_ *connect.Response[managev1.WorkCreditGroup], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWorkCreditGroup", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.WorkCreditGroup], error) {
 	// Get group to find work ID
 	var group model.WorkCreditGroup
 	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
@@ -337,14 +309,7 @@ func (s *WorkService) UpdateWorkCreditGroup(
 func (s *WorkService) DeleteWorkCreditGroup(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteWorkCreditGroupRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkCreditGroup", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	// Get group to find work ID
 	var group model.WorkCreditGroup
 	if err := s.db.WithContext(ctx).First(&group, "id = ?", req.Msg.GroupId).Error; err != nil {
@@ -413,14 +378,7 @@ func (s *WorkService) DeleteWorkCreditGroup(
 func (s *WorkService) AddWorkCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.AddWorkCreditRequest],
-) (_ *connect.Response[managev1.WorkCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "AddWorkCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.WorkCredit], error) {
 	// Verify work exists
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
@@ -495,14 +453,7 @@ func (s *WorkService) AddWorkCredit(
 func (s *WorkService) UpdateWorkCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateWorkCreditRequest],
-) (_ *connect.Response[managev1.WorkCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UpdateWorkCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.WorkCredit], error) {
 	// Get credit to find work ID
 	var credit model.WorkCredit
 	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {
@@ -581,14 +532,7 @@ func (s *WorkService) UpdateWorkCredit(
 func (s *WorkService) DeleteWorkCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteWorkCreditRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	// Get credit to find work ID
 	var credit model.WorkCredit
 	if err := s.db.WithContext(ctx).First(&credit, "id = ?", req.Msg.CreditId).Error; err != nil {

@@ -171,13 +171,7 @@ func (s *PageService) GetPage(
 	ctx context.Context,
 	req *connect.Request[managev1.GetPageRequest],
 ) (_ *connect.Response[managev1.Page], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetId()))
 
 	return s.getPageBy(ctx, "id", req.Msg.Id)
 }
@@ -195,15 +189,7 @@ func (s *PageService) getPageBy(
 func (s *PageService) GetPageBySlug(
 	ctx context.Context,
 	req *connect.Request[managev1.GetPageBySlugRequest],
-) (_ *connect.Response[managev1.Page], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.GetPageBySlug", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Page], error) {
 	return s.getPageBy(ctx, "slug", req.Msg.Slug)
 }
 
@@ -211,15 +197,7 @@ func (s *PageService) GetPageBySlug(
 func (s *PageService) ListPagesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPagesAdminRequest],
-) (_ *connect.Response[managev1.ListPagesAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ListPagesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListPagesAdminResponse], error) {
 	// Check admin permission
 	if err := requirePageList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -289,15 +267,7 @@ func (s *PageService) ListPagesAdmin(
 func (s *PageService) CreatePage(
 	ctx context.Context,
 	req *connect.Request[managev1.CreatePageRequest],
-) (_ *connect.Response[managev1.Page], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CreatePage", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Page], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
@@ -450,13 +420,7 @@ func (s *PageService) UpdatePage(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdatePageRequest],
 ) (_ *connect.Response[managev1.UpdatePageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetId()))
 
 	page := model.Page{ID: req.Msg.Id}
 	update, err := s.preparePageUpdate(ctx, req.Msg)
@@ -486,13 +450,7 @@ func (s *PageService) DeletePage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeletePageRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.DeletePage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
@@ -607,13 +565,7 @@ func (s *PageService) PublishPage(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishPageRequest],
 ) (_ *connect.Response[managev1.PageLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.PublishPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
@@ -705,13 +657,7 @@ func (s *PageService) UnpublishPage(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishPageRequest],
 ) (_ *connect.Response[managev1.PageLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UnpublishPage", "outcome", "failed", "page_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetId()))
 
 	var page model.Page
 	lifecycleChanged := false

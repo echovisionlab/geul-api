@@ -23,15 +23,7 @@ import (
 func (s *FormService) GetFormSubmissionStats(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFormSubmissionStatsRequest],
-) (rpcResponse *connect.Response[managev1.GetFormSubmissionStatsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetFormSubmissionStats", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.GetFormSubmissionStatsResponse], error) {
 	formID := strings.TrimSpace(req.Msg.FormId)
 	if formID == "" {
 		return nil, errs.Required("form_id")

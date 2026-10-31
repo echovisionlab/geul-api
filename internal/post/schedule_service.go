@@ -24,13 +24,7 @@ func (s *PostService) SchedulePost(
 	ctx context.Context,
 	req *connect.Request[managev1.SchedulePostRequest],
 ) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.SchedulePost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetId()))
 
 	if req.Msg.ScheduledAt == nil {
 		return nil, errs.Required("scheduled_at")
@@ -103,13 +97,7 @@ func (s *PostService) CancelPostSchedule(
 	ctx context.Context,
 	req *connect.Request[managev1.CancelPostScheduleRequest],
 ) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.CancelPostSchedule", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetId()))
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -160,13 +148,7 @@ func (s *PostService) RepublishPost(
 	ctx context.Context,
 	req *connect.Request[managev1.RepublishPostRequest],
 ) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RepublishPost", "outcome", "failed", "post_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetId()))
 
 	var post model.Post
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

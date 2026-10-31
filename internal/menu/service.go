@@ -107,13 +107,7 @@ func (s *MenuService) GetMenuById(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMenuByIdRequest],
 ) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.GetMenuById", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
 
 	// Validate ID is provided
 	id := strings.TrimSpace(req.Msg.Id)
@@ -144,15 +138,7 @@ func (s *MenuService) GetMenuById(
 func (s *MenuService) ListMenus(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMenusRequest],
-) (_ *connect.Response[managev1.ListMenusResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.ListMenus", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListMenusResponse], error) {
 	can, err := policyv1.Menu.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -217,15 +203,7 @@ func (s *MenuService) ListMenus(
 func (s *MenuService) CreateMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMenuRequest],
-) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.CreateMenu", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Menu], error) {
 	can, err := policyv1.Menu.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -322,13 +300,7 @@ func (s *MenuService) UpdateMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMenuRequest],
 ) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.UpdateMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
 
 	// Validate ID
 	id := strings.TrimSpace(req.Msg.Id)
@@ -359,13 +331,7 @@ func (s *MenuService) DeleteMenu(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMenuRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.DeleteMenu", "outcome", "failed", "menu_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
 
 	menuID := strings.TrimSpace(req.Msg.Id)
 	if menuID == "" {

@@ -25,15 +25,7 @@ import (
 func (s *FormService) GetDashboard(
 	ctx context.Context,
 	req *connect.Request[openv1.GetFormDashboardRequest],
-) (rpcResponse *connect.Response[openv1.GetFormDashboardResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetDashboard", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[openv1.GetFormDashboardResponse], error) {
 	if req.Msg.ShareToken == "" {
 		return nil, errs.NotFoundMsg("form not found")
 	}

@@ -101,6 +101,20 @@ func WithAttrs(err error, attrs ...slog.Attr) error {
 	return &annotatedError{cause: err, attrs: attrs}
 }
 
+// Annotate adds identifier attributes to the error *errp holds, if any. A
+// handler whose every failure concerns the same object defers it once:
+//
+//	defer failurecause.Annotate(&err, slog.String("page_id", req.Msg.GetPageId()))
+func Annotate(errp *error, attrs ...slog.Attr) {
+	*errp = WithAttrs(*errp, attrs...)
+}
+
+// AnnotatePrivate adds private values, such as a requested file name, to the
+// error *errp holds, if any. Defer it like Annotate.
+func AnnotatePrivate(errp *error, values ...string) {
+	*errp = WithPrivate(*errp, values...)
+}
+
 // annotatedError adds diagnosis to an error without changing its text or
 // classification: errors.Is, errors.As and connect.CodeOf see the cause.
 type annotatedError struct {

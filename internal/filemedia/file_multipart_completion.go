@@ -90,13 +90,7 @@ func (completion *multipartCompletion) publishFailure(err error) error {
 func (s *FileService) CompleteMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.CompleteMultipartUploadRequest],
-) (_ *connect.Response[managev1.CompleteMultipartUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "CompleteMultipartUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "completion request is required")
 	}

@@ -68,22 +68,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	locale string,
 	mode AIDocumentExecutionMode,
 	compiler AIDocumentMutationCompiler,
-) (_ AIDocumentMutationResult, terminalErr error) {
-	defer func() {
-		var conflict *AIDocumentRevisionConflictError
-		expected := errors.As(terminalErr, &conflict)
-		if expected {
-			if terminalErr != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr))
-			}
-		} else {
-			if terminalErr != nil {
-				level := errs.OperationLogLevel(terminalErr)
-				slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-			}
-		}
-	}()
-
+) (AIDocumentMutationResult, error) {
 	if s == nil || s.internal == nil || s.internal.db == nil ||
 		s.internal.spiceDB == nil || s.internal.contentBlocks == nil {
 		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Work AI document")

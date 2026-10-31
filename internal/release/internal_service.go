@@ -87,14 +87,7 @@ func NewInternalReleaseService(db *gorm.DB, spiceDB *auth.SpiceDBClient, ogRefre
 func (s *InternalReleaseService) LoadReleaseBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadReleaseBlockDocumentRequest],
-) (_ *connect.Response[intrav1.LoadReleaseBlockDocumentResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "LoadReleaseBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.LoadReleaseBlockDocumentResponse], error) {
 	if s.contentBlocks == nil || req.Msg == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
@@ -187,14 +180,7 @@ func (s *InternalReleaseService) LoadReleaseBlockDocument(
 func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyReleaseBlockBatchRequest],
-) (_ *connect.Response[intrav1.ApplyReleaseBlockBatchResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ApplyReleaseBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.ApplyReleaseBlockBatchResponse], error) {
 	if s.contentBlocks == nil || req.Msg == nil || req.Msg.Batch == nil {
 		return nil, errs.Required("batch")
 	}
@@ -304,14 +290,7 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateReleaseLocaleMetadataRequest],
-) (_ *connect.Response[intrav1.UpdateReleaseLocaleMetadataResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateReleaseLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.UpdateReleaseLocaleMetadataResponse], error) {
 	input := req.Msg
 	if s.contentBlocks == nil || input == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")

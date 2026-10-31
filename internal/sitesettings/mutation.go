@@ -25,15 +25,7 @@ import (
 func (s *SiteSettingService) SetSetting(
 	ctx context.Context,
 	req *connect.Request[managev1.SetSettingRequest],
-) (_ *connect.Response[managev1.SetSettingResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.SetSetting", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.SetSettingResponse], error) {
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -110,15 +102,7 @@ func (s *SiteSettingService) SetSetting(
 func (s *SiteSettingService) SetManySettings(
 	ctx context.Context,
 	req *connect.Request[managev1.SetManySettingsRequest],
-) (_ *connect.Response[managev1.SetManySettingsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.SetManySettings", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.SetManySettingsResponse], error) {
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -143,15 +127,7 @@ func (s *SiteSettingService) SetManySettings(
 func (s *SiteSettingService) AddSiteLoaderAsset(
 	ctx context.Context,
 	req *connect.Request[managev1.AddSiteLoaderAssetRequest],
-) (_ *connect.Response[managev1.AddSiteLoaderAssetResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.AddSiteLoaderAsset", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.AddSiteLoaderAssetResponse], error) {
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -215,15 +191,7 @@ func (s *SiteSettingService) AddSiteLoaderAsset(
 func (s *SiteSettingService) RemoveSiteLoaderAsset(
 	ctx context.Context,
 	req *connect.Request[managev1.RemoveSiteLoaderAssetRequest],
-) (_ *connect.Response[managev1.RemoveSiteLoaderAssetResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings.RemoveSiteLoaderAsset", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.RemoveSiteLoaderAssetResponse], error) {
 	can, err := policyv1.SiteSetting.Edit(siteSettingAuthorizationID)
 	if err != nil {
 		return nil, errs.Internal(err)

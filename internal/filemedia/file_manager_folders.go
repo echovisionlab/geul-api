@@ -3,7 +3,6 @@ package filemedia
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -22,16 +21,8 @@ import (
 )
 
 func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (_ *connect.Response[managev1.CreateFileFolderResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			privateName := ""
-			if req != nil && req.Msg != nil {
-				privateName = req.Msg.GetName()
-			}
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "CreateFileFolder", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetName())
+
 	user, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -58,7 +49,7 @@ func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request
 		}
 		return appendFileFolderCreatedAudit(ctx, tx, s.auditWriter, folder.ID)
 	}); err != nil {
-		return nil, fileManagerMutationError(ctx, err, "folder name already exists at this location", name)
+		return nil, fileManagerMutationError(err, "folder name already exists at this location", name)
 	}
 	proto, err := s.fileFolderProto(ctx, folder)
 	if err != nil {
@@ -68,16 +59,8 @@ func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request
 }
 
 func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (_ *connect.Response[managev1.RenameFileFolderResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			privateName := ""
-			if req != nil && req.Msg != nil {
-				privateName = req.Msg.GetName()
-			}
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "RenameFileFolder", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetName())
+
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -105,7 +88,7 @@ func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request
 			return nil
 		}
 		if err := tx.Model(&model.FileFolder{}).Where("id = ?", *folderID).Updates(structured.Fields{"name": name, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
-			return fileManagerMutationError(ctx, err, "folder name already exists at this location", name)
+			return fileManagerMutationError(err, "folder name already exists at this location", name)
 		}
 		if err := tx.Where("id = ?", *folderID).First(&folder).Error; err != nil {
 			return err
@@ -121,13 +104,7 @@ func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&managev1.RenameFileFolderResponse{Folder: proto}), nil
 }
 
-func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (_ *connect.Response[managev1.MoveFileFolderResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "MoveFileFolder", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -198,7 +175,7 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 		if err := tx.WithContext(ctx).Model(&model.FileFolder{}).
 			Where("id = ?", *folderID).
 			Updates(structured.Fields{"parent_id": parentID, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
-			return fileManagerMutationError(ctx, err, "folder move would create a cycle or duplicate name", folder.Name)
+			return fileManagerMutationError(err, "folder move would create a cycle or duplicate name", folder.Name)
 		}
 		if err := tx.WithContext(ctx).Where("id = ?", *folderID).First(&folder).Error; err != nil {
 			return err
@@ -214,16 +191,15 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 	return connect.NewResponse(&managev1.MoveFileFolderResponse{Folder: proto}), nil
 }
 
-func fileManagerMutationError(ctx context.Context, err error, message string, privateName string) error {
+func fileManagerMutationError(err error, message string, privateName string) error {
+	cause := failurecause.WithPrivate(err, privateName)
 	if dberrors.IsUniqueViolation(err) {
-		slog.WarnContext(ctx, "File folder uniqueness conflict", failurecause.Attr(err, privateName))
-		return errs.AlreadyExistsMsg(message)
+		return errs.WithCause(errs.AlreadyExistsMsg(message), cause)
 	}
 	if value := strings.ToLower(err.Error()); strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
-		slog.WarnContext(ctx, "File folder hierarchy conflict", failurecause.Attr(err, privateName))
-		return errs.FailedPrecondition(message)
+		return errs.WithCause(errs.FailedPrecondition(message), cause)
 	}
-	return errs.Internal(err)
+	return errs.Internal(cause)
 }
 
 func (s *FileService) fileFolderProto(ctx context.Context, folder model.FileFolder) (*managev1.FileFolder, error) {

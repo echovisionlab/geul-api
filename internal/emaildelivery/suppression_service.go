@@ -3,7 +3,6 @@ package emaildelivery
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -52,15 +50,7 @@ func NewEmailSuppressionService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *Email
 func (s *EmailSuppressionService) GetEmailSuppression(
 	ctx context.Context,
 	req *connect.Request[managev1.GetEmailSuppressionRequest],
-) (rpcResponse *connect.Response[managev1.GetEmailSuppressionResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "GetEmailSuppression", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, req.Msg.Email))
-	}()
-
+) (*connect.Response[managev1.GetEmailSuppressionResponse], error) {
 	if req.Msg.Email == "" {
 		return nil, errs.Required("email")
 	}
@@ -80,15 +70,7 @@ func (s *EmailSuppressionService) GetEmailSuppression(
 func (s *EmailSuppressionService) ReleaseEmailSuppression(
 	ctx context.Context,
 	req *connect.Request[managev1.ReleaseEmailSuppressionRequest],
-) (rpcResponse *connect.Response[managev1.ReleaseEmailSuppressionResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "ReleaseEmailSuppression", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, req.Msg.Email))
-	}()
-
+) (*connect.Response[managev1.ReleaseEmailSuppressionResponse], error) {
 	can, err := policyv1.EmailSuppression.Release()
 	if err != nil {
 		return nil, errs.Internal(err)

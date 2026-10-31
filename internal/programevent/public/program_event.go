@@ -179,14 +179,7 @@ func NewProgramEventTypeService(db *gorm.DB) *ProgramEventTypeService {
 func (s *ProgramEventService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetProgramEventRequest],
-) (_ *connect.Response[openv1.GetProgramEventResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetProgramEventResponse], error) {
 	slugOrID := strings.TrimSpace(req.Msg.Slug)
 	if slugOrID == "" {
 		return nil, errs.Required("slug")
@@ -265,14 +258,7 @@ func (s *ProgramEventService) Get(
 func (s *ProgramEventService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListProgramEventsRequest],
-) (_ *connect.Response[openv1.ListProgramEventsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListProgramEventsResponse], error) {
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEvent{}).
 		Where("status IN ?", publicProgramEventStatuses())
@@ -412,14 +398,7 @@ func programEventTBAFirstOrder() string {
 func (s *ProgramEventSeriesService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetProgramEventSeriesRequest],
-) (_ *connect.Response[openv1.GetProgramEventSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetProgramEventSeriesResponse], error) {
 	slugOrID := strings.TrimSpace(req.Msg.Slug)
 	if slugOrID == "" {
 		return nil, errs.Required("slug")
@@ -450,14 +429,7 @@ func (s *ProgramEventSeriesService) Get(
 func (s *ProgramEventSeriesService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListProgramEventSeriesRequest],
-) (_ *connect.Response[openv1.ListProgramEventSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListProgramEventSeriesResponse], error) {
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventSeries{}).
 		Where("status = ?", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String())
@@ -492,14 +464,7 @@ func (s *ProgramEventSeriesService) List(
 func (s *ProgramEventTypeService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListProgramEventTypesRequest],
-) (_ *connect.Response[openv1.ListProgramEventTypesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListProgramEventTypesResponse], error) {
 	query := s.db.WithContext(ctx).
 		Model(&model.ProgramEventType{}).
 		Where("status = ?", openv1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE.String())

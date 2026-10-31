@@ -238,14 +238,7 @@ func (s *InternalMapService) requireLockedMapThemeContributorsEdit(
 
 func (s *InternalMapService) SaveMapThemeSnapshot(
 	ctx context.Context, req *connect.Request[intrav1.SaveMapThemeSnapshotRequest],
-) (_ *connect.Response[intrav1.SaveMapThemeSnapshotResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "SaveMapThemeSnapshot", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.SaveMapThemeSnapshotResponse], error) {
 	themeID, err := normalizeMapThemeID(req.Msg.ThemeId, "theme_id")
 	if err != nil {
 		return nil, err
@@ -324,14 +317,7 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 
 func (s *InternalMapService) LoadMapThemeSnapshot(
 	ctx context.Context, req *connect.Request[intrav1.LoadMapThemeSnapshotRequest],
-) (_ *connect.Response[intrav1.LoadMapThemeSnapshotResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "LoadMapThemeSnapshot", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.LoadMapThemeSnapshotResponse], error) {
 	themeID, err := normalizeMapThemeID(req.Msg.ThemeId, "theme_id")
 	if err != nil {
 		return nil, err

@@ -5,14 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"log/slog"
 	"sort"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -35,14 +33,7 @@ type artistDeletionImpactRow struct {
 func (s *ArtistService) PreviewDeleteArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewDeleteArtistRequest],
-) (_ *connect.Response[managev1.PreviewDeleteArtistResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "PreviewDeleteArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.PreviewDeleteArtistResponse], error) {
 	if err := requireArtistPermission(ctx, s.spiceDB, req.Msg.Id, policyv1.Artist.Delete); err != nil {
 		return nil, err
 	}

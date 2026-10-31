@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -86,14 +85,7 @@ func NewAIDocumentService(internal *InternalWorkService) (*AIDocumentService, er
 	return &AIDocumentService{internal: internal}, nil
 }
 
-func (s *AIDocumentService) Load(ctx context.Context, workID, locale string) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "Load", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+func (s *AIDocumentService) Load(ctx context.Context, workID, locale string) (AIDocumentState, error) {
 	if err := validateWorkAIDocumentIdentity(workID, locale); err != nil {
 		return AIDocumentState{}, err
 	}

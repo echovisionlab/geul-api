@@ -23,14 +23,7 @@ import (
 func (s *ReleaseService) UpdateRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateReleaseRequest],
-) (_ *connect.Response[managev1.UpdateReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.UpdateReleaseResponse], error) {
 	updates, err := s.buildReleaseUpdates(ctx, req.Msg)
 	if err != nil {
 		return nil, err

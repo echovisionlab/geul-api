@@ -2,12 +2,10 @@ package artist
 
 import (
 	"context"
-	"log/slog"
 
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -19,14 +17,7 @@ import (
 func (s *ArtistService) ListArtistParticipants(
 	ctx context.Context,
 	req *connect.Request[managev1.ListArtistParticipantsRequest],
-) (_ *connect.Response[managev1.ListArtistParticipantsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListArtistParticipants", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListArtistParticipantsResponse], error) {
 	if err := requireArtistPermission(ctx, s.spiceDB, req.Msg.ArtistId, policyv1.Artist.ManageParticipants); err != nil {
 		return nil, err
 	}
@@ -41,14 +32,7 @@ func (s *ArtistService) ListArtistParticipants(
 func (s *ArtistService) SetArtistParticipant(
 	ctx context.Context,
 	req *connect.Request[managev1.SetArtistParticipantRequest],
-) (_ *connect.Response[managev1.ArtistParticipant], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "SetArtistParticipant", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ArtistParticipant], error) {
 	role, err := artistParticipantRole(req.Msg.Role)
 	if err != nil {
 		return nil, err
@@ -67,14 +51,7 @@ func (s *ArtistService) SetArtistParticipant(
 func (s *ArtistService) RemoveArtistParticipant(
 	ctx context.Context,
 	req *connect.Request[managev1.RemoveArtistParticipantRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "RemoveArtistParticipant", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	return removeEntityParticipantResponseWithAudit(ctx, s.db, s.spiceDB, artistParticipantSpec(), req.Msg.ArtistId, req.Msg.MemberId, func(ctx context.Context, tx *gorm.DB, previous, next string) error {
 		return s.appendArtistParticipantAudit(ctx, tx, req.Msg.ArtistId, req.Msg.MemberId, artistAuditRelationship(previous), artistAuditRelationship(next))
 	})

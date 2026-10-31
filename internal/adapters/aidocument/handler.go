@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -36,13 +35,7 @@ func NewService(application Application) (*Service, error) {
 	return &Service{application: application}, nil
 }
 
-func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[managev1.OpenAIDocumentRequest]) (rpcResponse *connect.Response[managev1.OpenAIDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "OpenAIDocument", "failure_cause", failurecause.Message(returnErr))
-		}
-	}()
+func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[managev1.OpenAIDocumentRequest]) (*connect.Response[managev1.OpenAIDocumentResponse], error) {
 	if request == nil || request.Msg == nil {
 		return nil, invalidArgument(errors.New("request is required"))
 	}
@@ -61,13 +54,7 @@ func (s *Service) OpenAIDocument(ctx context.Context, request *connect.Request[m
 	return connect.NewResponse(&managev1.OpenAIDocumentResponse{Metadata: metadataToProto(metadata)}), nil
 }
 
-func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connect.Request[managev1.ApplyAIDocumentOperationsRequest]) (rpcResponse *connect.Response[managev1.ApplyAIDocumentOperationsResponse], returnErr error) {
-	defer func() {
-		if returnErr != nil {
-			level := errs.OperationLogLevel(returnErr)
-			slog.Log(ctx, level, "RPC failed", "method", "ApplyAIDocumentOperations", "failure_cause", failurecause.Message(returnErr))
-		}
-	}()
+func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connect.Request[managev1.ApplyAIDocumentOperationsRequest]) (*connect.Response[managev1.ApplyAIDocumentOperationsResponse], error) {
 	if request == nil || request.Msg == nil {
 		return nil, invalidArgument(errors.New("request is required"))
 	}

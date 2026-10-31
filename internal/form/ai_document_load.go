@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -77,11 +78,7 @@ func (s *InternalFormService) LoadAIDocumentState(ctx context.Context, formID, l
 		state = loaded.State
 		return loadErr
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "AI document load failed", "domain", "form", "event", "form.document_load_failed", "outcome", "failed", "entity_id", formID, "locale", locale, failurecause.Attr(err))
-	}
-	return state, err
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "form"), slog.String("entity_id", formID), slog.String("locale", locale))
 }
 
 func loadFormAIDocumentRoot(

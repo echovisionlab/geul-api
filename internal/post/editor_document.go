@@ -18,13 +18,7 @@ import (
 
 // GetPostEditorDocument uses the same authorized projection as room bootstrap.
 func (s *PostService) GetPostEditorDocument(ctx context.Context, req *connect.Request[managev1.GetPostEditorDocumentRequest]) (_ *connect.Response[managev1.GetPostEditorDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.GetPostEditorDocument", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.SessionID == "" {

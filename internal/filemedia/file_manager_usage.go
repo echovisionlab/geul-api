@@ -347,13 +347,7 @@ func fileUsageProto(row fileUsageRow) *managev1.FileUsage {
 func (s *FileService) ListFileUsages(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFileUsagesRequest],
-) (_ *connect.Response[managev1.ListFileUsagesResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileUsages", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.ListFileUsagesResponse], error) {
 	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}

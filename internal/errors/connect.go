@@ -326,6 +326,27 @@ func Internal(err error) *connect.Error {
 	return Wrap(err)
 }
 
+// WithCause returns client with cause kept server-side: the client sees only
+// client's code, message and details, while errors.Is/As and the request
+// record see cause. Use it where a failure maps to a fixed client answer
+// (not found, unavailable, a rejected credential) that would otherwise drop
+// the reason.
+func WithCause(client *connect.Error, cause error) *connect.Error {
+	if cause == nil {
+		return client
+	}
+	classified := newClassifiedError(client.Code(), &classifiedCause{
+		message: client.Message(), operation: operationCause(cause), cause: cause,
+	})
+	for _, detail := range client.Details() {
+		classified.AddDetail(detail)
+	}
+	for key, values := range client.Meta() {
+		classified.Meta()[key] = append([]string(nil), values...)
+	}
+	return classified
+}
+
 // InternalMsg returns a CodeInternal error with a custom message.
 func InternalMsg(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%s", msg))
@@ -361,7 +382,9 @@ func Wrap(err error) *connect.Error {
 		if err == connectErr { //nolint:errorlint // identity: an unwrapped Connect error needs no added context
 			return connectErr
 		}
-		return withOperationContext(connectErr, err)
+		// The outer operation context in err survives classification
+		// without reaching the client.
+		return WithCause(connectErr, err)
 	}
 	if stderrors.Is(err, context.Canceled) {
 		return classifiedError(connect.CodeCanceled, context.Canceled.Error(), err)
@@ -419,21 +442,6 @@ func newClassifiedError(code connect.Code, cause *classifiedCause) *connect.Erro
 
 func classifiedError(code connect.Code, message string, cause error) *connect.Error {
 	return newClassifiedError(code, &classifiedCause{message: message, operation: cause.Error(), cause: cause})
-}
-
-// withOperationContext copies connectErr so that the outer operation context
-// in err survives classification without reaching the client.
-func withOperationContext(connectErr *connect.Error, err error) *connect.Error {
-	classified := newClassifiedError(connectErr.Code(), &classifiedCause{
-		message: connectErr.Message(), operation: operationCause(err), cause: err,
-	})
-	for _, detail := range connectErr.Details() {
-		classified.AddDetail(detail)
-	}
-	for key, values := range connectErr.Meta() {
-		classified.Meta()[key] = append([]string(nil), values...)
-	}
-	return classified
 }
 
 // operationCause returns the server-side description of err. Where err holds a

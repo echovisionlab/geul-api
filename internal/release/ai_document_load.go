@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -17,14 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func (s *InternalReleaseService) LoadAIDocumentState(ctx context.Context, releaseID, locale string) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+func (s *InternalReleaseService) LoadAIDocumentState(ctx context.Context, releaseID, locale string) (AIDocumentState, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentState{}, errs.Internal(errors.New("release AI document dependencies are not configured"))
 	}

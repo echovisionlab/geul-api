@@ -28,15 +28,7 @@ import (
 func (s *PostService) ListMyPosts(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMyPostsRequest],
-) (_ *connect.Response[managev1.ListMyPostsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListMyPosts", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListMyPostsResponse], error) {
 	var posts []model.Post
 	var total int64
 

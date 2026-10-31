@@ -56,13 +56,7 @@ func NewService(db *gorm.DB, authority TargetAuthority) *Service {
 }
 
 func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[managev1.ListShareLinksRequest]) (_ *connect.Response[managev1.ListShareLinksResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.ListShareLinks", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("entity_type", req.Msg.GetEntityType().String()), slog.String("entity_id", req.Msg.GetEntityId()))
 
 	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
 		return nil, err
@@ -84,21 +78,7 @@ func (s *Service) ListShareLinks(ctx context.Context, req *connect.Request[manag
 }
 
 func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[managev1.CreateShareLinkRequest]) (_ *connect.Response[managev1.CreateShareLinkResponse], returnErr error) {
-	var link *model.ShareLink
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		private := []string{req.Msg.GetPassword()}
-		if link != nil {
-			private = append(private, link.Token)
-			if link.PasswordHash != nil {
-				private = append(private, *link.PasswordHash)
-			}
-		}
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.CreateShareLink", "outcome", "failed", "entity_type", req.Msg.GetEntityType().String(), "entity_id", req.Msg.GetEntityId(), failurecause.Attr(returnErr, private...))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("entity_type", req.Msg.GetEntityType().String()), slog.String("entity_id", req.Msg.GetEntityId()))
 
 	if err := validateTarget(req.Msg.EntityType, req.Msg.EntityId); err != nil {
 		return nil, err
@@ -108,25 +88,14 @@ func (s *Service) CreateShareLink(ctx context.Context, req *connect.Request[mana
 		return nil, err
 	}
 	if err := s.authority.Create(ctx, req.Msg.EntityType, req.Msg.EntityId, link, createRecord); err != nil {
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(failurecause.WithPrivate(err, linkSecrets(link)...))
 	}
 	return connect.NewResponse(&managev1.CreateShareLinkResponse{ShareLink: toProto(link)}), nil
 }
 
 func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[managev1.DeleteShareLinkRequest]) (_ *connect.Response[managev1.DeleteShareLinkResponse], returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("share_link_id", req.Msg.GetId()))
 	var link model.ShareLink
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		private := []string{link.Token}
-		if link.PasswordHash != nil {
-			private = append(private, *link.PasswordHash)
-		}
-		slog.Log(ctx, level, "content operation failed", "domain", "sharelink", "operation", "sharelink.DeleteShareLink", "outcome", "failed", "share_link_id", req.Msg.GetId(), "entity_type", link.EntityType, "entity_id", link.EntityID, failurecause.Attr(returnErr, private...))
-	}()
-
 	if err := s.db.WithContext(ctx).First(&link, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("share link", req.Msg.Id)
@@ -138,7 +107,8 @@ func (s *Service) DeleteShareLink(ctx context.Context, req *connect.Request[mana
 		return nil, errs.InvalidEntityType(link.EntityType)
 	}
 	if err := s.authority.Delete(ctx, managev1.ShareLinkEntityType(value), link, deleteRecord); err != nil {
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(failurecause.WithAttrs(failurecause.WithPrivate(err, linkSecrets(&link)...),
+			slog.String("entity_type", link.EntityType), slog.String("entity_id", link.EntityID)))
 	}
 	return connect.NewResponse(&managev1.DeleteShareLinkResponse{Success: true}), nil
 }
@@ -227,4 +197,13 @@ func toProto(link *model.ShareLink) *managev1.ShareLinkItem {
 		item.ExpiresAt = timestamppb.New(*link.ExpiresAt)
 	}
 	return item
+}
+
+// linkSecrets are the stored values of link that no failure log may keep.
+func linkSecrets(link *model.ShareLink) []string {
+	secrets := []string{link.Token}
+	if link.PasswordHash != nil {
+		secrets = append(secrets, *link.PasswordHash)
+	}
+	return secrets
 }

@@ -127,14 +127,7 @@ func NewInternalArtistService(db *gorm.DB, asyncPublisher AsyncPublisher, spiceD
 func (s *InternalArtistService) LoadArtistBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadArtistBlockDocumentRequest],
-) (_ *connect.Response[intrav1.LoadArtistBlockDocumentResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "LoadArtistBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.LoadArtistBlockDocumentResponse], error) {
 	locale, err := normalizeArtistDocumentLocale(req.Msg.Locale)
 	if err != nil {
 		return nil, err
@@ -195,14 +188,7 @@ func (s *InternalArtistService) LoadArtistBlockDocument(
 func (s *InternalArtistService) ApplyArtistBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyArtistBlockBatchRequest],
-) (_ *connect.Response[intrav1.ApplyArtistBlockBatchResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ApplyArtistBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.ApplyArtistBlockBatchResponse], error) {
 	if s.contentBlocks == nil || req.Msg == nil || req.Msg.Batch == nil {
 		return nil, errs.Required("batch")
 	}
@@ -352,14 +338,7 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateArtistLocaleMetadataRequest],
-) (_ *connect.Response[intrav1.UpdateArtistLocaleMetadataResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UpdateArtistLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.UpdateArtistLocaleMetadataResponse], error) {
 	locale, err := normalizeArtistDocumentLocale(req.Msg.Locale)
 	if err != nil {
 		return nil, err

@@ -26,14 +26,7 @@ import (
 func (s *ProgramEventTypeService) CreateProgramEventType(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateProgramEventTypeRequest],
-) (_ *connect.Response[managev1.ProgramEventType], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventType", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventType], error) {
 	can, err := policyv1.ProgramEvent.CreateType()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -106,14 +99,7 @@ func (s *ProgramEventTypeService) CreateProgramEventType(
 func (s *ProgramEventTypeService) ListProgramEventTypesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListProgramEventTypesAdminRequest],
-) (_ *connect.Response[managev1.ListProgramEventTypesAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventTypesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListProgramEventTypesAdminResponse], error) {
 	can, err := policyv1.ProgramEvent.ListTypes()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -165,14 +151,7 @@ func (s *ProgramEventTypeService) ListProgramEventTypesAdmin(
 func (s *ProgramEventTypeService) UpdateProgramEventType(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventTypeRequest],
-) (_ *connect.Response[managev1.ProgramEventType], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventType", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventType], error) {
 	can, err := policyv1.ProgramEvent.UpdateType()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -195,14 +174,7 @@ func (s *ProgramEventTypeService) UpdateProgramEventType(
 func (s *ProgramEventTypeService) DeleteProgramEventType(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventTypeRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventType", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	can, err := policyv1.ProgramEvent.DeleteType()
 	if err != nil {
 		return nil, errs.Internal(err)

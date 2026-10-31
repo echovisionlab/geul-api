@@ -90,13 +90,7 @@ func (s *LabelService) SetLabelImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetLabelImageRequest],
 ) (_ *connect.Response[managev1.SetLabelImageResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.SetLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
 
 	logoColumn, err := labelLogoColumnForVariant(req.Msg.Variant)
 	if err != nil {
@@ -187,13 +181,7 @@ func (s *LabelService) DeleteLabelImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteLabelImageRequest],
 ) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabelImage", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
 
 	logoColumn, err := labelLogoColumnForVariant(req.Msg.Variant)
 	if err != nil {

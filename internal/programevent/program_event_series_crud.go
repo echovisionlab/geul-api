@@ -29,14 +29,7 @@ import (
 func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventSeries], error) {
 	can, err := policyv1.ProgramEventSeries.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -119,14 +112,7 @@ func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 func (s *ProgramEventSeriesService) GetProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.GetProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "GetProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventSeries], error) {
 	series, err := s.loadProgramEventSeriesRow(ctx, req.Msg.Id)
 	if err != nil {
 		return nil, err
@@ -148,14 +134,7 @@ func (s *ProgramEventSeriesService) GetProgramEventSeries(
 func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListProgramEventSeriesAdminRequest],
-) (_ *connect.Response[managev1.ListProgramEventSeriesAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ListProgramEventSeriesAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error) {
 	can, err := policyv1.ProgramEventSeries.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -202,14 +181,7 @@ func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
 func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.ProgramEventSeries], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventSeries], error) {
 	can, err := programEventSeriesUpdateCan(req.Msg)
 	if err != nil {
 		return nil, err
@@ -235,14 +207,7 @@ func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
 func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventSeriesRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	can, err := policyv1.ProgramEventSeries.Delete(req.Msg.Id)
 	if err != nil {
 		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(err))

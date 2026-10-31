@@ -77,15 +77,7 @@ func NewLabelService(db *gorm.DB, dependencies Dependencies) *LabelService {
 func (s *LabelService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListLabelsRequest],
-) (_ *connect.Response[openv1.ListLabelsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label/public.List", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.ListLabelsResponse], error) {
 	// Base query - only published labels
 	query := s.db.WithContext(ctx).Model(&model.Label{}).Where("status = ?", managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String())
 
@@ -196,15 +188,7 @@ func (s *LabelService) List(
 func (s *LabelService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetLabelRequest],
-) (_ *connect.Response[openv1.GetLabelResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label/public.Get", "outcome", "failed", failurecause.Attr(returnErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()))
-	}()
-
+) (*connect.Response[openv1.GetLabelResponse], error) {
 	slugOrID := req.Msg.Slug
 	shareToken := req.Msg.GetShareToken()
 	sharePassword := req.Msg.GetSharePassword()

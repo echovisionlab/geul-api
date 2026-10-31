@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
@@ -25,15 +23,7 @@ import (
 func (s *EmailTemplateService) PreviewEmailTemplate(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.PreviewEmailTemplateResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "PreviewEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.PreviewEmailTemplateResponse], error) {
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
 	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err

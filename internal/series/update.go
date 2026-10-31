@@ -29,14 +29,7 @@ type seriesUpdatePlan struct {
 func (s *SeriesService) UpdateSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateSeriesRequest],
-) (_ *connect.Response[managev1.Series], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "UpdateSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Series], error) {
 	plan, err := buildSeriesUpdatePlan(req.Msg)
 	if err != nil {
 		return nil, err

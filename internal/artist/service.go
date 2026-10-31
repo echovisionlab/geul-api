@@ -112,14 +112,7 @@ func NewArtistService(db *gorm.DB, spiceDB *auth.SpiceDBClient, kratosClient aut
 func (s *ArtistService) GetArtistEditorData(
 	ctx context.Context,
 	req *connect.Request[managev1.GetArtistEditorDataRequest],
-) (_ *connect.Response[managev1.GetArtistEditorDataResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "GetArtistEditorData", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.GetArtistEditorDataResponse], error) {
 	var artist model.Artist
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
@@ -171,14 +164,7 @@ func (s *ArtistService) GetArtistEditorData(
 func (s *ArtistService) ListArtists(
 	ctx context.Context,
 	req *connect.Request[managev1.ListArtistsRequest],
-) (_ *connect.Response[managev1.ListArtistsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListArtists", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListArtistsResponse], error) {
 	var artists []model.Artist
 	var total int64
 
@@ -267,14 +253,7 @@ func (s *ArtistService) ListArtists(
 func (s *ArtistService) ListArtistsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListArtistsAdminRequest],
-) (_ *connect.Response[managev1.ListArtistsAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListArtistsAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
 	// Check admin permission
 	if err := requireArtistList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -393,14 +372,7 @@ func (s *ArtistService) ListArtistsAdmin(
 func (s *ArtistService) CreateArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateArtistRequest],
-) (_ *connect.Response[managev1.Artist], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "CreateArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Artist], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Artist content Block store is not configured")
 	}
@@ -579,14 +551,7 @@ func insertArtistOwner(tx *gorm.DB, artistID, memberID string, now time.Time) er
 func (s *ArtistService) DeleteArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteArtistRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Artist content Block store is not configured")
 	}
@@ -683,14 +648,7 @@ func (s *ArtistService) DeleteArtist(
 func (s *ArtistService) PublishArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishArtistRequest],
-) (_ *connect.Response[managev1.ArtistLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "PublishArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ArtistLifecycleMutationResponse], error) {
 	var artist model.Artist
 	transitioned := false
 	now := dbtime.Now()
@@ -740,14 +698,7 @@ func (s *ArtistService) PublishArtist(
 func (s *ArtistService) UnpublishArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishArtistRequest],
-) (_ *connect.Response[managev1.ArtistLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UnpublishArtist", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ArtistLifecycleMutationResponse], error) {
 	var artist model.Artist
 	transitioned := false
 	now := dbtime.Now()

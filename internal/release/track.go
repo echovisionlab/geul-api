@@ -269,14 +269,7 @@ func (s *TrackService) getCreditsForTrack(ctx context.Context, trackID string) (
 func (s *TrackService) ListTracksByRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.ListTracksByReleaseRequest],
-) (_ *connect.Response[managev1.ListTracksByReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ListTracksByRelease", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
 	if req.Msg.ReleaseId == "" {
 		return nil, errs.Required("release_id")
 	}
@@ -313,14 +306,7 @@ func (s *TrackService) ListTracksByRelease(
 func (s *TrackService) CreateTrack(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateTrackRequest],
-) (_ *connect.Response[managev1.Track], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "CreateTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Track], error) {
 	if req.Msg.ReleaseId == "" {
 		return nil, errs.Required("release_id")
 	}
@@ -406,14 +392,7 @@ func (s *TrackService) CreateTrack(
 func (s *TrackService) UpdateTrack(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateTrackRequest],
-) (_ *connect.Response[managev1.Track], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "UpdateTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Track], error) {
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}
@@ -533,14 +512,7 @@ func (s *TrackService) UpdateTrack(
 func (s *TrackService) DeleteTrack(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteTrackRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
 	}
@@ -611,14 +583,7 @@ func (s *TrackService) DeleteTrack(
 func (s *TrackService) SetTrackCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.SetTrackCreditsRequest],
-) (_ *connect.Response[managev1.TrackWithCredits], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "SetTrackCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.TrackWithCredits], error) {
 	if req.Msg.TrackId == "" {
 		return nil, errs.Required("track_id")
 	}
@@ -656,14 +621,7 @@ func (s *TrackService) SetTrackCredits(
 func (s *TrackService) ReorderTracks(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderTracksRequest],
-) (_ *connect.Response[managev1.ListTracksByReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ReorderTracks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
 	if len(req.Msg.TrackIds) == 0 {
 		return nil, errs.Required("track_ids")
 	}

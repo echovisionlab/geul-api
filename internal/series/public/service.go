@@ -2,13 +2,11 @@ package public
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
@@ -44,14 +42,7 @@ func NewSeriesService(reader Reader) *SeriesService {
 func (s *SeriesService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListSeriesRequest],
-) (_ *connect.Response[openv1.ListSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListSeriesResponse], error) {
 	page, err := s.reader.List(ctx, req.Msg, req.Header().Get("Accept-Language"))
 	if err != nil {
 		return nil, err
@@ -70,14 +61,7 @@ func (s *SeriesService) List(
 func (s *SeriesService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetSeriesRequest],
-) (_ *connect.Response[openv1.GetSeriesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "Get", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetSeriesResponse], error) {
 	idOrSlug := strings.TrimSpace(req.Msg.Slug)
 	if idOrSlug == "" {
 		return nil, errs.Required("slug")

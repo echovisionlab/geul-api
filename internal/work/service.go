@@ -247,14 +247,7 @@ func NewAuditedWorkService(
 func (s *WorkService) GetWork(
 	ctx context.Context,
 	req *connect.Request[managev1.GetWorkRequest],
-) (_ *connect.Response[managev1.Work], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "GetWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Work], error) {
 	var work model.Work
 	if err := s.db.WithContext(ctx).
 		Where("id = ?", req.Msg.Id).
@@ -293,14 +286,7 @@ func (s *WorkService) GetWork(
 func (s *WorkService) ListWorksAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListWorksAdminRequest],
-) (_ *connect.Response[managev1.ListWorksAdminResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "ListWorksAdmin", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListWorksAdminResponse], error) {
 	// Check admin role
 	if err := requireWorkList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -442,14 +428,7 @@ func (s *WorkService) ListWorksAdmin(
 func (s *WorkService) CreateWork(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateWorkRequest],
-) (_ *connect.Response[managev1.Work], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.Work], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
@@ -665,14 +644,7 @@ func (s *WorkService) loadCreatedWork(ctx context.Context, workID string) (model
 func (s *WorkService) DeleteWork(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteWorkRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Work content Block store is not configured")
 	}
@@ -771,14 +743,7 @@ func (s *WorkService) DeleteWork(
 func (s *WorkService) PublishWork(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishWorkRequest],
-) (_ *connect.Response[managev1.WorkLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "PublishWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.WorkLifecycleMutationResponse], error) {
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -851,14 +816,7 @@ func (s *WorkService) PublishWork(
 func (s *WorkService) UnpublishWork(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishWorkRequest],
-) (_ *connect.Response[managev1.WorkLifecycleMutationResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "UnpublishWork", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.WorkLifecycleMutationResponse], error) {
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -924,14 +882,7 @@ func (s *WorkService) UnpublishWork(
 func (s *WorkService) SetWorkFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetWorkFeaturedImageRequest],
-) (_ *connect.Response[managev1.SetWorkFeaturedImageResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "SetWorkFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.SetWorkFeaturedImageResponse], error) {
 	// Verify work exists.
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", req.Msg.WorkId).Error; err != nil {
@@ -1017,14 +968,7 @@ func (s *WorkService) SetWorkFeaturedImage(
 func (s *WorkService) DeleteWorkFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteWorkFeaturedImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "DeleteWorkFeaturedImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var ogRunID *string
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

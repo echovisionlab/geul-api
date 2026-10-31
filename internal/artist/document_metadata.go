@@ -225,14 +225,7 @@ func replaceArtistLabelIDs(
 func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateArtistDocumentMetadataRequest],
-) (_ *connect.Response[intrav1.UpdateArtistDocumentMetadataResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "UpdateArtistDocumentMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.UpdateArtistDocumentMetadataResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Artist content Block store is not configured")
 	}

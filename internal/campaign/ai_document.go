@@ -134,11 +134,7 @@ func (s *AIDocumentService) Load(ctx context.Context, campaignID, locale string)
 		)
 		return err
 	})
-	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "AI document load failed", "domain", "campaign", "event", "campaign.document_load_failed", "outcome", "failed", "entity_id", campaignID, "locale", locale, failurecause.Attr(err))
-	}
-	return state, err
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "campaign"), slog.String("entity_id", campaignID), slog.String("locale", locale))
 }
 
 var errRollbackCampaignAIDocumentValidation = errors.New("rollback Campaign AI document validation")

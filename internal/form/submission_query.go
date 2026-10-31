@@ -18,15 +18,7 @@ import (
 func (s *FormService) ListFormSubmissions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormSubmissionsRequest],
-) (rpcResponse *connect.Response[managev1.ListFormSubmissionsResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "ListFormSubmissions", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListFormSubmissionsResponse], error) {
 	// Keep behavior consistent with other submission endpoints:
 	// unknown form IDs should return not_found (including admins).
 	var formCount int64
@@ -102,15 +94,7 @@ func (s *FormService) ListFormSubmissions(
 func (s *FormService) GetFormSubmissionWithSchema(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFormSubmissionRequest],
-) (rpcResponse *connect.Response[managev1.FormSubmissionWithSchema], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "GetFormSubmissionWithSchema", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.FormSubmissionWithSchema], error) {
 	var submission model.FormSubmission
 	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

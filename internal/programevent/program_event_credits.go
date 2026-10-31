@@ -28,14 +28,7 @@ import (
 func (s *ProgramEventService) AddProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.AddProgramEventCreditRequest],
-) (_ *connect.Response[managev1.ProgramEventCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "AddProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventCredit], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -93,14 +86,7 @@ func (s *ProgramEventService) AddProgramEventCredit(
 func (s *ProgramEventService) UpdateProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateProgramEventCreditRequest],
-) (_ *connect.Response[managev1.ProgramEventCredit], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ProgramEventCredit], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -159,14 +145,7 @@ func (s *ProgramEventService) UpdateProgramEventCredit(
 func (s *ProgramEventService) DeleteProgramEventCredit(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteProgramEventCreditRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventCredit", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}
@@ -208,14 +187,7 @@ func (s *ProgramEventService) DeleteProgramEventCredit(
 func (s *ProgramEventService) ReorderProgramEventCredits(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderProgramEventCreditsRequest],
-) (_ *connect.Response[managev1.ReorderProgramEventCreditsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ReorderProgramEventCredits", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ReorderProgramEventCreditsResponse], error) {
 	if strings.TrimSpace(req.Msg.EventId) == "" {
 		return nil, errs.Required("event_id")
 	}

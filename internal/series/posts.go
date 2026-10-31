@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -20,14 +18,7 @@ import (
 func (s *SeriesService) AssignPostToSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.AssignPostToSeriesRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "AssignPostToSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	var observed struct {
 		SeriesID *string `gorm:"column:series_id"`
 	}
@@ -165,14 +156,7 @@ func updatePostSeriesAssignment(tx *gorm.DB, postID, seriesID string, order int)
 func (s *SeriesService) UnassignPostFromSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.UnassignPostFromSeriesRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "UnassignPostFromSeries", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := s.requireSeriesManageAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
 			return err
@@ -211,14 +195,7 @@ func (s *SeriesService) UnassignPostFromSeries(
 func (s *SeriesService) ReorderSeriesPosts(
 	ctx context.Context,
 	req *connect.Request[managev1.ReorderSeriesPostsRequest],
-) (_ *connect.Response[managev1.DeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "ReorderSeriesPosts", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	postIDs, err := validateSeriesPostOrder(req.Msg.PostIds)
 	if err != nil {
 		return nil, err

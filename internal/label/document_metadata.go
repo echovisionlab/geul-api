@@ -117,13 +117,7 @@ func buildLabelDocumentMetadataPlan(input *intrav1.LabelDocumentMetadataUpdate) 
 }
 
 func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, req *connect.Request[intrav1.UpdateLabelDocumentMetadataRequest]) (_ *connect.Response[intrav1.UpdateLabelDocumentMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.UpdateLabelDocumentMetadata", "outcome", "failed", "label_id", req.Msg.GetLabelId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Label content Block store is not configured")

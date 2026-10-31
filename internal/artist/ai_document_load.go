@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -19,14 +18,7 @@ import (
 
 // LoadAIDocumentState preserves published visibility while keeping non-public
 // reads behind Artist's current SpiceDB authority fence.
-func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistID, locale string) (_ AIDocumentState, terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "LoadAIDocumentState", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistID, locale string) (AIDocumentState, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
 		return AIDocumentState{}, errs.Internal(errors.New("artist AI document dependencies are not configured"))
 	}

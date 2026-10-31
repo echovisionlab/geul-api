@@ -28,15 +28,7 @@ import (
 func (s *ClientService) CreateClient(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateClientRequest],
-) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateClient", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Client], error) {
 	can, err := policyv1.Client.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -101,13 +93,7 @@ func (s *ClientService) UpdateClient(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateClientRequest],
 ) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
 
 	can, err := policyv1.Client.Edit(req.Msg.Id)
 	if err != nil {
@@ -184,13 +170,7 @@ func (s *ClientService) DeleteClient(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteClientRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
 
 	can, err := policyv1.Client.Delete(req.Msg.Id)
 	if err != nil {

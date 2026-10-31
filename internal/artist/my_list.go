@@ -19,14 +19,7 @@ import (
 func (s *ArtistService) ListMyArtists(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMyArtistsRequest],
-) (_ *connect.Response[managev1.ListMyArtistsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "ListMyArtists", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.ListMyArtistsResponse], error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.NotAuthenticated()

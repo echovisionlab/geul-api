@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -183,15 +181,7 @@ func (s *EmailTemplateService) requireEmailTemplateCan(
 func (s *EmailTemplateService) ListEmailTemplatesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListEmailTemplatesAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListEmailTemplatesAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "ListEmailTemplatesAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListEmailTemplatesAdminResponse], error) {
 	can, canErr := policyv1.EmailTemplate.List()
 	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -247,15 +237,7 @@ func (s *EmailTemplateService) ListEmailTemplatesAdmin(
 func (s *EmailTemplateService) GetEmailTemplate(
 	ctx context.Context,
 	req *connect.Request[managev1.GetEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.EmailTemplate], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "GetEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.EmailTemplate], error) {
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
 	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -363,15 +345,7 @@ func persistNewEmailTemplateSourceMetadata(
 func (s *EmailTemplateService) CreateEmailTemplate(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.EmailTemplate], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "CreateEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.EmailTemplate], error) {
 	templateCan, err := policyv1.EmailTemplate.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -467,15 +441,7 @@ func (s *EmailTemplateService) CreateEmailTemplate(
 func (s *EmailTemplateService) UpdateEmailTemplate(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.UpdateEmailTemplateResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "UpdateEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.UpdateEmailTemplateResponse], error) {
 	templateCan, err := policyv1.EmailTemplate.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())
@@ -506,15 +472,7 @@ func (s *EmailTemplateService) UpdateEmailTemplate(
 func (s *EmailTemplateService) DeleteEmailTemplate(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteEmailTemplateRequest],
-) (rpcResponse *connect.Response[managev1.DeleteResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "DeleteEmailTemplate", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.DeleteResponse], error) {
 	templateCan, err := policyv1.EmailTemplate.Delete(req.Msg.Id)
 	if err != nil {
 		return nil, errs.InvalidArgument("id", err.Error())

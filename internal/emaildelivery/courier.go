@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -113,13 +114,9 @@ func NewEmailCourierService(
 func (s *EmailCourierService) SendEmail(
 	ctx context.Context,
 	req *connect.Request[intrav1.SendEmailRequest],
-) (rpcResponse *connect.Response[intrav1.SendEmailResponse], rpcErr error) {
+) (_ *connect.Response[intrav1.SendEmailResponse], rpcErr error) {
 	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "mail", "event", "mail.rpc_failed", "operation", "SendEmail", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), "failure_cause", requestFailureCause(rpcErr, req.Msg), "template_type", req.Msg.GetTemplateType())
+		rpcErr = failurecause.WithAttrs(failurecause.WithPrivate(rpcErr, requestPrivateValues(req.Msg)...), slog.String("template_type", req.Msg.GetTemplateType()))
 	}()
 
 	slog.Info("Received email request from Kratos",
@@ -172,7 +169,7 @@ func (s *EmailCourierService) SendEmail(
 		req.Msg.TemplateData,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "Authentication issuance provenance rejected", "domain", "mail", "event", "mail.courier.invalid_issuance_provenance", "outcome", "blocked", "template_type", req.Msg.TemplateType, "locale", targetLocale, "reason", "invalid_issuance_provenance", "failure_cause", requestFailureCause(err, req.Msg))
+		slog.WarnContext(ctx, "Authentication issuance provenance rejected", "domain", "mail", "event", "mail.courier.invalid_issuance_provenance", "outcome", "blocked", "template_type", req.Msg.TemplateType, "locale", targetLocale, "reason", "invalid_issuance_provenance", "failure_cause", failurecause.Message(err, requestPrivateValues(req.Msg)...))
 		return nil, errs.PermissionDenied("authentication issuance provenance is invalid")
 	}
 

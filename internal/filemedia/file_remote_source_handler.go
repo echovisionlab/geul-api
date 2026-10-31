@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
@@ -40,15 +38,13 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	request, err := s.prepareRemoteImport(r.Context(), opts)
 	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		writeUploadSourceError(w, err)
 		return
 	}
 	source, err := s.openBrowserUploadSource(r.Context(), request)
 	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadSource", "code", connect.CodeOf(err).String())
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		writeUploadSourceError(w, err)
 		return
 	}

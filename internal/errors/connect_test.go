@@ -324,3 +324,24 @@ func TestFailureCauseRendersClassifiedOperationContextOutsideConnect(t *testing.
 		})
 	}
 }
+
+func TestWithCauseKeepsTheReasonOutOfTheClientMessage(t *testing.T) {
+	cause := failurecause.WithPrivate(fmt.Errorf("validate share link: %w", stderrors.New("token share-token-private expired")), "share-token-private")
+	client := NotFoundMsg("label not found")
+	client.Meta().Set("x-retry", "no")
+
+	err := WithCause(client, cause)
+
+	if err.Code() != connect.CodeNotFound || err.Message() != "label not found" || err.Meta().Get("x-retry") != "no" {
+		t.Fatalf("client view changed: %v %q %v", err.Code(), err.Message(), err.Meta())
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("cause is not in the chain")
+	}
+	if got := failurecause.Message(err); got != "validate share link: token [redacted] expired" {
+		t.Fatalf("logged cause = %q", got)
+	}
+	if WithCause(client, nil) != client {
+		t.Fatal("a nil cause must return the client error")
+	}
+}

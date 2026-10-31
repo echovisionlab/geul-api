@@ -90,14 +90,7 @@ func NewReleaseService(
 func (s *ReleaseService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetReleaseRequest],
-) (_ *connect.Response[openv1.GetReleaseResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetReleaseResponse], error) {
 	slugOrID := req.Msg.Slug
 	shareToken := req.Msg.ShareToken
 	sharePassword := req.Msg.GetSharePassword()
@@ -159,14 +152,7 @@ func (s *ReleaseService) Get(
 func (s *ReleaseService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListReleasesRequest],
-) (_ *connect.Response[openv1.ListReleasesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListReleasesResponse], error) {
 	var releases []model.Release
 	var total int64
 

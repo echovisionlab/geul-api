@@ -38,13 +38,7 @@ func (s *ClientService) GetClient(
 	ctx context.Context,
 	req *connect.Request[managev1.GetClientRequest],
 ) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.GetClient", "outcome", "failed", "client_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
 
 	var client model.Client
 	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
@@ -62,15 +56,7 @@ func (s *ClientService) GetClient(
 func (s *ClientService) ListClients(
 	ctx context.Context,
 	req *connect.Request[managev1.ListClientsRequest],
-) (_ *connect.Response[managev1.ListClientsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListClients", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListClientsResponse], error) {
 	var clients []model.Client
 	var total int64
 
@@ -128,15 +114,7 @@ func (s *ClientService) ListClients(
 func (s *ClientService) SearchClients(
 	ctx context.Context,
 	req *connect.Request[managev1.SearchClientsRequest],
-) (_ *connect.Response[managev1.SearchClientsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SearchClients", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.SearchClientsResponse], error) {
 	limit := int(req.Msg.Limit)
 	if limit <= 0 || limit > 50 {
 		limit = 10
@@ -173,15 +151,7 @@ func (s *ClientService) SearchClients(
 func (s *ClientService) ListClientsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListClientsAdminRequest],
-) (_ *connect.Response[managev1.ListClientsAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListClientsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListClientsAdminResponse], error) {
 	can, err := policyv1.Client.List()
 	if err != nil {
 		return nil, errs.Internal(err)

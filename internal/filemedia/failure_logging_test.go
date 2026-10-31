@@ -11,30 +11,25 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	telemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 )
 
-func TestFileFolderConflictLogsOriginalCauseThroughNormalization(t *testing.T) {
-	var output bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
+func TestFileFolderConflictKeepsOriginalCauseForTheRequestRecord(t *testing.T) {
 	cause := fmt.Errorf("create folder: %w", errors.New(`duplicate key violates constraint "file_folder_name_key": <folder> {detail} Private Folder private@example.test token=hidden`))
-	err := fileManagerMutationError(t.Context(), cause, "folder already exists", "Private Folder")
+	err := fileManagerMutationError(cause, "folder already exists", "Private Folder")
 	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
+	require.Equal(t, "folder already exists", err.(*connect.Error).Message()) //nolint:errorlint // the mapper returns *connect.Error directly
 
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Contains(t, entry["failure_cause"], `create folder: duplicate key violates constraint "file_folder_name_key": <folder> {detail}`)
-	require.Equal(t, "WARN", entry["level"])
+	logged := failurecause.Message(err)
+	require.Contains(t, logged, `create folder: duplicate key violates constraint "file_folder_name_key": <folder> {detail}`)
 	for _, private := range []string{"Private Folder", "private@example.test", "hidden"} {
-		require.NotContains(t, output.String(), private)
+		require.NotContains(t, logged, private)
 	}
 }
 
-func TestMediaRPCFailureLoggingAllowsNilRequest(t *testing.T) {
+func TestPrepareClientMediaUploadRejectsNilRequestWithoutLogging(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))))
@@ -43,12 +38,8 @@ func TestMediaRPCFailureLoggingAllowsNilRequest(t *testing.T) {
 	service := &FileService{}
 	_, err := service.PrepareClientMediaUpload(t.Context(), nil)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "PrepareClientMediaUpload", entry["operation"])
-	// The request log already records the rejected request at WARN.
-	require.Equal(t, "DEBUG", entry["level"])
-	require.NotEmpty(t, entry["failure_cause"])
+	// The request log records the rejected request once.
+	require.Empty(t, output.String())
 }
 
 func TestClientWaveformDecodeLogsCauseWithoutBody(t *testing.T) {

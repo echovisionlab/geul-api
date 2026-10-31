@@ -2,10 +2,11 @@ package legal
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"connectrpc.com/connect"
 	"github.com/DATA-DOG/go-sqlmock"
@@ -17,7 +18,9 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestTermsRPCLogsDatabaseCauseBeforeReturningStatus(t *testing.T) {
+// The handler leaves logging to the request record and keeps the database
+// cause in the returned error.
+func TestTermsRPCKeepsDatabaseCauseForTheRequestRecord(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -33,13 +36,11 @@ func TestTermsRPCLogsDatabaseCauseBeforeReturningStatus(t *testing.T) {
 	service := &TermsService{db: db}
 	_, err = service.GetTermsVersion(t.Context(), connect.NewRequest(&managev1.GetTermsVersionRequest{Id: "terms-1"}))
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "ERROR", entry["level"])
-	require.Equal(t, "GetTermsVersion", entry["method"])
-	require.Contains(t, entry["failure_cause"], `store failed: column "title" <policy> {constraint detail}`)
-	require.NotContains(t, output.String(), "reader@example.test")
-	require.NotContains(t, output.String(), "private-password")
+	require.Empty(t, output.String())
+	cause := failurecause.Message(err)
+	require.Contains(t, cause, `store failed: column "title" <policy> {constraint detail}`)
+	require.NotContains(t, cause, "reader@example.test")
+	require.NotContains(t, cause, "private-password")
 	require.NoError(t, mock.ExpectationsWereMet())
 	mock.ExpectClose()
 }

@@ -110,14 +110,7 @@ func publicLoadMapThemes(
 
 func (s *MapThemeService) ResolveByIds(
 	ctx context.Context, req *connect.Request[openv1.ResolveMapThemesByIdsRequest],
-) (_ *connect.Response[openv1.ResolveMapThemesByIdsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "ResolveByIds", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ResolveMapThemesByIdsResponse], error) {
 	requested := make([]string, 0, len(req.Msg.RequestedThemeIds))
 	for _, id := range req.Msg.RequestedThemeIds {
 		if id == "" {
@@ -151,14 +144,7 @@ func (s *MapThemeService) ResolveByIds(
 
 func (s *MapThemeService) Resolve(
 	ctx context.Context, req *connect.Request[openv1.ResolveMapThemeRequest],
-) (_ *connect.Response[openv1.ResolvedMapTheme], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "maptheme", "operation", "Resolve", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ResolvedMapTheme], error) {
 	scheme := req.Msg.Scheme
 	if scheme == "" {
 		scheme = "light"

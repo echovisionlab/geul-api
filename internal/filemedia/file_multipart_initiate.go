@@ -38,16 +38,8 @@ func (s *FileService) InitiateMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.InitiateMultipartUploadRequest],
 ) (_ *connect.Response[managev1.InitiateMultipartUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			privateName := ""
-			if req != nil && req.Msg != nil {
-				privateName = req.Msg.GetFileName()
-			}
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr, privateName), "operation", "InitiateMultipartUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetFileName())
+
 	initiation, err := s.prepareMultipartUploadInitiation(ctx, req.Msg)
 	if err != nil {
 		return nil, err

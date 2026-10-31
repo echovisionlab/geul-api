@@ -28,14 +28,7 @@ import (
 func (s *WorkService) CheckWorkSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckWorkSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckWorkSlugAvailableResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "work", "operation", "CheckWorkSlugAvailable", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.CheckWorkSlugAvailableResponse], error) {
 	if req.Msg.ExcludeWorkId != nil {
 		if err := RequireExists(ctx, s.db, *req.Msg.ExcludeWorkId); err != nil {
 			return nil, err

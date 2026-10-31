@@ -77,13 +77,7 @@ func (s *PostService) ListPostVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPostVersionsRequest],
 ) (_ *connect.Response[managev1.ListPostVersionsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.ListPostVersions", "outcome", "failed", "post_id", req.Msg.GetPostId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()))
 
 	limit := int32(20)
 	offset := int32(0)
@@ -152,13 +146,7 @@ func (s *PostService) RestorePostVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.RestorePostVersionRequest],
 ) (_ *connect.Response[managev1.Post], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "post", "operation", "post.RestorePostVersion", "outcome", "failed", "post_id", req.Msg.GetPostId(), "version_id", req.Msg.GetVersionId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetPostId()), slog.String("version_id", req.Msg.GetVersionId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Post content Block store is not configured")

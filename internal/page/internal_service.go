@@ -106,13 +106,7 @@ func (s *InternalPageService) LoadPageBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPageBlockDocumentRequest],
 ) (_ *connect.Response[intrav1.LoadPageBlockDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.LoadPageBlockDocument", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -201,13 +195,7 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyPageBlockBatchRequest],
 ) (_ *connect.Response[intrav1.ApplyPageBlockBatchResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ApplyPageBlockBatch", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -393,13 +381,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePageLocaleMetadataRequest],
 ) (_ *connect.Response[intrav1.UpdatePageLocaleMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePageLocaleMetadata", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -667,13 +649,7 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdatePageDocumentMetadataRequest],
 ) (_ *connect.Response[intrav1.UpdatePageDocumentMetadataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.UpdatePageDocumentMetadata", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err
@@ -745,13 +721,7 @@ func (s *InternalPageService) CreatePageVersionCheckpoint(
 	ctx context.Context,
 	req *connect.Request[intrav1.CreatePageVersionCheckpointRequest],
 ) (_ *connect.Response[intrav1.CreatePageVersionCheckpointResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CreatePageVersionCheckpoint", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := s.requireContentBlockStore(); err != nil {
 		return nil, err

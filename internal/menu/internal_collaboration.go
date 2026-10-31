@@ -52,15 +52,7 @@ func NewInternalMenuService(
 func (s *InternalMenuService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadMenuDocumentRequest],
-) (_ *connect.Response[intrav1.LoadMenuDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.LoadDocument", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[intrav1.LoadMenuDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -100,15 +92,7 @@ func (s *InternalMenuService) LoadDocument(
 func (s *InternalMenuService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveMenuDocumentRequest],
-) (_ *connect.Response[intrav1.SaveMenuDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "menu", "operation", "menu.SaveDocument", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[intrav1.SaveMenuDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}

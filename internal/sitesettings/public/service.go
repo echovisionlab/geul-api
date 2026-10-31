@@ -59,15 +59,7 @@ func NewManifestService(
 func (s *ManifestService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetRequest],
-) (_ *connect.Response[openv1.GetResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitesettings", "operation", "sitesettings/public.Get", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.GetResponse], error) {
 	user, err := s.getUserContext(ctx)
 	if err != nil {
 		return nil, errs.Internal(err)

@@ -118,11 +118,9 @@ type RemoteFileImportInput struct {
 
 func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
 	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Remote file import failed", failurecause.Attr(resultErr, input.FileName), "correlation_id", input.CorrelationID, "upload_type", input.UploadType.String())
-		}
+		resultErr = failurecause.WithAttrs(failurecause.WithPrivate(resultErr, input.FileName), slog.String("correlation_id", input.CorrelationID), slog.String("upload_type", input.UploadType.String()))
 	}()
+
 	if input.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && !isEditorFileIngestUploadType(input.UploadType) {
 		return nil, errs.InvalidArgument("upload_type", "standalone File import requires a File library upload kind")
 	}
@@ -328,13 +326,7 @@ func newRemoteImportHTTPClient(
 func (s *FileService) DownloadFromUrl(
 	ctx context.Context,
 	req *connect.Request[managev1.DownloadFromUrlRequest],
-) (_ *connect.Response[managev1.DownloadFromUrlResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "DownloadFromUrl", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
 	var entityType string
 	transcodeEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
 	if req.Msg.EntityType != nil {

@@ -53,14 +53,7 @@ func NewInternalPostSeriesService(
 func (s *InternalPostSeriesService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadPostSeriesDocumentRequest],
-) (_ *connect.Response[intrav1.LoadPostSeriesDocumentResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "LoadDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.LoadPostSeriesDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -98,14 +91,7 @@ func (s *InternalPostSeriesService) LoadDocument(
 func (s *InternalPostSeriesService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SavePostSeriesDocumentRequest],
-) (_ *connect.Response[intrav1.SavePostSeriesDocumentResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "series", "operation", "SaveDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.SavePostSeriesDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}

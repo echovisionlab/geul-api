@@ -196,13 +196,7 @@ func (s *LabelService) GetLabelEditorData(
 	ctx context.Context,
 	req *connect.Request[managev1.GetLabelEditorDataRequest],
 ) (_ *connect.Response[managev1.GetLabelEditorDataResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.GetLabelEditorData", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetId()))
 
 	var label model.Label
 	if err := s.db.WithContext(ctx).
@@ -242,15 +236,7 @@ func (s *LabelService) GetLabelEditorData(
 func (s *LabelService) ListLabels(
 	ctx context.Context,
 	req *connect.Request[managev1.ListLabelsRequest],
-) (_ *connect.Response[managev1.ListLabelsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabels", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListLabelsResponse], error) {
 	var labels []model.Label
 	var total int64
 
@@ -328,15 +314,7 @@ func (s *LabelService) ListLabels(
 func (s *LabelService) ListLabelsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListLabelsAdminRequest],
-) (_ *connect.Response[managev1.ListLabelsAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.ListLabelsAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListLabelsAdminResponse], error) {
 	// Check admin role
 	if err := requireLabelList(ctx, s.spiceDB); err != nil {
 		return nil, err
@@ -461,15 +439,7 @@ func (s *LabelService) ListLabelsAdmin(
 func (s *LabelService) CreateLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateLabelRequest],
-) (_ *connect.Response[managev1.Label], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.CreateLabel", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Label], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Label content Block store is not configured")
 	}
@@ -656,13 +626,7 @@ func (s *LabelService) PreviewDeleteLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewDeleteLabelRequest],
 ) (_ *connect.Response[managev1.PreviewDeleteLabelResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.PreviewDeleteLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetId()))
 
 	var label model.Label
 	if err := s.db.WithContext(ctx).Select("id").First(&label, "id = ?", req.Msg.Id).Error; err != nil {
@@ -686,13 +650,7 @@ func (s *LabelService) DeleteLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteLabelRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Label content Block store is not configured")
@@ -808,13 +766,7 @@ func (s *LabelService) PublishLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishLabelRequest],
 ) (_ *connect.Response[managev1.LabelLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.PublishLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetId()))
 
 	var label model.Label
 	transitioned := false
@@ -864,13 +816,7 @@ func (s *LabelService) UnpublishLabel(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishLabelRequest],
 ) (_ *connect.Response[managev1.LabelLifecycleMutationResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.UnpublishLabel", "outcome", "failed", "label_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetId()))
 
 	var label model.Label
 	transitioned := false

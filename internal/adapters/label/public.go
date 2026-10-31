@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -146,10 +145,7 @@ func (runtime *PublicRuntime) Require(ctx context.Context, labelID, token, passw
 	}
 	_, err := sharelink.ValidateForEntity(ctx, runtime.db, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
 	if err != nil {
-		cause := failurecause.Message(err, token, password)
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "Label share access rejected", "failure_cause", cause, "entity_id", labelID)
-		return errs.NotFoundMsg("label not found")
+		return errs.WithCause(errs.NotFoundMsg("label not found"), failurecause.WithPrivate(err, token, password))
 	}
 	return nil
 }

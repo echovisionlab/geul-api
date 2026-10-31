@@ -31,13 +31,7 @@ func (s *PageService) ListPageVersions(
 	ctx context.Context,
 	req *connect.Request[managev1.ListPageVersionsRequest],
 ) (_ *connect.Response[managev1.ListPageVersionsResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.ListPageVersions", "outcome", "failed", "page_id", req.Msg.GetPageId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
 
 	if err := requirePagePermission(ctx, s.spiceDB, req.Msg.PageId, policyv1.Page.View); err != nil {
 		return nil, err
@@ -105,13 +99,7 @@ func (s *PageService) RestorePageVersion(
 	ctx context.Context,
 	req *connect.Request[managev1.RestorePageVersionRequest],
 ) (_ *connect.Response[managev1.Page], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.RestorePageVersion", "outcome", "failed", "page_id", req.Msg.GetPageId(), "version_id", req.Msg.GetVersionId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()), slog.String("version_id", req.Msg.GetVersionId()))
 
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")

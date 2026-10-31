@@ -944,13 +944,7 @@ func uploadPermissionResourceTable(resourceType string) (string, bool) {
 func (s *FileService) AbortMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.AbortMultipartUploadRequest],
-) (_ *connect.Response[managev1.AbortMultipartUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AbortMultipartUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.AbortMultipartUploadResponse], error) {
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).
 		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
@@ -1040,13 +1034,7 @@ func (s *FileService) AbortMultipartUpload(
 func (s *FileService) FindMultipartUploadCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (_ *connect.Response[managev1.FindMultipartUploadCandidateResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "FindMultipartUploadCandidate", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()

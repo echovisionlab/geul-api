@@ -42,13 +42,7 @@ func (s *ClientService) SetClientLogo(
 	ctx context.Context,
 	req *connect.Request[managev1.SetClientLogoRequest],
 ) (_ *connect.Response[managev1.SetClientLogoResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.SetClientLogo", "outcome", "failed", "client_id", req.Msg.GetClientId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetClientId()))
 
 	can, err := policyv1.Client.Edit(req.Msg.ClientId)
 	if err != nil {
@@ -155,13 +149,7 @@ func (s *ClientService) DeleteClientLogo(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteClientLogoRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteClientLogo", "outcome", "failed", "client_id", req.Msg.GetClientId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetClientId()))
 
 	can, err := policyv1.Client.Edit(req.Msg.ClientId)
 	if err != nil {

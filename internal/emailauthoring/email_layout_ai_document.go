@@ -153,11 +153,7 @@ func (s *EmailLayoutAIDocumentService) Load(
 		state, err = s.loadStateAfterAuthorization(ctx, tx, layoutID, locale, memberID, clause.LockingStrengthShare)
 		return err
 	})
-	if err != nil {
-		level := errs.OperationLogLevel(err)
-		slog.Log(ctx, level, "AI document load failed", "domain", "emailauthoring", "event", "emailauthoring.document_load_failed", "outcome", "failed", "entity_id", layoutID, "locale", locale, failurecause.Attr(err))
-	}
-	return state, err
+	return state, failurecause.WithAttrs(err, slog.String("entity_type", "email_layout"), slog.String("entity_id", layoutID), slog.String("locale", locale))
 }
 
 var errRollbackEmailLayoutAIDocumentValidation = errors.New("rollback Email Layout AI document validation")

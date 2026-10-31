@@ -35,13 +35,7 @@ func NewInternalFileIngestService(files *FileService) *InternalFileIngestService
 func (s *InternalFileIngestService) AttachTrackOriginalAudio(
 	ctx context.Context,
 	req *connect.Request[intrav1.AttachTrackOriginalAudioRequest],
-) (_ *connect.Response[intrav1.AttachTrackOriginalAudioResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "AttachTrackOriginalAudio", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[intrav1.AttachTrackOriginalAudioResponse], error) {
 	if req.Msg == nil {
 		return nil, errs.Required("request")
 	}

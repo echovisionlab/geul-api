@@ -103,15 +103,7 @@ func NewSitemapService(
 func (s *SitemapService) GetDocument(
 	ctx context.Context,
 	req *connect.Request[openv1.GetSitemapDocumentRequest],
-) (_ *connect.Response[openv1.GetSitemapDocumentResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "sitemap", "operation", "sitemap/public.GetDocument", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[openv1.GetSitemapDocumentResponse], error) {
 	kind := req.Msg.Kind
 	if kind == openv1.SitemapDocumentKind_SITEMAP_DOCUMENT_KIND_UNSPECIFIED {
 		return nil, errs.Required("kind")

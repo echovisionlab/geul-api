@@ -3,7 +3,6 @@ package audience
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"sort"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -29,15 +27,7 @@ import (
 func (s *AudienceService) CreateSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateSegmentRequest],
-) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "CreateSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.Segment], error) {
 	can, err := policyv1.AudienceSegment.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -109,15 +99,7 @@ func (s *AudienceService) CreateSegment(
 func (s *AudienceService) EstimateSegmentCount(
 	ctx context.Context,
 	req *connect.Request[managev1.EstimateSegmentCountRequest],
-) (rpcResponse *connect.Response[managev1.EstimateSegmentCountResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "EstimateSegmentCount", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.EstimateSegmentCountResponse], error) {
 	can, err := policyv1.AudienceSegment.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -200,15 +182,7 @@ func buildSegmentUpdatePlan(request *managev1.UpdateSegmentRequest) (segmentUpda
 func (s *AudienceService) UpdateSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateSegmentRequest],
-) (rpcResponse *connect.Response[managev1.Segment], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "audience", "event", "audience.rpc_failed", "operation", "UpdateSegment", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.Segment], error) {
 	can, err := policyv1.AudienceSegment.Edit(req.Msg.Id)
 	if err != nil {
 		return nil, errs.Internal(err)

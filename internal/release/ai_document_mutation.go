@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -24,22 +23,7 @@ import (
 
 var errRollbackReleaseAIDocumentValidation = errors.New("rollback Release AI document validation")
 
-func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, releaseID, locale string, mode AIDocumentExecutionMode, compiler AIDocumentMutationCompiler) (_ AIDocumentMutationResult, terminalErr error) {
-	defer func() {
-		var conflict *AIDocumentRevisionConflictError
-		expected := errors.As(terminalErr, &conflict)
-		if expected {
-			if terminalErr != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr))
-			}
-		} else {
-			if terminalErr != nil {
-				level := errs.OperationLogLevel(terminalErr)
-				slog.Log(ctx, level, "Operation failed", "domain", "release", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-			}
-		}
-	}()
-
+func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, releaseID, locale string, mode AIDocumentExecutionMode, compiler AIDocumentMutationCompiler) (AIDocumentMutationResult, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil || s.ogRefresher == nil {
 		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Release AI document")
 	}

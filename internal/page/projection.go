@@ -249,15 +249,7 @@ func (s *PageService) toProtoPageSummary(p *model.Page) (*managev1.PageSummary, 
 func (s *PageService) CheckPageSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckPageSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckPageSlugAvailableResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "page", "operation", "page.CheckPageSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.CheckPageSlugAvailableResponse], error) {
 	excludeID := ""
 	if req.Msg.ExcludeId != nil {
 		excludeID = *req.Msg.ExcludeId

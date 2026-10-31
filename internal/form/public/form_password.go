@@ -3,7 +3,6 @@ package public
 import (
 	"context"
 	"errors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -19,15 +18,7 @@ import (
 func (s *FormService) VerifyPassword(
 	ctx context.Context,
 	req *connect.Request[openv1.VerifyFormPasswordRequest],
-) (rpcResponse *connect.Response[openv1.VerifyFormPasswordResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "VerifyPassword", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[openv1.VerifyFormPasswordResponse], error) {
 	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
 	if err != nil {
 		return nil, err

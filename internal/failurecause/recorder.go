@@ -44,8 +44,12 @@ func RecorderFrom(ctx context.Context) *Recorder {
 }
 
 // Record stores a sanitized failure. The last record wins: it is the one
-// closest to the terminal outcome.
+// closest to the terminal outcome. A nil Recorder, outside a request, drops
+// it.
 func (r *Recorder) Record(failure Failure) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.failure, r.recorded = failure, true

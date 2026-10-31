@@ -80,14 +80,7 @@ func NewInternalProgramEventService(db *gorm.DB, asyncPublisher AsyncPublisher, 
 func (s *InternalProgramEventService) LoadProgramEventBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadProgramEventBlockDocumentRequest],
-) (_ *connect.Response[intrav1.LoadProgramEventBlockDocumentResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "LoadProgramEventBlockDocument", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.LoadProgramEventBlockDocumentResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}
@@ -165,14 +158,7 @@ func (s *InternalProgramEventService) LoadProgramEventBlockDocument(
 func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 	ctx context.Context,
 	req *connect.Request[intrav1.ApplyProgramEventBlockBatchRequest],
-) (_ *connect.Response[intrav1.ApplyProgramEventBlockBatchResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "ApplyProgramEventBlockBatch", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.ApplyProgramEventBlockBatchResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}
@@ -333,14 +319,7 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 	ctx context.Context,
 	req *connect.Request[intrav1.UpdateProgramEventLocaleMetadataRequest],
-) (_ *connect.Response[intrav1.UpdateProgramEventLocaleMetadataResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventLocaleMetadata", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[intrav1.UpdateProgramEventLocaleMetadataResponse], error) {
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Program Event content Block store is not configured")
 	}

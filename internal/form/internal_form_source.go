@@ -28,22 +28,11 @@ import (
 func (s *InternalFormService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveFormDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.SaveFormDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		formID := ""
-		if req != nil {
-			formID = req.Msg.GetFormId()
-		}
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "SaveDocument", "formId", formID, "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (_ *connect.Response[intrav1.SaveFormDocumentResponse], rpcErr error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
+	defer failurecause.Annotate(&rpcErr, slog.String("form_id", req.Msg.GetFormId()))
 	r := req.Msg
 	locale := strings.TrimSpace(r.Locale)
 	if locale == "" {
@@ -334,15 +323,7 @@ func applyFormCollaborativeLocaleUpdates(
 func (s *InternalFormService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadFormDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadFormDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.LoadFormDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}

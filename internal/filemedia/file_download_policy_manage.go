@@ -55,13 +55,7 @@ type fileDownloadPolicyRelation struct {
 func (s *FileService) GetFileDownloadPolicy(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFileDownloadPolicyRequest],
-) (_ *connect.Response[managev1.GetFileDownloadPolicyResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "GetFileDownloadPolicy", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
 	selector, err := validateFileDownloadPolicySelector(
 		req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath,
 	)
@@ -92,13 +86,7 @@ func (s *FileService) GetFileDownloadPolicy(
 func (s *FileService) UpdateFileDownloadPolicy(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFileDownloadPolicyRequest],
-) (_ *connect.Response[managev1.UpdateFileDownloadPolicyResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "UpdateFileDownloadPolicy", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
 	selector, err := validateFileDownloadPolicySelector(
 		req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath,
 	)

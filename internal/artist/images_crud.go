@@ -2,12 +2,9 @@ package artist
 
 import (
 	"context"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"log/slog"
 
 	"connectrpc.com/connect"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -16,14 +13,7 @@ import (
 func (s *ArtistService) SetArtistImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetArtistImageRequest],
-) (_ *connect.Response[managev1.SetArtistImageResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "SetArtistImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.SetArtistImageResponse], error) {
 	fileIDs, err := validateOrderedArtistFileIDs([]string{req.Msg.FileId})
 	if err != nil {
 		return nil, err
@@ -45,14 +35,7 @@ func (s *ArtistService) SetArtistImage(
 func (s *ArtistService) DeleteArtistImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteArtistImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "DeleteArtistImage", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	_, ogRunID, err := s.replaceArtistImages(ctx, req.Msg.ArtistId, nil, nil)
 	if err != nil {
 		return nil, err

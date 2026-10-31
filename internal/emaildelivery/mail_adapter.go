@@ -100,21 +100,8 @@ func (s *MailAdapterService) requireMailAdapterCan(
 func (s *MailAdapterService) Create(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMailAdapterRequest],
-) (rpcResponse *connect.Response[managev1.CreateMailAdapterResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		private := []string{}
-		if cfg := req.Msg.GetSesConfig(); cfg != nil {
-			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
-		}
-		if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
-			private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
-		}
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Create", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
+) (_ *connect.Response[managev1.CreateMailAdapterResponse], rpcErr error) {
+	defer failurecause.AnnotatePrivate(&rpcErr, mailAdapterConfigPrivateValues(req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())...)
 
 	mailAdapterCan, err := policyv1.MailAdapter.Create()
 	if err != nil {
@@ -189,21 +176,8 @@ func (s *MailAdapterService) update(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMailAdapterRequest],
 	sender *MailAdapterSenderUpdate,
-) (rpcResponse *connect.Response[managev1.UpdateMailAdapterResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		private := []string{}
-		if cfg := req.Msg.GetSesConfig(); cfg != nil {
-			private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
-		}
-		if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
-			private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
-		}
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Update", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
+) (_ *connect.Response[managev1.UpdateMailAdapterResponse], rpcErr error) {
+	defer failurecause.AnnotatePrivate(&rpcErr, mailAdapterConfigPrivateValues(req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())...)
 
 	mailAdapterCan, err := policyv1.MailAdapter.Update()
 	if err != nil {
@@ -364,15 +338,7 @@ func (s *MailAdapterService) update(
 func (s *MailAdapterService) Delete(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMailAdapterRequest],
-) (rpcResponse *connect.Response[managev1.DeleteMailAdapterResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Delete", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.DeleteMailAdapterResponse], error) {
 	mailAdapterCan, err := policyv1.MailAdapter.Delete()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -417,15 +383,7 @@ func (s *MailAdapterService) Delete(
 func (s *MailAdapterService) ListMailAdaptersAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMailAdaptersAdminRequest],
-) (rpcResponse *connect.Response[managev1.ListMailAdaptersAdminResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "ListMailAdaptersAdmin", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.ListMailAdaptersAdminResponse], error) {
 	can, canErr := policyv1.MailAdapter.List()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -475,22 +433,9 @@ func (s *MailAdapterService) ListMailAdaptersAdmin(
 func (s *MailAdapterService) TestConfig(
 	ctx context.Context,
 	req *connect.Request[managev1.TestMailAdapterConfigRequest],
-) (rpcResponse *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
-	private := []string{}
-	if cfg := req.Msg.GetSesConfig(); cfg != nil {
-		private = append(private, cfg.AccessKeyId, cfg.SecretAccessKey, cfg.FromEmail, cfg.GetFromName())
-	}
-	if cfg := req.Msg.GetSmtpConfig(); cfg != nil {
-		private = append(private, cfg.User, cfg.Password, cfg.FromEmail, cfg.GetFromName())
-	}
-	private = append(private, req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail))
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "TestConfig", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
+) (_ *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
+	private := append(mailAdapterConfigPrivateValues(req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig()), req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail))
+	defer failurecause.AnnotatePrivate(&rpcErr, private...)
 
 	can, canErr := policyv1.MailAdapter.Test()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
@@ -539,15 +484,9 @@ func (s *MailAdapterService) TestConfig(
 func (s *MailAdapterService) Test(
 	ctx context.Context,
 	req *connect.Request[managev1.TestMailAdapterRequest],
-) (rpcResponse *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
+) (_ *connect.Response[managev1.TestMailAdapterResponse], rpcErr error) {
 	private := []string{req.Msg.TestEmail, strings.TrimSpace(req.Msg.TestEmail)}
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emaildelivery", "event", "emaildelivery.rpc_failed", "operation", "Test", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr, private...))
-	}()
+	defer func() { failurecause.AnnotatePrivate(&rpcErr, private...) }()
 
 	can, canErr := policyv1.MailAdapter.Test()
 	if err := s.requireMailAdapterCan(ctx, can, canErr); err != nil {
@@ -884,4 +823,17 @@ func (s *MailAdapterService) publishAdapterChangedEvent(ctx context.Context, ada
 		"adapter_id", adapterID,
 		"change_type", changeType.String(),
 	)
+}
+
+// mailAdapterConfigPrivateValues are the submitted credentials and sender
+// identity that no failure log may keep.
+func mailAdapterConfigPrivateValues(ses *managev1.SESConfig, smtp *managev1.SMTPConfig) []string {
+	var private []string
+	if ses != nil {
+		private = append(private, ses.AccessKeyId, ses.SecretAccessKey, ses.FromEmail, ses.GetFromName())
+	}
+	if smtp != nil {
+		private = append(private, smtp.User, smtp.Password, smtp.FromEmail, smtp.GetFromName())
+	}
+	return private
 }

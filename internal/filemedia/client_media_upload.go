@@ -26,13 +26,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (_ *connect.Response[managev1.PrepareClientMediaUploadResponse], resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := errs.OperationLogLevel(resultErr)
-			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "PrepareClientMediaUpload", "code", connect.CodeOf(resultErr).String())
-		}
-	}()
+func (s *FileService) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (*connect.Response[managev1.PrepareClientMediaUploadResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.Required("request")
 	}
@@ -166,8 +160,7 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		status := clientArtifactHTTPStatus(err)
-		level := errs.OperationLogLevel(err)
-		slog.Log(r.Context(), level, "Media RPC failed", failurecause.Attr(err), "operation", "HandleUploadMediaArtifact", "code", connect.CodeOf(err).String())
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(err))
 		http.Error(w, http.StatusText(status), status)
 		return
 	}

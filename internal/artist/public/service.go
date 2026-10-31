@@ -76,14 +76,7 @@ func NewArtistService(db *gorm.DB, spiceDB *auth.SpiceDBClient, media MediaProje
 func (s *ArtistService) List(
 	ctx context.Context,
 	req *connect.Request[openv1.ListArtistsRequest],
-) (_ *connect.Response[openv1.ListArtistsResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "List", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.ListArtistsResponse], error) {
 	// Base query - only published artists
 	query := s.db.WithContext(ctx).Model(&model.Artist{}).Where("status = ?", openv1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String())
 
@@ -220,14 +213,7 @@ func buildArtistSummary(artist *model.Artist) *openv1.ArtistSummary {
 func (s *ArtistService) Get(
 	ctx context.Context,
 	req *connect.Request[openv1.GetArtistRequest],
-) (_ *connect.Response[openv1.GetArtistResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "Get", failurecause.Attr(terminalErr, req.Msg.GetShareToken(), req.Msg.GetSharePassword()), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetArtistResponse], error) {
 	slugOrID := req.Msg.Slug
 	shareToken := req.Msg.GetShareToken()
 	sharePassword := req.Msg.GetSharePassword()
@@ -282,14 +268,7 @@ func (s *ArtistService) requireDraftArtistAccess(
 func (s *ArtistService) GetReleases(
 	ctx context.Context,
 	req *connect.Request[openv1.GetArtistReleasesRequest],
-) (_ *connect.Response[openv1.GetArtistReleasesResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "GetReleases", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetArtistReleasesResponse], error) {
 	artistID := req.Msg.ArtistId
 	limit := int32(20)
 	if req.Msg.Limit > 0 {
@@ -396,14 +375,7 @@ func (s *ArtistService) GetReleases(
 func (s *ArtistService) GetWorks(
 	ctx context.Context,
 	req *connect.Request[openv1.GetArtistWorksRequest],
-) (_ *connect.Response[openv1.GetArtistWorksResponse], terminalErr error) {
-	defer func() {
-		if terminalErr != nil {
-			level := errs.OperationLogLevel(terminalErr)
-			slog.Log(ctx, level, "Operation failed", "domain", "artist", "operation", "GetWorks", failurecause.Attr(terminalErr), "code", connect.CodeOf(terminalErr).String())
-		}
-	}()
-
+) (*connect.Response[openv1.GetArtistWorksResponse], error) {
 	artistID := req.Msg.ArtistId
 	limit := int32(20)
 	if req.Msg.Limit > 0 {

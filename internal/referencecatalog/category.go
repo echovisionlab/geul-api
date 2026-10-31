@@ -86,15 +86,7 @@ func NewAuditedCategoryService(db *gorm.DB, auditWriter domainaudit.Appender, me
 func (s *CategoryService) ListCategories(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCategoriesRequest],
-) (_ *connect.Response[managev1.ListCategoriesResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListCategories", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListCategoriesResponse], error) {
 	categories, total, page, err := categoryListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
@@ -114,15 +106,7 @@ func (s *CategoryService) ListCategories(
 func (s *CategoryService) ListCategoriesAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListCategoriesAdminRequest],
-) (_ *connect.Response[managev1.ListCategoriesAdminResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.ListCategoriesAdmin", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.ListCategoriesAdminResponse], error) {
 	can, err := policyv1.Category.List()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -168,15 +152,7 @@ func (s *CategoryService) ListCategoriesAdmin(
 func (s *CategoryService) CreateCategory(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateCategoryRequest],
-) (_ *connect.Response[managev1.Category], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateCategory", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.Category], error) {
 	can, err := policyv1.Category.Create()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -222,13 +198,7 @@ func (s *CategoryService) UpdateCategory(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateCategoryRequest],
 ) (_ *connect.Response[managev1.Category], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateCategory", "outcome", "failed", "category_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("category_id", req.Msg.GetId()))
 
 	can, err := policyv1.Category.Edit(req.Msg.Id)
 	if err != nil {
@@ -277,13 +247,7 @@ func (s *CategoryService) DeleteCategory(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteCategoryRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteCategory", "outcome", "failed", "category_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("category_id", req.Msg.GetId()))
 
 	can, err := policyv1.Category.Delete(req.Msg.Id)
 	if err != nil {

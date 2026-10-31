@@ -21,15 +21,7 @@ import (
 func (s *FormService) SetFormFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.SetFormFeaturedImageRequest],
-) (rpcResponse *connect.Response[managev1.SetFormFeaturedImageResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "SetFormFeaturedImage", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.SetFormFeaturedImageResponse], error) {
 	var (
 		current    model.Form
 		file       model.File
@@ -116,15 +108,7 @@ func (s *FormService) SetFormFeaturedImage(
 func (s *FormService) DeleteFormFeaturedImage(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteFormFeaturedImageRequest],
-) (rpcResponse *connect.Response[managev1.OgAssetDeleteResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "DeleteFormFeaturedImage", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
 	var current model.Form
 	var ogRunID *string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

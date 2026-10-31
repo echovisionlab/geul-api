@@ -52,15 +52,7 @@ type formSubmissionSystemMetadata struct {
 func (s *FormService) Submit(
 	ctx context.Context,
 	req *connect.Request[openv1.SubmitFormRequest],
-) (rpcResponse *connect.Response[openv1.SubmitFormResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "form", "event", "form.rpc_failed", "operation", "Submit", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[openv1.SubmitFormResponse], error) {
 	if err := validateFormSubmissionDataPayload(req.Msg.Data); err != nil {
 		return nil, err
 	}

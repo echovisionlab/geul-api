@@ -62,15 +62,7 @@ func NewAuditedInternalEmailLayoutService(db *gorm.DB, auditWriter domainaudit.A
 func (s *InternalEmailLayoutService) SaveDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.SaveEmailLayoutDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.SaveEmailLayoutDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "SaveDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.SaveEmailLayoutDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
@@ -320,15 +312,7 @@ func compileEmailLayoutTargetValues(
 func (s *InternalEmailLayoutService) LoadDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadEmailLayoutDocumentRequest],
-) (rpcResponse *connect.Response[intrav1.LoadEmailLayoutDocumentResponse], rpcErr error) {
-	defer func() {
-		if rpcErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(rpcErr)
-		slog.Log(ctx, level, "RPC failed", "domain", "emailauthoring", "event", "emailauthoring.rpc_failed", "operation", "LoadDocument", "outcome", "failed", "reason", connect.CodeOf(rpcErr).String(), failurecause.Attr(rpcErr))
-	}()
-
+) (*connect.Response[intrav1.LoadEmailLayoutDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}

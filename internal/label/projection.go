@@ -23,15 +23,7 @@ import (
 func (s *LabelService) CheckLabelSlugAvailable(
 	ctx context.Context,
 	req *connect.Request[managev1.CheckLabelSlugAvailableRequest],
-) (_ *connect.Response[managev1.CheckLabelSlugAvailableResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "label", "operation", "label.CheckLabelSlugAvailable", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.CheckLabelSlugAvailableResponse], error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()

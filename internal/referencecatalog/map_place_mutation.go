@@ -24,15 +24,7 @@ import (
 func (s *MapPlaceService) CreateMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateMapPlaceRequest],
-) (_ *connect.Response[managev1.MapPlace], returnErr error) {
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.CreateMapPlace", "outcome", "failed", failurecause.Attr(returnErr))
-	}()
-
+) (*connect.Response[managev1.MapPlace], error) {
 	if req.Msg.Name == "" {
 		return nil, errs.Required("name")
 	}
@@ -136,13 +128,7 @@ func (s *MapPlaceService) UpdateMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateMapPlaceRequest],
 ) (_ *connect.Response[managev1.MapPlace], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.UpdateMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("map_place_id", req.Msg.GetId()))
 
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
@@ -353,13 +339,7 @@ func (s *MapPlaceService) DeleteMapPlace(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteMapPlaceRequest],
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer func() {
-		if returnErr == nil || req == nil {
-			return
-		}
-		level := errs.OperationLogLevel(returnErr)
-		slog.Log(ctx, level, "content operation failed", "domain", "referencecatalog", "operation", "referencecatalog.DeleteMapPlace", "outcome", "failed", "map_place_id", req.Msg.GetId(), failurecause.Attr(returnErr))
-	}()
+	defer failurecause.Annotate(&returnErr, slog.String("map_place_id", req.Msg.GetId()))
 
 	if req.Msg.Id == "" {
 		return nil, errs.Required("id")
