@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.8](https://github.com/echovisionlab/geul-api/compare/v4.1.7...v4.1.8) (2026-10-31)
+
+
+### Bug Fixes
+
+* return mutation timestamps at the precision PostgreSQL stores ([#209](https://github.com/echovisionlab/geul-api/issues/209)) ([f075aca](https://github.com/echovisionlab/geul-api/commit/f075aca89e2c316d6e74cfb4d8f85182fb54b14d))
+
 ## [4.1.7](https://github.com/echovisionlab/geul-api/compare/v4.1.6...v4.1.7) (2026-10-31)
 
 
