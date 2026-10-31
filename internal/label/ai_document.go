@@ -119,7 +119,7 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, labelID, locale strin
 	}
 
 	var state AIDocumentState
-	err = mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
+	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		root, err := loadLabelAIDocumentRoot(ctx, tx, canonicalID.String(), "KEY SHARE")
 		if err != nil {
 			return err

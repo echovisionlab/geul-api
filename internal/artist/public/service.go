@@ -551,7 +551,7 @@ func (s *Service) buildArtistResponse(
 ) (*openv1.Artist, error) {
 	wasPublic := artist.Status == model.ArtistStatusPublished
 	var response *openv1.Artist
-	err := mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		projection := *s
 		projection.db = tx
 		var err error

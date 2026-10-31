@@ -86,7 +86,7 @@ func loadLabelContentBlockBootstrap(ctx context.Context, db *gorm.DB, store *con
 		return labelContentBootstrap{}, errAuthenticationRequired
 	}
 	var output labelContentBootstrap
-	err := mutation.LockingRead(ctx, db, func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, tx, sessionID)
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 			return errAuthenticationRequired

@@ -232,7 +232,7 @@ func (s *Service) buildLabelResponse(
 ) (*openv1.Label, error) {
 	wasPublic := label.Status == model.LabelStatusPublished
 	var response *openv1.Label
-	err := mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		projection := *s
 		projection.db = tx
 		var err error

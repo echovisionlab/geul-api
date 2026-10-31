@@ -132,7 +132,7 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentState
 		return AIDocumentState{}, err
 	}
 	var state AIDocumentState
-	err = lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+	err = mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
 		root, err := loadProgramEventAIDocumentRoot(ctx, tx, query.EventID, clause.LockingStrengthShare)
 		if err != nil {
 			return err

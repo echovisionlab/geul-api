@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
@@ -51,7 +52,7 @@ func initializeProgramEventBlockTranslationSource(
 // just changed, read under a share lock of the event row.
 func (s *Service) loadProgramEvent(ctx context.Context, id string) (*managev1.ProgramEvent, error) {
 	var output *managev1.ProgramEvent
-	err := lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+	err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
 		event, err := lockProgramEventForRead(ctx, tx, id)
 		if err != nil {
 			return err
@@ -77,7 +78,7 @@ func lockProgramEventForRead(ctx context.Context, tx *gorm.DB, id string) (*mode
 // share-locked event and returns its view with authorized Block media.
 func (s *Service) loadAuthorizedProgramEvent(ctx context.Context, id string) (*managev1.ProgramEvent, error) {
 	var output *managev1.ProgramEvent
-	err := lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+	err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
 		event, err := lockProgramEventForRead(ctx, tx, id)
 		if err != nil {
 			return err

@@ -44,7 +44,7 @@ func (s *Service) LoadBlockDocument(ctx context.Context, query LoadBlockDocument
 	var localeState programEventExactLocaleState
 	var sourceMetadata *intrav1.ProgramEventLocaleMetadata
 	var blockMedia []*contentv1.ContentBlockMediaItem
-	if err := lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+	if err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
 		documentID, principal, err := requireProgramEventBlockBootstrap(ctx, tx, s.spiceDB, query.EventID, query.SessionID)
 		if err != nil {
 			return err

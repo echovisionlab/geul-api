@@ -28,7 +28,7 @@ func loadCreativeManageContentProjection(
 	loadRoot func(context.Context, *gorm.DB) error,
 ) (labelManageContentProjection, error) {
 	var projection labelManageContentProjection
-	err := mutation.LockingRead(ctx, db, func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		if err := loadRoot(ctx, tx); err != nil {
 			return err
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
@@ -34,7 +35,7 @@ func LoadTranslationSourceDocument(
 		return nil, errors.New("program Event translation content Block store is not configured")
 	}
 	var output *translation.SourceDocument
-	err := lockedRead(ctx, db, func(tx *gorm.DB) error {
+	err := mutation.ReadCurrent(ctx, db, func(tx *gorm.DB) error {
 		if err := lockTranslationEntityRootWithDB(ctx, tx, EntityType, eventID); err != nil {
 			return err
 		}

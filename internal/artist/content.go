@@ -47,7 +47,7 @@ func loadCreativeManageContentProjection(
 	loadRoot func(context.Context, *gorm.DB) error,
 ) (creativeManageContentProjection, error) {
 	var projection creativeManageContentProjection
-	err := mutation.LockingRead(ctx, db, func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		if err := loadRoot(ctx, tx); err != nil {
 			return err
 		}
@@ -320,7 +320,7 @@ func loadCreativeContentBlockBootstrap(
 		return creativeContentBootstrapSnapshot{}, errAuthenticationRequired
 	}
 	var output creativeContentBootstrapSnapshot
-	err := mutation.LockingRead(ctx, db, func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		documentID, err := loadCreativeContentDocumentIDWithStrength(
 			ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 		)

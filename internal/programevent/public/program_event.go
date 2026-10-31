@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/google/uuid"
@@ -61,7 +62,7 @@ func (s *Service) GetProgramEvent(ctx context.Context, query GetProgramEventQuer
 	var protoEvent *openv1.ProgramEvent
 	var media []*contentv1.ContentBlockMediaItem
 	var mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
-	err := lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+	err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
 		event, err := loadPublicProgramEvent(ctx, tx, slugOrID)
 		if err != nil {
 			return err

@@ -212,7 +212,9 @@ rows uses `mutation.Read` instead of opening a transaction. PostgreSQL
 refuses row locks in a read-only transaction, so a projection that
 share-locks its root uses `mutation.ReadLocked`, and a check that locks rows
 `FOR UPDATE` to agree with the next mutation of them, such as whether upload
-cleanup is still needed, uses `mutation.ReadCurrent`. Neither writes.
+cleanup is still needed, or an authorized read that locks its target and the
+principal's Identity read committed, uses `mutation.ReadCurrent`. Neither
+writes.
 
 ## Errors
 
