@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
@@ -567,22 +568,19 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 			return AIDocumentResult{}, errs.Internal(err)
 		}
 	}
+	// A source edit is audited like a collaboration source save.
+	operation := sharedtelemetry.AuditItemOperationUpdated
 	if locale != sourceState.SourceLocale {
-		if err := appendProgramEventMemberLocaleContentAudit(
-			ctx,
-			tx,
-			s.auditWriter,
-			command.ContributorMemberID.String(),
-			command.EventID,
-			locale,
-			programEventTargetLocaleContentOperation(
-				command.CreateTranslation,
-				command.DeleteTranslation,
-				localeExists,
-			),
-		); err != nil {
-			return AIDocumentResult{}, err
-		}
+		operation = programEventTargetLocaleContentOperation(
+			command.CreateTranslation,
+			command.DeleteTranslation,
+			localeExists,
+		)
+	}
+	if err := appendProgramEventMemberLocaleContentAudit(
+		ctx, tx, s.auditWriter, command.ContributorMemberID.String(), command.EventID, locale, operation,
+	); err != nil {
+		return AIDocumentResult{}, err
 	}
 	output := AIDocumentResult{
 		DocumentRevision: blockResult.DocumentRevision.String(), TargetRevision: targetRevision, Changed: true,
