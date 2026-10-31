@@ -29,7 +29,7 @@ func newMediaHTTPServer(cfg *config.Config) (*http.Server, error) {
 	}
 	return &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Media.DeliveryPort),
-		Handler:           mediadelivery.NewHandler(delivery, store),
+		Handler:           recoverHTTPPanics(mediadelivery.NewHandler(delivery, store)),
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
 	}, nil
 }

@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // =============================================================================
@@ -347,43 +347,95 @@ func OperationLogLevel(err error) slog.Level {
 }
 
 // Wrap returns a Connect error with the appropriate code based on the error type.
-// If err contains a *connect.Error, it is returned as-is, including its details.
-// Request cancellation and deadlines retain their transport classification.
-// Otherwise, it returns a CodeInternal error.
+// If err contains a *connect.Error, its code, message, details and metadata are
+// preserved. Request cancellation and deadlines retain their transport
+// classification. Otherwise, it returns a CodeInternal error.
+//
+// Wrap does not log: it has no request context. When the classification
+// discards outer operation context, the returned error keeps that context for
+// the RPC boundary (BoundaryInterceptor), which logs it with the request
+// context. Clients only ever see the classified message.
 func Wrap(err error) *connect.Error {
 	var connectErr *connect.Error
 	if stderrors.As(err, &connectErr) && connectErr != nil {
-		if err != connectErr {
-			// Returning the classified error discards the outer operation context.
-			slog.Log(context.Background(), OperationLogLevel(connectErr), "Classified RPC error", "error_code", connectErr.Code().String(), "failure_cause", failurecause.Message(err))
+		if err == connectErr {
+			return connectErr
 		}
-		return connectErr
+		return withOperationContext(connectErr, err)
 	}
 	if stderrors.Is(err, context.Canceled) {
-		if err.Error() != context.Canceled.Error() {
-			slog.Warn("Request canceled", "failure_cause", failurecause.Message(err))
-		}
-		return connect.NewError(connect.CodeCanceled, context.Canceled)
+		return classifiedError(connect.CodeCanceled, context.Canceled.Error(), err)
 	}
 	if stderrors.Is(err, context.DeadlineExceeded) {
-		if err.Error() != context.DeadlineExceeded.Error() {
-			slog.Warn("Request deadline exceeded", "failure_cause", failurecause.Message(err))
-		}
-		return connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)
+		return classifiedError(connect.CodeDeadlineExceeded, context.DeadlineExceeded.Error(), err)
 	}
-	// UUID columns cannot contain malformed stored UUIDs. This exact driver
-	// rejection therefore identifies an invalid UUID passed to a query, not a
-	// database outage. Other SQL failures retain their internal classification.
-	var sqlState interface {
-		error
-		SQLState() string
-	}
-	if stderrors.As(err, &sqlState) && sqlState.SQLState() == "22P02" &&
-		strings.Contains(sqlState.Error(), "invalid input syntax for type uuid") {
-		slog.Warn("Database rejected request UUID", "sql_state", sqlState.SQLState(), "failure_cause", failurecause.Message(err))
-		return InvalidArgumentMsg("request contains an invalid UUID")
+	if isRequestUUIDRejection(err) {
+		return classifiedError(connect.CodeInvalidArgument, msgInvalidRequestUUID, err)
 	}
 	return connect.NewError(connect.CodeInternal, err)
+}
+
+const msgInvalidRequestUUID = "request contains an invalid UUID"
+
+// isRequestUUIDRejection reports whether PostgreSQL rejected a malformed UUID
+// bound as a query parameter, which is client input. The same SQLSTATE raised
+// while evaluating the query (a stored text value cast to uuid) is data the
+// server cannot decode and stays an internal failure. PostgreSQL attributes
+// bind-time conversion failures to the parameter in the error context
+// ("unnamed portal parameter $1").
+func isRequestUUIDRejection(err error) bool {
+	var pgErr *pgconn.PgError
+	return stderrors.As(err, &pgErr) &&
+		pgErr.Code == "22P02" &&
+		strings.Contains(pgErr.Message, "invalid input syntax for type uuid") &&
+		strings.Contains(pgErr.Where, "parameter $")
+}
+
+// classifiedCause is the cause of a Connect error whose client message differs
+// from its server-side context. Error returns the client message; Unwrap keeps
+// the full chain for errors.Is/As; operation is the loggable server context.
+type classifiedCause struct {
+	message   string
+	operation string
+	cause     error
+}
+
+func (c *classifiedCause) Error() string { return c.message }
+func (c *classifiedCause) Unwrap() error { return c.cause }
+
+func classifiedError(code connect.Code, message string, cause error) *connect.Error {
+	return connect.NewError(code, &classifiedCause{message: message, operation: cause.Error(), cause: cause})
+}
+
+// withOperationContext copies connectErr so that the outer operation context
+// in err survives classification without reaching the client.
+func withOperationContext(connectErr *connect.Error, err error) *connect.Error {
+	classified := connect.NewError(connectErr.Code(), &classifiedCause{
+		message: connectErr.Message(), operation: operationCause(err), cause: err,
+	})
+	for _, detail := range connectErr.Details() {
+		classified.AddDetail(detail)
+	}
+	for key, values := range connectErr.Meta() {
+		classified.Meta()[key] = append([]string(nil), values...)
+	}
+	return classified
+}
+
+// operationCause returns the server-side description of err. Where err holds a
+// classified Connect error, that error's client-facing text is replaced by the
+// operation context it kept.
+func operationCause(err error) string {
+	text := err.Error()
+	var connectErr *connect.Error
+	if !stderrors.As(err, &connectErr) || connectErr == nil {
+		return text
+	}
+	classified, ok := connectErr.Unwrap().(*classifiedCause)
+	if !ok {
+		return text
+	}
+	return strings.Replace(text, connectErr.Error(), classified.operation, 1)
 }
 
 // CollaborationState preserves revisions read under the owning resource lock.

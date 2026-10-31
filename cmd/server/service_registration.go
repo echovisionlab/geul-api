@@ -173,10 +173,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 
 	// Request logging wraps authentication so denied requests also receive one
 	// terminal record. The request scope observes the actor resolved by auth.
+	// connectInterceptors places the failure boundary between the two.
 	accessLogInterceptor := telemetry.NewAccessLogInterceptor(telemetryWriter)
 	tracingInterceptor := telemetry.NewTracingInterceptor()
 	handlerOpts := []connect.HandlerOption{
-		connect.WithInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor, auth.ExpectedMemberInterceptor(), contentsignal.ClientOriginInterceptor()),
+		connectInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor, auth.ExpectedMemberInterceptor(), contentsignal.ClientOriginInterceptor()),
 		jsonCodec,
 	}
 	// Internal handlers do not use browser/session auth. Each registration below
@@ -185,7 +186,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	// use the auth interceptor so logged-in users can optionally hydrate context
 	// for draft previews while anonymous public requests remain allowed.
 	internalHandlerOpts := []connect.HandlerOption{
-		connect.WithInterceptors(tracingInterceptor, accessLogInterceptor),
+		connectInterceptors(tracingInterceptor, accessLogInterceptor),
 		jsonCodec,
 	}
 	internalRPCTrust := internalRPCTrustBoundary{
@@ -199,7 +200,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	)
 	mux.Handle(gatewayAuthorizationPath, internalRPCTrust.identity(gatewayAuthorizationHandler))
 	publicHandlerOpts := []connect.HandlerOption{
-		connect.WithInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor),
+		connectInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor),
 		jsonCodec,
 	}
 

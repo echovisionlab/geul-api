@@ -28,7 +28,7 @@ func newMCPPrivateHTTPServer(handlers mcpPrivateHandlers, cfg *config.Config) (*
 	protocols.SetHTTP1(true)
 	return &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.MCPPrivatePort),
-		Handler:      mux,
+		Handler:      recoverHTTPPanics(mux),
 		Protocols:    protocols,
 		ReadTimeout:  time.Duration(cfg.HTTPReadTimeoutSec) * time.Second,
 		WriteTimeout: time.Duration(cfg.HTTPWriteTimeoutSec) * time.Second,

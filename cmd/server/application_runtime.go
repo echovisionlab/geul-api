@@ -212,9 +212,9 @@ func newApplicationHTTPServer(mux *http.ServeMux, cfg *config.Config) *http.Serv
 	protocols.SetUnencryptedHTTP2(true)
 	return &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.Port),
-		Handler: corsHandler.Handler(telemetry.NewHTTPHandler(mux, func(request *http.Request) bool {
+		Handler: corsHandler.Handler(recoverHTTPPanics(telemetry.NewHTTPHandler(mux, func(request *http.Request) bool {
 			return auth.IsInternalServiceRequest(cfg.TokenSigningSecret, cfg.InternalServiceHeaderName, request)
-		})),
+		}))),
 		Protocols:    protocols,
 		ReadTimeout:  time.Duration(cfg.HTTPReadTimeoutSec) * time.Second,
 		WriteTimeout: time.Duration(cfg.HTTPWriteTimeoutSec) * time.Second,
