@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
@@ -42,7 +43,7 @@ func normalizeReferenceSlug(value string) (string, error) {
 }
 
 func classifyReferenceUniqueViolation(resource string, name string, slug string, err error) error {
-	if !isUniqueViolation(err) {
+	if !dberrors.IsUniqueViolation(err) {
 		return errs.Internal(err)
 	}
 

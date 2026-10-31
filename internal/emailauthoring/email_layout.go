@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -484,7 +485,7 @@ func (s *EmailLayoutService) CreateEmailLayout(
 			UpdatedAt:         now,
 		}
 		if err := createEmailLayoutBaseRow(ctx, tx, layout); err != nil {
-			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			if dberrors.IsUniqueViolation(err) {
 				return errs.AlreadyExists("email layout", "key", req.Msg.Key)
 			}
 			return errs.Internal(err)
@@ -643,7 +644,7 @@ func applyEmailLayoutUpdates(
 	updates structured.Fields,
 ) error {
 	if err := tx.WithContext(ctx).Model(layout).Updates(updates).Error; err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if dberrors.IsUniqueViolation(err) {
 			key := layout.Key
 			if requestedKey != nil {
 				key = *requestedKey

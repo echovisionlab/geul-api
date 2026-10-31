@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -481,7 +482,7 @@ func (s *ReleaseService) CreateRelease(
 		return nil
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("release", "slug")
 		}

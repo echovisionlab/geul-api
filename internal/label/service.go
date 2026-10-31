@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -496,7 +497,7 @@ func (s *LabelService) CreateLabel(
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
-		if strings.Contains(err.Error(), "duplicate key") {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 			return nil, errs.AlreadyExistsMsg("label with this slug already exists")
 		}

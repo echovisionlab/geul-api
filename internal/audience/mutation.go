@@ -6,16 +6,15 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -99,7 +98,7 @@ func (s *AudienceService) CreateSegment(
 		)
 	})
 	if err != nil {
-		if isForeignKeyViolation(err) {
+		if dberrors.IsForeignKeyViolation(err) {
 			return nil, errs.InvalidArgumentMsg("one or more audience references do not exist")
 		}
 		return nil, errs.Wrap(err)
@@ -411,7 +410,7 @@ func applySegmentUpdates(
 		return changedFields, nil
 	}
 	if err := replaceSegmentRelations(tx, memberReferences, segment.ID, nextConfig); err != nil {
-		if isForeignKeyViolation(err) {
+		if dberrors.IsForeignKeyViolation(err) {
 			return nil, errs.InvalidArgumentMsg("one or more audience references do not exist")
 		}
 		return nil, errs.Internal(err)
@@ -476,25 +475,4 @@ func equalTime(left, right *time.Time) bool {
 		return left == nil && right == nil
 	}
 	return left.Equal(*right)
-}
-
-func isForeignKeyViolation(err error) bool {
-	if errors.Is(err, gorm.ErrForeignKeyViolated) {
-		return true
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-		return true
-	}
-	const sqliteConstraintForeignKey, sqliteConstraintTrigger = 787, 1811
-	var sqliteErr interface {
-		error
-		Code() int
-	}
-	if !errors.As(err, &sqliteErr) {
-		return false
-	}
-	return sqliteErr.Code() == sqliteConstraintForeignKey ||
-		(sqliteErr.Code() == sqliteConstraintTrigger &&
-			strings.Contains(strings.ToLower(sqliteErr.Error()), "foreign key constraint failed"))
 }

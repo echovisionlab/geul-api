@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -289,7 +290,7 @@ func (s *PostService) persistInitialPostDocument(
 }
 
 func mapCreatePostError(err error, requestedSlug *string) error {
-	if strings.Contains(err.Error(), "duplicate key") {
+	if dberrors.IsUniqueViolation(err) {
 		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 		return errs.SlugAlreadyExists("post", ptrStringValue(requestedSlug))
 	}

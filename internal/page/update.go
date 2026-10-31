@@ -3,11 +3,11 @@ package page
 import (
 	"context"
 	"log/slog"
-	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -215,7 +215,7 @@ func (s *PageService) updatePageMenuTargetAfterSlugChange(
 }
 
 func normalizePageUpdateError(err error) error {
-	if strings.Contains(err.Error(), "duplicate key") {
+	if dberrors.IsUniqueViolation(err) {
 		slog.WarnContext(context.Background(), "content operation failed", "domain", "page", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 		return errs.SlugAlreadyExists("page", "slug")
 	}

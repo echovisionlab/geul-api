@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -471,7 +472,7 @@ func (s *WorkService) CreateWork(
 		if connect.CodeOf(err) != connect.CodeUnknown {
 			return nil, err
 		}
-		if strings.Contains(err.Error(), "duplicate key") {
+		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("work", "slug")
 		}

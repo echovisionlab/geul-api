@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -214,12 +215,11 @@ func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[m
 }
 
 func fileManagerMutationError(ctx context.Context, err error, message string, privateName string) error {
-	value := strings.ToLower(err.Error())
-	if strings.Contains(value, "duplicate key") || strings.Contains(value, "unique constraint") {
+	if dberrors.IsUniqueViolation(err) {
 		slog.WarnContext(ctx, "File folder uniqueness conflict", failurecause.Attr(err, privateName))
 		return errs.AlreadyExistsMsg(message)
 	}
-	if strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
+	if value := strings.ToLower(err.Error()); strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
 		slog.WarnContext(ctx, "File folder hierarchy conflict", failurecause.Attr(err, privateName))
 		return errs.FailedPrecondition(message)
 	}

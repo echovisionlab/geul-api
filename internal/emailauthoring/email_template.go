@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -453,7 +454,7 @@ func (s *EmailTemplateService) CreateEmailTemplate(
 		)
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+		if dberrors.IsUniqueViolation(err) {
 			return nil, errs.AlreadyExists("template", "key", req.Msg.Key)
 		}
 		return nil, errs.Wrap(err)
