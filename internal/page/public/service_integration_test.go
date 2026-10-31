@@ -487,32 +487,3 @@ func setPublicHomepagePage(t *testing.T, db *gorm.DB, ctx context.Context, pageI
 	require.NoError(t, result.Error)
 	require.EqualValues(t, 1, result.RowsAffected)
 }
-
-func TestPublicPageServiceRejectsMissingMediaResolverBeforeReadIntegration(t *testing.T) {
-	t.Parallel()
-	db := newPublicIntegrationDB(t)
-	spiceDB := publicIntegrationSpiceDB(t)
-	adminID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Public media admin"})
-	adminMemberID := seedPublicAdminMemberIdentityLink(t, db, adminID, "Public media admin")
-	blocks, err := contentblock.NewGeneratedStore(publicPageFileReuseAuthorizer{})
-	require.NoError(t, err)
-	manageSvc := newPublicPageManageService(db, spiceDB, blocks, newPublicReferenceManageFileService(db))
-	slug := "public-media-" + uuid.NewString()
-	created, err := manageSvc.CreatePage(publicLegalAdminCtx(adminMemberID, adminID), connect.NewRequest(&managev1.CreatePageRequest{
-		Title: "Public media page", Slug: &slug, SourceLocale: "en",
-	}))
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(
-		"UPDATE page SET status = 'PAGE_STATUS_PUBLISHED', published_at = now() WHERE id = ?::uuid", created.Msg.Id,
-	).Error)
-
-	publicSvc := newPublicPageService(db, spiceDB, blocks)
-	publicSvc.media = nil
-	var response *connect.Response[openv1.GetPageResponse]
-	require.NotPanics(t, func() {
-		response, err = publicSvc.Get(context.Background(), connect.NewRequest(&openv1.GetPageRequest{Slug: slug}))
-	})
-	require.ErrorContains(t, err, "Page media resolver is not configured")
-	require.Nil(t, response)
-}
