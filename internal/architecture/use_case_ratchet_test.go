@@ -20,6 +20,7 @@ const (
 var pipelineDomains = []string{
 	"internal/maptheme",
 	"internal/member",
+	"internal/referencecatalog",
 }
 
 func inPipelineDomain(pkg string) bool {
