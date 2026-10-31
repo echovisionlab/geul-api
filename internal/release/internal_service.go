@@ -453,13 +453,17 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 		if err != nil {
 			return normalizeReleaseContentBlockError(err)
 		}
-		if sourceResult.TranslationSourceChanged {
-			if sourceTitleChanged {
-				return s.ogRefresher.RequestCurrent(ctx, tx, input.ReleaseId, "release_source_title_saved")
-			}
+		if !sourceResult.Changed {
 			return nil
 		}
-		return nil
+		if sourceResult.TranslationSourceChanged && sourceTitleChanged {
+			if err := s.ogRefresher.RequestCurrent(ctx, tx, input.ReleaseId, "release_source_title_saved"); err != nil {
+				return err
+			}
+		}
+		return appendReleaseRequestTargetLocaleAudit(
+			ctx, tx, s.auditWriter, input.ReleaseId, source.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
+		)
 	})
 	if err != nil {
 		return nil, normalizeReleaseTargetWriterError(err)

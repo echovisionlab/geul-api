@@ -519,7 +519,15 @@ func TestUpdateReleaseLocaleMetadataSourceLocaleIntegration(t *testing.T) {
 			require.Equal(t, before.Titles["fr"], after.Titles["fr"], "a source edit leaves the target title alone")
 			require.Equal(t, test.wantNotes(fixture), after.Notes["en"])
 			require.Equal(t, before.Notes["fr"], after.Notes["fr"])
-			require.Empty(t, after.Audits, "source metadata edits append no Domain Audit record")
+			if test.changed {
+				require.Equal(t, []releaseAuditRow{{
+					Action: string(sharedtelemetry.AuditReleaseUpdated), ChangedFields: pq.StringArray{"locale_content"},
+					Locale: proto.String("en"), ItemOperation: proto.String(string(sharedtelemetry.AuditItemOperationUpdated)),
+					ActorKind: "member", ActorMemberID: proto.String(fixture.contributor),
+				}}, after.Audits)
+			} else {
+				require.Empty(t, after.Audits, "an unchanged source edit appends no Domain Audit record")
+			}
 			require.Equal(t, test.wantReasons, fixture.og.reasons)
 			require.Zero(t, fixture.publisher.calls, "source metadata edits publish no content event")
 		})
