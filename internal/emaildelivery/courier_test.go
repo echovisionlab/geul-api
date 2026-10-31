@@ -101,7 +101,7 @@ func TestEmailCourierServiceSendEmailSkipsUnsupportedSelectorsWithoutQueueing(t 
 
 			enqueuer := &stubEmailCourierPublisher{}
 			service := newTestEmailCourierService(enqueuer, nil)
-			resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+			resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 				Recipient:    "user@example.com",
 				TemplateType: templateType,
 			}))
@@ -213,7 +213,7 @@ func TestEmailCourierServiceSendEmailBuildsExpectedQueueMessage(t *testing.T) {
 				tc.templateData,
 			)
 
-			resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+			resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 				Recipient:    "user@example.com",
 				TemplateType: tc.templateType,
 				TemplateData: data,
@@ -327,7 +327,7 @@ func TestEmailCourierServiceSendEmailAllowsUnverifiedUsableCodeAddress(t *testin
 		},
 	)
 
-	resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+	resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "user@example.com",
 		TemplateType: "login_code_valid",
 		TemplateData: data,
@@ -356,7 +356,7 @@ func TestEmailCourierServiceSendEmailRejectsMismatchedCodeAddress(t *testing.T) 
 		},
 	)
 
-	resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+	resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "user@example.com",
 		TemplateType: "login_code_valid",
 		TemplateData: data,
@@ -406,7 +406,7 @@ func TestEmailCourierServiceSendEmailRejectsUnavailableLoginIdentity(t *testing.
 				},
 			)
 
-			resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+			resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 				Recipient:    "user@example.com",
 				TemplateType: "login_code_valid",
 				TemplateData: data,
@@ -443,7 +443,7 @@ func TestEmailCourierServiceSendEmailRejectsInvalidPasswordlessContext(t *testin
 				structured.Fields{"login_code": "123456"},
 			)
 
-			resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+			resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 				Recipient:    "user@example.com",
 				TemplateType: tc.templateType,
 				TemplateData: data,
@@ -481,12 +481,12 @@ func TestEmailCourierServiceSendEmailRetriesFailedDurableEnqueue(t *testing.T) {
 		})
 	}
 
-	_, err := service.SendEmail(context.Background(), request())
+	_, err := NewCourierConnectHandler(service).SendEmail(context.Background(), request())
 	require.Error(t, err)
 	require.Len(t, enqueuer.requests, 1)
 
 	enqueuer.err = nil
-	response, err := service.SendEmail(context.Background(), request())
+	response, err := NewCourierConnectHandler(service).SendEmail(context.Background(), request())
 	require.NoError(t, err)
 	require.True(t, response.Msg.Queued)
 	require.Len(t, enqueuer.requests, 2)
@@ -517,13 +517,13 @@ func TestEmailCourierServiceSendEmailUsesExactIssuanceIdempotency(t *testing.T) 
 		})
 	}
 
-	first, err := service.SendEmail(context.Background(), request("123456", "issuance-a"))
+	first, err := NewCourierConnectHandler(service).SendEmail(context.Background(), request("123456", "issuance-a"))
 	require.NoError(t, err)
 	require.True(t, first.Msg.Queued)
-	duplicate, err := service.SendEmail(context.Background(), request("123456", "issuance-a"))
+	duplicate, err := NewCourierConnectHandler(service).SendEmail(context.Background(), request("123456", "issuance-a"))
 	require.NoError(t, err)
 	require.True(t, duplicate.Msg.Queued)
-	third, err := service.SendEmail(context.Background(), request("123456", "issuance-b"))
+	third, err := NewCourierConnectHandler(service).SendEmail(context.Background(), request("123456", "issuance-b"))
 	require.NoError(t, err)
 	require.True(t, third.Msg.Queued)
 
@@ -546,7 +546,7 @@ func TestEmailCourierServiceSendEmailFailsClosedWithoutGeneratedCode(t *testing.
 		structured.Fields{"expires_in_minutes": 15},
 	)
 
-	_, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+	_, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "new@example.com",
 		TemplateType: "registration_code_valid",
 		TemplateData: data,
@@ -594,7 +594,7 @@ func TestEmailCourierServiceSendEmailFailsClosedOnInvalidIssuanceProvenance(t *t
 			t.Parallel()
 			enqueuer := &stubEmailCourierPublisher{}
 			service := newTestEmailCourierService(enqueuer, nil)
-			_, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+			_, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 				Recipient:    "new@example.com",
 				TemplateType: "registration_code_valid",
 				TemplateData: data,
@@ -624,7 +624,7 @@ func TestEmailCourierServiceExpiryUsesReservedIssuanceTimeAndShortestLifespan(t 
 		},
 	)
 
-	response, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+	response, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "new@example.com",
 		TemplateType: "registration_code_valid",
 		TemplateData: data,
@@ -645,7 +645,7 @@ func TestEmailCourierServiceExpiryUsesReservedIssuanceTimeAndShortestLifespan(t 
 			"expires_in_minutes": 10,
 		},
 	)
-	_, err = service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+	_, err = NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "expired@example.com",
 		TemplateType: "registration_code_valid",
 		TemplateData: expiredData,
@@ -683,7 +683,7 @@ func TestEmailCourierServiceSendEmailSkipsVerificationWithoutIdentityContext(t *
 		structured.Fields{"verification_code": "123456"},
 	)
 
-	resp, err := service.SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
+	resp, err := NewCourierConnectHandler(service).SendEmail(context.Background(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "user@example.com",
 		TemplateType: "verification_code_valid",
 		TemplateData: data,
@@ -868,7 +868,7 @@ func TestEmailCourierServiceRewritesVerificationURLToSitePage(t *testing.T) {
 	data := authCourierTemplateDataForTest(
 		t, "verification_code_valid", "reader@example.test", "rewrite", testEmailCourierNow.Add(-time.Minute), templateData,
 	)
-	_, err := service.SendEmail(t.Context(), connect.NewRequest(&intrav1.SendEmailRequest{
+	_, err := NewCourierConnectHandler(service).SendEmail(t.Context(), connect.NewRequest(&intrav1.SendEmailRequest{
 		Recipient:    "reader@example.test",
 		TemplateType: "verification_code_valid",
 		TemplateData: data,

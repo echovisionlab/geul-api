@@ -5,130 +5,100 @@ import (
 	"errors"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-type EmailSuppressionService struct {
-	managev1connect.UnimplementedEmailSuppressionServiceHandler
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
-	auditWriter domainaudit.Appender
+// GetEmailSuppressionQuery reads the active suppression of an address.
+type GetEmailSuppressionQuery struct {
+	Email string
 }
 
-// NewAuditedEmailSuppressionService creates an EmailSuppressionService whose
-// administrator release operation appends Domain Audit in the same transaction.
-func NewAuditedEmailSuppressionService(db *gorm.DB, auditWriter domainaudit.Appender, spiceDB *auth.SpiceDBClient) *EmailSuppressionService {
-	if auditWriter == nil {
-		panic("email suppression audit writer is required")
+// GetEmailSuppression returns the active suppression of the address, or nil
+// when deliveries to it are not suppressed.
+func (s *Service) GetEmailSuppression(ctx context.Context, query GetEmailSuppressionQuery) (*managev1.EmailSuppression, error) {
+	// A suppression names an address and its delivery failure; only
+	// administrators may read it.
+	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
+		return nil, err
 	}
-	service := NewEmailSuppressionService(db, spiceDB)
-	service.auditWriter = auditWriter
-	return service
+	if query.Email == "" {
+		return nil, domainerr.Required("email")
+	}
+	suppression, err := GetActiveEmailSuppression(ctx, s.db, query.Email)
+	if err != nil || suppression == nil {
+		return nil, err
+	}
+	return toProtoEmailSuppression(suppression), nil
 }
 
-func NewEmailSuppressionService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *EmailSuppressionService {
-	dependencycheck.MustNotNil(db, "db")
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	return &EmailSuppressionService{db: db, spiceDB: spiceDB}
+// ReleaseEmailSuppressionCommand releases the active suppression of an
+// address.
+type ReleaseEmailSuppressionCommand struct {
+	Email string
 }
 
-func (s *EmailSuppressionService) GetEmailSuppression(
-	ctx context.Context,
-	req *connect.Request[managev1.GetEmailSuppressionRequest],
-) (*connect.Response[managev1.GetEmailSuppressionResponse], error) {
-	if req.Msg.Email == "" {
-		return nil, errs.Required("email")
-	}
-
-	suppression, err := GetActiveEmailSuppression(ctx, s.db, req.Msg.Email)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if suppression == nil {
-		return connect.NewResponse(&managev1.GetEmailSuppressionResponse{}), nil
-	}
-	return connect.NewResponse(&managev1.GetEmailSuppressionResponse{
-		Suppression: toProtoEmailSuppression(suppression),
-	}), nil
-}
-
-func (s *EmailSuppressionService) ReleaseEmailSuppression(
-	ctx context.Context,
-	req *connect.Request[managev1.ReleaseEmailSuppressionRequest],
-) (*connect.Response[managev1.ReleaseEmailSuppressionResponse], error) {
-	can, err := policyv1.EmailSuppression.Release()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
+// ReleaseEmailSuppression releases the active suppression of the address,
+// recording the releasing Member. Releasing an address without one changes
+// nothing.
+func (s *Service) ReleaseEmailSuppression(ctx context.Context, command ReleaseEmailSuppressionCommand) error {
 	var releasedBy *string
 	if user := auth.GetUser(ctx); user != nil && user.MemberID.String() != "" {
 		memberID := user.MemberID.String()
 		releasedBy = &memberID
 	}
-	if err := s.releaseEmailSuppression(ctx, req.Msg.Email, releasedBy, can); err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return connect.NewResponse(&managev1.ReleaseEmailSuppressionResponse{Success: true}), nil
-}
-
-func (s *EmailSuppressionService) releaseEmailSuppression(
-	ctx context.Context,
-	email string,
-	releasedBy *string,
-	can policyv1.Can,
-) error {
-	normalized := emailutil.NormalizeAddressForDelivery(email)
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var suppression model.EmailSuppression
-		findErr := gorm.ErrRecordNotFound
-		if normalized != "" {
-			findErr = tx.WithContext(ctx).
+	normalized := emailutil.NormalizeAddressForDelivery(command.Email)
+	var suppression model.EmailSuppression
+	found := false
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			if normalized == "" {
+				return nil
+			}
+			err := tx.WithContext(ctx).
 				Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 				Where("LOWER(email) = ? AND released_at IS NULL", normalized).
 				First(&suppression).Error
-		}
-		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
-			return findErr
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			found = err == nil
 			return err
-		}
-		if normalized == "" {
-			return errs.Required("email")
-		}
-		if errors.Is(findErr, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		now := time.Now().UTC()
-		if err := tx.Model(&suppression).Updates(map[string]any{
-			"released_at": now,
-			"released_by": releasedBy,
-		}).Error; err != nil {
-			return err
-		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditEmailSuppressionUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewEmailSuppressionReleasedAuditRecord(metadata, suppression.ID)
-		})
+		},
+		Access: freshAdmin(policyv1.EmailSuppression.Release()),
+		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
+			if normalized == "" {
+				return false, domainerr.Required("email")
+			}
+			if !found {
+				return false, nil
+			}
+			return true, tx.Model(&suppression).Updates(map[string]any{
+				"released_at": time.Now().UTC(),
+				"released_by": releasedBy,
+			}).Error
+		},
+		Audit: func(released bool) mutation.Audit {
+			if !released {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditEmailSuppressionUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewEmailSuppressionReleasedAuditRecord(metadata, suppression.ID)
+			})
+		},
 	})
+	return err
 }
 
 func toProtoEmailSuppression(s *model.EmailSuppression) *managev1.EmailSuppression {

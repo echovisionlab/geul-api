@@ -23,7 +23,7 @@ func TestMenuServiceValidateMenuItemsRejectsInvalidVisibilityRole(t *testing.T) 
 		},
 	}}
 
-	err := (&MenuService{}).validateMenuItems(items, 0)
+	err := validateMenuItems(items, 0)
 
 	require.ErrorContains(t, err, "invalid role: owner")
 }

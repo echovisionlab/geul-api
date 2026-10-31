@@ -112,12 +112,12 @@ func main() {
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
 	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
-		emaildelivery.NewEmailCourierService(
+		emaildelivery.NewCourierConnectHandler(emaildelivery.NewEmailCourierService(
 			publisher,
 			stack.KratosClient,
 			emaildeliveryadapter.NewAuthIssuanceAuthority([]byte(stack.TokenSigningSecret), nil, nil),
 			15*time.Minute,
-		),
+		)),
 	)
 	courierHandler := protectBackendIntegrationCourier(
 		stack.TokenSigningSecret,

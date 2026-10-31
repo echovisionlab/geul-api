@@ -255,11 +255,11 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 
 func termsParityOps(db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) legalParityOps {
 	service := newTermsServiceForLegalIntegrationTest(
-		db, "https://example.com", "https://cdn.example.com", spiceDB, legaldomain.WithTermsContentBlockStore(store),
+		db, "https://example.com", "https://cdn.example.com", spiceDB, withLegalContentBlocks(store),
 	)
-	internal := legaldomain.NewAuditedInternalTermsService(
+	internal := newTestInternalTermsService(
 		db, apitelemetry.NewDurableWriter(db), legalIntegrationDependencies(db, "https://cdn.example.com"),
-		legaldomain.WithInternalTermsContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB)),
+		store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB),
 	)
 	fromTerms := func(terms *managev1.Terms) legalParityPolicy {
 		return legalParityPolicy{
@@ -329,11 +329,11 @@ func termsParityOps(db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentbloc
 
 func privacyParityOps(db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) legalParityOps {
 	service := newPrivacyServiceForLegalIntegrationTest(
-		db, "https://example.com", "https://cdn.example.com", spiceDB, legaldomain.WithPrivacyContentBlockStore(store),
+		db, "https://example.com", "https://cdn.example.com", spiceDB, withLegalContentBlocks(store),
 	)
-	internal := legaldomain.NewAuditedInternalPrivacyService(
+	internal := newTestInternalPrivacyService(
 		db, apitelemetry.NewDurableWriter(db), legalIntegrationDependencies(db, "https://cdn.example.com"),
-		legaldomain.WithInternalPrivacyContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB)),
+		store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB),
 	)
 	fromPrivacy := func(privacy *managev1.Privacy) legalParityPolicy {
 		return legalParityPolicy{

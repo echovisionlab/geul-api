@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -26,7 +27,7 @@ type FormReferenceDiscovery interface {
 }
 
 type PostSeriesReferenceDiscovery interface {
-	ListSeriesAdmin(context.Context, *connect.Request[managev1.ListSeriesAdminRequest]) (*connect.Response[managev1.ListSeriesAdminResponse], error)
+	ListSeriesAdmin(context.Context, series.ListSeriesAdminQuery) (*managev1.ListSeriesAdminResponse, error)
 }
 
 type PageReferenceTools struct {
@@ -109,15 +110,17 @@ func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Princ
 			}
 		}
 	case ToolPostSeriesList:
-		response, err := tools.series.ListSeriesAdmin(ctx, connect.NewRequest(&managev1.ListSeriesAdminRequest{Pagination: pagination, Filters: filters}))
+		response, err := tools.series.ListSeriesAdmin(ctx, series.ListSeriesAdminQuery{
+			Page: series.Page{Limit: pagination.Limit, Offset: pagination.Offset}, Filters: filters,
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Series {
+		responsePagination = response.Pagination
+		for _, item := range response.Series {
 			if item != nil && item.Series != nil {
-				series := item.Series
-				items = append(items, map[string]any{"id": series.Id, "title": series.Title, "slug": series.Slug, "status": series.Status, "source_locale": series.SourceLocale, "post_count": item.PostCount})
+				listed := item.Series
+				items = append(items, map[string]any{"id": listed.Id, "title": listed.Title, "slug": listed.Slug, "status": listed.Status, "source_locale": listed.SourceLocale, "post_count": item.PostCount})
 			}
 		}
 	}

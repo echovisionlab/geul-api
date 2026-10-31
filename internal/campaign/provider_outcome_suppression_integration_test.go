@@ -3,11 +3,14 @@
 package campaign
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -143,8 +146,15 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	require.Equal(t, 1, run.FailedCount)
 
 	adminContext, spiceDB := testutil.IntegrationAdminContext(t, db)
-	_, err = emaildelivery.NewEmailSuppressionService(db, spiceDB).ReleaseEmailSuppression(
-		adminContext, connect.NewRequest(&managev1.ReleaseEmailSuppressionRequest{Email: recipientEmail}),
+	admin := auth.GetUser(adminContext)
+	delivery, err := emaildelivery.NewService(emaildelivery.Deps{
+		DB: db, SpiceDB: spiceDB, AdapterCache: noopMailAdapterCache{},
+		AdapterChanges: unusedMailAdapterChanges{}, Audit: &audittest.Recorder{},
+	})
+	require.NoError(t, err)
+	err = delivery.ReleaseEmailSuppression(
+		testutil.NewAuditContext(t, string(admin.IdentityID), string(admin.MemberID)),
+		emaildelivery.ReleaseEmailSuppressionCommand{Email: recipientEmail},
 	)
 	require.NoError(t, err)
 	require.NoError(t, emaildelivery.SuppressEmailAddress(
@@ -158,4 +168,14 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 		Where("LOWER(email) = ? AND released_at IS NULL", emailutil.NormalizeAddressForDelivery(recipientEmail)).
 		Count(&activeSuppressionCount).Error)
 	require.Zero(t, activeSuppressionCount)
+}
+
+type noopMailAdapterCache struct{}
+
+func (noopMailAdapterCache) InvalidateCache() {}
+
+type unusedMailAdapterChanges struct{}
+
+func (unusedMailAdapterChanges) PublishMailAdapterChanged(context.Context, *managev1.MailAdapterChangedEvent) error {
+	return errors.New("test did not expect a mail adapter change")
 }

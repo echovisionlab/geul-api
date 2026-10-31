@@ -8,13 +8,12 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/model"
-	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -52,7 +51,7 @@ func TestFormDomainAuditRootSettingsLifecycleAssetAndDeleteIntegration(t *testin
 	_, err = service.DeleteFormFeaturedImage(ctx, connect.NewRequest(&managev1.DeleteFormFeaturedImageRequest{FormId: formID}))
 	require.NoError(t, err)
 
-	links := sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, spiceDB, writer))
+	links := sharelinktest.NewHandler(t, db, spiceDB)
 	createdLink, err := links.CreateShareLink(ctx, connect.NewRequest(&managev1.CreateShareLinkRequest{EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, EntityId: formID}))
 	require.NoError(t, err)
 	_, err = links.DeleteShareLink(ctx, connect.NewRequest(&managev1.DeleteShareLinkRequest{Id: createdLink.Msg.ShareLink.Id}))

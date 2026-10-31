@@ -136,7 +136,7 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error)
 type Spec[R any] struct {
 	Access        Access                                       // required
 	Subjects      []string                                     // Identity IDs whose Member state changes
-	Lock          func(context.Context, *gorm.DB) error        // row locks of the target, before Access
+	Lock          func(context.Context, *gorm.DB) error        // domain root locks taken before Access
 	Change        func(context.Context, *gorm.DB) (R, error)   // required
 	Audit         func(R) Audit                                // required
 	Outbox        func(context.Context, *gorm.DB, R) error
@@ -150,6 +150,7 @@ func Checked(check func(context.Context, *gorm.DB) error) Access // authority th
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
+func Audits(records ...Audit) Audit                     // several records; skips Unchanged entries
 func Unchanged() Audit
 
 func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // one read-only snapshot
@@ -162,10 +163,10 @@ directly: `mutation.FreshCan(policyv1.Post.Edit(id))`.
 
 1. the global authorization lock, when `Relationships` or `Subjects` is set;
 2. the `Subjects` Identity locks, sorted;
-3. `Lock`: the row locks of the mutation's target;
+3. `Lock`: the domain root row locks;
 4. `Access`: the caller's identity fence and fresh authorization;
 5. `Change`;
-6. the audit record `Audit` names;
+6. the audit records `Audit` names;
 7. `Outbox`;
 8. the `Relationships` batch, written through `authzmutation.Execute` and
    compensated if the transaction rolls back.
@@ -176,11 +177,6 @@ Rules for a spec:
   for an administrator-only mutation. `PrincipalFence` is for a principal's
   own lifecycle step that `Change` guards by state, such as onboarding, where
   the principal is not yet active.
-- **Lock.** Lock the target's root row here when the domain promises that
-  authority is decided while the target cannot change: a role revoked while
-  the mutation waited on the row is then observed, and a missing target
-  answers not found before authorization as it did before the migration.
-  `Change` reads what `Lock` loaded through the enclosing closure.
 - **Checked.** An internal caller whose authority is not the request
   principal, such as a collaboration save attributed to its contributors,
   re-resolves that authority with `Checked` inside the transaction.
@@ -190,9 +186,14 @@ Rules for a spec:
   `internal/member/member_self_profile.go` shows the shape. Subjects take the
   global authorization lock first, which keeps two concurrent mutations that
   lock the same pair of Identities from deadlocking.
+- **Lock.** A mutation whose root row serializes its writers locks it in
+  `Lock`, so a request that waited on a concurrent writer authorizes as of
+  when it proceeds, and a missing root answers NotFound before
+  authorization. `Change` reads the locked row through the closure.
 - **Audit.** Every mutation names a record or returns `Unchanged()` because
-  nothing changed. A zero `Audit` fails the mutation. There is no optional
-  writer.
+  nothing changed; `Audits` names several records of one change, in order,
+  and skips the entries that are `Unchanged()`. A zero `Audit` fails the
+  mutation. There is no optional writer.
 - **Outbox.** Enqueue PGMQ commands and schedule `content.updated` in the
   transaction. Get the executor with `contentsignal.TransactionExecutor(tx)`,
   which refuses a pool that is not a live transaction; publish signals with
@@ -228,6 +229,7 @@ func Duplicate(resource, field, value string) *Error   // "resource with field '
 func Precondition(message string) *Error
 func Denied(message string) *Error
 func InvalidSession() *Error
+func Retry(message string) *Error
 func DependencyUnavailable(dependency string) *Error   // "dependency unavailable"
 ```
 
@@ -245,6 +247,7 @@ Connect lives in one place, `internal/errors/domain.go`:
 | `PermissionDenied` | `PermissionDenied` |
 | `Unauthenticated` | `Unauthenticated` |
 | `Unavailable` | `Unavailable` |
+| `Aborted` | `Aborted` |
 
 `errs.Classified(err)` returns the Connect form of a Connect error or a
 use-case error in the chain. `errs.Wrap`, `errs.BoundaryInterceptor`,

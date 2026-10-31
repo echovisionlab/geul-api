@@ -63,9 +63,13 @@ func LookupActiveEmailSuppressionsByEmail(ctx context.Context, db *gorm.DB, emai
 	return result, nil
 }
 
+// SuppressEmailAddress records a delivery suppression of email in tx, which
+// must be a transaction: it locks the active suppression before replacing
+// it. An SES callback replay and a weaker SES reason leave the active
+// suppression unchanged.
 func SuppressEmailAddress(
 	ctx context.Context,
-	db *gorm.DB,
+	tx *gorm.DB,
 	email string,
 	reason string,
 	source string,
@@ -90,61 +94,60 @@ func SuppressEmailAddress(
 		lastError = &value
 	}
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if source == EmailSuppressionSourceSESCallback &&
-			referenceID != nil && strings.TrimSpace(*referenceID) != "" {
-			var replayCount int64
-			if err := tx.Model(&model.EmailSuppression{}).
-				Where(
-					"LOWER(email) = ? AND source = ? AND reason = ? AND reference_id = ?",
-					normalized,
-					source,
-					reason,
-					strings.TrimSpace(*referenceID),
-				).
-				Count(&replayCount).Error; err != nil {
-				return err
-			}
-			if replayCount > 0 {
-				return nil
-			}
-		}
-
-		var existing model.EmailSuppression
-		err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("LOWER(email) = ? AND released_at IS NULL", normalized).
-			First(&existing).Error
-		if err == nil {
-			if source == EmailSuppressionSourceSESCallback &&
-				!shouldApplySESSuppression(existing, reason) {
-				return nil
-			}
-			if existing.Reason == reason &&
-				existing.Source == source &&
-				stringPointerEqual(existing.ReferenceID, referenceID) {
-				return nil
-			}
-			return tx.Model(&existing).Updates(structured.Fields{
-				"reason":        reason,
-				"source":        source,
-				"reference_id":  referenceID,
-				"last_error":    lastError,
-				"suppressed_at": now,
-			}).Error
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+	tx = tx.WithContext(ctx)
+	if source == EmailSuppressionSourceSESCallback &&
+		referenceID != nil && strings.TrimSpace(*referenceID) != "" {
+		var replayCount int64
+		if err := tx.Model(&model.EmailSuppression{}).
+			Where(
+				"LOWER(email) = ? AND source = ? AND reason = ? AND reference_id = ?",
+				normalized,
+				source,
+				reason,
+				strings.TrimSpace(*referenceID),
+			).
+			Count(&replayCount).Error; err != nil {
 			return err
 		}
+		if replayCount > 0 {
+			return nil
+		}
+	}
 
-		return tx.Create(&model.EmailSuppression{
-			Email:        normalized,
-			Reason:       reason,
-			Source:       source,
-			ReferenceID:  referenceID,
-			LastError:    lastError,
-			SuppressedAt: now,
+	var existing model.EmailSuppression
+	err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Where("LOWER(email) = ? AND released_at IS NULL", normalized).
+		First(&existing).Error
+	if err == nil {
+		if source == EmailSuppressionSourceSESCallback &&
+			!shouldApplySESSuppression(existing, reason) {
+			return nil
+		}
+		if existing.Reason == reason &&
+			existing.Source == source &&
+			stringPointerEqual(existing.ReferenceID, referenceID) {
+			return nil
+		}
+		return tx.Model(&existing).Updates(structured.Fields{
+			"reason":        reason,
+			"source":        source,
+			"reference_id":  referenceID,
+			"last_error":    lastError,
+			"suppressed_at": now,
 		}).Error
-	})
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	return tx.Create(&model.EmailSuppression{
+		Email:        normalized,
+		Reason:       reason,
+		Source:       source,
+		ReferenceID:  referenceID,
+		LastError:    lastError,
+		SuppressedAt: now,
+	}).Error
 }
 
 func shouldApplySESSuppression(existing model.EmailSuppression, incomingReason string) bool {

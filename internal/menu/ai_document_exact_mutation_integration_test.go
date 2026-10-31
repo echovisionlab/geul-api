@@ -41,9 +41,9 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 		targetLocale = "en"
 	}
 
-	source, err := service.LoadAIDocument(ctx, menuID, sourceLocale)
+	source, err := service.domain.LoadAIDocument(ctx, menuID, sourceLocale)
 	require.NoError(t, err)
-	sourceEmpty, err := service.ExecuteAIDocumentMutation(
+	sourceEmpty, err := service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, sourceLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(source.DocumentRevision, nil, menudomain.AIDocumentOperation{
@@ -55,12 +55,12 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 	require.True(t, sourceEmpty.Changed)
 	require.Nil(t, sourceEmpty.TargetRevision)
 
-	missing, err := service.LoadAIDocument(ctx, menuID, targetLocale)
+	missing, err := service.domain.LoadAIDocument(ctx, menuID, targetLocale)
 	require.NoError(t, err)
 	require.False(t, missing.LocaleExists)
 	require.Nil(t, missing.TargetRevision)
 
-	createdTarget, err := service.ExecuteAIDocumentMutation(
+	createdTarget, err := service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(missing.DocumentRevision, nil, menudomain.AIDocumentOperation{
@@ -82,9 +82,9 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 		string(rows[2].Attributes),
 	)
 
-	current, err := service.LoadAIDocument(ctx, menuID, targetLocale)
+	current, err := service.domain.LoadAIDocument(ctx, menuID, targetLocale)
 	require.NoError(t, err)
-	noChange, err := service.ExecuteAIDocumentMutation(
+	noChange, err := service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(current.DocumentRevision, current.TargetRevision, menudomain.AIDocumentOperation{
@@ -97,7 +97,7 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 	require.Equal(t, current.TargetRevision, noChange.TargetRevision)
 	require.Len(t, menuAuditRows(t, db, menuID), 3, "semantic no-op must not append an Audit")
 
-	_, err = service.ExecuteAIDocumentMutation(
+	_, err = service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(current.DocumentRevision, nil, menudomain.AIDocumentOperation{
@@ -110,7 +110,7 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 	require.True(t, conflict.Target)
 	require.Len(t, menuAuditRows(t, db, menuID), 3, "CAS conflict must not append an Audit")
 
-	_, err = service.ExecuteAIDocumentMutation(
+	_, err = service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(current.DocumentRevision, current.TargetRevision, menudomain.AIDocumentOperation{
@@ -123,7 +123,7 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 	require.Equal(t, menudomain.AIDocumentIssueTargetForbidden, invalid.Issues[0].Code)
 	require.Len(t, menuAuditRows(t, db, menuID), 3, "rejected target structure must not append an Audit")
 
-	emptyTarget, err := service.ExecuteAIDocumentMutation(
+	emptyTarget, err := service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(current.DocumentRevision, current.TargetRevision, menudomain.AIDocumentOperation{
@@ -135,7 +135,7 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 	require.JSONEq(t, `[{"id":"about","label":""},{"id":"home","label":""}]`, menuLocaleJSON(t, db, menuID, targetLocale))
 	require.Len(t, menuAuditRows(t, db, menuID), 4)
 
-	deleted, err := service.ExecuteAIDocumentMutation(
+	deleted, err := service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(emptyTarget.DocumentRevision, emptyTarget.TargetRevision, menudomain.AIDocumentOperation{
@@ -153,7 +153,7 @@ func TestMenuAIDocumentExactTargetLifecycleSeedsCASAndAuditsIntegration(t *testi
 		string(rows[4].Attributes),
 	)
 
-	recreated, err := service.ExecuteAIDocumentMutation(
+	recreated, err := service.domain.ExecuteAIDocumentMutation(
 		ctx, menuID, targetLocale, menudomain.AIDocumentMutationEdit,
 		menudomain.AIDocumentExecutionApply,
 		menuMutation(deleted.DocumentRevision, nil, menudomain.AIDocumentOperation{

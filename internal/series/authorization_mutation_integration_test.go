@@ -27,25 +27,25 @@ func TestSeriesAuthorizationMutationsAreSynchronousIntegration(t *testing.T) {
 	require.NoError(t, err)
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 
-	created, err := service.CreateSeries(seriesIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.CreateSeriesRequest{Title: "Synchronous Series"}))
+	created, err := service.CreateSeries(seriesIntegrationAdminCtx(t, adminID), connect.NewRequest(&managev1.CreateSeriesRequest{Title: "Synchronous Series"}))
 	require.NoError(t, err)
 	seriesID := created.Msg.Id
 	requireSeriesManagerRelation(t, service, adminID, seriesID, true)
 
-	added, err := service.AddSeriesManager(seriesIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.AddSeriesManagerRequest{
+	added, err := service.AddSeriesManager(seriesIntegrationAdminCtx(t, adminID), connect.NewRequest(&managev1.AddSeriesManagerRequest{
 		SeriesId: seriesID, MemberId: testutil.PostIntegrationMemberID(managerID),
 	}))
 	require.NoError(t, err)
 	require.True(t, added.Msg.Success)
 	requireSeriesManagerRelation(t, service, managerID, seriesID, true)
 
-	idempotentAdd, err := service.AddSeriesManager(seriesIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.AddSeriesManagerRequest{
+	idempotentAdd, err := service.AddSeriesManager(seriesIntegrationAdminCtx(t, adminID), connect.NewRequest(&managev1.AddSeriesManagerRequest{
 		SeriesId: seriesID, MemberId: testutil.PostIntegrationMemberID(managerID),
 	}))
 	require.NoError(t, err)
 	require.True(t, idempotentAdd.Msg.Success)
 
-	removed, err := service.RemoveSeriesManager(seriesIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.RemoveSeriesManagerRequest{
+	removed, err := service.RemoveSeriesManager(seriesIntegrationAdminCtx(t, adminID), connect.NewRequest(&managev1.RemoveSeriesManagerRequest{
 		SeriesId: seriesID, MemberId: testutil.PostIntegrationMemberID(managerID),
 	}))
 	require.NoError(t, err)
@@ -54,12 +54,12 @@ func TestSeriesAuthorizationMutationsAreSynchronousIntegration(t *testing.T) {
 
 	// Deletion snapshots and removes every current Series relationship, not only
 	// the policy edge. Leave an active Manager edge in place for that assertion.
-	_, err = service.AddSeriesManager(seriesIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.AddSeriesManagerRequest{
+	_, err = service.AddSeriesManager(seriesIntegrationAdminCtx(t, adminID), connect.NewRequest(&managev1.AddSeriesManagerRequest{
 		SeriesId: seriesID, MemberId: testutil.PostIntegrationMemberID(managerID),
 	}))
 	require.NoError(t, err)
 
-	deleted, err := service.DeleteSeries(seriesIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.DeleteSeriesRequest{Id: seriesID}))
+	deleted, err := service.DeleteSeries(seriesIntegrationAdminCtx(t, adminID), connect.NewRequest(&managev1.DeleteSeriesRequest{Id: seriesID}))
 	require.NoError(t, err)
 	require.True(t, deleted.Msg.Success)
 	requireSeriesManagerRelation(t, service, adminID, seriesID, false)

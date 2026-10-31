@@ -18,8 +18,13 @@ const (
 // connect_handler*.go files know the transport. Add a domain here when its
 // migration lands.
 var pipelineDomains = []string{
+	"internal/audience",
+	"internal/emaildelivery",
 	"internal/maptheme",
 	"internal/member",
+	"internal/menu",
+	"internal/series",
+	"internal/sharelink",
 }
 
 func inPipelineDomain(pkg string) bool {
@@ -183,4 +188,3 @@ func TestAuditWriterNilGuardRatchet(t *testing.T) {
 	}
 	requireRatchet(t, "audit_writer_nil_guards", observed)
 }
-

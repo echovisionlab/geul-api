@@ -12,7 +12,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -140,12 +139,12 @@ func deriveCampaignDeliveryTarget(
 	target.MemberTagIDs = append([]string(nil), segment.MemberTagIDs...)
 	target.AccountRoles = append([]string(nil), segment.AccountRoles...)
 	target.ExcludedMemberIDs = append([]string(nil), segment.ExcludedMemberIDs...)
-	switch strings.TrimSpace(segment.SegmentType) {
-	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String():
+	switch model.AudienceSegmentType(strings.TrimSpace(string(segment.SegmentType))) {
+	case model.AudienceSegmentAllMembers:
 		target.Mode = CampaignDeliveryTargetModeAllUsers
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
+	case model.AudienceSegmentMemberTags:
 		target.Mode = CampaignDeliveryTargetModeUserTags
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+	case model.AudienceSegmentMembersByFilter:
 		target.Mode = CampaignDeliveryTargetModeUsersByFilter
 	default:
 		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment type is unsupported")

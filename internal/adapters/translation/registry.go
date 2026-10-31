@@ -425,7 +425,7 @@ func (r *DomainRegistry) RequireSourceLocaleEdit(
 }
 
 func maskTranslationAuthorizationDenial(err error, entityType string, entityID string) error {
-	if connect.CodeOf(err) == connect.CodePermissionDenied {
+	if errs.CodeOf(err) == connect.CodePermissionDenied {
 		return errs.WithCause(errs.NotFound(entityType, entityID), err)
 	}
 	return err

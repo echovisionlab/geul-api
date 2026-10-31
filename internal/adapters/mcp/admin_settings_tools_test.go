@@ -143,8 +143,7 @@ func TestMailAdapterListPaginationAndCredentialExclusion(t *testing.T) {
 			if arguments != `{}` {
 				limit, offset = 1, 2
 			}
-			require.Equal(t, &commonv1.PaginationRequest{Limit: limit, Offset: offset}, owner.listRequest.Pagination)
-			require.Empty(t, owner.listRequest.Filters)
+			require.Equal(t, emaildelivery.ListMailAdaptersQuery{Limit: limit, Offset: offset}, owner.listQuery)
 			require.Equal(t, true, result.StructuredContent["has_more"])
 			require.Equal(t, float64(offset+2), result.StructuredContent["next_offset"])
 			adapters := result.StructuredContent["adapters"].([]any)
@@ -294,7 +293,7 @@ func TestAdminSettingsPreservesServiceDenialsAndValidation(t *testing.T) {
 }
 
 func TestAdminSettingsUsesNativeAuthenticationBoundary(t *testing.T) {
-	tools, err := NewAdminSettingsTools(&sitesettings.SiteSettingService{}, &emaildelivery.MailAdapterService{})
+	tools, err := NewAdminSettingsTools(&sitesettings.SiteSettingService{}, &emaildelivery.Service{})
 	require.NoError(t, err)
 	for _, name := range tools.ToolNames() {
 		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, adminSettingsArguments(t, name))
@@ -379,18 +378,18 @@ func assertAdminSettingsNoSecrets(t *testing.T, result mcpserver.ToolResult) {
 }
 
 type recordingAdminSettingsApplication struct {
-	settings    *managev1.AllSettings
-	adapters    []*managev1.MailAdapter
-	adapter     *managev1.MailAdapter
-	total       int32
-	err         error
-	bindingErr  error
-	ctx         context.Context
-	calls       int
-	getKeys     []string
-	setRequest  *managev1.SetManySettingsRequest
-	listRequest *managev1.ListMailAdaptersAdminRequest
-	sender      emaildelivery.MailAdapterSenderUpdate
+	settings   *managev1.AllSettings
+	adapters   []*managev1.MailAdapter
+	adapter    *managev1.MailAdapter
+	total      int32
+	err        error
+	bindingErr error
+	ctx        context.Context
+	calls      int
+	getKeys    []string
+	setRequest *managev1.SetManySettingsRequest
+	listQuery  emaildelivery.ListMailAdaptersQuery
+	sender     emaildelivery.MailAdapterSenderUpdate
 }
 
 func (owner *recordingAdminSettingsApplication) GetSettings(ctx context.Context, _ *connect.Request[managev1.GetSettingsRequest]) (*connect.Response[managev1.GetSettingsResponse], error) {
@@ -416,16 +415,16 @@ func (owner *recordingAdminSettingsApplication) SetManySettings(ctx context.Cont
 	return connect.NewResponse(&managev1.SetManySettingsResponse{Success: true}), owner.err
 }
 
-func (owner *recordingAdminSettingsApplication) ListMailAdaptersAdmin(ctx context.Context, request *connect.Request[managev1.ListMailAdaptersAdminRequest]) (*connect.Response[managev1.ListMailAdaptersAdminResponse], error) {
-	owner.ctx, owner.listRequest = ctx, request.Msg
+func (owner *recordingAdminSettingsApplication) ListMailAdapters(ctx context.Context, query emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error) {
+	owner.ctx, owner.listQuery = ctx, query
 	owner.calls++
-	return connect.NewResponse(&managev1.ListMailAdaptersAdminResponse{Adapters: owner.adapters, Pagination: &commonv1.PaginationResponse{Total: owner.total, Limit: request.Msg.Pagination.Limit, Offset: request.Msg.Pagination.Offset}}), owner.err
+	return emaildelivery.MailAdapterPage{Adapters: owner.adapters, Pagination: &commonv1.PaginationResponse{Total: owner.total, Limit: query.Limit, Offset: query.Offset}}, owner.err
 }
 
-func (owner *recordingAdminSettingsApplication) UpdateSender(ctx context.Context, input emaildelivery.MailAdapterSenderUpdate) (*connect.Response[managev1.UpdateMailAdapterResponse], error) {
+func (owner *recordingAdminSettingsApplication) UpdateMailAdapterSender(ctx context.Context, input emaildelivery.MailAdapterSenderUpdate) (*managev1.MailAdapter, error) {
 	owner.ctx, owner.sender = ctx, input
 	owner.calls++
-	return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: owner.adapter}), owner.err
+	return owner.adapter, owner.err
 }
 
 func TestSiteSettingsUpdateRejectsLegacyContactKeys(t *testing.T) {

@@ -46,7 +46,7 @@ func TestPostSeriesTranslationInterchangePersistsSparseTargetCASAuditAndRollback
 	var result TranslationInterchangeResult
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var applyErr error
-		result, applyErr = service.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
+		result, applyErr = service.domain.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
 			SeriesID: seriesID, SourceLocale: sourceLocale, TargetLocale: targetLocale,
 			Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			Plan: plan, Targets: map[string]translation.UnitResult{
@@ -76,7 +76,7 @@ func TestPostSeriesTranslationInterchangePersistsSparseTargetCASAuditAndRollback
 	}))
 	require.NoError(t, err)
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, applyErr := service.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
+		_, applyErr := service.domain.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
 			SeriesID: seriesID, SourceLocale: sourceLocale, TargetLocale: targetLocale,
 			Mode:             managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			ExpectedRevision: &oldTargetRevision, Plan: plan,
@@ -92,7 +92,7 @@ func TestPostSeriesTranslationInterchangePersistsSparseTargetCASAuditAndRollback
 
 	staleAbsentRevision := ""
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, applyErr := service.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
+		_, applyErr := service.domain.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
 			SeriesID: seriesID, SourceLocale: sourceLocale, TargetLocale: targetLocale,
 			Mode:             managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			ExpectedRevision: &staleAbsentRevision, Plan: plan,
@@ -116,7 +116,7 @@ func TestPostSeriesTranslationInterchangePersistsSparseTargetCASAuditAndRollback
 		t, db, adminID, stack.SpiceDBClient, seriesFailingAuditAppender{},
 	)
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, applyErr := failing.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
+		_, applyErr := failing.domain.ApplyTranslationInterchange(ctx, tx, TranslationInterchangeMutation{
 			SeriesID: seriesID, SourceLocale: sourceLocale, TargetLocale: rollbackLocale,
 			Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			Plan: rollbackPlan, Targets: map[string]translation.UnitResult{

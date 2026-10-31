@@ -120,7 +120,7 @@ func (h *Handlers) handleSuccessfulTranscodeComplete(
 }
 
 func logUntrackedTranscodeComplete(ctx context.Context, event *managev1.TranscodeCompleteEvent) {
-	slog.WarnContext(ctx, 
+	slog.WarnContext(ctx,
 		"Skipped untracked transcode completion",
 		"fileId",
 		event.FileId,

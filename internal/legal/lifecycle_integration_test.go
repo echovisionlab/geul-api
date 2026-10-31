@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -36,9 +37,9 @@ func newPrivacyServiceForLegalIntegrationTest(
 	baseURL string,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	options ...legaldomain.PrivacyServiceOption,
-) *legaldomain.PrivacyService {
-	return legaldomain.NewAuditedPrivacyService(
+	options ...legalPolicyTestOption,
+) *legaldomain.PrivacyConnectHandler {
+	return newTestPrivacyService(
 		db, baseURL, apitelemetry.NewDurableWriter(db), spiceDB,
 		legalIntegrationDependencies(db, cdnDomain), options...,
 	)
@@ -49,9 +50,9 @@ func newTermsServiceForLegalIntegrationTest(
 	baseURL string,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	options ...legaldomain.TermsServiceOption,
-) *legaldomain.TermsService {
-	return legaldomain.NewAuditedTermsService(
+	options ...legalPolicyTestOption,
+) *legaldomain.TermsConnectHandler {
+	return newTestTermsService(
 		db, baseURL, apitelemetry.NewDurableWriter(db), spiceDB,
 		legalIntegrationDependencies(db, cdnDomain), options...,
 	)
@@ -75,7 +76,7 @@ func TestCancellingOnlyScheduledPrivacyClearsCanonicalOgRouteIntegration(t *test
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	svc := newPrivacyServiceForLegalIntegrationTest(
 		db, "https://example.com", "https://cdn.example.com", spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 
 	draft, err := svc.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
@@ -149,7 +150,7 @@ func TestPrivacyScheduleActivationKeepsMailLifecycleIndependentIntegration(t *te
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	svc := newPrivacyServiceForLegalIntegrationTest(
 		db, "https://example.com", "", spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 
 	activeDraft, err := svc.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
@@ -291,7 +292,7 @@ func TestScheduledTermsActivationCancelsPendingUpdateDeliveryRunIntegration(t *t
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithTermsContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 	draft, err := service.CreateTermsVersion(
 		ctx,
@@ -357,7 +358,7 @@ func TestImmediateLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegrat
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	service := newPrivacyServiceForLegalIntegrationTest(
 		db, "https://example.com", "", spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 	draft, err := service.CreatePrivacyVersion(
 		ctx,
@@ -406,7 +407,7 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 			"https://example.com",
 			"https://cdn.example.com",
 			spiceDB,
-			legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+			withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 		)
 		first, err := service.CreatePrivacyVersion(
 			ctx,
@@ -496,7 +497,7 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 			"https://example.com",
 			"https://cdn.example.com",
 			spiceDB,
-			legaldomain.WithTermsContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+			withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 		)
 		first, err := service.CreateTermsVersion(
 			ctx,
@@ -594,7 +595,7 @@ func TestTermsScheduleTransitionErrorsUseReadableMessagesIntegration(t *testing.
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithTermsContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 	draft, err := service.CreateTermsVersion(
 		ctx,
@@ -640,7 +641,7 @@ func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithTermsContentBlockStore(store),
+		withLegalContentBlocks(store),
 	)
 	termsDraft, err := termsService.CreateTermsVersion(
 		ctx,
@@ -650,8 +651,7 @@ func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	internalTerms := legaldomain.NewInternalTermsService(db, legalIntegrationDependencies(db, "https://cdn.example.com"))
-	legaldomain.WithInternalTermsContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(internalTerms)
+	internalTerms := newTestInternalTermsService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, "https://cdn.example.com"), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 	termsUpdated, err := internalTerms.UpdateTermsLocaleMetadata(
 		ctx,
 		connect.NewRequest(&intrav1.UpdateTermsLocaleMetadataRequest{
@@ -670,7 +670,7 @@ func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(store),
+		withLegalContentBlocks(store),
 	)
 	privacyDraft, err := privacyService.CreatePrivacyVersion(
 		ctx,
@@ -680,8 +680,7 @@ func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
 		}),
 	)
 	require.NoError(t, err)
-	internalPrivacy := legaldomain.NewInternalPrivacyService(db, legalIntegrationDependencies(db, "https://cdn.example.com"))
-	legaldomain.WithInternalPrivacyContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(internalPrivacy)
+	internalPrivacy := newTestInternalPrivacyService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, "https://cdn.example.com"), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 	privacyUpdated, err := internalPrivacy.UpdatePrivacyLocaleMetadata(
 		ctx,
 		connect.NewRequest(&intrav1.UpdatePrivacyLocaleMetadataRequest{
@@ -711,7 +710,7 @@ func TestLegalDeliveryTemplateAndLayoutLifecycleGuardsIntegration(t *testing.T) 
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(store),
+		withLegalContentBlocks(store),
 	)
 	draft, err := privacyService.CreatePrivacyVersion(
 		ctx,
@@ -949,7 +948,7 @@ func TestPrivacyCancelRejectsSendingDeliveryRunIntegration(t *testing.T) {
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 	draft, err := privacyService.CreatePrivacyVersion(
 		ctx,
@@ -1011,7 +1010,7 @@ func TestPrivacyActivationDoesNotMutateSendingSupersededDeliveryRunIntegration(
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 	activeDraft, err := service.CreatePrivacyVersion(
 		ctx,
@@ -1105,7 +1104,7 @@ func TestPrivacyActivationDoesNotMutateStartedUpdateRunIntegration(t *testing.T)
 			ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 			service := newPrivacyServiceForLegalIntegrationTest(
 				db, "https://example.com", "", spiceDB,
-				legaldomain.WithPrivacyContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+				withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 			)
 			draft, err := service.CreatePrivacyVersion(
 				ctx,
@@ -1174,7 +1173,7 @@ func TestTermsDeliveryHistorySurvivesDraftDeleteIntegration(t *testing.T) {
 		"https://example.com",
 		"https://cdn.example.com",
 		spiceDB,
-		legaldomain.WithTermsContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+		withLegalContentBlocks(newLegalLifecycleContentBlockStore(t, spiceDB)),
 	)
 	draft, err := service.CreateTermsVersion(
 		ctx,

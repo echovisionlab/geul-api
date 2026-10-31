@@ -48,7 +48,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, stack.SpiceDBClient, contributorID)
 	internal := NewAuditedInternalCampaignService(
-		db, apitelemetry.NewDurableWriter(db),
+		db, apitelemetry.NewDurableWriter(db), campaignTestContributorMembers{},
 		WithInternalCampaignContentBlockStore(store),
 		WithInternalCampaignSpiceDB(stack.SpiceDBClient),
 		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
@@ -309,7 +309,7 @@ func TestCampaignSharedPresentationEditProjectsSourceLocaleIntegration(t *testin
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, stack.SpiceDBClient, contributorID)
 	internal := NewInternalCampaignService(
-		db,
+		db, campaignTestContributorMembers{},
 		WithInternalCampaignContentBlockStore(store),
 		WithInternalCampaignSpiceDB(stack.SpiceDBClient),
 		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),

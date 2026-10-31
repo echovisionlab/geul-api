@@ -101,9 +101,9 @@ func TestInternalMenuServicePersistsExactTargetAndSourceRooms(t *testing.T) {
 	checkpoint := collaboration.NewCheckpointFence(
 		registry, menuCollaborationContributorResolver{subject: subject},
 	)
-	service := NewInternalMenuService(&MenuService{
-		db: db, targets: menuCollaborationTargets{}, auditWriter: audit,
-	}, checkpoint)
+	service := NewInternalConnectHandler(newTestService(t, Deps{
+		DB: db, Targets: menuCollaborationTargets{}, Checkpoints: checkpoint, Audit: audit,
+	}))
 	memberID := uuid.NewString()
 
 	target, err := service.LoadDocument(t.Context(), connect.NewRequest(

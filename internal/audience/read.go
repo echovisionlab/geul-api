@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -40,29 +39,33 @@ var segmentFilterConfig = &queryutil.FilterConfig{
 	},
 }
 
-func (s *AudienceService) GetSegment(
-	ctx context.Context,
-	req *connect.Request[managev1.GetSegmentRequest],
-) (*connect.Response[managev1.Segment], error) {
-	can, err := policyv1.AudienceSegment.View(req.Msg.Id)
+// GetSegmentQuery reads one segment.
+type GetSegmentQuery struct {
+	ID string
+}
+
+// GetSegment returns the segment with its configuration, reference counts
+// and, when the counter answers, its estimated recipients.
+func (s *Service) GetSegment(ctx context.Context, query GetSegmentQuery) (*managev1.Segment, error) {
+	can, err := policyv1.AudienceSegment.View(query.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := requireAudienceAdminCan(ctx, s.spiceDB, can); err != nil {
 		return nil, err
 	}
 	var segment model.AudienceSegment
-	if err := s.db.WithContext(ctx).First(&segment, "id = ?", req.Msg.Id).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&segment, "id = ?", query.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("segment not found")
+			return nil, errSegmentNotFound()
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := LoadSegmentConfig(ctx, s.db, &segment); err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	if err := loadSegmentReferenceCounts(ctx, s.db, []*model.AudienceSegment{&segment}); err != nil {
-		return nil, errs.Internal(err)
+	if err := s.loadSegmentReferenceCounts(ctx, s.db, []*model.AudienceSegment{&segment}); err != nil {
+		return nil, err
 	}
 	proto := toProtoSegment(&segment)
 	if count, err := s.estimateCount(ctx, &segment); err == nil {
@@ -70,109 +73,145 @@ func (s *AudienceService) GetSegment(
 	} else {
 		slog.ErrorContext(ctx, "Audience segment count estimate failed; returning segment without a count", "domain", "audience", "event", "audience.operation_failed", "operation", "estimate_segment_count", "outcome", "failed", "segment_id", segment.ID, failurecause.Attr(err))
 	}
-	return connect.NewResponse(proto), nil
+	return proto, nil
 }
 
-func (s *AudienceService) ListSegmentsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListSegmentsAdminRequest],
-) (*connect.Response[managev1.ListSegmentsAdminResponse], error) {
+// ListSegmentsQuery pages through segments for administrators.
+type ListSegmentsQuery struct {
+	IncludeArchived bool
+	// Limit defaults to 20 and is capped at 100.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// SegmentPage is one page of segments.
+type SegmentPage struct {
+	Segments   []*managev1.Segment
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListSegments returns one page of segments with their configuration and
+// reference counts.
+func (s *Service) ListSegments(ctx context.Context, query ListSegmentsQuery) (SegmentPage, error) {
 	can, err := policyv1.AudienceSegment.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return SegmentPage{}, err
 	}
 	if err := requireAudienceAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return SegmentPage{}, err
 	}
-	query := s.db.WithContext(ctx).Model(&model.AudienceSegment{})
-	if !req.Msg.IncludeArchived {
-		query = query.Where("archived_at IS NULL")
+	list := s.db.WithContext(ctx).Model(&model.AudienceSegment{})
+	if !query.IncludeArchived {
+		list = list.Where("archived_at IS NULL")
 	}
-	query, err = segmentFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	list, err = segmentFilterConfig.ApplyFilters(list, query.Filters)
 	if err != nil {
-		return nil, err
+		return SegmentPage{}, err
 	}
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := list.Count(&total).Error; err != nil {
+		return SegmentPage{}, err
 	}
-	limit, offset := normalizePagination(req.Msg.Pagination)
-	query, err = segmentSortConfig.ApplySort(query, req.Msg.Sorts)
+	limit, offset := normalizePagination(query.Limit, query.Offset)
+	list, err = segmentSortConfig.ApplySort(list, query.Sorts)
 	if err != nil {
-		return nil, err
+		return SegmentPage{}, err
 	}
 	var segments []model.AudienceSegment
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&segments).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := list.Limit(int(limit)).Offset(int(offset)).Find(&segments).Error; err != nil {
+		return SegmentPage{}, err
 	}
 	pointers := make([]*model.AudienceSegment, 0, len(segments))
 	for i := range segments {
 		pointers = append(pointers, &segments[i])
 	}
 	if err := LoadSegmentConfigs(ctx, s.db, pointers); err != nil {
-		return nil, errs.Internal(err)
+		return SegmentPage{}, err
 	}
-	if err := loadSegmentReferenceCounts(ctx, s.db, pointers); err != nil {
-		return nil, errs.Internal(err)
+	if err := s.loadSegmentReferenceCounts(ctx, s.db, pointers); err != nil {
+		return SegmentPage{}, err
 	}
 	protoSegments := make([]*managev1.Segment, len(segments))
 	for i := range segments {
 		protoSegments[i] = toProtoSegment(&segments[i])
 	}
-	return connect.NewResponse(&managev1.ListSegmentsAdminResponse{
+	return SegmentPage{
 		Segments:   protoSegments,
 		Pagination: (queryutil.Pagination{Limit: limit, Offset: offset}).BuildResponse(total),
-	}), nil
+	}, nil
 }
 
-func (s *AudienceService) ListSegmentsForAuthenticatedAccess(
-	ctx context.Context,
-	req *connect.Request[managev1.ListSegmentsForAuthenticatedAccessRequest],
-) (*connect.Response[managev1.ListSegmentsForAuthenticatedAccessResponse], error) {
-	if _, err := requireDownloadPolicyAuthor(ctx, s.spiceDB); err != nil {
-		return nil, err
+// ListAuthenticatedAccessSegmentsQuery pages through the active segments a
+// download policy may grant access to.
+type ListAuthenticatedAccessSegmentsQuery struct {
+	// Limit defaults to 20 and is capped at 100.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// AccessSegmentPage is one page of segment summaries.
+type AccessSegmentPage struct {
+	Segments   []*managev1.AudienceSegmentSummary
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListAuthenticatedAccessSegments returns summaries of the segments that can
+// grant authenticated download access, for authors editing a policy.
+func (s *Service) ListAuthenticatedAccessSegments(ctx context.Context, query ListAuthenticatedAccessSegmentsQuery) (AccessSegmentPage, error) {
+	if err := requireDownloadPolicyAuthor(ctx, s.spiceDB); err != nil {
+		return AccessSegmentPage{}, err
 	}
-	query := s.db.WithContext(ctx).
+	list := s.db.WithContext(ctx).
 		Model(&model.AudienceSegment{}).
 		Where("segment_type IN ?", authenticatedAccessSegmentTypes).
 		Where("archived_at IS NULL")
 	var err error
-	query, err = segmentFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	list, err = segmentFilterConfig.ApplyFilters(list, query.Filters)
 	if err != nil {
-		return nil, err
+		return AccessSegmentPage{}, err
 	}
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := list.Count(&total).Error; err != nil {
+		return AccessSegmentPage{}, err
 	}
-	query, err = segmentSortConfig.ApplySort(query, req.Msg.Sorts)
+	list, err = segmentSortConfig.ApplySort(list, query.Sorts)
 	if err != nil {
-		return nil, err
+		return AccessSegmentPage{}, err
 	}
-	limit, offset := normalizePagination(req.Msg.Pagination)
+	limit, offset := normalizePagination(query.Limit, query.Offset)
 	var segments []model.AudienceSegment
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&segments).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := list.Limit(int(limit)).Offset(int(offset)).Find(&segments).Error; err != nil {
+		return AccessSegmentPage{}, err
 	}
 	summaries := make([]*managev1.AudienceSegmentSummary, 0, len(segments))
 	for i := range segments {
 		summary, valid := AuthenticatedAccessSegmentSummary(&segments[i])
 		if !valid {
-			return nil, errs.InternalMsg("authenticated access segment query returned an ineligible segment")
+			return AccessSegmentPage{}, errors.New("authenticated access segment query returned an ineligible segment")
 		}
 		summaries = append(summaries, summary)
 	}
-	return connect.NewResponse(newAudienceSegmentListResponse(summaries, total, limit, offset)), nil
+	return AccessSegmentPage{
+		Segments: summaries,
+		Pagination: &commonv1.PaginationResponse{
+			Total:   int32(total),
+			Limit:   limit,
+			Offset:  offset,
+			HasMore: int64(offset+limit) < total,
+		},
+	}, nil
 }
 
-func (s *AudienceService) estimateCount(ctx context.Context, segment *model.AudienceSegment) (int32, error) {
+func (s *Service) estimateCount(ctx context.Context, segment *model.AudienceSegment) (int32, error) {
 	if segment == nil {
 		return 0, fmt.Errorf("segment is required")
 	}
 	switch segment.SegmentType {
-	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String(),
-		managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
-		managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+	case model.AudienceSegmentAllMembers, model.AudienceSegmentMemberTags, model.AudienceSegmentMembersByFilter:
 	default:
 		return 0, fmt.Errorf("unknown segment type: %s", segment.SegmentType)
 	}
@@ -183,21 +222,18 @@ func (s *AudienceService) estimateCount(ctx context.Context, segment *model.Audi
 	return int32(count), nil
 }
 
-func loadSegmentForResponse(ctx context.Context, db *gorm.DB, segmentID string, result *model.AudienceSegment) error {
+func (s *Service) loadSegmentForResponse(ctx context.Context, db *gorm.DB, segmentID string, result *model.AudienceSegment) error {
 	*result = model.AudienceSegment{}
 	if err := db.WithContext(ctx).First(result, "id = ?", segmentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFoundMsg("segment not found")
+			return errSegmentNotFound()
 		}
-		return errs.Internal(err)
+		return err
 	}
 	if err := LoadSegmentConfig(ctx, db, result); err != nil {
-		return errs.Internal(err)
+		return err
 	}
-	if err := loadSegmentReferenceCounts(ctx, db, []*model.AudienceSegment{result}); err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return s.loadSegmentReferenceCounts(ctx, db, []*model.AudienceSegment{result})
 }
 
 func toProtoSegment(segment *model.AudienceSegment) *managev1.Segment {
@@ -205,7 +241,7 @@ func toProtoSegment(segment *model.AudienceSegment) *managev1.Segment {
 		Id:                           segment.ID,
 		Name:                         segment.Name,
 		Description:                  segment.Description,
-		SegmentType:                  managev1.SegmentType(managev1.SegmentType_value[segment.SegmentType]),
+		SegmentType:                  segmentTypeToProto(segment.SegmentType),
 		Config:                       toProtoSegmentConfig(segment.Config),
 		CreatedAt:                    timestamppb.New(segment.CreatedAt),
 		CampaignCount:                segment.CampaignCount,
@@ -250,15 +286,13 @@ func requireAudienceAdminCan(
 	return authz.RequireAdminCan(ctx, spiceDB, can)
 }
 
-func normalizePagination(pagination *commonv1.PaginationRequest) (int32, int32) {
+func normalizePagination(requestedLimit, requestedOffset int32) (int32, int32) {
 	limit, offset := int32(20), int32(0)
-	if pagination != nil {
-		if pagination.Limit > 0 {
-			limit = pagination.Limit
-		}
-		if pagination.Offset > 0 {
-			offset = pagination.Offset
-		}
+	if requestedLimit > 0 {
+		limit = requestedLimit
+	}
+	if requestedOffset > 0 {
+		offset = requestedOffset
 	}
 	if limit > 100 {
 		limit = 100
@@ -266,18 +300,6 @@ func normalizePagination(pagination *commonv1.PaginationRequest) (int32, int32) 
 	return limit, offset
 }
 
-func newAudienceSegmentListResponse(
-	summaries []*managev1.AudienceSegmentSummary,
-	total int64,
-	limit, offset int32,
-) *managev1.ListSegmentsForAuthenticatedAccessResponse {
-	return &managev1.ListSegmentsForAuthenticatedAccessResponse{
-		Segments: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: int64(offset+limit) < total,
-		},
-	}
+func errSegmentNotFound() error {
+	return domainerr.New(domainerr.NotFound, "", "segment not found")
 }

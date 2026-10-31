@@ -12,7 +12,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -39,8 +38,8 @@ type SiteSettingsAdminApplication interface {
 }
 
 type MailAdapterAdminApplication interface {
-	ListMailAdaptersAdmin(context.Context, *connect.Request[managev1.ListMailAdaptersAdminRequest]) (*connect.Response[managev1.ListMailAdaptersAdminResponse], error)
-	UpdateSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (*connect.Response[managev1.UpdateMailAdapterResponse], error)
+	ListMailAdapters(context.Context, emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error)
+	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (*managev1.MailAdapter, error)
 }
 
 type AdminSettingsTools struct {
@@ -138,17 +137,15 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		if limit < 1 || limit > 100 || input.Offset < 0 {
 			return executionError(errors.New("limit must be between 1 and 100; offset must be between 0 and 2147483647"))
 		}
-		response, err := tools.mail.ListMailAdaptersAdmin(ctx, connect.NewRequest(&managev1.ListMailAdaptersAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: limit, Offset: input.Offset},
-		}))
+		page, err := tools.mail.ListMailAdapters(ctx, emaildelivery.ListMailAdaptersQuery{Limit: limit, Offset: input.Offset})
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		adapters := make([]mailAdapterAdminOutput, 0, len(response.Msg.Adapters))
-		for _, adapter := range response.Msg.Adapters {
+		adapters := make([]mailAdapterAdminOutput, 0, len(page.Adapters))
+		for _, adapter := range page.Adapters {
 			adapters = append(adapters, projectMailAdapterAdmin(adapter))
 		}
-		pagination := response.Msg.Pagination
+		pagination := page.Pagination
 		next := int64(input.Offset) + int64(len(adapters))
 		hasMore := len(adapters) > 0 && next < int64(pagination.GetTotal()) && next <= 1<<31-1
 		output := map[string]any{"adapters": adapters, "total": pagination.GetTotal(), "limit": limit, "offset": input.Offset, "has_more": hasMore}
@@ -176,13 +173,13 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		if input.FromName == nil && input.FromEmail == nil && input.IsActive == nil && input.Priority == nil {
 			return executionError(errors.New("supply at least one of from_name, from_email, is_active, or priority"))
 		}
-		response, err := tools.mail.UpdateSender(ctx, emaildelivery.MailAdapterSenderUpdate{
+		adapter, err := tools.mail.UpdateMailAdapterSender(ctx, emaildelivery.MailAdapterSenderUpdate{
 			ID: input.ID, FromName: input.FromName, FromEmail: input.FromEmail, IsActive: input.IsActive, Priority: input.Priority,
 		})
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(response.Msg.Adapter)})
+		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(adapter)})
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}

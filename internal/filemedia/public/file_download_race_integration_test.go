@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -332,7 +333,7 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceRestricted,
 	)
 	segmentID := uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO audience_segment (id, name, segment_type, created_at) VALUES (?::uuid, 'All members download', ?, CURRENT_TIMESTAMP)`, segmentID, managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String()).Error)
+	require.NoError(t, db.Exec(`INSERT INTO audience_segment (id, name, segment_type, created_at) VALUES (?::uuid, 'All members download', ?, CURRENT_TIMESTAMP)`, segmentID, model.AudienceSegmentAllMembers).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_audience_segment (block_id, reference_path, audience_segment_id) VALUES (?::uuid, 'file', ?::uuid)`, blockID, segmentID).Error)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())

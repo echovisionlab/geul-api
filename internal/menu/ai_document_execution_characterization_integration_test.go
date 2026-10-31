@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -41,7 +42,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 	t.Run("source name apply advances document and signals", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
 		events := &recordedMenuContentEvents{}
-		result, err := fixture.service.ExecuteAIDocumentMutation(
+		result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil, menuSetName("Renamed "+menuID[:8])),
@@ -65,7 +66,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 	t.Run("validate rolls every write back and reports no result", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
 		events := &recordedMenuContentEvents{}
-		result, err := fixture.service.ExecuteAIDocumentMutation(
+		result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionValidate,
 			menuMutation(before, nil, menuSetName("Validated "+menuID[:8])),
@@ -82,7 +83,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 	t.Run("source label writes source values only", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
 		events := &recordedMenuContentEvents{}
-		result, err := fixture.service.ExecuteAIDocumentMutation(
+		result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil, menuSetLabel("about", "About us")),
@@ -103,7 +104,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 
 	t.Run("source unset label removes the stored value", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
-		result, err := fixture.service.ExecuteAIDocumentMutation(
+		result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil, menudomain.AIDocumentOperation{
@@ -118,7 +119,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 
 	t.Run("source item field rewrites root items", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
-		result, err := fixture.service.ExecuteAIDocumentMutation(
+		result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil,
@@ -148,7 +149,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 			menuSetText("contact", "link_type", "custom"),
 			menuSetText("contact", "url", "/contact"),
 		}
-		_, err := fixture.service.ExecuteAIDocumentMutation(
+		_, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil, insert...),
@@ -156,7 +157,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		requireMenuConnectError(t, err, connect.CodeInvalidArgument,
 			"mutation: compiled Menu operations must match the authorized mutation action")
 
-		inserted, err := fixture.service.ExecuteAIDocumentMutation(
+		inserted, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationManage, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil, insert...),
@@ -172,7 +173,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 			"an inserted item has no source label until one is set")
 		fixture.requireLastAudit(t, menuID, 2, `{"changed_fields":["items"]}`)
 
-		moved, err := fixture.service.ExecuteAIDocumentMutation(
+		moved, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationManage, menudomain.AIDocumentExecutionApply,
 			menuMutation(inserted.DocumentRevision, nil, menudomain.AIDocumentOperation{
@@ -189,7 +190,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		]`, fixture.state(t, menuID).items)
 		fixture.requireLastAudit(t, menuID, 3, `{"changed_fields":["items"]}`)
 
-		deleted, err := fixture.service.ExecuteAIDocumentMutation(
+		deleted, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationManage, menudomain.AIDocumentExecutionApply,
 			menuMutation(moved.DocumentRevision, nil, menudomain.AIDocumentOperation{
@@ -212,7 +213,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 
 	t.Run("target label update keeps the document revision", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
-		created, err := fixture.service.ExecuteAIDocumentMutation(
+		created, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, target,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil, menudomain.AIDocumentOperation{Kind: menudomain.AIDocumentCreateTranslation}),
@@ -224,7 +225,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		fixture.requireLastAudit(t, menuID, 2, `{"changed_fields":["locale_content"],"locale":"`+target+`","item_operation":"created"}`)
 
 		events := &recordedMenuContentEvents{}
-		validated, err := fixture.service.ExecuteAIDocumentMutation(
+		validated, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, target,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionValidate,
 			menuMutation(before, created.TargetRevision, menuSetLabel("home", "홈")),
@@ -234,7 +235,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		require.JSONEq(t, `[{"id":"about","label":"about"},{"id":"home","label":"home"}]`, menuLocaleJSON(t, fixture.db, menuID, target))
 		events.requireNone(t)
 
-		updated, err := fixture.service.ExecuteAIDocumentMutation(
+		updated, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, target,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, created.TargetRevision, menuSetLabel("home", "홈")),
@@ -254,7 +255,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		})
 
 		events = &recordedMenuContentEvents{}
-		deleted, err := fixture.service.ExecuteAIDocumentMutation(
+		deleted, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, target,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, updated.TargetRevision, menudomain.AIDocumentOperation{Kind: menudomain.AIDocumentDeleteTranslation}),
@@ -273,7 +274,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 	t.Run("semantic no-op returns current revisions without audit or signal", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
 		events := &recordedMenuContentEvents{}
-		result, err := fixture.service.ExecuteAIDocumentMutation(
+		result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, nil,
@@ -293,7 +294,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 	t.Run("revision conflicts", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
 		stale := testutil.IntegrationUUID()
-		_, err := fixture.service.ExecuteAIDocumentMutation(
+		_, err := fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutationWithHandles(stale, nil, []string{"menu:" + menuID + "/name"}, menuSetName("Stale")),
@@ -307,7 +308,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		require.EqualError(t, err, "Menu AI document revision conflict")
 
 		targetRevision := testutil.IntegrationUUID()
-		_, err = fixture.service.ExecuteAIDocumentMutation(
+		_, err = fixture.service.domain.ExecuteAIDocumentMutation(
 			fixture.ctx, menuID, source,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
 			menuMutation(before, &targetRevision, menuSetName("Stale")),
@@ -448,7 +449,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				_, err := fixture.service.ExecuteAIDocumentMutation(
+				_, err := fixture.service.domain.ExecuteAIDocumentMutation(
 					fixture.ctx, menuID, tc.locale, tc.action, menudomain.AIDocumentExecutionApply,
 					menuMutation(before, nil, tc.operation),
 				)
@@ -542,7 +543,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				result, err := fixture.service.ExecuteAIDocumentMutation(
+				result, err := fixture.service.domain.ExecuteAIDocumentMutation(
 					tc.ctx, tc.menuID, tc.locale, tc.action, tc.mode, tc.compiler,
 				)
 				require.Equal(t, menudomain.AIDocumentApplyResult{}, result)
@@ -566,7 +567,7 @@ const menuCharacterizationRootItems = `[
 
 type menuAIDocumentExecutionFixture struct {
 	db          *gorm.DB
-	service     *menudomain.MenuService
+	service     menuIntegrationService
 	ctx         context.Context
 	outsiderCtx context.Context
 	memberID    string
@@ -668,13 +669,14 @@ func menuSetText(itemID, field, value string) menudomain.AIDocumentOperation {
 	}
 }
 
+// requireMenuConnectError asserts what the client sees once the boundary
+// maps the use-case error.
 func requireMenuConnectError(t *testing.T, err error, code connect.Code, message string) {
 	t.Helper()
 	require.Error(t, err)
-	require.Equal(t, code, connect.CodeOf(err))
-	var connectErr *connect.Error
-	require.ErrorAs(t, err, &connectErr)
-	require.Equal(t, message, connectErr.Message())
+	mapped := errs.Wrap(err)
+	require.Equal(t, code, mapped.Code())
+	require.Equal(t, message, mapped.Message())
 }
 
 // recordedMenuContentEvents captures the content.updated signals a mutation

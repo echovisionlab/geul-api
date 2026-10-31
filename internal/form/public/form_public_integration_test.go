@@ -15,12 +15,11 @@ import (
 	"gorm.io/gorm"
 
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
-	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
@@ -116,8 +115,8 @@ func TestPublicFormServiceAccessPasswordSubmitAndLimitIntegration(t *testing.T) 
 	require.NoError(t, err)
 	require.NotEmpty(t, submitted.Msg.SubmissionId)
 
-	dashboardLink, err := sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, testutil.IntegrationSpiceDB(t), nil)).CreateShareLink(
-		formPublicPrincipalContext(adminMemberID, adminID),
+	dashboardLink, err := sharelinktest.NewHandler(t, db, testutil.IntegrationSpiceDB(t)).CreateShareLink(
+		testutil.NewAuditContext(t, adminID, adminMemberID),
 		connect.NewRequest(&managev1.CreateShareLinkRequest{
 			EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD,
 			EntityId:   form.id,

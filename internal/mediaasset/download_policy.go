@@ -367,7 +367,7 @@ func LoadFileDownloadPolicyFingerprints(
 				continue
 			}
 			record.Segments = append(record.Segments, fileDownloadPolicySegmentRecord{
-				ID: segment.ID, SegmentType: segment.SegmentType, ArchivedAt: segment.ArchivedAt,
+				ID: segment.ID, SegmentType: string(segment.SegmentType), ArchivedAt: segment.ArchivedAt,
 				UpdatedAt: segment.UpdatedAt, Config: segment.Config,
 			})
 		}
@@ -783,7 +783,7 @@ func loadRestrictedFileDownloadTagFacts(
 ) (map[string]struct{}, map[string]struct{}, error) {
 	referencedTagIDs := make([]string, 0)
 	for _, segment := range segments {
-		if strings.TrimSpace(segment.SegmentType) !=
+		if strings.TrimSpace(string(segment.SegmentType)) !=
 			managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String() {
 			continue
 		}
@@ -832,7 +832,7 @@ func restrictedFileDownloadMemberMatchesSegment(
 	}
 
 	config := segment.Config
-	switch strings.TrimSpace(segment.SegmentType) {
+	switch strings.TrimSpace(string(segment.SegmentType)) {
 	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String():
 		return true
 	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
@@ -913,7 +913,7 @@ func resolveRestrictedFileDownloadPermissions(
 ) (map[policyv1.RoleID]bool, error) {
 	requested := make(map[policyv1.RoleID]struct{})
 	for _, segment := range segments {
-		if strings.TrimSpace(segment.SegmentType) != managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String() {
+		if strings.TrimSpace(string(segment.SegmentType)) != managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String() {
 			continue
 		}
 		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)

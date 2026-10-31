@@ -8,25 +8,22 @@ import (
 	"log/slog"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
-	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -40,55 +37,61 @@ const (
 	menuURLMaxLength       = 2048
 )
 
-// MenuService implements the MenuService Connect handler
-type MenuService struct {
-	managev1connect.UnimplementedMenuServiceHandler
+// Deps are the collaborators of the Menu use cases. Every field is required;
+// NewService rejects a missing one.
+type Deps struct {
+	DB           *gorm.DB
+	SpiceDB      *auth.SpiceDBClient
+	SiteSettings SiteSettingsReferences
+	Targets      TargetReferences
+	// Checkpoints authorize the contributors of a collaboration save.
+	Checkpoints MenuCollaborationCheckpointFence
+	Audit       domainaudit.Appender
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "SiteSettings": d.SiteSettings == nil,
+		"Targets": d.Targets == nil, "Checkpoints": d.Checkpoints == nil, "Audit": d.Audit == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("menu dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the Menu use cases. Connect, MCP and AI document adapters
+// translate their requests into its commands and queries.
+type Service struct {
 	db           *gorm.DB
-	spiceDB      *auth.SpiceDBClient
 	permissions  menuPermissionChecker
 	auditWriter  domainaudit.Appender
 	siteSettings SiteSettingsReferences
 	targets      TargetReferences
+	checkpoints  MenuCollaborationCheckpointFence
+	mutations    *mutation.Runner
 }
 
-// NewMenuService creates a new MenuService
-func NewMenuService(
-	db *gorm.DB,
-	siteSettings SiteSettingsReferences,
-	targets TargetReferences,
-	spiceDB *auth.SpiceDBClient,
-) *MenuService {
-	if db == nil {
-		panic("db is required")
+// NewService validates deps and returns the Menu use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	if siteSettings == nil {
-		panic("site settings references are required")
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	if err != nil {
+		return nil, err
 	}
-	if targets == nil {
-		panic("menu target references are required")
-	}
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	return &MenuService{
-		db: db, spiceDB: spiceDB, permissions: spiceDB,
-		siteSettings: siteSettings, targets: targets,
-	}
-}
-
-// NewAuditedMenuService requires every authoritative Menu mutation to append
-// its Domain Audit record in the same transaction.
-func NewAuditedMenuService(
-	db *gorm.DB,
-	auditWriter domainaudit.Appender,
-	siteSettings SiteSettingsReferences,
-	targets TargetReferences,
-	spiceDB *auth.SpiceDBClient,
-) *MenuService {
-	if auditWriter == nil {
-		panic("menu audit writer is required")
-	}
-	service := NewMenuService(db, siteSettings, targets, spiceDB)
-	service.auditWriter = auditWriter
-	return service
+	return &Service{
+		db: deps.DB, permissions: deps.SpiceDB, auditWriter: deps.Audit,
+		siteSettings: deps.SiteSettings, targets: deps.Targets, checkpoints: deps.Checkpoints,
+		mutations: mutations,
+	}, nil
 }
 
 func lockMenuForUpdate(ctx context.Context, tx *gorm.DB, menuID string) (*model.Menu, error) {
@@ -101,47 +104,67 @@ func lockMenuForUpdate(ctx context.Context, tx *gorm.DB, menuID string) (*model.
 	return &menu, nil
 }
 
-// GetMenu retrieves a menu by name
-// GetMenuById retrieves a menu by ID
-func (s *MenuService) GetMenuById(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMenuByIdRequest],
-) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
+// GetMenuQuery reads one Menu.
+type GetMenuQuery struct {
+	ID string
+}
 
-	// Validate ID is provided
-	id := strings.TrimSpace(req.Msg.Id)
+// ListMenusQuery pages Menus by name. A zero Limit reads 100.
+type ListMenusQuery struct {
+	Limit  int32
+	Offset int32
+}
+
+// CreateMenuCommand creates a Menu. Items carry the API item tree the Menu
+// validates as a whole.
+type CreateMenuCommand struct {
+	Name  string
+	Items []*managev1.MenuItem
+}
+
+// UpdateMenuCommand updates the name, the item tree, or both. A nil field
+// is left alone; Items is set when the request replaces the tree.
+type UpdateMenuCommand struct {
+	ID    string
+	Name  *string
+	Items *[]*managev1.MenuItem
+}
+
+// DeleteMenuCommand deletes a Menu.
+type DeleteMenuCommand struct {
+	ID string
+}
+
+func (s *Service) GetMenu(ctx context.Context, query GetMenuQuery) (_ *managev1.Menu, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", query.ID))
+
+	id := strings.TrimSpace(query.ID)
 	if id == "" {
-		return nil, errs.Required("id")
+		return nil, domainerr.Required("id")
 	}
 
 	var menu model.Menu
 	if err := s.db.WithContext(ctx).First(&menu, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("menu", id)
+			return nil, domainerr.ResourceNotFound("menu", id)
 		}
-		return nil, errs.Internal(fmt.Errorf("failed to get menu: %w", err))
+		return nil, fmt.Errorf("failed to get menu: %w", err)
 	}
 	if err := s.requireExistingMenuPermission(ctx, id, policyv1.Menu.View); err != nil {
 		return nil, err
 	}
 
-	protoMenu, err := s.toProtoMenu(&menu)
+	protoMenu, err := toProtoMenu(&menu)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to convert menu: %w", err))
+		return nil, fmt.Errorf("failed to convert menu: %w", err)
 	}
-
-	return connect.NewResponse(protoMenu), nil
+	return protoMenu, nil
 }
 
-// ListMenus returns all menus
-func (s *MenuService) ListMenus(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMenusRequest],
-) (*connect.Response[managev1.ListMenusResponse], error) {
+func (s *Service) ListMenus(ctx context.Context, query ListMenusQuery) (*managev1.ListMenusResponse, error) {
 	can, err := policyv1.Menu.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := requireMenuGlobalCan(ctx, s.permissions, can); err != nil {
 		return nil, err
@@ -149,34 +172,27 @@ func (s *MenuService) ListMenus(
 	var menus []model.Menu
 	var total int64
 
-	query := s.db.WithContext(ctx).Model(&model.Menu{})
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	stored := s.db.WithContext(ctx).Model(&model.Menu{})
+	if err := stored.Count(&total).Error; err != nil {
+		return nil, err
 	}
 
-	// Apply pagination
 	limit := int32(100)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
+	if query.Limit > 0 {
+		limit = query.Limit
 	}
-
-	if err := query.
+	offset := query.Offset
+	if err := stored.
 		Order("name ASC").
 		Limit(int(limit)).
 		Offset(int(offset)).
 		Find(&menus).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	protoMenus := make([]*managev1.Menu, 0, len(menus))
 	for i := range menus {
-		protoMenu, err := s.toProtoMenu(&menus[i])
+		protoMenu, err := toProtoMenu(&menus[i])
 		if err != nil {
 			// One corrupted menu must not break the whole list.
 			slog.ErrorContext(ctx, "Stored Menu items are not valid; omitting the menu from the list", "domain", "menu", "operation", "decode_menu_items", "outcome", "failed", "menu_id", menus[i].ID, failurecause.Attr(err))
@@ -185,7 +201,7 @@ func (s *MenuService) ListMenus(
 		protoMenus = append(protoMenus, protoMenu)
 	}
 
-	return connect.NewResponse(&managev1.ListMenusResponse{
+	return &managev1.ListMenusResponse{
 		Menus: protoMenus,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
@@ -193,202 +209,153 @@ func (s *MenuService) ListMenus(
 			Offset:  offset,
 			HasMore: offset+limit < int32(total),
 		},
-	}), nil
+	}, nil
 }
 
-// CreateMenu creates a new menu
-func (s *MenuService) CreateMenu(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateMenuRequest],
-) (*connect.Response[managev1.Menu], error) {
+func (s *Service) CreateMenu(ctx context.Context, command CreateMenuCommand) (*managev1.Menu, error) {
 	can, err := policyv1.Menu.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	// Validate menu name
-	if err := s.validateMenuName(req.Msg.Name); err != nil {
 		return nil, err
 	}
-
-	// Check name uniqueness
+	if err := validateMenuName(command.Name); err != nil {
+		return nil, err
+	}
 	var existingCount int64
-	if err := s.db.WithContext(ctx).Model(&model.Menu{}).Where("name = ?", req.Msg.Name).Count(&existingCount).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to check menu name uniqueness: %w", err))
+	if err := s.db.WithContext(ctx).Model(&model.Menu{}).Where("name = ?", command.Name).Count(&existingCount).Error; err != nil {
+		return nil, fmt.Errorf("failed to check menu name uniqueness: %w", err)
 	}
 	if existingCount > 0 {
-		return nil, errs.AlreadyExists("menu", "name", req.Msg.Name)
+		return nil, domainerr.Duplicate("menu", "name", command.Name)
 	}
-
-	// Validate menu items
-	if err := s.validateMenuItems(req.Msg.Items, 0); err != nil {
+	if err := validateMenuItems(command.Items, 0); err != nil {
 		return nil, err
 	}
-
-	// Convert proto items to JSON
-	items, err := s.protoItemsToJSON(req.Msg.Items)
+	items, err := protoItemsToJSON(command.Items)
 	if err != nil {
-		return nil, errs.InvalidArgumentMsg(fmt.Sprintf("failed to convert menu items: %s", err.Error()))
+		return nil, domainerr.New(domainerr.Invalid, "", fmt.Sprintf("failed to convert menu items: %s", err.Error()))
 	}
 
 	now := dbtime.Now()
-	menu := &model.Menu{
-		Name: strings.TrimSpace(req.Msg.Name), Items: items,
-		SourceLocale: translation.DefaultLocale,
-		CreatedAt:    now, UpdatedAt: now,
-	}
-
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		targetErr := s.targets.ValidateAndLock(ctx, tx, collectMenuTargetReferences(req.Msg.Items))
-		if err := requireFreshMenuGlobalCan(ctx, tx, s.permissions, can); err != nil {
-			return err
-		}
-		if targetErr != nil {
-			return targetErr
-		}
-		documentID, err := createMenuContentDocument(ctx, tx, now)
-		if err != nil {
-			return err
-		}
-		menu.ContentDocumentID = documentID.String()
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(menu).Error; err != nil {
-			return err
-		}
-		if err := initializeCurrentSourceLabelValues(
-			ctx, tx, menu.ID, menu.Items, menu.UpdatedAt,
-		); err != nil {
-			return err
-		}
-		if err := domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMenuCreated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMenuCreatedAuditRecord(metadata, menu.ID)
-			},
-		); err != nil {
-			return err
-		}
-		apply, err := policyv1.Menu.TouchPolicy(menu.ID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.Menu.DeletePolicy(menu.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
-	})
-	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to create menu: %w", err))
-	}
-	protoMenu, err := s.toProtoMenu(menu)
-	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to convert menu: %w", err))
-	}
-	return connect.NewResponse(protoMenu), nil
-}
-
-// UpdateMenu updates an existing menu
-func (s *MenuService) UpdateMenu(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateMenuRequest],
-) (_ *connect.Response[managev1.Menu], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
-
-	// Validate ID
-	id := strings.TrimSpace(req.Msg.Id)
-	if id == "" {
-		return nil, errs.Required("id")
-	}
-	update, err := s.prepareMenuUpdate(req.Msg, time.Now())
-	if err != nil {
-		return nil, err
-	}
-	menu, _, err := s.applyMenuUpdate(ctx, id, req.Msg, update)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("menu", id)
-		}
-		return nil, errs.Internal(fmt.Errorf("failed to update menu: %w", err))
-	}
-
-	protoMenu, err := s.toProtoMenu(menu)
-	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to convert menu: %w", err))
-	}
-	return connect.NewResponse(protoMenu), nil
-}
-
-// DeleteMenu deletes a menu
-func (s *MenuService) DeleteMenu(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteMenuRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("menu_id", req.Msg.GetId()))
-
-	menuID := strings.TrimSpace(req.Msg.Id)
-	if menuID == "" {
-		return nil, errs.Required("id")
-	}
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		// Site Settings mutations always lock the singleton first. Deleting a
-		// selected Menu follows that order before taking the Menu lock too.
-		if err := s.siteSettings.ClearMenuReferences(ctx, tx, menuID); err != nil {
-			return err
-		}
-		menu, err := lockMenuForUpdate(ctx, tx, menuID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("menu", menuID)
+	menu, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.Menu]{
+		// Target locks precede the principal fence, as in every Menu write.
+		Access: s.afterTargetLocks(collectMenuTargetReferences(command.Items), func(require mutation.Require) error {
+			if err := require(can); err != nil {
+				if mutation.IsDenied(err) {
+					return domainerr.AdminRequired().WithCause(err)
+				}
+				return err
 			}
-			return errs.Internal(err)
-		}
-		if err := requireFreshMenuPermission(ctx, tx, s.permissions, menuID, policyv1.Menu.Delete); err != nil {
-			return err
-		}
-		document, err := loadMenuContentDocumentStateFromRoot(ctx, tx, *menu, true)
-		if err != nil {
-			return err
-		}
-
-		if err := tx.Delete(menu).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := deleteMenuContentDocument(ctx, tx, document.ID); err != nil {
-			return err
-		}
-		if err := domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMenuDeleted,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMenuDeletedAuditRecord(metadata, menuID)
-			},
-		); err != nil {
-			return err
-		}
-		apply, err := policyv1.Menu.DeletePolicy(menuID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.Menu.TouchPolicy(menuID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
+			return nil
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (*model.Menu, error) {
+			documentID, err := createMenuContentDocument(ctx, tx, now)
+			if err != nil {
+				return nil, err
+			}
+			menu := &model.Menu{
+				Name: strings.TrimSpace(command.Name), Items: items,
+				SourceLocale: translation.DefaultLocale, ContentDocumentID: documentID.String(),
+				CreatedAt: now, UpdatedAt: now,
+			}
+			if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(menu).Error; err != nil {
+				return nil, err
+			}
+			return menu, initializeCurrentSourceLabelValues(ctx, tx, menu.ID, menu.Items, menu.UpdatedAt)
+		},
+		Audit: func(menu *model.Menu) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMenuCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMenuCreatedAuditRecord(metadata, menu.ID)
+			})
+		},
+		Relationships: func(menu *model.Menu) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return menuPolicy(policyv1.Menu.TouchPolicy, policyv1.Menu.DeletePolicy, menu.ID)
+		},
 	})
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to delete menu: %w", err))
+		return nil, fmt.Errorf("failed to create menu: %w", err)
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	protoMenu, err := toProtoMenu(menu)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert menu: %w", err)
+	}
+	return protoMenu, nil
+}
+
+func (s *Service) DeleteMenu(ctx context.Context, command DeleteMenuCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("menu_id", command.ID))
+
+	menuID := strings.TrimSpace(command.ID)
+	if menuID == "" {
+		return domainerr.Required("id")
+	}
+	var locked *model.Menu
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+			// Site Settings mutations always lock the singleton first. Deleting a
+			// selected Menu follows that order before taking the Menu lock too;
+			// a denied delete rolls the cleared slots back.
+			if err := s.siteSettings.ClearMenuReferences(ctx, tx, menuID); err != nil {
+				return err
+			}
+			var err error
+			if locked, err = lockMenuForUpdate(ctx, tx, menuID); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domainerr.ResourceNotFound("menu", menuID)
+				}
+				return err
+			}
+			return requireFreshMenuPermission(ctx, tx, require, menuID, policyv1.Menu.Delete)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			document, err := loadMenuContentDocumentStateFromRoot(ctx, tx, *locked, true)
+			if err != nil {
+				return struct{}{}, err
+			}
+			if err := tx.Delete(locked).Error; err != nil {
+				return struct{}{}, err
+			}
+			return struct{}{}, deleteMenuContentDocument(ctx, tx, document.ID)
+		},
+		Audit: func(struct{}) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMenuDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMenuDeletedAuditRecord(metadata, menuID)
+			})
+		},
+		Relationships: func(struct{}) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return menuPolicy(policyv1.Menu.DeletePolicy, policyv1.Menu.TouchPolicy, menuID)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete menu: %w", err)
+	}
+	return nil
+}
+
+// menuPolicy returns the one Menu policy relationship apply writes and its
+// inverse.
+func menuPolicy(apply, compensate func(string) (policyv1.RelationshipMutation, error), menuID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	applied, err := apply(menuID)
+	if err != nil {
+		return nil, nil, err
+	}
+	compensated, err := compensate(menuID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []policyv1.RelationshipMutation{applied}, []policyv1.RelationshipMutation{compensated}, nil
+}
+
+// afterTargetLocks validates and locks the Menu's item targets before the
+// fresh check authorize runs. A target error is answered after the check, so
+// a caller without authority learns nothing about the targets.
+func (s *Service) afterTargetLocks(targets []TargetReference, authorize func(mutation.Require) error) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+		targetErr := s.targets.ValidateAndLock(ctx, tx, targets)
+		if err := authorize(require); err != nil {
+			return err
+		}
+		return targetErr
+	})
 }
 
 // semanticMenuItemsEqual treats undecodable items as changed. It runs after
@@ -413,25 +380,25 @@ func semanticMenuItemsEqual(stored, requested []byte) bool {
 // ==================== Validation Methods ====================
 
 // validateMenuName validates the menu name
-func (s *MenuService) validateMenuName(name string) error {
+func validateMenuName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return errs.InvalidArgument("name", "cannot be empty")
+		return domainerr.InvalidField("name", "cannot be empty")
 	}
 	if len(name) > menuNameMaxLength {
-		return errs.InvalidArgument("name", fmt.Sprintf("must be at most %d characters", menuNameMaxLength))
+		return domainerr.InvalidField("name", fmt.Sprintf("must be at most %d characters", menuNameMaxLength))
 	}
 	return nil
 }
 
 // validateMenuItems validates menu items recursively
-func (s *MenuService) validateMenuItems(items []*managev1.MenuItem, depth int) error {
+func validateMenuItems(items []*managev1.MenuItem, depth int) error {
 	if depth > menuMaxNestingDepth {
-		return errs.InvalidArgument("items", fmt.Sprintf("menu nesting depth exceeds maximum of %d levels", menuMaxNestingDepth))
+		return domainerr.InvalidField("items", fmt.Sprintf("menu nesting depth exceeds maximum of %d levels", menuMaxNestingDepth))
 	}
 
 	for i, item := range items {
-		if err := s.validateMenuItem(item, i, depth); err != nil {
+		if err := validateMenuItem(item, i, depth); err != nil {
 			return err
 		}
 	}
@@ -439,7 +406,7 @@ func (s *MenuService) validateMenuItems(items []*managev1.MenuItem, depth int) e
 }
 
 // validateMenuItem validates a single menu item
-func (s *MenuService) validateMenuItem(item *managev1.MenuItem, index, depth int) error {
+func validateMenuItem(item *managev1.MenuItem, index, depth int) error {
 	itemPath := fmt.Sprintf("item[%d]", index)
 	if depth > 0 {
 		itemPath = fmt.Sprintf("child at depth %d, %s", depth, itemPath)
@@ -448,16 +415,16 @@ func (s *MenuService) validateMenuItem(item *managev1.MenuItem, index, depth int
 	// Validate ID
 	id := strings.TrimSpace(item.Id)
 	if id == "" {
-		return errs.InvalidArgument(itemPath, "id cannot be empty")
+		return domainerr.InvalidField(itemPath, "id cannot be empty")
 	}
 
 	// Validate label
 	label := strings.TrimSpace(item.Label)
 	if label == "" {
-		return errs.InvalidArgument(itemPath, "label cannot be empty")
+		return domainerr.InvalidField(itemPath, "label cannot be empty")
 	}
 	if len(label) > menuItemLabelMaxLength {
-		return errs.InvalidArgument(itemPath, fmt.Sprintf("label must be at most %d characters", menuItemLabelMaxLength))
+		return domainerr.InvalidField(itemPath, fmt.Sprintf("label must be at most %d characters", menuItemLabelMaxLength))
 	}
 
 	// Validate linkType
@@ -469,10 +436,10 @@ func (s *MenuService) validateMenuItem(item *managev1.MenuItem, index, depth int
 		managev1.MenuLinkType_MENU_LINK_TYPE_SERIES:   true,
 	}
 	if item.LinkType == managev1.MenuLinkType_MENU_LINK_TYPE_UNSPECIFIED {
-		return errs.InvalidArgument(itemPath, "linkType must be specified")
+		return domainerr.InvalidField(itemPath, "linkType must be specified")
 	}
 	if !validLinkTypes[item.LinkType] {
-		return errs.InvalidArgument(itemPath, "invalid linkType")
+		return domainerr.InvalidField(itemPath, "invalid linkType")
 	}
 
 	if err := validateMenuItemLink(item, itemPath); err != nil {
@@ -488,7 +455,7 @@ func (s *MenuService) validateMenuItem(item *managev1.MenuItem, index, depth int
 			managev1.MenuVisibilityMode_MENU_VISIBILITY_MODE_ROLES:         true,
 		}
 		if !validModes[item.Visibility.Mode] && item.Visibility.Mode != managev1.MenuVisibilityMode_MENU_VISIBILITY_MODE_UNSPECIFIED {
-			return errs.InvalidArgument(itemPath, "invalid visibility mode")
+			return domainerr.InvalidField(itemPath, "invalid visibility mode")
 		}
 		roles, err := normalizeUserRoleList(itemPath+".visibility.roles", item.Visibility.Roles)
 		if err != nil {
@@ -497,7 +464,7 @@ func (s *MenuService) validateMenuItem(item *managev1.MenuItem, index, depth int
 		item.Visibility.Roles = roles
 		// If mode is "roles", at least one role should be specified
 		if item.Visibility.Mode == managev1.MenuVisibilityMode_MENU_VISIBILITY_MODE_ROLES && len(item.Visibility.Roles) == 0 {
-			return errs.InvalidArgument(itemPath, "at least one role is required when visibility mode is 'roles'")
+			return domainerr.InvalidField(itemPath, "at least one role is required when visibility mode is 'roles'")
 		}
 	}
 
@@ -505,21 +472,21 @@ func (s *MenuService) validateMenuItem(item *managev1.MenuItem, index, depth int
 	if item.FixedLocale != nil {
 		fixedLocaleTrimmed = strings.TrimSpace(*item.FixedLocale)
 		if fixedLocaleTrimmed != "" && NormalizeItemFixedLocale(item.FixedLocale) == nil {
-			return errs.InvalidArgument(itemPath, "fixedLocale must be a supported locale")
+			return domainerr.InvalidField(itemPath, "fixedLocale must be a supported locale")
 		}
 	}
 
 	mode := NormalizeItemLocalizationMode(
-		s.protoLocalizationModeToStringPtr(item.LocalizationMode),
+		protoLocalizationModeToStringPtr(item.LocalizationMode),
 		item.FixedLocale,
 	)
 	if mode == model.MenuItemLocalizationModeFixedLocale && fixedLocaleTrimmed == "" {
-		return errs.InvalidArgument(itemPath, "fixedLocale is required when localization mode is fixed locale")
+		return domainerr.InvalidField(itemPath, "fixedLocale is required when localization mode is fixed locale")
 	}
 
 	// Recursively validate children
 	if len(item.Children) > 0 {
-		if err := s.validateMenuItems(item.Children, depth+1); err != nil {
+		if err := validateMenuItems(item.Children, depth+1); err != nil {
 			return err
 		}
 	}
@@ -532,29 +499,29 @@ func validateMenuItemLink(item *managev1.MenuItem, itemPath string) error {
 		hasTargetID := item.TargetId != nil && strings.TrimSpace(*item.TargetId) != ""
 		hasTargetSlug := item.TargetSlug != nil && strings.TrimSpace(*item.TargetSlug) != ""
 		if !hasTargetID && !hasTargetSlug {
-			return errs.InvalidArgument(itemPath, fmt.Sprintf("targetId or targetSlug is required for %s link type", item.LinkType.String()))
+			return domainerr.InvalidField(itemPath, fmt.Sprintf("targetId or targetSlug is required for %s link type", item.LinkType.String()))
 		}
 		return nil
 	}
 	if item.Url == nil || strings.TrimSpace(*item.Url) == "" {
-		return errs.InvalidArgument(itemPath, "url is required for custom link type")
+		return domainerr.InvalidField(itemPath, "url is required for custom link type")
 	}
 	urlString := strings.TrimSpace(*item.Url)
 	if len(urlString) > menuURLMaxLength {
-		return errs.InvalidArgument(itemPath, fmt.Sprintf("url must be at most %d characters", menuURLMaxLength))
+		return domainerr.InvalidField(itemPath, fmt.Sprintf("url must be at most %d characters", menuURLMaxLength))
 	}
 	if strings.HasPrefix(urlString, "/") {
 		return nil
 	}
 	if _, err := url.ParseRequestURI(urlString); err != nil {
-		return errs.InvalidArgument(itemPath, "url must be a valid URL or relative path")
+		return domainerr.InvalidField(itemPath, "url must be a valid URL or relative path")
 	}
 	return nil
 }
 
 // ==================== Helper Methods ====================
 
-func (s *MenuService) toProtoMenu(m *model.Menu) (*managev1.Menu, error) {
+func toProtoMenu(m *model.Menu) (*managev1.Menu, error) {
 	menu := &managev1.Menu{
 		Id:           m.ID,
 		SourceLocale: m.SourceLocale,
@@ -569,7 +536,7 @@ func (s *MenuService) toProtoMenu(m *model.Menu) (*managev1.Menu, error) {
 		if err := json.Unmarshal(m.Items, &items); err != nil {
 			return nil, fmt.Errorf("failed to parse menu items: %w", err)
 		}
-		menu.Items = s.modelItemsToProto(items)
+		menu.Items = modelItemsToProto(items)
 	} else {
 		menu.Items = []*managev1.MenuItem{}
 	}
@@ -577,21 +544,21 @@ func (s *MenuService) toProtoMenu(m *model.Menu) (*managev1.Menu, error) {
 	return menu, nil
 }
 
-func (s *MenuService) modelItemsToProto(items []model.MenuItem) []*managev1.MenuItem {
+func modelItemsToProto(items []model.MenuItem) []*managev1.MenuItem {
 	result := make([]*managev1.MenuItem, len(items))
 	for i, item := range items {
-		result[i] = s.modelItemToProto(&item)
+		result[i] = modelItemToProto(&item)
 	}
 	return result
 }
 
-func (s *MenuService) modelItemToProto(item *model.MenuItem) *managev1.MenuItem {
+func modelItemToProto(item *model.MenuItem) *managev1.MenuItem {
 	localizationMode, fixedLocale := CanonicalizeItemLocalization(item.LocalizationMode, item.FixedLocale)
 	protoItem := &managev1.MenuItem{
 		Id:               item.ID,
 		Label:            item.Label,
-		LinkType:         s.linkTypeToProto(item.LinkType),
-		LocalizationMode: s.localizationModeToProto(localizationMode),
+		LinkType:         linkTypeToProto(item.LinkType),
+		LocalizationMode: localizationModeToProto(localizationMode),
 	}
 
 	if item.URL != nil {
@@ -608,7 +575,7 @@ func (s *MenuService) modelItemToProto(item *model.MenuItem) *managev1.MenuItem 
 	}
 	if item.Visibility != nil {
 		protoItem.Visibility = &managev1.MenuVisibility{
-			Mode:  s.visibilityModeToProto(item.Visibility.Mode),
+			Mode:  visibilityModeToProto(item.Visibility.Mode),
 			Roles: item.Visibility.Roles,
 		}
 	}
@@ -618,13 +585,13 @@ func (s *MenuService) modelItemToProto(item *model.MenuItem) *managev1.MenuItem 
 
 	// Recursive children
 	if len(item.Children) > 0 {
-		protoItem.Children = s.modelItemsToProto(item.Children)
+		protoItem.Children = modelItemsToProto(item.Children)
 	}
 
 	return protoItem
 }
 
-func (s *MenuService) linkTypeToProto(linkType string) managev1.MenuLinkType {
+func linkTypeToProto(linkType string) managev1.MenuLinkType {
 	switch linkType {
 	case "custom":
 		return managev1.MenuLinkType_MENU_LINK_TYPE_CUSTOM
@@ -641,7 +608,7 @@ func (s *MenuService) linkTypeToProto(linkType string) managev1.MenuLinkType {
 	}
 }
 
-func (s *MenuService) visibilityModeToProto(mode string) managev1.MenuVisibilityMode {
+func visibilityModeToProto(mode string) managev1.MenuVisibilityMode {
 	switch mode {
 	case "all":
 		return managev1.MenuVisibilityMode_MENU_VISIBILITY_MODE_ALL
@@ -656,7 +623,7 @@ func (s *MenuService) visibilityModeToProto(mode string) managev1.MenuVisibility
 	}
 }
 
-func (s *MenuService) localizationModeToProto(mode *string) managev1.MenuItemLocalizationMode {
+func localizationModeToProto(mode *string) managev1.MenuItemLocalizationMode {
 	if mode == nil {
 		return managev1.MenuItemLocalizationMode_MENU_ITEM_LOCALIZATION_MODE_UNSPECIFIED
 	}
@@ -671,23 +638,23 @@ func (s *MenuService) localizationModeToProto(mode *string) managev1.MenuItemLoc
 	}
 }
 
-func (s *MenuService) protoItemsToJSON(items []*managev1.MenuItem) (json.RawMessage, error) {
+func protoItemsToJSON(items []*managev1.MenuItem) (json.RawMessage, error) {
 	modelItems := make([]model.MenuItem, len(items))
 	for i, item := range items {
-		modelItems[i] = s.protoItemToModel(item)
+		modelItems[i] = protoItemToModel(item)
 	}
 	return json.Marshal(modelItems)
 }
 
-func (s *MenuService) protoItemToModel(item *managev1.MenuItem) model.MenuItem {
+func protoItemToModel(item *managev1.MenuItem) model.MenuItem {
 	localizationMode, fixedLocale := CanonicalizeItemLocalization(
-		s.protoLocalizationModeToStringPtr(item.LocalizationMode),
+		protoLocalizationModeToStringPtr(item.LocalizationMode),
 		item.FixedLocale,
 	)
 	modelItem := model.MenuItem{
 		ID:               item.Id,
 		Label:            item.Label,
-		LinkType:         s.protoLinkTypeToString(item.LinkType),
+		LinkType:         protoLinkTypeToString(item.LinkType),
 		LocalizationMode: localizationMode,
 		FixedLocale:      fixedLocale,
 	}
@@ -708,7 +675,7 @@ func (s *MenuService) protoItemToModel(item *managev1.MenuItem) model.MenuItem {
 		// validateMenuItems has already rejected unknown roles.
 		roles, _ := normalizeUserRoleList("visibility.roles", item.Visibility.Roles)
 		modelItem.Visibility = &model.MenuVisibility{
-			Mode:  s.protoVisibilityModeToString(item.Visibility.Mode),
+			Mode:  protoVisibilityModeToString(item.Visibility.Mode),
 			Roles: roles,
 		}
 	}
@@ -717,14 +684,14 @@ func (s *MenuService) protoItemToModel(item *managev1.MenuItem) model.MenuItem {
 	if len(item.Children) > 0 {
 		modelItem.Children = make([]model.MenuItem, len(item.Children))
 		for i, child := range item.Children {
-			modelItem.Children[i] = s.protoItemToModel(child)
+			modelItem.Children[i] = protoItemToModel(child)
 		}
 	}
 
 	return modelItem
 }
 
-func (s *MenuService) protoLinkTypeToString(linkType managev1.MenuLinkType) string {
+func protoLinkTypeToString(linkType managev1.MenuLinkType) string {
 	switch linkType {
 	case managev1.MenuLinkType_MENU_LINK_TYPE_CUSTOM:
 		return "custom"
@@ -741,7 +708,7 @@ func (s *MenuService) protoLinkTypeToString(linkType managev1.MenuLinkType) stri
 	}
 }
 
-func (s *MenuService) protoVisibilityModeToString(mode managev1.MenuVisibilityMode) string {
+func protoVisibilityModeToString(mode managev1.MenuVisibilityMode) string {
 	switch mode {
 	case managev1.MenuVisibilityMode_MENU_VISIBILITY_MODE_ALL:
 		return "all"
@@ -756,7 +723,7 @@ func (s *MenuService) protoVisibilityModeToString(mode managev1.MenuVisibilityMo
 	}
 }
 
-func (s *MenuService) protoLocalizationModeToStringPtr(
+func protoLocalizationModeToStringPtr(
 	mode managev1.MenuItemLocalizationMode,
 ) *string {
 	switch mode {

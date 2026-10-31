@@ -2,9 +2,9 @@ package menu
 
 import (
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -20,7 +20,7 @@ func normalizeUserRoleList(field string, roles []string) ([]string, error) {
 		switch canonical {
 		case policyv1.Role.Admin().ID(), policyv1.Role.Author().ID(), policyv1.Role.User().ID():
 		default:
-			return nil, errs.InvalidArgument(field, fmt.Sprintf("invalid role: %s", strings.TrimSpace(role)))
+			return nil, domainerr.InvalidField(field, fmt.Sprintf("invalid role: %s", strings.TrimSpace(role)))
 		}
 		if _, exists := seen[canonical]; exists {
 			continue

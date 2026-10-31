@@ -33,7 +33,7 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 
 	segmentID := uuid.NewString()
 	require.NoError(t, db.Create(&model.AudienceSegment{
-		ID: segmentID, Name: "Frozen exclusion", SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String(),
+		ID: segmentID, Name: "Frozen exclusion", SegmentType: model.AudienceSegmentMembersByFilter,
 		CreatedAt: now, UpdatedAt: &now,
 	}).Error)
 	require.NoError(t, db.Create(&model.AudienceSegmentExcludedMember{

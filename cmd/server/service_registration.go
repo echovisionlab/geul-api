@@ -538,19 +538,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(pagePath, pageHandler)
 	slog.Info("Registered service", "path", pagePath)
 
-	menuService := menu.NewAuditedMenuService(
-		db,
-		telemetryWriter,
-		menuadapter.NewSiteSettingsReferences(telemetryWriter),
-		menuadapter.NewTargetReferences(),
-		spicedbClient,
-	)
-	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menuService, handlerOpts...)
+	menuService, err := menu.NewService(menu.Deps{
+		DB: db, SpiceDB: spicedbClient,
+		SiteSettings: menuadapter.NewSiteSettingsReferences(telemetryWriter),
+		Targets:      menuadapter.NewTargetReferences(),
+		Checkpoints:  collaborationRuntime.Checkpoints,
+		Audit:        telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, err
+	}
+	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menu.NewConnectHandler(menuService), handlerOpts...)
 	mux.Handle(menuPath, menuHandler)
 	slog.Info("Registered service", "path", menuPath)
-	internalMenuService := menu.NewInternalMenuService(menuService, collaborationRuntime.Checkpoints)
 	internalMenuPath, internalMenuHandler := intrav1connect.NewInternalMenuServiceHandler(
-		internalMenuService, internalHandlerOpts...,
+		menu.NewInternalConnectHandler(menuService), internalHandlerOpts...,
 	)
 	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
 	slog.Info("Registered internal service", "path", internalMenuPath)
@@ -564,32 +566,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
 	seriesMenuTargets := menu.NewTargetLifecycle(telemetryWriter)
 	seriesPostAccess := seriesadapter.PostAccess{}
-	seriesService := series.NewAuditedSeriesService(
-		db,
-		seriesRuntime,
-		seriesRuntime,
-		seriesRuntime,
-		spicedbClient,
-		kratosClient,
-		seriesMenuTargets,
-		seriesPostAccess,
-		seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
-		telemetryWriter,
-	)
-	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(seriesService, handlerOpts...)
+	seriesService, err := series.NewService(series.Deps{
+		DB: db, SpiceDB: spicedbClient, Identity: kratosClient,
+		Media: seriesRuntime, OG: seriesRuntime, Reads: seriesRuntime,
+		MenuTargets: seriesMenuTargets, Posts: seriesPostAccess, Membership: postadapter.SeriesMembership{},
+		Members:     seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
+		Checkpoints: collaborationRuntime.Checkpoints, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post Series service: %w", err)
+	}
+	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(series.NewConnectHandler(seriesService), handlerOpts...)
 	mux.Handle(seriesPath, seriesHandler)
 	slog.Info("Registered service", "path", seriesPath)
-	postSeriesDocuments, err := series.NewAIDocumentService(
-		db, spicedbClient, seriesMenuTargets, seriesPostAccess, seriesRuntime, telemetryWriter,
-	)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post Series document service: %w", err)
-	}
-	internalPostSeriesService := series.NewInternalPostSeriesService(
-		postSeriesDocuments, collaborationRuntime.Checkpoints,
-	)
 	internalPostSeriesPath, internalPostSeriesHandler := intrav1connect.NewInternalPostSeriesServiceHandler(
-		internalPostSeriesService, internalHandlerOpts...,
+		series.NewInternalConnectHandler(seriesService), internalHandlerOpts...,
 	)
 	mux.Handle(internalPostSeriesPath, internalRPCTrust.collab(internalPostSeriesHandler))
 	slog.Info("Registered internal service", "path", internalPostSeriesPath)
@@ -601,27 +592,23 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	privacyService := legal.NewAuditedPrivacyService(
-		db,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		legalDependencies,
-		legal.WithPrivacyContentBlockStore(contentBlockStore),
-	)
-	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(privacyService, handlerOpts...)
+	legalPolicyService, err := legal.NewService(legal.Deps{
+		DB:            db,
+		SpiceDB:       spicedbClient,
+		ContentBlocks: contentBlockStore,
+		OG:            legalDependencies.OG,
+		Notice:        legalDependencies.Notice,
+		Audit:         telemetryWriter,
+		BaseURL:       cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
+	}
+	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(legal.NewPrivacyConnectHandler(legalPolicyService), handlerOpts...)
 	mux.Handle(privacyPath, privacyHandler)
 	slog.Info("Registered service", "path", privacyPath)
 
-	termsService := legal.NewAuditedTermsService(
-		db,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		legalDependencies,
-		legal.WithTermsContentBlockStore(contentBlockStore),
-	)
-	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(termsService, handlerOpts...)
+	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(legal.NewTermsConnectHandler(legalPolicyService), handlerOpts...)
 	mux.Handle(termsPath, termsHandler)
 	slog.Info("Registered service", "path", termsPath)
 
@@ -665,13 +652,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(emailLayoutPath, emailLayoutHandler)
 	slog.Info("Registered service", "path", emailLayoutPath)
 
-	mailAdapterService := emaildelivery.NewAuditedMailAdapterService(db, adapterLoader, ogPublisher, telemetryWriter, spicedbClient)
-	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(mailAdapterService, handlerOpts...)
+	mailAdapterService, err := emaildelivery.NewService(emaildelivery.Deps{
+		DB:             db,
+		SpiceDB:        spicedbClient,
+		AdapterCache:   adapterLoader,
+		AdapterChanges: ogPublisher,
+		Audit:          telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize email delivery service: %w", err)
+	}
+	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(emaildelivery.NewMailAdapterConnectHandler(mailAdapterService), handlerOpts...)
 	mux.Handle(mailAdapterPath, mailAdapterHandler)
 	slog.Info("Registered service", "path", mailAdapterPath)
 
-	emailSuppressionService := emaildelivery.NewAuditedEmailSuppressionService(db, telemetryWriter, spicedbClient)
-	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emailSuppressionService, handlerOpts...)
+	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emaildelivery.NewEmailSuppressionConnectHandler(mailAdapterService), handlerOpts...)
 	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
 	slog.Info("Registered service", "path", emailSuppressionPath)
 
@@ -693,14 +688,18 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(campaignPath, campaignHandler)
 	slog.Info("Registered service", "path", campaignPath)
 
-	audienceService := audience.NewAuditedAudienceService(
-		db,
-		telemetryWriter,
-		spicedbClient,
-		audienceadapter.NewRecipientCounter(db, spicedbClient),
-		audienceadapter.MemberReferences{},
-	)
-	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audienceService, handlerOpts...)
+	audienceService, err := audience.NewService(audience.Deps{
+		DB:               db,
+		SpiceDB:          spicedbClient,
+		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
+		MemberReferences: audienceadapter.MemberReferences{},
+		Campaigns:        campaign.SegmentUsage{},
+		Audit:            telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize audience service: %w", err)
+	}
+	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audience.NewConnectHandler(audienceService), handlerOpts...)
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 
@@ -731,11 +730,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(adminPath, adminHandler)
 	slog.Info("Registered service", "path", adminPath)
 
-	shareLinkService := sharelink.NewService(
-		db,
-		sharelinkadapter.NewAuthority(db, spicedbClient, telemetryWriter),
-	)
-	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(shareLinkService, handlerOpts...)
+	shareLinkService, err := sharelink.NewService(sharelink.Deps{
+		DB: db, SpiceDB: spicedbClient, Targets: sharelinkadapter.NewAuthority(db, spicedbClient), Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, err
+	}
+	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(sharelink.NewConnectHandler(shareLinkService), handlerOpts...)
 	mux.Handle(shareLinkPath, shareLinkHandler)
 	slog.Info("Registered service", "path", shareLinkPath)
 
@@ -824,7 +825,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, fmt.Errorf("register Terms AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.postSeries, err = aidocumentadapter.NewPostSeriesRegistration(
-		postSeriesDocuments,
+		seriesService,
 	); err != nil {
 		return registeredServices{}, fmt.Errorf("register Post Series AI document domain: %w", err)
 	}
@@ -837,29 +838,28 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		releaseService,
 		artistService,
 		contentMCPApplications{
-			terms:        termsService,
-			privacy:      privacyService,
-			categories:   categoryService,
-			tags:         tagService,
-			clients:      clientService,
-			mapPlaces:    mapPlaceService,
-			members:      memberService,
-			artists:      artistService,
-			files:        fileService,
-			eventTypes:   programEventTypeService,
-			eventSeries:  programEventSeriesService,
-			labels:       labelService,
-			genres:       genreService,
-			styles:       styleService,
-			formats:      formatService,
-			forms:        formService,
-			postSeries:   seriesService,
-			tracks:       trackService,
-			mapThemes:    mapThemeService,
-			menus:        menuService,
-			menuSettings: siteSettingService,
-			siteSettings: siteSettingService,
-			mailAdapters: mailAdapterService,
+			legalPolicies: legalPolicyService,
+			categories:    categoryService,
+			tags:          tagService,
+			clients:       clientService,
+			mapPlaces:     mapPlaceService,
+			members:       memberService,
+			artists:       artistService,
+			files:         fileService,
+			eventTypes:    programEventTypeService,
+			eventSeries:   programEventSeriesService,
+			labels:        labelService,
+			genres:        genreService,
+			styles:        styleService,
+			formats:       formatService,
+			forms:         formService,
+			postSeries:    seriesService,
+			tracks:        trackService,
+			mapThemes:     mapThemeService,
+			menus:         menuService,
+			menuSettings:  siteSettingService,
+			siteSettings:  siteSettingService,
+			mailAdapters:  mailAdapterService,
 		},
 		translationService,
 		fileService,

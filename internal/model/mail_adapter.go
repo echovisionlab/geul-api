@@ -8,8 +8,16 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-// MailAdapterType defines the type of mail adapter
+// MailAdapterType is the stored provider of a mail adapter. The values are the
+// strings the mail_adapter_type column holds; internal/emaildelivery maps
+// them to and from the API enum.
 type MailAdapterType string
+
+const (
+	MailAdapterTypeLogging MailAdapterType = "MAIL_ADAPTER_TYPE_LOGGING"
+	MailAdapterTypeSES     MailAdapterType = "MAIL_ADAPTER_TYPE_SES"
+	MailAdapterTypeSMTP    MailAdapterType = "MAIL_ADAPTER_TYPE_SMTP"
+)
 
 // MailAdapterConfig wraps the JSON config for mail adapters
 type MailAdapterConfig struct {

@@ -16,7 +16,9 @@ import (
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -62,27 +64,27 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audiencedomain.AudienceService {
-	return audiencedomain.NewAudienceService(
-		db,
-		spiceDB,
-		audienceRecipientCounter{},
-		audienceMemberReferences{},
-	)
+func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audiencedomain.ConnectHandler {
+	return newAuditedAudienceServiceForTest(db, &audittest.Recorder{}, spiceDB)
 }
 
 func newAuditedAudienceServiceForTest(
 	db *gorm.DB,
 	writer domainaudit.Appender,
 	spiceDB *auth.SpiceDBClient,
-) *audiencedomain.AudienceService {
-	return audiencedomain.NewAuditedAudienceService(
-		db,
-		writer,
-		spiceDB,
-		audienceRecipientCounter{},
-		audienceMemberReferences{},
-	)
+) *audiencedomain.ConnectHandler {
+	service, err := audiencedomain.NewService(audiencedomain.Deps{
+		DB:               db,
+		SpiceDB:          spiceDB,
+		RecipientCounter: audienceRecipientCounter{},
+		MemberReferences: audienceMemberReferences{},
+		Campaigns:        campaign.SegmentUsage{},
+		Audit:            writer,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return audiencedomain.NewConnectHandler(service)
 }
 
 func newAudienceIntegrationDB(t *testing.T) *gorm.DB {

@@ -44,7 +44,7 @@ func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 	seedSeriesActor(t, db, adminID, "Series closure admin")
 	seedSeriesActor(t, db, outsiderID, "Series closure outsider")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
-	ctx := seriesIntegrationAdminCtx(adminID)
+	ctx := seriesIntegrationAdminCtx(t, adminID)
 	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 
 	created, err := service.CreateSeries(ctx, connect.NewRequest(&managev1.CreateSeriesRequest{
@@ -162,7 +162,7 @@ func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
 	seedSeriesActor(t, db, authorID, "Series relation author")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 	testutil.GrantIntegrationGlobalRole(t, service.spiceDB, authorID, policyv1.Role.Author())
-	adminCtx := seriesIntegrationAdminCtx(adminID)
+	adminCtx := seriesIntegrationAdminCtx(t, adminID)
 	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(authorID)),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
@@ -284,7 +284,7 @@ func TestDeleteSeriesClearsPostRelationAndPreservesFeaturedImageFileIntegration(
 	seedSeriesActor(t, db, adminID, "Series delete admin")
 	fileDeleter := &recordingSeriesFileDeleter{}
 	service := newSeriesIntegrationService(t, db, adminID, fileDeleter)
-	ctx := seriesIntegrationAdminCtx(adminID)
+	ctx := seriesIntegrationAdminCtx(t, adminID)
 	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	seriesID := createSeriesForClosure(t, service, ctx, "Delete Series "+suffix, "delete-series-"+suffix)
 	now := time.Now().UTC()
@@ -367,7 +367,7 @@ func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T)
 	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Concurrent Series delete admin")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
-	ctx := seriesIntegrationAdminCtx(adminID)
+	ctx := seriesIntegrationAdminCtx(t, adminID)
 	seriesID := createSeriesForClosure(t, service, ctx, "Concurrent Series delete", "concurrent-series-delete-"+adminID)
 	fileID := seedImageBindingUploadedFileFixture(t, db, "series/"+seriesID+"/concurrent.webp")
 	t.Cleanup(func() {
@@ -430,7 +430,7 @@ func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T
 	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Concurrent Series update admin")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
-	ctx := seriesIntegrationAdminCtx(adminID)
+	ctx := seriesIntegrationAdminCtx(t, adminID)
 	seriesID := createSeriesForClosure(t, service, ctx, "Concurrent Series update", "series-slug-original-"+adminID)
 	originalSlug := requireSeriesSlug(t, db, seriesID)
 	menuID := testutil.IntegrationUUID()
@@ -501,7 +501,7 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 	seedSeriesActor(t, db, adminID, "Series authority admin")
 	seedSeriesActor(t, db, managerID, "Series authority manager")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
-	adminCtx := seriesIntegrationAdminCtx(adminID)
+	adminCtx := seriesIntegrationAdminCtx(t, adminID)
 	seriesID := seedSeriesRow(t, db, "Authority Series", "authority-series-"+managerID, managev1.SeriesStatus_SERIES_STATUS_DRAFT.String())
 	managerMemberID := testutil.PostIntegrationMemberID(managerID)
 	t.Cleanup(func() {
@@ -588,7 +588,7 @@ func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 		count:     &queryCount,
 	}})
 	service := newSeriesIntegrationService(t, countedDB, adminID, &recordingSeriesFileDeleter{})
-	ctx := seriesIntegrationAdminCtx(adminID)
+	ctx := seriesIntegrationAdminCtx(t, adminID)
 	listCount := func(limit int32) int64 {
 		queryCount.Store(0)
 		response, err := service.ListSeriesAdmin(ctx, connect.NewRequest(&managev1.ListSeriesAdminRequest{
@@ -610,7 +610,7 @@ func TestListSeriesSimpleReturnsAllSeriesIntegration(t *testing.T) {
 	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series simple list admin")
 	service := newSeriesIntegrationService(t, db, adminID, nil)
-	ctx := seriesIntegrationAdminCtx(adminID)
+	ctx := seriesIntegrationAdminCtx(t, adminID)
 	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 
 	const seededCount = 105
@@ -649,7 +649,7 @@ func requireSeriesManagerAttribution(t *testing.T, db *gorm.DB, seriesID, member
 
 func createSeriesForClosure(
 	t *testing.T,
-	service *SeriesService,
+	service seriesIntegrationService,
 	ctx context.Context,
 	title string,
 	slug string,
@@ -660,7 +660,7 @@ func createSeriesForClosure(
 	return created.Msg.Id
 }
 
-func replaceSeriesPostAuthorRelation(t *testing.T, service *SeriesService, postID, previousIdentityID, nextIdentityID string) {
+func replaceSeriesPostAuthorRelation(t *testing.T, service seriesIntegrationService, postID, previousIdentityID, nextIdentityID string) {
 	t.Helper()
 	previousActor, err := policyv1.NewAccountIdentityActor(previousIdentityID)
 	require.NoError(t, err)

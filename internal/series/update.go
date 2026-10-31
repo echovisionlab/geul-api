@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -24,15 +24,29 @@ type seriesUpdatePlan struct {
 	now        time.Time
 }
 
-func (s *SeriesService) UpdateSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateSeriesRequest],
-) (*connect.Response[managev1.Series], error) {
-	plan, err := buildSeriesUpdatePlan(req.Msg)
+// UpdateSeriesCommand edits a Series. A nil field is left alone; setting
+// Status publishes or unpublishes it.
+type UpdateSeriesCommand struct {
+	ID          string
+	Slug        *string
+	Status      *string
+	Title       *string
+	Description *string
+}
+
+func (s *Service) UpdateSeries(ctx context.Context, command UpdateSeriesCommand) (*managev1.Series, error) {
+	plan, err := buildSeriesUpdatePlan(command)
 	if err != nil {
 		return nil, err
 	}
-	series, err := s.applySeriesUpdate(ctx, req.Msg, plan)
+	var audits seriesAudits
+	series, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.Series]{
+		Access: lockedSeries(command.ID, seriesUpdateAction(command)),
+		Change: func(ctx context.Context, tx *gorm.DB) (model.Series, error) {
+			return s.applySeriesUpdate(ctx, tx, command, plan, &audits)
+		},
+		Audit: func(model.Series) mutation.Audit { return audits.audit() },
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -45,80 +59,70 @@ func (s *SeriesService) UpdateSeries(
 	}
 	response := s.toProtoSeries(&series, ogAsset)
 	s.setSeriesFeaturedImageAsset(ctx, response)
-	return connect.NewResponse(response), nil
+	return response, nil
 }
 
-func buildSeriesUpdatePlan(request *managev1.UpdateSeriesRequest) (seriesUpdatePlan, error) {
+func buildSeriesUpdatePlan(command UpdateSeriesCommand) (seriesUpdatePlan, error) {
 	plan := seriesUpdatePlan{now: time.Now().UTC()}
-	if request.Slug != nil {
-		normalized, err := validateSeriesSlug(*request.Slug)
+	if command.Slug != nil {
+		normalized, err := validateSeriesSlug(*command.Slug)
 		if err != nil {
 			return seriesUpdatePlan{}, err
 		}
 		plan.nextSlug = &normalized
 	}
-	if request.Status != nil {
-		if err := validateSeriesStatus(*request.Status); err != nil {
+	if command.Status != nil {
+		if err := validateSeriesStatus(*command.Status); err != nil {
 			return seriesUpdatePlan{}, err
 		}
-		plan.nextStatus = request.Status
+		plan.nextStatus = command.Status
 	}
 	return plan, nil
 }
 
-func (s *SeriesService) applySeriesUpdate(
+func (s *Service) applySeriesUpdate(
 	ctx context.Context,
-	request *managev1.UpdateSeriesRequest,
+	tx *gorm.DB,
+	command UpdateSeriesCommand,
 	plan seriesUpdatePlan,
+	audits *seriesAudits,
 ) (model.Series, error) {
 	var series model.Series
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.requireSeriesPermissionAndLock(ctx, tx, request.Id, seriesUpdateAction(request)); err != nil {
-			return err
-		}
-		if err := loadSeriesForUpdate(tx, request.Id, &series); err != nil {
-			return err
-		}
-		previousStatus := series.Status
-		metadataFields, lifecycleChanged, err := s.writeSeriesRoot(ctx, tx, &series, plan)
+	if err := loadSeriesForUpdate(tx, command.ID, &series); err != nil {
+		return model.Series{}, err
+	}
+	previousStatus := series.Status
+	metadataFields, lifecycleChanged, err := s.writeSeriesRoot(ctx, tx, &series, plan)
+	if err != nil {
+		return model.Series{}, err
+	}
+	sourceChanged, err := s.updateSeriesSourceDocument(ctx, tx, series.ID, command, plan.now)
+	if err != nil {
+		return model.Series{}, err
+	}
+	if !sourceChanged && (len(metadataFields) != 0 || lifecycleChanged) {
+		contentDocument, err := loadSeriesContentDocumentState(ctx, tx, series.ID, false)
 		if err != nil {
-			return err
+			return model.Series{}, err
 		}
-		sourceChanged, err := s.updateSeriesSourceDocument(ctx, tx, series.ID, request, plan.now)
-		if err != nil {
-			return err
+		if _, err := advanceSeriesContentDocument(ctx, tx, series.ID, contentDocument.ID, contentDocument.Revision, plan.now); err != nil {
+			return model.Series{}, err
 		}
-		if !sourceChanged && (len(metadataFields) != 0 || lifecycleChanged) {
-			contentDocument, err := loadSeriesContentDocumentState(ctx, tx, series.ID, false)
-			if err != nil {
-				return err
-			}
-			if _, err := advanceSeriesContentDocument(
-				ctx, tx, series.ID, contentDocument.ID, contentDocument.Revision, plan.now,
-			); err != nil {
-				return err
-			}
-		}
-		if err := s.appendPostSeriesSourceMetadataAudit(ctx, tx, series.ID, appendSourceCopyAuditField(metadataFields, sourceChanged)); err != nil {
-			return err
-		}
-		if lifecycleChanged {
-			if err := s.appendPostSeriesLifecycleAudit(ctx, tx, series.ID, postSeriesAuditState(previousStatus), postSeriesAuditState(*plan.nextStatus)); err != nil {
-				return err
-			}
-		}
-		if err := tx.First(&series, "id = ?", request.Id).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return nil
-	})
-	return series, err
+	}
+	audits.sourceMetadata(series.ID, appendSourceCopyAuditField(metadataFields, sourceChanged))
+	if lifecycleChanged {
+		audits.lifecycle(series.ID, postSeriesAuditState(previousStatus), postSeriesAuditState(*plan.nextStatus))
+	}
+	if err := tx.First(&series, "id = ?", command.ID).Error; err != nil {
+		return model.Series{}, err
+	}
+	return series, nil
 }
 
 // writeSeriesRoot writes the requested slug and status to the locked series
 // and moves Menu targets to a changed slug. It returns the changed metadata
 // audit fields and whether the status changed.
-func (s *SeriesService) writeSeriesRoot(
+func (s *Service) writeSeriesRoot(
 	ctx context.Context,
 	tx *gorm.DB,
 	series *model.Series,
@@ -142,8 +146,8 @@ func (s *SeriesService) writeSeriesRoot(
 	return metadataFields, lifecycleChanged, nil
 }
 
-func seriesUpdateAction(request *managev1.UpdateSeriesRequest) seriesAction {
-	if request != nil && request.Status != nil {
+func seriesUpdateAction(command UpdateSeriesCommand) seriesAction {
+	if command.Status != nil {
 		return policyv1.PostSeries.Publish
 	}
 	return policyv1.PostSeries.Edit
@@ -152,10 +156,10 @@ func seriesUpdateAction(request *managev1.UpdateSeriesRequest) seriesAction {
 func loadSeriesForUpdate(tx *gorm.DB, seriesID string, series *model.Series) error {
 	err := tx.First(series, "id = ?", seriesID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFound("series", seriesID)
+		return domainerr.ResourceNotFound("series", seriesID)
 	}
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -208,29 +212,29 @@ func applySeriesFields(tx *gorm.DB, series *model.Series, plan seriesUpdatePlan,
 	updates["updated_at"] = plan.now
 	err := tx.Model(series).Updates(updates).Error
 	if dberrors.IsUniqueViolation(err) && plan.nextSlug != nil {
-		return errs.WithCause(errs.SlugAlreadyExists("series", *plan.nextSlug), err)
+		return domainerr.Duplicate("series", "slug", *plan.nextSlug).WithCause(err)
 	}
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
 
-func (s *SeriesService) updateSeriesMenuSlug(ctx context.Context, tx *gorm.DB, seriesID, oldSlug string, nextSlug *string) error {
+func (s *Service) updateSeriesMenuSlug(ctx context.Context, tx *gorm.DB, seriesID, oldSlug string, nextSlug *string) error {
 	if nextSlug == nil || strings.TrimSpace(*nextSlug) == oldSlug {
 		return nil
 	}
 	return s.menuTargets.UpdateSlug(ctx, tx, "series", seriesID, oldSlug, *nextSlug)
 }
 
-func (s *SeriesService) updateSeriesSourceDocument(
+func (s *Service) updateSeriesSourceDocument(
 	ctx context.Context,
 	tx *gorm.DB,
 	seriesID string,
-	request *managev1.UpdateSeriesRequest,
+	command UpdateSeriesCommand,
 	now time.Time,
 ) (bool, error) {
-	if request.Title == nil && request.Description == nil {
+	if command.Title == nil && command.Description == nil {
 		return false, nil
 	}
 	current, err := LoadRequiredSourceLocaleDocument(ctx, tx, seriesID)
@@ -241,11 +245,11 @@ func (s *SeriesService) updateSeriesSourceDocument(
 	if err != nil {
 		return false, err
 	}
-	title, err := resolveSeriesUpdateTitle(current.Title, request.Title)
+	title, err := resolveSeriesUpdateTitle(current.Title, command.Title)
 	if err != nil {
 		return false, err
 	}
-	description := resolveSeriesUpdateDescription(current.Summary, request.Description)
+	description := resolveSeriesUpdateDescription(current.Summary, command.Description)
 	if nullableStringEqual(title, current.Title) && nullableStringEqual(description, current.Summary) {
 		return false, nil
 	}
@@ -260,7 +264,7 @@ func (s *SeriesService) updateSeriesSourceDocument(
 	); err != nil {
 		return false, err
 	}
-	if request.Title == nil {
+	if command.Title == nil {
 		return true, nil
 	}
 	_, err = s.ogRefresh.RequestCurrent(
@@ -275,7 +279,7 @@ func resolveSeriesUpdateTitle(current, requested *string) (*string, error) {
 	}
 	value := strings.TrimSpace(*requested)
 	if value == "" {
-		return nil, errs.Required("title")
+		return nil, domainerr.Required("title")
 	}
 	return &value, nil
 }

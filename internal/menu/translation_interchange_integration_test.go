@@ -44,7 +44,7 @@ func TestMenuTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegr
 	var result menudomain.TranslationInterchangeResult
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var applyErr error
-		result, applyErr = service.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
+		result, applyErr = service.domain.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
 			MenuID: created.Msg.Id, SourceLocale: translation.DefaultLocale, TargetLocale: "ko",
 			Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			Plan: plan, Targets: map[string]translation.UnitResult{
@@ -71,7 +71,7 @@ func TestMenuTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegr
 	createdRevision := result.Revision
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var applyErr error
-		result, applyErr = service.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
+		result, applyErr = service.domain.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
 			MenuID: created.Msg.Id, SourceLocale: translation.DefaultLocale, TargetLocale: "ko",
 			Mode:             managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
 			ExpectedRevision: &createdRevision, Plan: plan,
@@ -91,7 +91,7 @@ func TestMenuTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegr
 	require.JSONEq(t, `{"changed_fields":["locale_content"],"locale":"ko","item_operation":"updated"}`, string(rows[2].Attributes))
 
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, applyErr := service.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
+		_, applyErr := service.domain.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
 			MenuID: created.Msg.Id, SourceLocale: translation.DefaultLocale, TargetLocale: "ko",
 			Mode:             managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			ExpectedRevision: &createdRevision, Plan: plan,
@@ -112,7 +112,7 @@ func TestMenuTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegr
 	require.NoError(t, err)
 	failing := newMenuIntegrationService(db, failingMenuDomainAuditAppender{}, spiceDB)
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, applyErr := failing.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
+		_, applyErr := failing.domain.ApplyTranslationInterchange(ctx, tx, menudomain.TranslationInterchangeMutation{
 			MenuID: created.Msg.Id, SourceLocale: translation.DefaultLocale, TargetLocale: "fr",
 			Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
 			Plan: rollbackPlan, Targets: map[string]translation.UnitResult{

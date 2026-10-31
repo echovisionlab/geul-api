@@ -170,8 +170,11 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicCategoryPath, publicCategoryHandler)
 	slog.Info("Registered public service", "path", publicCategoryPath)
 
-	publicSeriesService := seriespublic.NewSeriesService(seriespublicadapter.NewPublicReader(db, cfg.CDNURL))
-	publicSeriesPath, publicSeriesHandler := openv1connect.NewSeriesServiceHandler(publicSeriesService, publicHandlerOpts...)
+	publicSeriesService, err := seriespublic.NewService(seriespublicadapter.NewPublicReader(db, cfg.CDNURL))
+	if err != nil {
+		return err
+	}
+	publicSeriesPath, publicSeriesHandler := openv1connect.NewSeriesServiceHandler(seriespublic.NewConnectHandler(publicSeriesService), publicHandlerOpts...)
 	mux.Handle(publicSeriesPath, publicSeriesHandler)
 	slog.Info("Registered public service", "path", publicSeriesPath)
 
@@ -221,8 +224,11 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicProgramEventPath, publicProgramEventHandler)
 	slog.Info("Registered public service", "path", publicProgramEventPath)
 
-	publicShareLinkService := sharelinkpublic.NewService(db, sharelinkadapter.NewPublicTargetResolver(db))
-	publicShareLinkPath, publicShareLinkHandler := openv1connect.NewShareLinkServiceHandler(publicShareLinkService, publicHandlerOpts...)
+	publicShareLinkService, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: sharelinkadapter.NewPublicTargetResolver(db)})
+	if err != nil {
+		return err
+	}
+	publicShareLinkPath, publicShareLinkHandler := openv1connect.NewShareLinkServiceHandler(sharelinkpublic.NewConnectHandler(publicShareLinkService), publicHandlerOpts...)
 	mux.Handle(publicShareLinkPath, publicShareLinkHandler)
 	slog.Info("Registered public service", "path", publicShareLinkPath)
 

@@ -97,12 +97,11 @@ type aiDocumentMCPConfig struct {
 }
 
 type contentMCPApplications struct {
-	terms      mcpadapter.TermsPolicyManagementApplication
-	privacy    mcpadapter.PrivacyPolicyManagementApplication
-	categories mcpadapter.CategoryReferenceDiscovery
-	tags       mcpadapter.TagReferenceDiscovery
-	clients    mcpadapter.ClientReferenceDiscovery
-	mapPlaces  interface {
+	legalPolicies mcpadapter.LegalPolicyManagementApplication
+	categories    mcpadapter.CategoryReferenceDiscovery
+	tags          mcpadapter.TagReferenceDiscovery
+	clients       mcpadapter.ClientReferenceDiscovery
+	mapPlaces     interface {
 		mcpadapter.MapPlaceReferenceDiscovery
 		mcpadapter.MapPlaceManagementApplication
 	}
@@ -227,7 +226,7 @@ func newAIDocumentMCPComposition(
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP content management tools: %w", err)
 	}
-	policyTools, err := mcpadapter.NewLegalPolicyTools(references.terms, references.privacy)
+	policyTools, err := mcpadapter.NewLegalPolicyTools(references.legalPolicies)
 	if err != nil {
 		return aiDocumentMCPComposition{}, fmt.Errorf("initialize MCP legal policy tools: %w", err)
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -29,15 +28,15 @@ func TestLegalAuthorizationCreateDeleteIntegration(t *testing.T) {
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 
-	termsService := legaldomain.NewAuditedTermsService(
+	termsService := newTestTermsService(
 		db, "https://example.test", writer, spiceDB,
 		legalIntegrationDependencies(db, ""),
-		legaldomain.WithTermsContentBlockStore(store),
+		withLegalContentBlocks(store),
 	)
-	privacyService := legaldomain.NewAuditedPrivacyService(
+	privacyService := newTestPrivacyService(
 		db, "https://example.test", writer, spiceDB,
 		legalIntegrationDependencies(db, ""),
-		legaldomain.WithPrivacyContentBlockStore(store),
+		withLegalContentBlocks(store),
 	)
 
 	terms, err := termsService.CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{}))

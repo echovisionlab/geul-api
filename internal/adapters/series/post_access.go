@@ -32,7 +32,7 @@ func (PostAccess) RequireLockedEdit(
 	}
 	// Series membership is a private mutation surface. Do not reveal whether a
 	// Post exists to a principal that cannot perform the selected Post action.
-	switch connect.CodeOf(err) {
+	switch errs.CodeOf(err) {
 	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
 		return errs.WithCause(errs.NotFound("post", postID), err)
 	default:

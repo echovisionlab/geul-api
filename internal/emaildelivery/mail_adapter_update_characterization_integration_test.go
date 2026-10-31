@@ -42,9 +42,9 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 	outsiderMemberID := testutil.SeedPostIntegrationIdentity(t, db, outsiderIdentityID, "Mail adapter outsider "+outsiderIdentityID[:8])
 	outsiderCtx := testutil.NewAuditContext(t, outsiderIdentityID, outsiderMemberID)
 
-	newService := func() (*MailAdapterService, *recordingMailAdapterPublisher) {
+	newService := func() (mailAdapterTestClient, *recordingMailAdapterPublisher) {
 		publisher := &recordingMailAdapterPublisher{}
-		return NewAuditedMailAdapterService(db, nil, publisher, apitelemetry.NewDurableWriter(db), spiceDB), publisher
+		return newMailAdapterTestClient(t, Deps{DB: db, SpiceDB: spiceDB, AdapterChanges: publisher, Audit: apitelemetry.NewDurableWriter(db)}), publisher
 	}
 
 	t.Run("metadata change skips verification", func(t *testing.T) {

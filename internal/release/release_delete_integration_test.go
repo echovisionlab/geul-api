@@ -12,14 +12,13 @@ import (
 	"gorm.io/gorm"
 
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
-	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -213,9 +212,9 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 			"processing_status":      managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String(),
 		}).Error)
 
-	shareLinkSvc := sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, spiceDB, nil))
+	shareLinkSvc := sharelinktest.NewHandler(t, db, spiceDB)
 	shareLabel := "Release delete integration share"
-	shareLink, err := shareLinkSvc.CreateShareLink(ctx, connect.NewRequest(&managev1.CreateShareLinkRequest{
+	shareLink, err := shareLinkSvc.CreateShareLink(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateShareLinkRequest{
 		EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE,
 		EntityId:   releaseID,
 		Label:      &shareLabel,

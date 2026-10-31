@@ -21,7 +21,9 @@ func TestShareLinkValidateRequiresContractedExistingTarget(t *testing.T) {
 	t.Parallel()
 
 	db := newShareLinkValidationUnitDB(t)
-	service := sharelinkpublic.NewService(db, NewPublicTargetResolver(db))
+	links, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: NewPublicTargetResolver(db)})
+	require.NoError(t, err)
+	service := sharelinkpublic.NewConnectHandler(links)
 
 	artistID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO artist (id, slug) VALUES (?, ?)`, artistID, "artist-slug").Error)
@@ -68,7 +70,7 @@ func TestShareLinkValidateRequiresContractedExistingTarget(t *testing.T) {
 	require.False(t, validateShareLinkUnit(t, service, "corrupt-token").Valid)
 }
 
-func validateShareLinkUnit(t *testing.T, service *sharelinkpublic.ShareLinkService, token string) *openv1.ValidateShareLinkResponse {
+func validateShareLinkUnit(t *testing.T, service *sharelinkpublic.ConnectHandler, token string) *openv1.ValidateShareLinkResponse {
 	t.Helper()
 	response, err := service.Validate(context.Background(), connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: token}))
 	require.NoError(t, err)

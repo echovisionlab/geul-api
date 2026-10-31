@@ -94,7 +94,7 @@ type CampaignDeliveryMetrics interface {
 type CampaignAudienceTarget struct {
 	Archived          bool
 	Valid             bool
-	SegmentType       string
+	SegmentType       model.AudienceSegmentType
 	CreatedAfter      *time.Time
 	CreatedBefore     *time.Time
 	MemberTagIDs      []string
@@ -194,4 +194,13 @@ type CampaignDeliveryPort interface {
 		int,
 		int,
 	) (CampaignDeliveryRecipientPage, error)
+}
+
+// ContributorMembers locks the Members a collaboration write credits, so a
+// concurrent Member deletion waits for the write. Member owns those rows
+// (memberadapter.ContributorMembers).
+type ContributorMembers interface {
+	// LockMembers takes a KEY SHARE lock on each existing Member of
+	// memberIDs and returns the IDs it locked.
+	LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error)
 }
