@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -41,7 +42,7 @@ func (emailAuthoringFailingAppender) AppendDomainAuditInTransaction(context.Cont
 func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 	t.Parallel()
 	db := newEmailAuthoringLocalKratosIntegrationDB(t)
-	baseContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	baseContext, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	admin := auth.GetUser(baseContext)
 	require.NotNil(t, admin)
 	identityID := string(admin.IdentityID)
@@ -50,16 +51,8 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 	writer := apitelemetry.NewDurableWriter(db)
 	references := integrationCampaignDeliveryReferences{}
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	layouts := NewAuditedEmailLayoutService(
-		db, "", "", writer, spiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(references),
-		WithEmailLayoutContentBlockStore(store),
-	)
-	templates := NewAuditedEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "", "", writer, spiceDB,
-		WithEmailTemplateContentBlockStore(store),
-		WithEmailTemplateCampaignDeliveryReferences(references),
-	)
+	layouts := NewLayoutConnectHandler(newTestService(t, Deps{DB: db, Audit: writer, SpiceDB: spiceDB, References: references, ContentBlocks: store}))
+	templates := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, Audit: writer, SpiceDB: spiceDB, ContentBlocks: store, References: references}))
 
 	layout, err := layouts.CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Key: "email_audit_layout", Name: "Email audit layout",
@@ -82,12 +75,7 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 
 	// Trusted collaboration saves attribute each accepted mutation to exactly
 	// one origin Member. Email authoring owns no separate Version checkpoint.
-	internalTemplate := NewAuditedInternalEmailTemplateService(
-		db, writer, spiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(references),
-	)
+	internalTemplate := NewInternalTemplateConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: writer, SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: references}))
 	applied, err := internalTemplate.ApplyBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
 		EmailTemplateId: template.Msg.Id,
 		Locale:          template.Msg.Document.SourceLocale,
@@ -108,8 +96,8 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		ContributorMemberIds: []string{memberID},
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-	storedTemplateSubject, err := loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
+	storedTemplateSubject, err := loadEmailTemplateSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, "Initial subject", storedTemplateSubject)
 
@@ -124,8 +112,8 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		ContributorMemberIds: []string{memberID},
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
+	storedTemplateSubject, err = loadEmailTemplateSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, "Initial subject", storedTemplateSubject)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
@@ -137,18 +125,11 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
 	require.NoError(t, err)
-	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
+	storedTemplateSubject, err = loadEmailTemplateSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, acceptedSubject, storedTemplateSubject)
 	rejectedSubject := "must roll back with Audit"
-	_, err = NewAuditedInternalEmailTemplateService(
-		db,
-		emailAuthoringFailingAppender{},
-		spiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(references),
-	).UpdateEmailTemplateLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateEmailTemplateLocaleMetadataRequest{
+	_, err = NewInternalTemplateConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: emailAuthoringFailingAppender{}, SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: references})).UpdateEmailTemplateLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateEmailTemplateLocaleMetadataRequest{
 		EmailTemplateId:      template.Msg.Id,
 		ExpectedRevision:     metadata.Msg.DocumentRevision,
 		Subject:              &rejectedSubject,
@@ -156,17 +137,11 @@ func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
 		Locale:               template.Msg.Document.SourceLocale,
 	}))
 	require.Error(t, err)
-	storedTemplateSubject, err = loadCampaignEmailSourceSubject(ctx, db, template.Msg.Id, "en")
+	storedTemplateSubject, err = loadEmailTemplateSourceSubject(ctx, db, template.Msg.Id, "en")
 	require.NoError(t, err)
 	require.Equal(t, acceptedSubject, storedTemplateSubject)
 
-	internalLayout := NewAuditedInternalEmailLayoutService(
-		db,
-		writer,
-		WithInternalEmailLayoutCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailLayoutCampaignDeliveryReferences(references),
-		WithInternalEmailLayoutContentBlockStore(store),
-	)
+	internalLayout := NewInternalLayoutConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: writer, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: references, ContentBlocks: store}))
 	layoutSourceLocale := layout.Msg.SourceLocale
 	loadedLayout, err := internalLayout.LoadDocument(ctx, connect.NewRequest(&intrav1.LoadEmailLayoutDocumentRequest{
 		EmailLayoutId: layout.Msg.Id,

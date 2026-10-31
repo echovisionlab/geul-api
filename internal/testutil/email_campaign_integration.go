@@ -115,6 +115,19 @@ func IntegrationAdminContext(t *testing.T, db *gorm.DB) (context.Context, *auth.
 	}), spiceDB
 }
 
+// IntegrationAdminAuditContext is IntegrationAdminContext with the request
+// context that domain audit attributes the administrator's records to.
+func IntegrationAdminAuditContext(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
+	t.Helper()
+	ctx, spiceDB := IntegrationAdminContext(t, db)
+	admin := auth.GetUser(ctx)
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: string(admin.IdentityID), MemberID: string(admin.MemberID), SessionID: string(admin.SessionID),
+	})
+	require.NoError(t, err)
+	return sharedtelemetry.WithRequestContext(ctx, request), spiceDB
+}
+
 type emailCampaignNoFileReuseAuthorizer struct{}
 
 func (emailCampaignNoFileReuseAuthorizer) AuthorizeFileReuse(context.Context, *gorm.DB, contentblock.Document, contentblock.FullBlock, contentblock.FileReference, contentblock.File) error {

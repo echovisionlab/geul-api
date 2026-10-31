@@ -10,8 +10,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -25,10 +25,7 @@ func LoadTemplateTranslationSourceDocument(
 	store *contentblock.Store,
 	templateID string,
 ) (*translation.SourceDocument, error) {
-	if store == nil {
-		return nil, errors.New("email template translation content block store is not configured")
-	}
-	return emailTemplateContent.LoadTranslationSourceDocument(ctx, db, store, templateID, loadCampaignEmailSourceSubject)
+	return emailTemplateContent.LoadTranslationSourceDocument(ctx, db, store, templateID, loadEmailTemplateSourceSubject)
 }
 
 // ApplyTemplateTranslationCandidate commits one generated target for an
@@ -37,21 +34,20 @@ func ApplyTemplateTranslationCandidate(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	_ CampaignDeliveryReferences,
 	job *model.TranslationJob,
 	candidate *translation.Candidate,
 	input translation.EntryWrite,
 	auditWriter domainaudit.Appender,
 ) error {
-	if store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
-		return errors.New("typed Email Template translation candidate and content Block store are required")
+	if job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
+		return errors.New("typed Email Template translation candidate is required")
 	}
 	if job.EntityType != emailTemplateContentEntity {
-		return errs.InvalidArgument("entity_type", "Email Template translation entity is required")
+		return domainerr.InvalidField("entity_type", "Email Template translation entity is required")
 	}
 	return emailTemplateContent.ApplyTranslationCandidate(ctx, tx, store, emailcontent.TranslationCandidate{
 		Job: job, Candidate: candidate, Input: input,
-		Fence: emailTemplateTranslationJobApplyFence(emailTemplateContentEntity, job.EntityID),
+		Fence: emailTemplateTranslationJobApplyFence(job.EntityID),
 	}, auditWriter)
 }
 
@@ -64,14 +60,14 @@ func projectEmailTemplateMaterializedContent(
 	now time.Time,
 ) error {
 	if snapshot.Document.Profile != emailContentProfile {
-		return errs.FailedPrecondition("Email Template content document profile changed")
+		return domainerr.Precondition("Email Template content document profile changed")
 	}
-	domain, err := loadCampaignEmailSourceContext(ctx, tx, emailTemplateContentEntity, templateID)
+	domain, err := loadEmailTemplateSourceContext(ctx, tx, templateID, false)
 	if err != nil {
 		return err
 	}
 	if snapshot.SourceLocale != domain.SourceLocale {
-		return errs.FailedPrecondition("Email Template translation source locale changed; reload before saving")
+		return domainerr.Precondition("Email Template translation source locale changed; reload before saving")
 	}
 	// Translation rows are the persisted set of locale projections. A target
 	// row may intentionally have no locale overlay because it currently falls
@@ -81,7 +77,7 @@ func projectEmailTemplateMaterializedContent(
 	if err := tx.WithContext(ctx).Table("email_template_translation").
 		Where("entity_id = ?", templateID).
 		Order("locale ASC").Pluck("locale", &persistedLocales).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	requested := make(map[string]struct{}, len(changedLocales))
 	for _, locale := range changedLocales {
@@ -113,10 +109,10 @@ func projectEmailTemplateMaterializedContent(
 			Where("entity_id = ? AND locale = ?", templateID, locale).
 			Updates(updates)
 		if result.Error != nil {
-			return errs.Internal(result.Error)
+			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("Email Template locale metadata is not initialized")
+			return domainerr.Precondition("Email Template locale metadata is not initialized")
 		}
 	}
 	return nil

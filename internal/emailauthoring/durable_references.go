@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -20,13 +20,10 @@ func RequireTranslationSourceMutable(
 	entityType string,
 	entityID string,
 ) error {
-	if tx == nil {
-		return errs.InternalMsg("Email Authoring transaction is required")
-	}
 	entityType = strings.TrimSpace(entityType)
 	entityID = strings.TrimSpace(entityID)
 	if entityID == "" {
-		return errs.InvalidArgument("entity_id", "Email Authoring translation source id is required")
+		return domainerr.InvalidField("entity_id", "Email Authoring translation source id is required")
 	}
 	var table string
 	switch entityType {
@@ -35,7 +32,7 @@ func RequireTranslationSourceMutable(
 	case "email_layout":
 		table = "email_layout"
 	default:
-		return errs.InvalidArgument("entity_type", "unsupported Email Authoring translation source")
+		return domainerr.InvalidField("entity_type", "unsupported Email Authoring translation source")
 	}
 	var root struct {
 		ID string `gorm:"column:id"`
@@ -45,14 +42,14 @@ func RequireTranslationSourceMutable(
 		Select("id").Where("id = ?", entityID).Take(&root)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return errs.NotFound(entityType, entityID)
+			return domainerr.ResourceNotFound(entityType, entityID)
 		}
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if entityType == "email_template" {
-		return ensureEmailTemplateMutableForActiveDelivery(ctx, tx, references, entityID)
+		return references.RequireTemplateMutable(ctx, tx, entityID)
 	}
-	return ensureEmailLayoutMutableForActiveDelivery(ctx, tx, references, entityID)
+	return references.RequireLayoutMutable(ctx, tx, entityID)
 }
 
 func loadEmailLayoutReferenceCounts(
@@ -72,9 +69,6 @@ func loadEmailLayoutReferenceCounts(
 	}
 	if len(ids) == 0 {
 		return nil
-	}
-	if references == nil {
-		return errs.InternalMsg("Campaign delivery references are not configured")
 	}
 	external, err := references.LayoutExternalReferenceCounts(ctx, db, ids)
 	if err != nil {
@@ -123,9 +117,6 @@ func loadEmailTemplateReferenceCounts(
 	if len(ids) == 0 {
 		return nil
 	}
-	if references == nil {
-		return errs.InternalMsg("Campaign delivery references are not configured")
-	}
 	counts, err := references.TemplateDeliveryRunCounts(ctx, db, ids)
 	if err != nil {
 		return err
@@ -136,28 +127,4 @@ func loadEmailTemplateReferenceCounts(
 		}
 	}
 	return nil
-}
-
-func ensureEmailTemplateMutableForActiveDelivery(
-	ctx context.Context,
-	tx *gorm.DB,
-	references CampaignDeliveryReferences,
-	templateID string,
-) error {
-	if references == nil {
-		return errs.InternalMsg("Campaign delivery references are not configured")
-	}
-	return references.RequireTemplateMutable(ctx, tx, templateID)
-}
-
-func ensureEmailLayoutMutableForActiveDelivery(
-	ctx context.Context,
-	tx *gorm.DB,
-	references CampaignDeliveryReferences,
-	layoutID string,
-) error {
-	if references == nil {
-		return errs.InternalMsg("Campaign delivery references are not configured")
-	}
-	return references.RequireLayoutMutable(ctx, tx, layoutID)
 }

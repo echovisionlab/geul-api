@@ -33,7 +33,7 @@ func emailTemplateDomainRegistration(
 			input core.EntryWrite,
 		) error {
 			return emailauthoring.ApplyTemplateTranslationCandidate(
-				ctx, tx, store, references, job, candidate, input, auditWriter,
+				ctx, tx, store, job, candidate, input, auditWriter,
 			)
 		},
 		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditEmailTemplateUpdated, sharedtelemetry.NewEmailTemplateSourceLocaleAuditRecord),

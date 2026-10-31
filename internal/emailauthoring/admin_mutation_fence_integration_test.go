@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -20,13 +21,9 @@ func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *test
 	t.Parallel()
 	t.Run("email template root", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+		ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 		mutationDB, applicationName := newEmailAuthoringFenceMutationDB(t)
-		service := NewEmailTemplateService(
-			mutationDB, nil, emailTemplateRuntimeFixture{}, "", "", spiceDB,
-			WithEmailTemplateContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-			WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-		)
+		service := NewTemplateConnectHandler(newTestService(t, Deps{DB: mutationDB, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: integrationCampaignDeliveryReferences{}}))
 		created, err := service.CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 			Key: "fence_template", Name: "Original template", Subject: "Subject", SourceLocale: "en",
 		}))
@@ -42,7 +39,7 @@ func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *test
 		requireEmailAuthoringMutationWaitingOnRoot(t, db, applicationName, result)
 		demoteEmailAuthoringMutationActor(t, spiceDB, ctx)
 		require.NoError(t, lockTx.Commit().Error)
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(<-result))
 
 		var name string
 		require.NoError(t, db.Table("email_template").Select("name").Where("id = ?", created.Msg.Id).Scan(&name).Error)
@@ -51,13 +48,9 @@ func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *test
 
 	t.Run("email layout root", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+		ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 		mutationDB, applicationName := newEmailAuthoringFenceMutationDB(t)
-		service := NewEmailLayoutService(
-			mutationDB, "", "", spiceDB,
-			WithEmailLayoutCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-			WithEmailLayoutContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-		)
+		service := NewLayoutConnectHandler(newTestService(t, Deps{DB: mutationDB, SpiceDB: spiceDB, References: integrationCampaignDeliveryReferences{}, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB)}))
 		created, err := service.CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 			Key: "fence_layout", Name: "Original layout", HtmlContent: "<main>{{content}}</main>", SourceLocale: "en",
 		}))
@@ -73,7 +66,7 @@ func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *test
 		requireEmailAuthoringMutationWaitingOnRoot(t, db, applicationName, result)
 		demoteEmailAuthoringMutationActor(t, spiceDB, ctx)
 		require.NoError(t, lockTx.Commit().Error)
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(<-result))
 
 		var name string
 		require.NoError(t, db.Table("email_layout").Select("name").Where("id = ?", created.Msg.Id).Scan(&name).Error)
@@ -82,13 +75,9 @@ func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *test
 
 	t.Run("email event mapping roots", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+		ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 		mutationDB, applicationName := newEmailAuthoringFenceMutationDB(t)
-		service := NewEmailTemplateService(
-			mutationDB, nil, emailTemplateRuntimeFixture{}, "", "", spiceDB,
-			WithEmailTemplateContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-			WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-		)
+		service := NewTemplateConnectHandler(newTestService(t, Deps{DB: mutationDB, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: integrationCampaignDeliveryReferences{}}))
 		created, err := service.CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 			Key: "fence_mapping_template", Name: "Mapping template", Subject: "Subject", SourceLocale: "en",
 		}))
@@ -105,7 +94,7 @@ func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *test
 		requireEmailAuthoringMutationWaitingOnRoot(t, db, applicationName, result)
 		demoteEmailAuthoringMutationActor(t, spiceDB, ctx)
 		require.NoError(t, lockTx.Commit().Error)
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(<-result))
 
 		var after []string
 		require.NoError(t, db.Table("email_template").Where("event_key = ?", "welcome").Order("id").Pluck("id", &after).Error)

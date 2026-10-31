@@ -33,14 +33,7 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 		cleanupConcurrentCampaignSnapshotFixture(t, db, ctx, spiceDB, "", campaignID, layoutID)
 	})
 
-	layout, err := emailauthoring.NewEmailLayoutService(
-		db,
-		"https://cdn.example.test",
-		"https://www.example.test",
-		spiceDB,
-		emailauthoring.WithEmailLayoutCampaignDeliveryReferences(references),
-		emailauthoring.WithEmailLayoutContentBlockStore(contentBlocks),
-	).CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
+	layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Name:         "Schedule layout race " + uuid.NewString(),
 		Key:          "schedule_layout_race_" + strings.ReplaceAll(uuid.NewString(), "-", "_"),
 		HtmlContent:  "<html><body>{{content}}</body></html>",
@@ -93,14 +86,7 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 	start := make(chan struct{})
 	deleteDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
 		<-start
-		_, deleteErr := emailauthoring.NewEmailLayoutService(
-			deleteDB,
-			"https://cdn.example.test",
-			"https://www.example.test",
-			spiceDB,
-			emailauthoring.WithEmailLayoutCampaignDeliveryReferences(references),
-			emailauthoring.WithEmailLayoutContentBlockStore(contentBlocks),
-		).DeleteEmailLayout(operationCtx, connect.NewRequest(&managev1.DeleteEmailLayoutRequest{Id: layoutID}))
+		_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: deleteDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(operationCtx, connect.NewRequest(&managev1.DeleteEmailLayoutRequest{Id: layoutID}))
 		return deleteErr
 	})
 	scheduleDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {

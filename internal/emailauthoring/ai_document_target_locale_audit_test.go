@@ -5,7 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -29,6 +31,23 @@ func (capture *emailAuthoringLocaleAuditCapture) AppendDomainAuditInTransaction(
 	return capture.err
 }
 
+// runLocaleAudit commits change through the mutation pipeline with record as
+// its audit.
+func runLocaleAudit(t *testing.T, capture *emailAuthoringLocaleAuditCapture, record mutation.Audit, change func(*gorm.DB) error) (*gorm.DB, error) {
+	t.Helper()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE mutation_fact (id TEXT PRIMARY KEY)`).Error)
+	runner, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, capture)
+	require.NoError(t, err)
+	_, err = mutation.Run(t.Context(), runner, mutation.Spec[struct{}]{
+		Access: emailcontent.CollaborationAccess,
+		Change: func(_ context.Context, tx *gorm.DB) (struct{}, error) { return struct{}{}, change(tx) },
+		Audit:  func(struct{}) mutation.Audit { return record },
+	})
+	return db, err
+}
+
 func TestEmailAuthoringAIDocumentLocaleAuditsAreMemberOwnedAndMinimal(t *testing.T) {
 	t.Parallel()
 
@@ -37,27 +56,17 @@ func TestEmailAuthoringAIDocumentLocaleAuditsAreMemberOwnedAndMinimal(t *testing
 		name       string
 		action     sharedtelemetry.AuditAction
 		targetType string
-		append     func(*emailAuthoringLocaleAuditCapture) error
+		record     mutation.Audit
 	}{
 		{
 			name: "Email Template", action: sharedtelemetry.AuditEmailTemplateUpdated,
 			targetType: "email_template",
-			append: func(capture *emailAuthoringLocaleAuditCapture) error {
-				return appendEmailTemplateLocaleContentAudit(
-					t.Context(), nil, capture, memberID, "template-1", "ko",
-					sharedtelemetry.AuditItemOperationUpdated,
-				)
-			},
+			record:     emailTemplateContent.LocaleContentChange(memberID, "template-1", "ko", sharedtelemetry.AuditItemOperationUpdated),
 		},
 		{
 			name: "Email Layout", action: sharedtelemetry.AuditEmailLayoutUpdated,
 			targetType: "email_layout",
-			append: func(capture *emailAuthoringLocaleAuditCapture) error {
-				return appendEmailLayoutLocaleContentAudit(
-					t.Context(), nil, capture, memberID, "layout-1", "ko",
-					sharedtelemetry.AuditItemOperationUpdated,
-				)
-			},
+			record:     emailLayoutLocaleContentChange(memberID, "layout-1", "ko", sharedtelemetry.AuditItemOperationUpdated),
 		},
 	}
 	for _, test := range tests {
@@ -65,7 +74,8 @@ func TestEmailAuthoringAIDocumentLocaleAuditsAreMemberOwnedAndMinimal(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			capture := &emailAuthoringLocaleAuditCapture{}
-			require.NoError(t, test.append(capture))
+			_, err := runLocaleAudit(t, capture, test.record, func(*gorm.DB) error { return nil })
+			require.NoError(t, err)
 			require.NoError(t, capture.record.Validate())
 			require.Equal(t, test.action, capture.record.Action)
 			require.Equal(t, test.targetType, capture.record.TargetType)
@@ -80,20 +90,11 @@ func TestEmailAuthoringAIDocumentLocaleAuditsAreMemberOwnedAndMinimal(t *testing
 }
 
 func TestEmailAuthoringLocaleAuditFailureRollsBackOwningTransaction(t *testing.T) {
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE mutation_fact (id TEXT PRIMARY KEY)`).Error)
 	want := errors.New("append failed")
 	capture := &emailAuthoringLocaleAuditCapture{err: want}
-
-	err = db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`INSERT INTO mutation_fact (id) VALUES ('layout-1')`).Error; err != nil {
-			return err
-		}
-		return appendEmailLayoutLocaleContentAudit(
-			t.Context(), tx, capture, uuid.NewString(), "layout-1", "ko",
-			sharedtelemetry.AuditItemOperationCreated,
-		)
+	record := emailLayoutLocaleContentChange(uuid.NewString(), "layout-1", "ko", sharedtelemetry.AuditItemOperationCreated)
+	db, err := runLocaleAudit(t, capture, record, func(tx *gorm.DB) error {
+		return tx.Exec(`INSERT INTO mutation_fact (id) VALUES ('layout-1')`).Error
 	})
 	require.ErrorIs(t, err, want)
 	var count int64

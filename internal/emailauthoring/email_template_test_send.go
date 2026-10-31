@@ -7,18 +7,17 @@ import (
 	"net/mail"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// templateKeyRegex validates the format of template keys
+// validateEmail validates an email address using net/mail.
 func validateEmail(email string) error {
 	email = strings.TrimSpace(email)
 	if email == "" {
@@ -31,49 +30,45 @@ func validateEmail(email string) error {
 	return nil
 }
 
-// SendTestEmail sends a test email (admin)
-func (s *EmailTemplateService) SendTestEmail(
-	ctx context.Context,
-	req *connect.Request[managev1.SendTestEmailRequest],
-) (*connect.Response[managev1.SuccessResponse], error) {
-	can, canErr := policyv1.EmailTemplate.Manage(req.Msg.Id)
-	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
-		return nil, err
-	}
+// SendTestEmailCommand sends an Email Template to one address with sample
+// data.
+type SendTestEmailCommand struct {
+	ID     string
+	Email  string
+	Locale *string
+}
 
-	// Validate email address
-	if err := validateEmail(req.Msg.Email); err != nil {
-		return nil, errs.InvalidArgument("email", err.Error())
+// SendTestEmail queues a test send of the template to an address that is
+// ready to receive one.
+func (s *Service) SendTestEmail(ctx context.Context, command SendTestEmailCommand) error {
+	can, canErr := policyv1.EmailTemplate.Manage(command.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return err
 	}
-
-	// Verify template exists
+	if err := validateEmail(command.Email); err != nil {
+		return domainerr.InvalidField("email", err.Error())
+	}
 	var template model.EmailTemplate
-	if err := s.db.WithContext(ctx).First(&template, "id = ?", req.Msg.Id).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&template, "id = ?", command.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("email template", req.Msg.Id)
+			return domainerr.ResourceNotFound("email template", command.ID)
 		}
-		return nil, errs.Internal(err)
+		return err
 	}
-
-	if s.publisher == nil {
-		return nil, errs.Internal(fmt.Errorf("email publisher is not configured"))
-	}
-	if err := email.CheckTestSendReadiness(ctx, s.db, req.Msg.Email); err != nil {
+	if err := email.CheckTestSendReadiness(ctx, s.db, command.Email); err != nil {
 		if message := email.TestSendReadinessMessage(err); message != "" {
-			return nil, errs.FailedPrecondition(message)
+			return domainerr.Precondition(message)
 		}
-		return nil, errs.Internal(err)
+		return err
 	}
-
-	sendJob, err := buildEmailTemplateSendTestJob(s.runtime, template.ID, req.Msg.Email, req.Msg.Locale, emailTestActorID(ctx))
+	sendJob, err := buildEmailTemplateSendTestJob(s.runtime, template.ID, command.Email, command.Locale, emailTestActorID(ctx))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := s.publisher.PublishSendEmail(ctx, sendJob); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to queue test email: %w", err))
+		return fmt.Errorf("failed to queue test email: %w", err)
 	}
-
-	return connect.NewResponse(&managev1.SuccessResponse{Success: true}), nil
+	return nil
 }
 
 func buildEmailTemplateSendTestJob(
@@ -111,9 +106,7 @@ func resolveEmailTemplateSendTestLocale(runtime EmailTemplateRuntime, locale *st
 	}
 	normalizedLocale := runtime.NormalizeSupportedLocale(strings.TrimSpace(*locale))
 	if normalizedLocale == nil {
-		return nil, errs.InvalidArgument("locale", "unsupported locale")
+		return nil, domainerr.InvalidField("locale", "unsupported locale")
 	}
 	return normalizedLocale, nil
 }
-
-// PreviewEmailTemplate renders a template with sample data (admin)

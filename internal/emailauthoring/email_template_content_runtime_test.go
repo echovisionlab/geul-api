@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/DATA-DOG/go-sqlmock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -13,7 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestCampaignDocumentLoadDistinguishesInvalidSessionFromLookupFailure(t *testing.T) {
+func TestEmailTemplateDocumentLoadDistinguishesInvalidSessionFromLookupFailure(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		name := "lookup failure"
 		if missing {
@@ -34,10 +35,9 @@ func TestCampaignDocumentLoadDistinguishesInvalidSessionFromLookupFailure(t *tes
 			} else {
 				query.WillReturnError(lookupErr)
 			}
-			err = requireCampaignEmailDocumentLoad(t.Context(), db, nil, nil,
-				&intrav1.CollaborationPrincipal{SessionId: "11111111-1111-4111-8111-111111111111"},
-				intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_TEMPLATE, "template")
-			require.Equal(t, want, connect.CodeOf(err))
+			err = requireEmailTemplateDocumentLoad(t.Context(), db, nil, nil,
+				&intrav1.CollaborationPrincipal{SessionId: "11111111-1111-4111-8111-111111111111"}, "template")
+			require.Equal(t, want, errs.Wrap(err).Code())
 			if !missing {
 				require.ErrorIs(t, err, lookupErr)
 			}

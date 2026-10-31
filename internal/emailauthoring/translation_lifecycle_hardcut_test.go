@@ -51,8 +51,8 @@ func TestEmailTemplateSourceSubjectNoopPreservesRevisionFactsAndTarget(t *testin
 	}
 	sourceBeforeEdit := readTarget("en")
 	targetBeforeEdit := readTarget("ko")
-	effect, err := updateCampaignEmailLocaleSubject(
-		t.Context(), db, emailTemplateContentEntity, "template-1", "en",
+	effect, err := updateEmailTemplateSourceSubject(
+		t.Context(), db, "template-1", "en",
 		"Source subject", now.Add(time.Minute),
 	)
 	require.NoError(t, err)
@@ -61,8 +61,8 @@ func TestEmailTemplateSourceSubjectNoopPreservesRevisionFactsAndTarget(t *testin
 	require.Equal(t, sourceBeforeEdit, readTarget("en"))
 	require.Equal(t, targetBeforeEdit, readTarget("ko"))
 
-	effect, err = updateCampaignEmailLocaleSubject(
-		t.Context(), db, emailTemplateContentEntity, "template-1", "en",
+	effect, err = updateEmailTemplateSourceSubject(
+		t.Context(), db, "template-1", "en",
 		"Edited source subject", now.Add(3*time.Minute),
 	)
 	require.NoError(t, err)

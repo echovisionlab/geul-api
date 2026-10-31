@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -30,18 +30,14 @@ import (
 func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegration(t *testing.T) {
 	t.Parallel()
 	db := newEmailAuthoringLocalKratosIntegrationDB(t)
-	baseContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	baseContext, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	admin := auth.GetUser(baseContext)
 	require.NotNil(t, admin)
 	ctx := testutil.NewAuditContext(t, string(admin.IdentityID), string(admin.MemberID))
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
 	references := integrationCampaignDeliveryReferences{}
 
-	template, err := NewEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "", "", spiceDB,
-		WithEmailTemplateContentBlockStore(store),
-		WithEmailTemplateCampaignDeliveryReferences(references),
-	).CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
+	template, err := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: spiceDB, ContentBlocks: store, References: references})).CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 		Key: "exact_target_" + strings.ReplaceAll(uuid.NewString(), "-", ""), Name: "Exact target Template",
 		Subject: "Source subject", SourceLocale: "en",
 	}))
@@ -49,12 +45,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributorID)
-	internal := NewAuditedInternalEmailTemplateService(
-		db, apitelemetry.NewDurableWriter(db), spiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(references),
-	)
+	internal := NewInternalTemplateConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: references}))
 	sourceWrite, err := internal.ApplyBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
 		EmailTemplateId: template.Msg.Id,
 		Locale:          "en",
@@ -64,7 +55,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	}))
 	require.NoError(t, err)
 
-	documentID, err := loadCampaignEmailContentDocumentID(ctx, db, emailTemplateContentEntity, template.Msg.Id)
+	documentID, err := loadEmailTemplateContentDocument(ctx, db, template.Msg.Id, false)
 	require.NoError(t, err)
 	expectedDocumentRevision := uuid.MustParse(sourceWrite.Msg.DocumentRevision)
 	expectedMissing := false
@@ -82,9 +73,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 				ExpectedLocaleExists:     &expectedMissing,
 				Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true},
 				Now:                      time.Now().UTC(),
-				Fence: campaignEmailContentFence(
-					references, emailTemplateContentEntity, template.Msg.Id,
-				),
+				Fence:                    emailTemplateContentFence(references, template.Msg.Id),
 			},
 		)
 		return createErr
@@ -110,7 +99,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 			blockID, sourceWrite.Msg.DocumentRevision, "ko", "거부할 번역", invalidContributors,
 		),
 	}))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	targetWrite, err := internal.ApplyBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
 		EmailTemplateId: template.Msg.Id, Locale: "ko",
@@ -176,7 +165,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		return ApplyTemplateTranslationCandidate(
-			ctx, tx, store, references, job, candidate,
+			ctx, tx, store, job, candidate,
 			translation.EntryWrite{Title: &targetSubject, Now: time.Now().UTC()},
 			apitelemetry.NewDurableWriter(db),
 		)

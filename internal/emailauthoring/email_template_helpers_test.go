@@ -15,9 +15,9 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/email"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestResolveEmailTemplatePreviewSubject(t *testing.T) {
@@ -26,8 +26,8 @@ func TestResolveEmailTemplatePreviewSubject(t *testing.T) {
 
 	emailTemplate := model.EmailTemplate{Subject: savedSubject}
 
-	assert.Equal(t, savedSubject, resolveEmailTemplatePreviewSubject(&managev1.PreviewEmailTemplateRequest{}, emailTemplate))
-	assert.Equal(t, overrideSubject, resolveEmailTemplatePreviewSubject(&managev1.PreviewEmailTemplateRequest{
+	assert.Equal(t, savedSubject, resolveEmailTemplatePreviewSubject(PreviewEmailTemplateQuery{}, emailTemplate))
+	assert.Equal(t, overrideSubject, resolveEmailTemplatePreviewSubject(PreviewEmailTemplateQuery{
 		Subject: &overrideSubject,
 	}, emailTemplate))
 }
@@ -37,7 +37,7 @@ func TestResolveEmailTemplatePreviewHTML(t *testing.T) {
 
 	emailTemplate := model.EmailTemplate{ContentHTML: &savedHTML}
 
-	html, err := resolveEmailTemplatePreviewHTML(context.Background(), &managev1.PreviewEmailTemplateRequest{}, emailTemplate)
+	html, err := resolveEmailTemplatePreviewHTML(context.Background(), PreviewEmailTemplateQuery{}, emailTemplate)
 	require.NoError(t, err)
 	assert.Equal(t, savedHTML, html)
 }
@@ -49,12 +49,12 @@ func TestResolveEmailTemplatePreviewLayoutID(t *testing.T) {
 
 	emailTemplate := model.EmailTemplate{LayoutID: &savedLayoutID}
 
-	assert.Equal(t, &savedLayoutID, resolveEmailTemplatePreviewLayoutID(&managev1.PreviewEmailTemplateRequest{}, emailTemplate))
-	assert.Equal(t, &overrideLayoutID, resolveEmailTemplatePreviewLayoutID(&managev1.PreviewEmailTemplateRequest{
-		LayoutId: &overrideLayoutID,
+	assert.Equal(t, &savedLayoutID, resolveEmailTemplatePreviewLayoutID(PreviewEmailTemplateQuery{}, emailTemplate))
+	assert.Equal(t, &overrideLayoutID, resolveEmailTemplatePreviewLayoutID(PreviewEmailTemplateQuery{
+		LayoutID: &overrideLayoutID,
 	}, emailTemplate))
-	assert.Nil(t, resolveEmailTemplatePreviewLayoutID(&managev1.PreviewEmailTemplateRequest{
-		LayoutId: &clearLayoutID,
+	assert.Nil(t, resolveEmailTemplatePreviewLayoutID(PreviewEmailTemplateQuery{
+		LayoutID: &clearLayoutID,
 	}, emailTemplate))
 }
 
@@ -179,7 +179,7 @@ func TestResolveEmailTemplateSendTestLocaleRejectsUnsupportedOverride(t *testing
 	normalized, err := resolveEmailTemplateSendTestLocale(emailTemplateRuntimeFixture{}, &locale)
 	require.Nil(t, normalized)
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 type emailTemplateRuntimeFixture struct{}

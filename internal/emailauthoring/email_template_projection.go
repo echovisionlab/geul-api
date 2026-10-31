@@ -9,7 +9,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// templateKeyRegex validates the format of template keys
 func toProtoEmailTemplate(t *model.EmailTemplate) *managev1.EmailTemplate {
 	populateSystemEmailTemplateMetadata(t)
 
@@ -55,18 +54,12 @@ func toProtoEmailTemplate(t *model.EmailTemplate) *managev1.EmailTemplate {
 	return proto
 }
 
-func (s *EmailTemplateService) toProtoEmailTemplateWithDocument(
+func (s *Service) toProtoEmailTemplateWithDocument(
 	ctx context.Context,
 	template *model.EmailTemplate,
 ) (*managev1.EmailTemplate, error) {
 	proto := toProtoEmailTemplate(template)
-	projection, err := loadCampaignEmailEditorProjection(
-		ctx,
-		s.db,
-		s.contentBlocks,
-		emailTemplateContentEntity,
-		template.ID,
-	)
+	projection, err := loadEmailTemplateEditorProjection(ctx, s.db, s.contentBlocks, template.ID)
 	if err != nil {
 		return nil, err
 	}

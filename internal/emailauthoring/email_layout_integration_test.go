@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -16,13 +17,9 @@ import (
 func TestEmailLayoutServiceListUsesCanonicalSourceBatchAndFailsClosedIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	service := NewEmailLayoutService(
-		db, "https://cdn.example.com", "https://example.com", spiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-		WithEmailLayoutContentBlockStore(store),
-	)
+	service := NewLayoutConnectHandler(newTestService(t, Deps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, References: integrationCampaignDeliveryReferences{}, ContentBlocks: store}))
 	created, err := service.CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Key:          "canonical_list_layout",
 		Name:         "Canonical list layout",
@@ -54,19 +51,15 @@ func TestEmailLayoutServiceListUsesCanonicalSourceBatchAndFailsClosedIntegration
 		connect.NewRequest(&managev1.ListEmailLayoutsAdminRequest{}),
 	)
 	require.Nil(t, listed)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInternal, errs.CodeOf(err))
 }
 
 func TestEmailLayoutPreviewFallsBackToCanonicalSourceWhenTargetIsMissingIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	service := NewEmailLayoutService(
-		db, "https://cdn.example.com", "https://example.com", spiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-		WithEmailLayoutContentBlockStore(store),
-	)
+	service := NewLayoutConnectHandler(newTestService(t, Deps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, References: integrationCampaignDeliveryReferences{}, ContentBlocks: store}))
 	created, err := service.CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Key:          "preview_resolver_failure",
 		Name:         "Preview resolver failure",
@@ -87,13 +80,9 @@ func TestEmailLayoutPreviewFallsBackToCanonicalSourceWhenTargetIsMissingIntegrat
 func TestEmailLayoutMutationIsFrozenOnlyWhileDeliveryRunIsActiveIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	service := NewEmailLayoutService(
-		db, "https://cdn.example.com", "https://example.com", spiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-		WithEmailLayoutContentBlockStore(store),
-	)
+	service := NewLayoutConnectHandler(newTestService(t, Deps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, References: integrationCampaignDeliveryReferences{}, ContentBlocks: store}))
 	created, err := service.CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Key:          "frozen_layout_" + testutil.IntegrationUUID(),
 		Name:         "Frozen delivery layout",
@@ -135,7 +124,7 @@ func TestEmailLayoutMutationIsFrozenOnlyWhileDeliveryRunIsActiveIntegration(t *t
 	_, err = service.UpdateEmailLayout(ctx, connect.NewRequest(&managev1.UpdateEmailLayoutRequest{
 		Id: created.Msg.Id, Name: &renamed,
 	}))
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	require.NoError(t, db.Model(&model.CampaignDeliveryRun{}).
 		Where("campaign_id = ?", campaignID).

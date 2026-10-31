@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/campaign"
+	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -11,7 +12,10 @@ import (
 // ContributorMembers locks the Member rows a collaboration write credits.
 type ContributorMembers struct{}
 
-var _ campaign.ContributorMembers = ContributorMembers{}
+var (
+	_ campaign.ContributorMembers       = ContributorMembers{}
+	_ emailauthoring.ContributorMembers = ContributorMembers{}
+)
 
 // LockMembers takes a KEY SHARE lock on each existing Member of memberIDs,
 // so a concurrent Member deletion waits for the write, and returns the IDs

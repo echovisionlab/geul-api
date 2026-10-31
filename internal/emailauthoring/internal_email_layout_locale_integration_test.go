@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -70,7 +71,7 @@ func (emailLayoutLocaleReferences) DetachLayoutHistory(context.Context, *gorm.DB
 func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 	t.Parallel()
 	db := newEmailAuthoringLocalKratosIntegrationDB(t)
-	baseContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	baseContext, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	admin := auth.GetUser(baseContext)
 	require.NotNil(t, admin)
 	memberID := string(admin.MemberID)
@@ -79,11 +80,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 	references := emailLayoutLocaleReferences{}
 	auditAppender := &emailLayoutLocaleAuditAppender{}
 
-	manageService := NewAuditedEmailLayoutService(
-		db, "", "", auditAppender, spiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(references),
-		WithEmailLayoutContentBlockStore(store),
-	)
+	manageService := NewLayoutConnectHandler(newTestService(t, Deps{DB: db, Audit: auditAppender, SpiceDB: spiceDB, References: references, ContentBlocks: store}))
 	created, err := manageService.CreateEmailLayout(ctx, connect.NewRequest(
 		&managev1.CreateEmailLayoutRequest{
 			Name: "Locale collaboration layout",
@@ -97,12 +94,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 	layoutID := created.Msg.Id
 	auditAppender.records = nil
 
-	service := NewAuditedInternalEmailLayoutService(
-		db, auditAppender,
-		WithInternalEmailLayoutCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailLayoutCampaignDeliveryReferences(references),
-		WithInternalEmailLayoutContentBlockStore(store),
-	)
+	service := NewInternalLayoutConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: auditAppender, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: references, ContentBlocks: store}))
 	source, err := service.LoadDocument(ctx, connect.NewRequest(
 		&intrav1.LoadEmailLayoutDocumentRequest{EmailLayoutId: layoutID, Locale: "en"},
 	))
@@ -145,11 +137,11 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 		LocaleValues:             emailLayoutLocaleValueMessages(nextValues),
 	}
 	_, err = service.SaveDocument(ctx, connect.NewRequest(&baseTargetRequest))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	multipleContributors := proto.Clone(&baseTargetRequest).(*intrav1.SaveEmailLayoutDocumentRequest)
 	multipleContributors.ContributorMemberIds = []string{memberID, uuid.NewString()}
 	_, err = service.SaveDocument(ctx, connect.NewRequest(multipleContributors))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	require.Empty(t, auditAppender.records)
 
 	acceptedTarget := proto.Clone(&baseTargetRequest).(*intrav1.SaveEmailLayoutDocumentRequest)
@@ -181,13 +173,13 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 
 	staleTarget := proto.Clone(acceptedTarget).(*intrav1.SaveEmailLayoutDocumentRequest)
 	_, err = service.SaveDocument(ctx, connect.NewRequest(staleTarget))
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	unknownUnit := proto.Clone(noOpTarget).(*intrav1.SaveEmailLayoutDocumentRequest)
 	unknownUnit.LocaleValues = append(unknownUnit.LocaleValues, &intrav1.EmailLayoutLocaleValue{
 		Handle: "unknown-unit", Value: "invalid",
 	})
 	_, err = service.SaveDocument(ctx, connect.NewRequest(unknownUnit))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	missingTarget, err := service.LoadDocument(ctx, connect.NewRequest(
 		&intrav1.LoadEmailLayoutDocumentRequest{EmailLayoutId: layoutID, Locale: "fr"},
@@ -201,7 +193,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 			ContributorMemberIds:     []string{memberID},
 		},
 	))
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err),
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err),
 		"Collaboration cannot implicitly create a missing target")
 
 	sparseValues := map[string]string{sourceUnits[0].Handle: "Deutscher Titel"}
@@ -249,7 +241,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 			}),
 		},
 	))
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err),
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err),
 		"source edit invalidates an out-of-date target room")
 	require.Len(t, auditAppender.records, 2)
 

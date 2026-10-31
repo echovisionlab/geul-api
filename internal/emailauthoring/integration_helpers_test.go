@@ -100,9 +100,9 @@ func integrationDetachDeliveryHistory(ctx context.Context, db *gorm.DB, column, 
 func publishEmailTemplateSourceBlocksForIntegration(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, templateID, text string) {
 	t.Helper()
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	documentID, err := loadCampaignEmailContentDocumentID(t.Context(), db, emailTemplateContentEntity, templateID)
+	documentID, err := loadEmailTemplateContentDocument(t.Context(), db, templateID, false)
 	require.NoError(t, err)
-	domain, err := loadCampaignEmailSourceContext(t.Context(), db, emailTemplateContentEntity, templateID)
+	domain, err := loadEmailTemplateSourceContext(t.Context(), db, templateID, false)
 	require.NoError(t, err)
 	snapshot, err := store.LoadSnapshot(t.Context(), db, documentID, domain.SourceLocale)
 	require.NoError(t, err)
@@ -110,14 +110,7 @@ func publishEmailTemplateSourceBlocksForIntegration(t *testing.T, db *gorm.DB, s
 	require.NoError(t, err)
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributorID)
-	_, err = NewAuditedInternalEmailTemplateService(
-		db,
-		apitelemetry.NewDurableWriter(db),
-		spiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-	).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
+	_, err = NewInternalTemplateConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: integrationCampaignDeliveryReferences{}})).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
 		EmailTemplateId: templateID,
 		Locale:          domain.SourceLocale,
 		Batch:           testutil.NewParagraphBatch(document, snapshot.Document.Revision.String(), domain.SourceLocale, text, []string{contributorID}),
