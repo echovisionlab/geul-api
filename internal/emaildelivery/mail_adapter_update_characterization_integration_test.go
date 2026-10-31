@@ -218,11 +218,11 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 				code: connect.CodeNotFound, message: "mail adapter not found: " + missingID,
 			},
 			{
-				name: "missing adapter is reported before authorization", ctx: outsiderCtx, server: server, missing: true,
+				name: "missing adapter is hidden from a non administrator", ctx: outsiderCtx, server: server, missing: true,
 				update: func(string) *managev1.UpdateMailAdapterRequest {
 					return &managev1.UpdateMailAdapterRequest{Id: missingID}
 				},
-				code: connect.CodeNotFound, message: "mail adapter not found: " + missingID,
+				code: connect.CodePermissionDenied, message: "admin access required",
 			},
 			{
 				name: "non administrator", ctx: outsiderCtx, server: server,
@@ -332,6 +332,18 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		}
 		require.Empty(t, server.recipients())
 		require.Empty(t, rejecting.recipients(), "a rejected MAIL FROM never reaches RCPT TO")
+	})
+
+	t.Run("delete authorizes before loading", func(t *testing.T) {
+		server := newFakeSMTPServer(t, false)
+		adapter := seedSMTPMailAdapter(t, db, server, `{}`)
+		service, publisher := newService()
+		for _, id := range []string{adapter.ID, testutil.IntegrationUUID()} {
+			_, err := service.Delete(outsiderCtx, connect.NewRequest(&managev1.DeleteMailAdapterRequest{Id: id}))
+			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "error: %v", err)
+		}
+		loadMailAdapter(t, db, adapter.ID)
+		publisher.requireNone(t)
 	})
 }
 

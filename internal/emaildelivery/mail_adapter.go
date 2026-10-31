@@ -213,10 +213,10 @@ func (s *MailAdapterService) update(
 	var adapter model.MailAdapter
 	changed := false
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
 			return err
 		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 
@@ -380,10 +380,10 @@ func (s *MailAdapterService) Delete(
 
 	var adapter model.MailAdapter
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
 			return err
 		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 		if err := tx.Delete(&adapter).Error; err != nil {
