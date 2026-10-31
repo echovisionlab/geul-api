@@ -693,8 +693,8 @@ func projectRelationItem(item RelationItem, fields map[FieldID]struct{}) Relatio
 // bindings of a block or relation item.
 type fieldScoped interface{ fieldID() FieldID }
 
-func (v FieldValue) fieldID() FieldID  { return v.ID }
-func (b FileBinding) fieldID() FieldID { return b.Field }
+func (f FieldValue) fieldID() FieldID  { return f.ID }
+func (f FileBinding) fieldID() FieldID { return f.Field }
 
 // filterByField keeps the values of the selected fields in their stored order
 // and returns nil when none match, so unselected fields stay absent.
