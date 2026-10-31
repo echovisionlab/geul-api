@@ -46,6 +46,7 @@ var layoutMarkerSeeds = []struct {
 	{"overlay_value_kind_mismatch", `<!--geul-overlay:v1--><!--geul-unit:text:` + layoutFuzzTextID + `--><!--geul-value:element:` + layoutFuzzTextID + `:alt-->x`},
 	{"overlay_missing_attribute", `<!--geul-overlay:v1--><!--geul-unit:element:` + layoutFuzzElementID + `--><!--geul-value:element:` + layoutFuzzElementID + `:title--><img alt="x">`},
 	{"overlay_unsupported_attribute", `<!--geul-overlay:v1--><!--geul-unit:element:` + layoutFuzzElementID + `--><!--geul-value:element:` + layoutFuzzElementID + `:href--><a href="/">x</a>`},
+	{"raw_text_element_text", `<textarea>Note</textarea><xmp>Code</xmp><!--geul-unit:element:` + layoutFuzzElementID + `--><iframe title="Frame">x</iframe>`},
 	{"missing_text_marker", `<footer>Unmarked footer</footer>`},
 	{"missing_element_marker", `<img alt="Unmarked">`},
 	{"detached_element_marker", `<!--geul-unit:element:` + layoutFuzzElementID + `-->text`},
@@ -97,6 +98,8 @@ func FuzzLayoutMarkerRoundTrip(f *testing.F) {
 	f.Add(`<p>Hello <b>world</b></p><img alt="Logo" title=" ">`, "Bonjour")
 	// Explicit empty text values before an inline element were unreadable.
 	f.Add(`<p>Hello <b>world</b></p>`, "")
+	// Raw-text and RCDATA elements read marker comments as literal text.
+	f.Add(`<textarea>Note</textarea>`, "Traduction")
 	f.Add("<p>  spaced  </p>", "\n")
 	f.Add(`<p>Source</p>`, "  a <b> & \"q\"  ")
 	f.Fuzz(func(t *testing.T, content, value string) {

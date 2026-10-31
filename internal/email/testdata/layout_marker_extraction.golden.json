@@ -217,6 +217,22 @@
     "units_error": "Email Layout source contains a target value marker",
     "locale_values_error": "Email Layout target value marker is detached from its unit"
   },
+  "raw_text_element_text": {
+    "units": [
+      {
+        "Handle": "unit:22222222-2222-4222-8222-222222222222:attr:title",
+        "MarkerID": "22222222-2222-4222-8222-222222222222",
+        "Kind": "attribute",
+        "Element": "iframe",
+        "Attribute": "title",
+        "Order": 0,
+        "SourceValue": "Frame",
+        "SourceFormat": "plain_text",
+        "Context": "iframe[title]"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
   "source_with_value_marker": {
     "units_error": "Email Layout source contains a target value marker",
     "locale_values_error": "Email Layout target value marker is detached from its unit"
