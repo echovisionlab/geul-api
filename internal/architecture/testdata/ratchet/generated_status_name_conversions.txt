@@ -12,11 +12,7 @@
 23 internal/campaign
 16 internal/filemedia/public
 2 internal/label/public
-50 internal/post
-10 internal/post/public
 3 internal/programevent/public
 2 internal/referencecatalog/public
 3 internal/transcode/application
-21 internal/work
-6 internal/work/public
 2 internal/worker

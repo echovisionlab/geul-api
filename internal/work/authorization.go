@@ -8,10 +8,11 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -29,18 +30,12 @@ func NewPolicyAuthority(checker CollaborationPermissionChecker) *PolicyAuthority
 }
 
 func (a *PolicyAuthority) RequireLockedView(ctx context.Context, tx *gorm.DB, workID string) error {
-	if a == nil {
-		return errs.DependencyUnavailable("Work policy access")
-	}
-	_, err := requireLockedWorkPermission(ctx, tx, a.checker, workID, policyv1.Work.View, workAuthorizationRead)
+	_, err := requireLockedWorkPermission(ctx, tx, freshRequire(ctx, tx, a.checker), workID, policyv1.Work.View, workAuthorizationRead)
 	return err
 }
 
 func (a *PolicyAuthority) RequireLockedEdit(ctx context.Context, tx *gorm.DB, workID string) error {
-	if a == nil {
-		return errs.DependencyUnavailable("Work policy access")
-	}
-	_, err := requireLockedWorkPermission(ctx, tx, a.checker, workID, policyv1.Work.Edit, workAuthorizationMutation)
+	_, err := requireLockedWorkPermission(ctx, tx, freshRequire(ctx, tx, a.checker), workID, policyv1.Work.Edit, workAuthorizationMutation)
 	return err
 }
 
@@ -51,18 +46,18 @@ const (
 
 func requireWorkGlobalAction(ctx context.Context, checker CollaborationPermissionChecker, can policyv1.Can) error {
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.AdminRequired()
+		return domainerr.AdminRequired()
 	}
 	return nil
 }
@@ -70,7 +65,7 @@ func requireWorkGlobalAction(ctx context.Context, checker CollaborationPermissio
 func requireWorkCreate(ctx context.Context, checker CollaborationPermissionChecker) error {
 	can, err := policyv1.Work.Create()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return requireWorkGlobalAction(ctx, checker, can)
 }
@@ -78,21 +73,13 @@ func requireWorkCreate(ctx context.Context, checker CollaborationPermissionCheck
 func requireWorkList(ctx context.Context, checker CollaborationPermissionChecker) error {
 	can, err := policyv1.Work.List()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return requireWorkGlobalAction(ctx, checker, can)
 }
 
-func requireLockedWorkCreate(ctx context.Context, tx *gorm.DB, checker *auth.SpiceDBClient) error {
-	can, err := policyv1.Work.Create()
-	if err != nil {
-		return errs.Internal(err)
-	}
-	return identitystate.RequireFreshAdminCan(ctx, tx, checker, can)
-}
-
-func workLifecycleAction(status string, normal workAction, use workAuthorizationUse) workAction {
-	if status != managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
+func workLifecycleAction(status model.WorkStatus, normal workAction, use workAuthorizationUse) workAction {
+	if status != model.WorkStatusArchived {
 		return normal
 	}
 	if use == workAuthorizationRead {
@@ -108,22 +95,22 @@ func requireWorkPermissionForCurrentActor(
 	action workAction,
 ) error {
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := action(workID)
 	if err != nil {
-		return errs.WithCause(errs.NotFound("work", workID), err)
+		return domainerr.ResourceNotFound("work", workID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NotFound("work", workID)
+		return domainerr.ResourceNotFound("work", workID)
 	}
 	return nil
 }
@@ -135,7 +122,7 @@ func requireWorkPermission(
 	normal workAction,
 	use workAuthorizationUse,
 ) error {
-	return requireWorkPermissionForCurrentActor(ctx, checker, work.ID, workLifecycleAction(string(work.Status), normal, use))
+	return requireWorkPermissionForCurrentActor(ctx, checker, work.ID, workLifecycleAction(work.Status, normal, use))
 }
 
 func lockWorkAuthorizationRoot(ctx context.Context, tx *gorm.DB, workID string) (model.Work, error) {
@@ -144,17 +131,26 @@ func lockWorkAuthorizationRoot(ctx context.Context, tx *gorm.DB, workID string) 
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id", "status").Where("id = ?", workID).Take(&work).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.Work{}, errs.NotFound("work", workID)
+			return model.Work{}, domainerr.ResourceNotFound("work", workID)
 		}
-		return model.Work{}, errs.Internal(err)
+		return model.Work{}, err
 	}
 	return work, nil
 }
 
+func freshRequire(ctx context.Context, tx *gorm.DB, checker authz.AuthorizationDecisionChecker) mutation.Require {
+	return func(can policyv1.Can) error {
+		return identitystate.RequireFreshCan(ctx, tx, checker, can)
+	}
+}
+
+// requireLockedWorkPermission locks the Work root and the principal, then
+// requires the one action the locked lifecycle selects from normal. A
+// caller without it, inactive or denied, finds no Work.
 func requireLockedWorkPermission(
 	ctx context.Context,
 	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	require mutation.Require,
 	workID string,
 	normal workAction,
 	use workAuthorizationUse,
@@ -165,17 +161,37 @@ func requireLockedWorkPermission(
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return model.Work{}, errs.AuthenticationRequired()
+		return model.Work{}, domainerr.AuthenticationRequired()
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		return model.Work{}, errs.Internal(err)
+		return model.Work{}, err
 	}
 	if !active {
-		return model.Work{}, errs.NotFound("work", workID)
+		return model.Work{}, domainerr.ResourceNotFound("work", workID)
 	}
-	if err := requireWorkPermission(ctx, checker, work, normal, use); err != nil {
+	can, err := workLifecycleAction(work.Status, normal, use)(workID)
+	if err != nil {
+		return model.Work{}, domainerr.ResourceNotFound("work", workID).WithCause(err)
+	}
+	if err := require(can); err != nil {
+		if mutation.IsDenied(err) {
+			return model.Work{}, domainerr.ResourceNotFound("work", workID).WithCause(err)
+		}
 		return model.Work{}, err
 	}
 	return work, nil
+}
+
+// lockedWork is the access of a Work mutation: the root is locked before
+// the one action its lifecycle requires is checked. locked, when set,
+// receives the locked root.
+func lockedWork(workID string, normal workAction, locked *model.Work) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+		work, err := requireLockedWorkPermission(ctx, tx, require, workID, normal, workAuthorizationMutation)
+		if locked != nil {
+			*locked = work
+		}
+		return err
+	})
 }

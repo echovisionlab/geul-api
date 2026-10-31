@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -23,7 +23,7 @@ func validateResourceDeletionAuthorizationBatchSize(
 		len(restoreRelationships) <= maxSpiceDBAtomicRelationshipMutations {
 		return nil
 	}
-	return errs.FailedPrecondition(fmt.Sprintf(
+	return domainerr.Precondition(fmt.Sprintf(
 		"%s has too many authorization relationships to delete atomically; remove participant relationships or reparent dependent resources first",
 		resourceName,
 	))
@@ -54,19 +54,19 @@ func postAuthorizationDeletionBatches(
 		deletePolicy, deletePolicyErr := policyv1.Post.DeletePolicy(postID)
 		touchPolicy, touchPolicyErr := policyv1.Post.TouchPolicy(postID)
 		if err := appendPair(deletePolicy, deletePolicyErr, touchPolicy, touchPolicyErr); err != nil {
-			return nil, nil, errs.Internal(err)
+			return nil, nil, err
 		}
 		actor, actorErr := policyv1.NewAccountIdentityActor(snapshot.SubjectID())
 		if actorErr == nil {
 			deleteAuthor, deleteAuthorErr := policyv1.Post.DeleteAuthor(postID, actor)
 			touchAuthor, touchAuthorErr := policyv1.Post.TouchAuthor(postID, actor)
 			if err := appendPair(deleteAuthor, deleteAuthorErr, touchAuthor, touchAuthorErr); err != nil {
-				return nil, nil, errs.Internal(err)
+				return nil, nil, err
 			}
 			deleteCollaborator, deleteCollaboratorErr := policyv1.Post.DeleteCollaborator(postID, actor)
 			touchCollaborator, touchCollaboratorErr := policyv1.Post.TouchCollaborator(postID, actor)
 			if err := appendPair(deleteCollaborator, deleteCollaboratorErr, touchCollaborator, touchCollaboratorErr); err != nil {
-				return nil, nil, errs.Internal(err)
+				return nil, nil, err
 			}
 		}
 		var matched auth.RelationshipMutationPair
@@ -77,7 +77,7 @@ func postAuthorizationDeletionBatches(
 			}
 		}
 		if !matched.Delete().Valid() {
-			return nil, nil, errs.FailedPrecondition("post authorization relationships contain an unsupported tuple")
+			return nil, nil, domainerr.Precondition("post authorization relationships contain an unsupported tuple")
 		}
 		deletes = append(deletes, matched.Delete())
 		restores = append(restores, matched.Restore())

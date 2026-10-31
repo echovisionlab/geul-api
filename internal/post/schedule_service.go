@@ -7,190 +7,127 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-func (s *PostService) SchedulePost(
-	ctx context.Context,
-	req *connect.Request[managev1.SchedulePostRequest],
-) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetId()))
+// SchedulePostCommand schedules a draft or scheduled Post for publication
+// at a minute-precise instant in an IANA time zone.
+type SchedulePostCommand struct {
+	ID          string
+	ScheduledAt *time.Time
+	TimeZone    string
+}
 
-	if req.Msg.ScheduledAt == nil {
-		return nil, errs.Required("scheduled_at")
+func (s *Service) SchedulePost(ctx context.Context, command SchedulePostCommand) (_ *managev1.PostLifecycleMutationResponse, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.ID))
+
+	if command.ScheduledAt == nil {
+		return nil, domainerr.Required("scheduled_at")
 	}
-	if err := req.Msg.ScheduledAt.CheckValid(); err != nil {
-		return nil, errs.WithCause(errs.InvalidArgument("scheduled_at", "must be a valid timestamp"), err)
-	}
-	scheduledAt := req.Msg.ScheduledAt.AsTime().UTC()
+	scheduledAt := command.ScheduledAt.UTC()
 	if scheduledAt.Second() != 0 || scheduledAt.Nanosecond() != 0 {
-		return nil, errs.InvalidArgument("scheduled_at", "must use minute precision")
+		return nil, domainerr.InvalidField("scheduled_at", "must use minute precision")
 	}
-	timeZone := strings.TrimSpace(req.Msg.ScheduledTimeZone)
+	timeZone := strings.TrimSpace(command.TimeZone)
 	if timeZone == "" {
-		return nil, errs.Required("scheduled_time_zone")
+		return nil, domainerr.Required("scheduled_time_zone")
 	}
 	if _, err := time.LoadLocation(timeZone); err != nil {
-		return nil, errs.WithCause(errs.InvalidArgument("scheduled_time_zone", "must be a valid IANA time zone"), err)
+		return nil, domainerr.InvalidField("scheduled_time_zone", "must be a valid IANA time zone").WithCause(err)
 	}
-
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var databaseNow time.Time
-		if err := tx.Raw("SELECT CURRENT_TIMESTAMP").Scan(&databaseNow).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if !scheduledAt.After(databaseNow.UTC()) {
-			return errs.InvalidArgument("scheduled_at", "must be in the future")
-		}
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("post", req.Msg.Id)
+	var databaseNow time.Time
+	post, _, err := runPostMutation(ctx, s, mutation.Spec[model.Post]{
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+			if err := tx.Raw("SELECT CURRENT_TIMESTAMP").Scan(&databaseNow).Error; err != nil {
+				return err
 			}
-			return errs.Internal(err)
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
+			if !scheduledAt.After(databaseNow.UTC()) {
+				return domainerr.InvalidField("scheduled_at", "must be in the future")
+			}
+			status, err := lockPostAuthorizationRoot(ctx, tx, command.ID)
+			if err != nil {
+				return err
+			}
+			_, err = requireLockedPostActionForStatus(require, command.ID, status, policyv1.Post.Publish)
 			return err
+		}),
+	}, func(ctx context.Context, tx *gorm.DB, effects *postEffects) (model.Post, error) {
+		var post model.Post
+		if err := tx.First(&post, "id = ?", command.ID).Error; err != nil {
+			return post, err
 		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()) &&
-			post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()) {
-			return errs.FailedPrecondition("only draft or scheduled posts can be scheduled")
+		if post.Status != model.PostStatusDraft &&
+			post.Status != model.PostStatusScheduled {
+			return post, domainerr.Precondition("only draft or scheduled posts can be scheduled")
 		}
 		previousStatus := post.Status
 		if err := tx.Model(&post).Updates(structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_SCHEDULED.String(),
+			"status":              string(model.PostStatusScheduled),
 			"scheduled_at":        scheduledAt,
 			"scheduled_time_zone": timeZone,
 			"updated_at":          databaseNow.UTC(),
 		}).Error; err != nil {
-			return err
+			return post, err
 		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String())
+		post.Status = model.PostStatusScheduled
 		post.ScheduledAt = &scheduledAt
 		post.ScheduledTimeZone = &timeZone
 		post.UpdatedAt = databaseNow.UTC()
-		return s.appendPostScheduleAudit(ctx, tx, post.ID, previousStatus, post.Status, scheduledAt, timeZone)
-	}); err != nil {
-		return nil, err
-	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post)
+		postScheduleAudit(effects, post.ID, previousStatus, post.Status, scheduledAt, timeZone)
+		return post, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(response), nil
+	return s.postLifecycleMutationResponse(ctx, &post)
 }
 
-func (s *PostService) CancelPostSchedule(
-	ctx context.Context,
-	req *connect.Request[managev1.CancelPostScheduleRequest],
-) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetId()))
+func (s *Service) CancelPostSchedule(ctx context.Context, command PostLifecycleCommand) (_ *managev1.PostLifecycleMutationResponse, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("post_id", command.ID))
 
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("post", req.Msg.Id)
-			}
-			return errs.Internal(err)
+	post, _, err := runPostMutation(ctx, s, mutation.Spec[model.Post]{
+		Access: lockedPost(command.ID, policyv1.Post.Publish, nil),
+	}, func(ctx context.Context, tx *gorm.DB, effects *postEffects) (model.Post, error) {
+		var post model.Post
+		if err := tx.First(&post, "id = ?", command.ID).Error; err != nil {
+			return post, err
 		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
-			return err
-		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()) {
-			return errs.FailedPrecondition("only scheduled posts can have their schedule cancelled")
+		if post.Status != model.PostStatusScheduled {
+			return post, domainerr.Precondition("only scheduled posts can have their schedule cancelled")
 		}
 		previousScheduledAt := post.ScheduledAt
 		previousTimeZone := post.ScheduledTimeZone
 		previousStatus := post.Status
 		now := dbtime.Now()
 		if err := tx.Model(&post).Updates(structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_DRAFT.String(),
+			"status":              string(model.PostStatusDraft),
 			"scheduled_at":        nil,
 			"scheduled_time_zone": nil,
 			"updated_at":          now,
 		}).Error; err != nil {
-			return err
+			return post, err
 		}
 		if previousScheduledAt == nil || previousTimeZone == nil {
-			return errs.InternalMsg("scheduled post is missing schedule details")
+			return post, errors.New("scheduled post is missing schedule details")
 		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String())
+		post.Status = model.PostStatusDraft
 		post.ScheduledAt = nil
 		post.ScheduledTimeZone = nil
 		post.UpdatedAt = now
-		return s.appendPostScheduleAudit(ctx, tx, post.ID, previousStatus, post.Status, *previousScheduledAt, *previousTimeZone)
-	}); err != nil {
-		return nil, err
-	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post)
+		postScheduleAudit(effects, post.ID, previousStatus, post.Status, *previousScheduledAt, *previousTimeZone)
+		return post, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(response), nil
-}
-
-func (s *PostService) RepublishPost(
-	ctx context.Context,
-	req *connect.Request[managev1.RepublishPostRequest],
-) (_ *connect.Response[managev1.PostLifecycleMutationResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("post_id", req.Msg.GetId()))
-
-	var post model.Post
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&post, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("post", req.Msg.Id)
-			}
-			return errs.Internal(err)
-		}
-		if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, post.ID, post.Status, policyv1.Post.Publish); err != nil {
-			return err
-		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-			return errs.FailedPrecondition("only archived posts can be republished")
-		}
-		now := dbtime.Now()
-		previousStatus := post.Status
-		updates := structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-			"scheduled_at":        nil,
-			"scheduled_time_zone": nil,
-			"updated_at":          now,
-		}
-		if post.PublishedAt == nil {
-			updates["published_at"] = now
-		}
-		if err := tx.Model(&post).Updates(updates).Error; err != nil {
-			return err
-		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String())
-		post.ScheduledAt = nil
-		post.ScheduledTimeZone = nil
-		post.UpdatedAt = now
-		if post.PublishedAt == nil {
-			post.PublishedAt = &now
-		}
-		return s.appendPostLifecycleAudit(ctx, tx, post.ID, previousStatus, post.Status)
-	}); err != nil {
-		return nil, err
-	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(response), nil
+	return s.postLifecycleMutationResponse(ctx, &post)
 }

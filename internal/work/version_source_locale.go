@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -28,14 +28,14 @@ func switchWorkVersionRestoreSourceLocale(
 	now time.Time,
 ) error {
 	if tx == nil || store == nil {
-		return errs.FailedPrecondition("Work content document is not initialized")
+		return domainerr.Precondition("Work content document is not initialized")
 	}
 	if strings.TrimSpace(workID) == "" || strings.TrimSpace(requestedLocale) == "" ||
 		strings.TrimSpace(previousLocale) == "" || expectedDocumentRevision == uuid.Nil {
-		return errs.InvalidArgument("source_locale", "source-locale switch identity is required")
+		return domainerr.InvalidField("source_locale", "source-locale switch identity is required")
 	}
 	if previousLocale == requestedLocale {
-		return errs.FailedPrecondition("requested locale is already the source locale")
+		return domainerr.Precondition("requested locale is already the source locale")
 	}
 	var root struct {
 		ContentDocumentID uuid.UUID `gorm:"column:content_document_id"`
@@ -48,16 +48,16 @@ func switchWorkVersionRestoreSourceLocale(
 		Where("id = ?", workID).
 		Take(&root)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.NotFound("work", workID)
+		return domainerr.ResourceNotFound("work", workID)
 	}
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if root.ContentDocumentID == uuid.Nil {
-		return errs.FailedPrecondition("Work content document is not initialized")
+		return domainerr.Precondition("Work content document is not initialized")
 	}
 	if root.SourceLocale != previousLocale {
-		return errs.FailedPrecondition("Work source locale changed during version restore")
+		return domainerr.Precondition("Work source locale changed during version restore")
 	}
 	_, err := store.AdvanceRevision(
 		ctx,
@@ -74,10 +74,10 @@ func switchWorkVersionRestoreSourceLocale(
 				Where("id = ? AND source_locale = ?", workID, previousLocale).
 				Updates(map[string]any{"source_locale": requestedLocale, "updated_at": now})
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.FailedPrecondition("Work source locale changed during version restore")
+				return contentblock.MetadataEffect{}, domainerr.Precondition("Work source locale changed during version restore")
 			}
 			return contentblock.MetadataEffect{
 				Changed:                  true,

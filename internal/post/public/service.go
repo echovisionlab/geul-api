@@ -2,24 +2,25 @@ package public
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
+	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -27,13 +28,11 @@ import (
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// PostService implements the public PostService
-type PostService struct {
-	openv1connect.UnimplementedPostServiceHandler
+// Service holds the public Post reads.
+type Service struct {
 	db         *gorm.DB
 	cdnDomain  string
 	spiceDB    *auth.SpiceDBClient
@@ -45,12 +44,81 @@ type PostService struct {
 	shareLinks postdomain.ShareLinkValidator
 }
 
-type PostServiceOption func(*PostService)
+// Deps are the collaborators of the public Post reads. Every field is
+// required unless marked; NewService rejects a missing one.
+type Deps struct {
+	DB *gorm.DB
+	// CDNDomain builds OG asset URLs; empty serves relative paths.
+	CDNDomain     string
+	SpiceDB       *auth.SpiceDBClient
+	Files         FileService
+	ContentBlocks *contentblock.Store
+	Localizer     LocalizationService
+	MapPlaces     MapPlaceProjector
+	Members       MemberSummaryLoader
+	ShareLinks    postdomain.ShareLinkValidator
+}
 
-func WithPostContentBlockStore(store *contentblock.Store) PostServiceOption {
-	return func(service *PostService) {
-		service.blocks = store
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Files": d.Files == nil, "ContentBlocks": d.ContentBlocks == nil,
+		"Localizer": d.Localizer == nil, "MapPlaces": d.MapPlaces == nil, "Members": d.Members == nil, "ShareLinks": d.ShareLinks == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
 	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("public Post dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// NewService validates deps and returns the public Post reads.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	return &Service{
+		db: deps.DB, cdnDomain: deps.CDNDomain, spiceDB: deps.SpiceDB, files: deps.Files, blocks: deps.ContentBlocks,
+		localizer: deps.Localizer, mapPlaces: deps.MapPlaces, members: deps.Members, shareLinks: deps.ShareLinks,
+	}, nil
+}
+
+// GetPostQuery reads a public Post by ID or slug. A draft is visible to a
+// caller with view permission or through its share link. AcceptLanguage
+// picks the displayed locale.
+type GetPostQuery struct {
+	Slug           string
+	ShareToken     string
+	SharePassword  string
+	AcceptLanguage string
+}
+
+// ListPostsQuery lists public Posts.
+type ListPostsQuery struct {
+	Limit          int32
+	Offset         int32
+	Filters        []*commonv1.FilterSpec
+	Sorts          []*commonv1.SortSpec
+	AcceptLanguage string
+}
+
+// ListPostMapFeaturesQuery clusters the mapped public Posts in Viewport.
+type ListPostMapFeaturesQuery struct {
+	Viewport       *openv1.PostMapViewport
+	Filters        []*commonv1.FilterSpec
+	Sorts          []*commonv1.SortSpec
+	AcceptLanguage string
+}
+
+// SearchPostsQuery searches public Post titles and text.
+type SearchPostsQuery struct {
+	Query          string
+	Limit          int32
+	AcceptLanguage string
 }
 
 type normalizedPostMapViewport struct {
@@ -91,48 +159,15 @@ type postMapPlaceGroup struct {
 	Order            int
 }
 
-// NewPostService creates a new public PostService
-func NewPostService(
-	db *gorm.DB,
-	cdnDomain string,
-	spiceDB *auth.SpiceDBClient,
-	files FileService,
-	localizer LocalizationService,
-	mapPlaces MapPlaceProjector,
-	members MemberSummaryLoader,
-	shareLinks postdomain.ShareLinkValidator,
-	options ...PostServiceOption,
-) *PostService {
-	if db == nil || spiceDB == nil || files == nil || localizer == nil || mapPlaces == nil || members == nil || shareLinks == nil {
-		panic("public post service dependencies are required")
-	}
-	service := &PostService{
-		db:         db,
-		cdnDomain:  cdnDomain,
-		spiceDB:    spiceDB,
-		files:      files,
-		localizer:  localizer,
-		mapPlaces:  mapPlaces,
-		members:    members,
-		shareLinks: shareLinks,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
-}
-
 func isPublicPostStatus(status model.PostStatus) bool {
-	return status == model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) ||
-		status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String())
+	return status == model.PostStatusPublished ||
+		status == model.PostStatusArchived
 }
 
 func publicPostStatusValues() []string {
 	return []string{
-		managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-		managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+		string(model.PostStatusPublished),
+		string(model.PostStatusArchived),
 	}
 }
 
@@ -144,18 +179,15 @@ func withPublicPostStatusFence(query *gorm.DB) *gorm.DB {
 // - UUID-first: if input is valid UUID, query by ID; otherwise query by slug
 // - share_token allows access to draft posts
 // - authenticated accounts with the exact SpiceDB view permission can access drafts
-func (s *PostService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetPostRequest],
-) (*connect.Response[openv1.GetPostResponse], error) {
-	projection, err := s.loadPublicPostSnapshot(ctx, req)
+func (s *Service) Get(ctx context.Context, query GetPostQuery) (*openv1.GetPostResponse, error) {
+	projection, err := s.loadPublicPostSnapshot(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	return s.buildPostResponse(ctx, req.Header().Get("Accept-Language"), projection)
+	return s.buildPostResponse(ctx, query.AcceptLanguage, projection)
 }
 
-func (s *PostService) requireDraftPostAccess(
+func (s *Service) requireDraftPostAccess(
 	ctx context.Context,
 	db *gorm.DB,
 	postID string,
@@ -164,7 +196,7 @@ func (s *PostService) requireDraftPostAccess(
 ) (mediaasset.ContentDownloadOwnerAccessMode, *model.ShareLink, error) {
 	allowed, err := hasDraftResourceView(ctx, s.spiceDB, postID)
 	if err != nil {
-		return "", nil, errs.Internal(fmt.Errorf("check post draft view permission: %w", err))
+		return "", nil, fmt.Errorf("check post draft view permission: %w", err)
 	}
 	if allowed {
 		return mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft, nil, nil
@@ -191,104 +223,115 @@ type publicPostSnapshot struct {
 // public/draft visibility and reading the localized body from the same RR
 // snapshot. Post content writers take UPDATE on this root before the document
 // lock, matching the page read/write lock order.
-func (s *PostService) loadPublicPostSnapshot(
-	ctx context.Context,
-	req *connect.Request[openv1.GetPostRequest],
-) (*publicPostSnapshot, error) {
-	slugOrID := req.Msg.Slug
+func (s *Service) loadPublicPostSnapshot(ctx context.Context, request GetPostQuery) (*publicPostSnapshot, error) {
 	var snapshot publicPostSnapshot
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		query := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-			Preload("Categories").
-			Preload("Tags").
-			Preload("Series").
-			Preload("MapPlace")
-		var loadErr error
-		if isValidUUID(slugOrID) {
-			loadErr = query.First(&snapshot.post, "id = ?", slugOrID).Error
-		} else {
-			loadErr = query.First(&snapshot.post, "slug = ?", slugOrID).Error
+	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
+		if err := lockPublicPost(ctx, tx, request.Slug, &snapshot.post); err != nil {
+			return err
 		}
-		if loadErr != nil {
-			if errors.Is(loadErr, gorm.ErrRecordNotFound) {
-				return errs.NotFoundMsg("post not found")
-			}
-			return errs.Internal(loadErr)
+		authorization, err := s.authorizePublicPostMedia(ctx, tx, &snapshot.post, request)
+		if err != nil {
+			return err
 		}
-
-		post := &snapshot.post
-		snapshot.mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
-			ResourceType: "post",
-			ResourceID:   post.ID,
-			Status:       string(post.Status),
-			Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
-		}
-		if post.ContentDocumentID != nil {
-			snapshot.mediaAuthorization.DocumentID = *post.ContentDocumentID
-		}
-		if !isPublicPostStatus(post.Status) {
-			mode, link, accessErr := s.requireDraftPostAccess(
-				ctx, tx, post.ID, optionalStringValue(req.Msg.ShareToken), req.Msg.GetSharePassword(),
-			)
-			if accessErr != nil {
-				return accessErr
-			}
-			snapshot.mediaAuthorization.Mode = mode
-			snapshot.mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-			if mode == mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft {
-				if user := auth.GetUser(ctx); user != nil {
-					snapshot.mediaAuthorization.IdentityID = user.IdentityID.String()
-					snapshot.mediaAuthorization.MemberID = user.MemberID.String()
-				}
-			}
-		}
-
-		state, stateErr := postdomain.LoadPostSourceLocaleDocumentStateForPublic(ctx, tx, post.ID)
-		if stateErr != nil {
-			return stateErr
-		}
-		if state == nil {
-			return errs.NotFound("post_translation", post.ID)
-		}
-		postdomain.OverlayPostSourceLocaleDocumentForPublic(post, state)
-		localization, localizationErr := s.localizer.ResolveSelectionWithPolicy(
-			ctx, tx, "post", post.ID, req.Header().Get("Accept-Language"), true,
-		)
-		if localizationErr != nil {
-			slog.ErrorContext(ctx, "failed to resolve post localization", "postId", post.ID, "failure_cause", failurecause.Message(localizationErr))
-		}
-		localization, localizationErr = s.localizer.ResolveOgConsistency(
-			ctx, tx, s.cdnDomain, "post", post.ID, localization,
-		)
-		if localizationErr != nil {
-			return errs.Internal(localizationErr)
-		}
-		if s.blocks == nil {
-			return errs.Internal(fmt.Errorf("post content Block store is not configured"))
-		}
-		document, revision, projectionErr := postdomain.LoadLocalizedPostContentProjectionForPublic(
-			ctx, tx, s.blocks, post.ID, localization.DisplayedLocale,
-		)
-		if projectionErr != nil {
-			return projectionErr
-		}
-		snapshot.localization = localization
-		snapshot.document = document
-		snapshot.revision = revision
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+		snapshot.mediaAuthorization = authorization
+		return s.loadPublicPostBody(ctx, tx, &snapshot, request.AcceptLanguage)
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &snapshot, nil
 }
 
-// List returns public posts, including archived read-only posts.
-func (s *PostService) List(
+// lockPublicPost SHARE-locks the Post named by an ID or slug and loads its
+// relations.
+func lockPublicPost(ctx context.Context, tx *gorm.DB, slugOrID string, post *model.Post) error {
+	query := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
+		Preload("Categories").
+		Preload("Tags").
+		Preload("Series").
+		Preload("MapPlace")
+	var err error
+	if isValidUUID(slugOrID) {
+		err = query.First(post, "id = ?", slugOrID).Error
+	} else {
+		err = query.First(post, "slug = ?", slugOrID).Error
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domainerr.New(domainerr.NotFound, "", "post not found")
+	}
+	return err
+}
+
+// authorizePublicPostMedia checks a draft Post's view or share-link access
+// and returns the witness its media downloads are authorized with.
+func (s *Service) authorizePublicPostMedia(
 	ctx context.Context,
-	req *connect.Request[openv1.ListPostsRequest],
-) (*connect.Response[openv1.ListPostsResponse], error) {
+	tx *gorm.DB,
+	post *model.Post,
+	request GetPostQuery,
+) (mediaasset.ContentDownloadOwnerAuthorization, error) {
+	authorization := mediaasset.ContentDownloadOwnerAuthorization{
+		ResourceType: "post",
+		ResourceID:   post.ID,
+		Status:       string(post.Status),
+		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
+	}
+	if post.ContentDocumentID != nil {
+		authorization.DocumentID = *post.ContentDocumentID
+	}
+	if isPublicPostStatus(post.Status) {
+		return authorization, nil
+	}
+	mode, link, err := s.requireDraftPostAccess(ctx, tx, post.ID, request.ShareToken, request.SharePassword)
+	if err != nil {
+		return authorization, err
+	}
+	authorization.Mode = mode
+	authorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+	if mode == mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft {
+		if user := auth.GetUser(ctx); user != nil {
+			authorization.IdentityID = user.IdentityID.String()
+			authorization.MemberID = user.MemberID.String()
+		}
+	}
+	return authorization, nil
+}
+
+// loadPublicPostBody overlays the source locale and reads the localized body
+// the caller's Accept-Language selects.
+func (s *Service) loadPublicPostBody(ctx context.Context, tx *gorm.DB, snapshot *publicPostSnapshot, acceptLanguage string) error {
+	post := &snapshot.post
+	state, err := postdomain.LoadPostSourceLocaleDocumentStateForPublic(ctx, tx, post.ID)
+	if err != nil {
+		return err
+	}
+	if state == nil {
+		return domainerr.ResourceNotFound("post_translation", post.ID)
+	}
+	postdomain.OverlayPostSourceLocaleDocumentForPublic(post, state)
+	localization, err := s.localizer.ResolveSelectionWithPolicy(ctx, tx, "post", post.ID, acceptLanguage, true)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to resolve post localization", "postId", post.ID, "failure_cause", failurecause.Message(err))
+	}
+	localization, err = s.localizer.ResolveOgConsistency(ctx, tx, s.cdnDomain, "post", post.ID, localization)
+	if err != nil {
+		return err
+	}
+	document, revision, err := postdomain.LoadLocalizedPostContentProjectionForPublic(
+		ctx, tx, s.blocks, post.ID, localization.DisplayedLocale,
+	)
+	if err != nil {
+		return err
+	}
+	snapshot.localization = localization
+	snapshot.document = document
+	snapshot.revision = revision
+	return nil
+}
+
+// List returns public posts, including archived read-only posts.
+func (s *Service) List(ctx context.Context, request ListPostsQuery) (*openv1.ListPostsResponse, error) {
 	var posts []model.Post
 	var total int64
 
@@ -297,28 +340,28 @@ func (s *PostService) List(
 		Preload("Tags").
 		Preload("FeaturedImage"))
 
-	query, err := s.applyPublicPostFilters(query, req.Msg.Filters)
+	query, err := s.applyPublicPostFilters(query, request.Filters)
 	if err != nil {
 		return nil, err
 	}
 
 	// Count total before pagination
 	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	// 4. Apply sort
-	query, err = PostSortConfig.ApplySort(query, req.Msg.Sorts)
+	query, err = PostSortConfig.ApplySort(query, request.Sorts)
 	if err != nil {
 		return nil, err
 	}
 
 	// 5. Apply pagination
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
+	pagination := queryutil.ExtractPaginationRaw(request.Limit, request.Offset, queryutil.DefaultPaginationConfig)
 	query = pagination.Apply(query)
 
 	if err := query.Find(&posts).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	if err := s.overlayPostSourceLocaleDocuments(ctx, posts); err != nil {
@@ -330,7 +373,7 @@ func (s *PostService) List(
 		s.db,
 		"post",
 		collectPostIDs(posts),
-		req.Header().Get("Accept-Language"),
+		request.AcceptLanguage,
 		true,
 	)
 	if err != nil {
@@ -338,11 +381,11 @@ func (s *PostService) List(
 	}
 	authorMembers, err := s.loadPostAuthorMembers(ctx, collectPostIDs(posts))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	featuredDeliveries, err := s.loadPostFeaturedImageDeliveries(ctx, posts)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	// Convert to proto summaries
@@ -351,13 +394,18 @@ func (s *PostService) List(
 		summaries = append(summaries, s.toPostSummary(&post, localizedSelections[post.ID], authorMembers[post.ID], featuredDeliveries[post.ID]))
 	}
 
-	return connect.NewResponse(&openv1.ListPostsResponse{
+	return &openv1.ListPostsResponse{
 		Posts:      summaries,
 		Pagination: pagination.BuildResponse(total),
-	}), nil
+	}, nil
 }
 
-func (s *PostService) applyPublicPostFilters(
+func invalidPostFilterOp(filter *commonv1.FilterSpec) error {
+	return domainerr.New(domainerr.Invalid, filter.GetField(),
+		fmt.Sprintf("invalid filter operation '%s' for field '%s'", filter.GetOp().String(), filter.GetField()))
+}
+
+func (s *Service) applyPublicPostFilters(
 	query *gorm.DB,
 	filters []*commonv1.FilterSpec,
 ) (*gorm.DB, error) {
@@ -371,7 +419,7 @@ func (s *PostService) applyPublicPostFilters(
 			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
 				query = query.Where("post.id IN (SELECT post_id FROM post_category WHERE category_id IN ?)", f.GetValues())
 			} else {
-				return nil, errs.InvalidFilterOp(f.GetField(), f.GetOp().String())
+				return nil, invalidPostFilterOp(f)
 			}
 		case "tag_id":
 			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
@@ -379,7 +427,7 @@ func (s *PostService) applyPublicPostFilters(
 			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
 				query = query.Where("post.id IN (SELECT post_id FROM post_tag WHERE tag_id IN ?)", f.GetValues())
 			} else {
-				return nil, errs.InvalidFilterOp(f.GetField(), f.GetOp().String())
+				return nil, invalidPostFilterOp(f)
 			}
 		case "author_id":
 			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
@@ -398,7 +446,7 @@ func (s *PostService) applyPublicPostFilters(
 					authorIDs,
 				)
 			} else {
-				return nil, errs.InvalidFilterOp(f.GetField(), f.GetOp().String())
+				return nil, invalidPostFilterOp(f)
 			}
 		default:
 			remainingFilters = append(remainingFilters, f)
@@ -409,11 +457,8 @@ func (s *PostService) applyPublicPostFilters(
 }
 
 // ListMapFeatures returns server-clustered map data for public posts in the current viewport.
-func (s *PostService) ListMapFeatures(
-	ctx context.Context,
-	req *connect.Request[openv1.ListPostMapFeaturesRequest],
-) (*connect.Response[openv1.ListPostMapFeaturesResponse], error) {
-	viewport, err := normalizePostMapViewport(req.Msg.Viewport)
+func (s *Service) ListMapFeatures(ctx context.Context, request ListPostMapFeaturesQuery) (*openv1.ListPostMapFeaturesResponse, error) {
+	viewport, err := normalizePostMapViewport(request.Viewport)
 	if err != nil {
 		return nil, err
 	}
@@ -442,18 +487,18 @@ func (s *PostService) ListMapFeatures(
 		query = query.Where("(map_place.lng >= ? OR map_place.lng <= ?)", viewport.West, viewport.East)
 	}
 
-	query, err = s.applyPublicPostFilters(query, req.Msg.Filters)
+	query, err = s.applyPublicPostFilters(query, request.Filters)
 	if err != nil {
 		return nil, err
 	}
 
-	query, err = PostSortConfig.ApplySort(query, req.Msg.Sorts)
+	query, err = PostSortConfig.ApplySort(query, request.Sorts)
 	if err != nil {
 		return nil, err
 	}
 
 	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	sourceStates, err := postdomain.LoadPostSourceLocaleDocumentStatesForPublic(
@@ -467,7 +512,7 @@ func (s *PostService) ListMapFeatures(
 	for i := range rows {
 		sourceState := sourceStates[rows[i].PostID]
 		if sourceState == nil {
-			return nil, errs.NotFound("post_translation", rows[i].PostID)
+			return nil, domainerr.ResourceNotFound("post_translation", rows[i].PostID)
 		}
 		if sourceState.Title != nil {
 			rows[i].PostTitle = *sourceState.Title
@@ -479,7 +524,7 @@ func (s *PostService) ListMapFeatures(
 		s.db,
 		"post",
 		collectPostMapIDs(rows),
-		req.Header().Get("Accept-Language"),
+		request.AcceptLanguage,
 		true,
 	)
 	if err != nil {
@@ -488,15 +533,15 @@ func (s *PostService) ListMapFeatures(
 	placeGroups := buildPostMapPlaceGroups(rows, localizedSelections)
 	clusters, items := clusterPostMapPlaceGroups(placeGroups, viewport)
 
-	return connect.NewResponse(&openv1.ListPostMapFeaturesResponse{
+	return &openv1.ListPostMapFeaturesResponse{
 		Clusters: clusters,
 		Items:    items,
-	}), nil
+	}, nil
 }
 
 func normalizePostMapViewport(viewport *openv1.PostMapViewport) (normalizedPostMapViewport, error) {
 	if viewport == nil || viewport.Bounds == nil {
-		return normalizedPostMapViewport{}, errs.InvalidArgument("viewport", "viewport bounds are required")
+		return normalizedPostMapViewport{}, domainerr.InvalidField("viewport", "viewport bounds are required")
 	}
 
 	south := mapcluster.Clamp(viewport.Bounds.South, -85, 85)
@@ -510,7 +555,7 @@ func normalizePostMapViewport(viewport *openv1.PostMapViewport) (normalizedPostM
 
 	zoom := viewport.Zoom
 	if math.IsNaN(zoom) || math.IsInf(zoom, 0) {
-		return normalizedPostMapViewport{}, errs.InvalidArgument("viewport.zoom", "zoom must be finite")
+		return normalizedPostMapViewport{}, domainerr.InvalidField("viewport.zoom", "zoom must be finite")
 	}
 	// Signed MapLibre zooms down to the renderer's minimum are valid with
 	// measured dimensions. Preserve legacy defaults for missing-size inputs
@@ -675,22 +720,17 @@ func postMapItem(group *postMapPlaceGroup) *openv1.PostMapItem {
 }
 
 // Search searches for posts by query
-func (s *PostService) Search(
-	ctx context.Context,
-	req *connect.Request[openv1.SearchPostsRequest],
-) (*connect.Response[openv1.SearchPostsResponse], error) {
-	query := req.Msg.Query
+func (s *Service) Search(ctx context.Context, request SearchPostsQuery) (*openv1.SearchPostsResponse, error) {
+	query := request.Query
 	if len(query) < 2 {
-		return connect.NewResponse(&openv1.SearchPostsResponse{
-			Posts: []*openv1.PostSummary{},
-		}), nil
+		return &openv1.SearchPostsResponse{Posts: []*openv1.PostSummary{}}, nil
 	}
 
 	var posts []model.Post
 	pattern := "%" + query + "%"
 	limit := int32(10)
-	if req.Msg.Limit > 0 {
-		limit = req.Msg.Limit
+	if request.Limit > 0 {
+		limit = request.Limit
 	}
 
 	if err := withPublicPostStatusFence(s.db.WithContext(ctx).
@@ -702,7 +742,7 @@ func (s *PostService) Search(
 		Order("published_at DESC NULLS LAST").
 		Limit(int(limit))).
 		Find(&posts).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	if err := s.overlayPostSourceLocaleDocuments(ctx, posts); err != nil {
@@ -714,7 +754,7 @@ func (s *PostService) Search(
 		s.db,
 		"post",
 		collectPostIDs(posts),
-		req.Header().Get("Accept-Language"),
+		request.AcceptLanguage,
 		true,
 	)
 	if err != nil {
@@ -722,11 +762,11 @@ func (s *PostService) Search(
 	}
 	authorMembers, err := s.loadPostAuthorMembers(ctx, collectPostIDs(posts))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	featuredDeliveries, err := s.loadPostFeaturedImageDeliveries(ctx, posts)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	summaries := make([]*openv1.PostSummary, 0, len(posts))
@@ -734,17 +774,15 @@ func (s *PostService) Search(
 		summaries = append(summaries, s.toPostSummary(&post, localizedSelections[post.ID], authorMembers[post.ID], featuredDeliveries[post.ID]))
 	}
 
-	return connect.NewResponse(&openv1.SearchPostsResponse{
-		Posts: summaries,
-	}), nil
+	return &openv1.SearchPostsResponse{Posts: summaries}, nil
 }
 
 // buildPostResponse builds a GetPostResponse with the post
-func (s *PostService) buildPostResponse(
+func (s *Service) buildPostResponse(
 	ctx context.Context,
 	acceptLanguage string,
 	projection *publicPostSnapshot,
-) (*connect.Response[openv1.GetPostResponse], error) {
+) (*openv1.GetPostResponse, error) {
 	post := &projection.post
 	localization := projection.localization
 	document := projection.document
@@ -752,13 +790,13 @@ func (s *PostService) buildPostResponse(
 	ctx = mediaasset.WithContentDownloadOwnerAuthorization(ctx, projection.mediaAuthorization)
 	documentLayout, err := post.DocumentLayout.Proto()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	protoPost := &openv1.Post{
 		Id:              post.ID,
 		Title:           post.Title,
-		Status:          s.toProtoStatus(post.Status),
+		Status:          postStatusToProto(post.Status),
 		CommentsEnabled: post.CommentsEnabled,
 		DocumentLayout:  documentLayout,
 		CreatedAt:       timestamppb.New(post.CreatedAt),
@@ -787,7 +825,7 @@ func (s *PostService) buildPostResponse(
 	}
 	protoPost.OgAsset, err = resolvedOgAssetRef(ctx, s.db, s.cdnDomain, postSourceOgAssetID, localization.OgAssetID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if post.MapPlaceID != nil {
 		protoPost.MapPlaceId = post.MapPlaceID
@@ -798,7 +836,7 @@ func (s *PostService) buildPostResponse(
 
 	authorMembers, err := s.loadPostAuthorMembers(ctx, []string{post.ID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	protoPost.AuthorMembers = authorMembers[post.ID]
 
@@ -834,7 +872,7 @@ func (s *PostService) buildPostResponse(
 			true,
 		)
 		if localizationErr != nil {
-			return nil, errs.Internal(localizationErr)
+			return nil, localizationErr
 		}
 		if seriesLocalization.Title != nil {
 			seriesTitle = *seriesLocalization.Title
@@ -853,14 +891,14 @@ func (s *PostService) buildPostResponse(
 	}
 
 	if s.files == nil {
-		return nil, errs.Internal(fmt.Errorf("post media resolver is not configured"))
+		return nil, fmt.Errorf("post media resolver is not configured")
 	}
 	if post.ContentDocumentID == nil || *post.ContentDocumentID == "" {
-		return nil, errs.FailedPrecondition("Post content document is not initialized")
+		return nil, domainerr.Precondition("Post content document is not initialized")
 	}
 	documentID, err := uuid.Parse(*post.ContentDocumentID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	contentMediaItems, err := s.files.ResolveAuthorizedContentBlockMedia(ctx, documentID)
 	if err != nil {
@@ -873,10 +911,10 @@ func (s *PostService) buildPostResponse(
 		}
 		protoPost.FeaturedImageDelivery = publicDisplayOnlyDelivery(featured[*post.FeaturedImageFileID])
 	}
-	return connect.NewResponse(&openv1.GetPostResponse{
+	return &openv1.GetPostResponse{
 		Post:       protoPost,
 		BlockMedia: contentMediaItems,
-	}), nil
+	}, nil
 }
 
 func applyPostLocalization(protoPost *openv1.Post, localization LocalizedContentSelection) {
@@ -889,7 +927,7 @@ func applyPostLocalization(protoPost *openv1.Post, localization LocalizedContent
 }
 
 // toPostSummary converts a post to a summary (no content)
-func (s *PostService) toPostSummary(
+func (s *Service) toPostSummary(
 	post *model.Post,
 	localization LocalizedContentSelection,
 	authorMembers []*commonv1.MemberSummary,
@@ -956,7 +994,7 @@ func collectPostIDs(posts []model.Post) []string {
 	return ids
 }
 
-func (s *PostService) overlayPostSourceLocaleDocuments(
+func (s *Service) overlayPostSourceLocaleDocuments(
 	ctx context.Context,
 	posts []model.Post,
 ) error {
@@ -967,7 +1005,7 @@ func (s *PostService) overlayPostSourceLocaleDocuments(
 	for i := range posts {
 		sourceState := sourceStates[posts[i].ID]
 		if sourceState == nil {
-			return errs.NotFound("post_translation", posts[i].ID)
+			return domainerr.ResourceNotFound("post_translation", posts[i].ID)
 		}
 		postdomain.OverlayPostSourceLocaleDocumentForPublic(&posts[i], sourceState)
 	}
@@ -976,7 +1014,7 @@ func (s *PostService) overlayPostSourceLocaleDocuments(
 
 // loadPostAuthorMembers resolves durable post authors and Member
 // summaries in a fixed number of queries for any page size.
-func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
+func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
 	ids := sliceutil.UniqueTrimmed(postIDs)
 	result := make(map[string][]*commonv1.MemberSummary, len(ids))
 	if len(ids) == 0 {
@@ -1009,20 +1047,4 @@ func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []strin
 		}
 	}
 	return result, nil
-}
-
-// toProtoStatus converts model status to proto status
-func (s *PostService) toProtoStatus(status model.PostStatus) openv1.PostStatus {
-	switch status {
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()):
-		return openv1.PostStatus_POST_STATUS_DRAFT
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()):
-		return openv1.PostStatus_POST_STATUS_PUBLISHED
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()):
-		return openv1.PostStatus_POST_STATUS_SCHEDULED
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()):
-		return openv1.PostStatus_POST_STATUS_ARCHIVED
-	default:
-		return openv1.PostStatus_POST_STATUS_UNSPECIFIED
-	}
 }

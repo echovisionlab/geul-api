@@ -35,6 +35,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
@@ -107,7 +108,6 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := testutil.NewAuditContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	identityManager := testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en"))
 	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
 	publisher := artistLabelAsyncPublisher{}
 	fileDeleter := artistLabelFileDeleter{}
@@ -133,12 +133,15 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		WaveformJobs: releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}),
 		Assets:       releaseadapter.NewAssets(artistLabelPublicCDN), OG: releaseadapter.NewOG(artistLabelPublicCDN),
 	}))
-	manageWork := workdomain.NewWorkService(
-		db, workFixtureRuntime(db), spiceDB, identityManager, publisher,
-		workdomain.WithWorkContentBlockStore(contentBlocks),
-		workdomain.WithWorkContentBlockMediaHydrator(artistLabelMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, artistLabelPublicCDN)),
-	)
+	workService, err := workdomain.NewService(workdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Runtime: workFixtureRuntime(db), Signals: publisher,
+		ContentBlocks: contentBlocks, Media: artistLabelMediaHydrator{},
+		Members:     workadapter.NewMemberSummaries(db, artistLabelPublicCDN),
+		Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelinkdomain.EntityWork}, Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	manageWork := workdomain.NewConnectHandler(workService)
 	shareLinks := sharelinktest.NewHandler(t, db, spiceDB)
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
 	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, Media: artistMedia})

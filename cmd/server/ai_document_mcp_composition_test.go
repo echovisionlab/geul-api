@@ -453,8 +453,11 @@ type compositionFileRuntime struct {
 
 type compositionSignalPublisher struct{}
 
+// compositionPostApplication lists no AI documents and leaves the Post use
+// cases unimplemented; no composition test reaches one.
 type compositionPostApplication struct {
-	managev1connect.UnimplementedPostServiceHandler
+	mcpadapter.PostManagementApplication
+	mcpadapter.PostRelatedApplication
 }
 
 func (*compositionPostApplication) ListAIDocuments(
@@ -464,8 +467,12 @@ func (*compositionPostApplication) ListAIDocuments(
 	return postdomain.AIDocumentListResult{Items: []postdomain.AIDocumentListItem{}, Limit: 20}, nil
 }
 
+// compositionWorkApplication lists the Work use cases; no composition test
+// reaches one.
 type compositionWorkApplication struct {
-	managev1connect.UnimplementedWorkServiceHandler
+	mcpadapter.WorkDocumentDiscovery
+	mcpadapter.WorkManagementApplication
+	mcpadapter.WorkRelatedApplication
 }
 
 // compositionPageApplication carries the Page use cases the composition

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -32,7 +32,7 @@ func normalizeOptionalNullableString(raw *string) (*string, bool) {
 	return &trimmed, true
 }
 
-func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.IdentityManager, acceptLanguage string) string {
+func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage string) string {
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
 		var preferredLocale *string
 		if err := db.WithContext(ctx).Model(&model.Member{}).
@@ -59,12 +59,12 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.Identit
 	return translation.DefaultLocale
 }
 
-func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, identity auth.IdentityManager, requestedLocale, acceptLanguage string) (string, error) {
+func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, requestedLocale, acceptLanguage string) (string, error) {
 	if requestedLocale != "" {
 		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
 			return *locale, nil
 		}
-		return "", errs.InvalidArgument("source_locale", "must be a supported canonical locale")
+		return "", domainerr.InvalidField("source_locale", "must be a supported canonical locale")
 	}
-	return resolveInitialSourceLocale(ctx, db, identity, acceptLanguage), nil
+	return resolveInitialSourceLocale(ctx, db, acceptLanguage), nil
 }

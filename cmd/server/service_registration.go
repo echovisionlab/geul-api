@@ -476,15 +476,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(accountPath, accountHandler)
 	slog.Info("Registered service", "path", accountPath)
 
-	workService := work.NewAuditedWorkService(
-		db, workRuntime, spicedbClient, kratosClient, servicePublisher, telemetryWriter,
-		work.WithWorkContentBlockStore(contentBlockStore),
-		work.WithWorkContentBlockMediaHydrator(fileService),
-		work.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, cfg.CDNURL)),
-	)
-	workPath, workHandler := managev1connect.NewWorkServiceHandler(workService, handlerOpts...)
+	workService, err := work.NewService(work.Deps{
+		DB: db, SpiceDB: spicedbClient, Runtime: workRuntime, Signals: servicePublisher,
+		ContentBlocks: contentBlockStore, Media: fileService,
+		Members:     workadapter.NewMemberSummaries(db, cfg.CDNURL),
+		Checkpoints: collaborationRuntime.Checkpoints,
+		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Work service: %w", err)
+	}
+	workPath, workHandler := managev1connect.NewWorkServiceHandler(work.NewConnectHandler(workService), handlerOpts...)
 	mux.Handle(workPath, workHandler)
 	slog.Info("Registered service", "path", workPath)
+	internalWorkPath, internalWorkHandler := intrav1connect.NewInternalWorkServiceHandler(work.NewInternalConnectHandler(workService), internalHandlerOpts...)
+	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
+	slog.Info("Registered internal service", "path", internalWorkPath)
 
 	// Phase 2: CMS Services
 	postMembers := postadapter.NewMemberSummaries(db, cfg.CDNURL)
@@ -492,25 +499,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	postMedia := postruntime.ContentBlockMedia{}
 	postFiles := postadapter.NewFiles(fileService, publicFileService)
 	postVersionRestore := postruntime.VersionRestore{}
-	postService := post.NewAuditedPostService(
-		db,
-		cfg.CDNURL,
-		ogDeps.refresher,
-		spicedbClient,
-		kratosClient,
-		postFiles,
-		servicePublisher,
-		postShareLinks,
-		postMedia,
-		postMembers,
-		postVersionRestore,
-		telemetryWriter,
-		post.WithPostContentBlockStore(contentBlockStore),
-		post.WithPostContentBlockMediaHydrator(fileService),
-	)
-	postPath, postHandler := managev1connect.NewPostServiceHandler(postService, handlerOpts...)
+	postService, err := post.NewService(post.Deps{
+		DB: db, SpiceDB: spicedbClient, CDNDomain: cfg.CDNURL, OG: ogDeps.refresher, Files: postFiles,
+		Signals: servicePublisher, ShareLinks: postShareLinks,
+		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
+		MediaLoader:      postMedia, Media: fileService, Members: postMembers, VersionRestore: postVersionRestore,
+		ContentBlocks: contentBlockStore, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post service: %w", err)
+	}
+	postPath, postHandler := managev1connect.NewPostServiceHandler(post.NewConnectHandler(postService), handlerOpts...)
 	mux.Handle(postPath, postHandler)
 	slog.Info("Registered service", "path", postPath)
+	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(post.NewInternalConnectHandler(postService), internalHandlerOpts...)
+	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
+	slog.Info("Registered internal service", "path", internalPostPath)
 
 	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(referencecatalog.NewCategoryConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(categoryPath, categoryHandler)
@@ -689,8 +693,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
 	slog.Info("Registered service", "path", emailSuppressionPath)
 
-	commentService := post.NewCommentService(db, spicedbClient, postMembers)
-	commentPath, commentHandler := managev1connect.NewCommentServiceHandler(commentService, handlerOpts...)
+	commentService, err := post.NewCommentService(post.CommentDeps{DB: db, SpiceDB: spicedbClient, Members: postMembers, Audit: telemetryWriter})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post comment service: %w", err)
+	}
+	commentPath, commentHandler := managev1connect.NewCommentServiceHandler(post.NewCommentConnectHandler(commentService), handlerOpts...)
 	mux.Handle(commentPath, commentHandler)
 	slog.Info("Registered service", "path", commentPath)
 
@@ -765,9 +772,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		internalTrust:               internalRPCTrust,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
 		collaborationRuntime:        collaborationRuntime,
-		workRuntime:                 workRuntime,
-		fileService:                 fileService,
-		postMedia:                   postMedia,
 		programEvents:               programEventService,
 		emailAuthoringReferences:    emailAuthoringReferences,
 		legalRuntime:                legalRuntime,
@@ -778,7 +782,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	internalWorkService := internalServices.work
 	internalEmailTemplateService := internalServices.emailTemplate
 	internalCampaignService := internalServices.campaign
 	internalFormService := internalServices.form
@@ -805,7 +808,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.page, err = aidocumentadapter.NewPageRegistration(pageService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Page AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.work, err = aidocumentadapter.NewWorkRegistration(internalWorkService); err != nil {
+	if aiDocumentRegistrations.work, err = aidocumentadapter.NewWorkRegistration(workService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Work AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.programEvent, err = aidocumentadapter.NewProgramEventRegistration(programEventService); err != nil {

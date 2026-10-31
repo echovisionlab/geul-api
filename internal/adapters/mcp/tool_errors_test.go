@@ -1,14 +1,15 @@
 package mcp
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
+	"testing"
+
+	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"testing"
 )
 
 func TestExpectedToolErrorPreservesActionableFailuresWithoutPrivateContext(t *testing.T) {

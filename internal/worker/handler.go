@@ -235,8 +235,10 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 		_, err := dispatcher.ResumeActiveEmailDeliveryRuns(ctx, 25)
 		return err
 	case scheduler.JobProcessScheduledPosts:
-		_, err := post.ProcessDueScheduledPosts(ctx, h.db, 0)
-		return err
+		return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			_, err := post.ProcessDueScheduledPosts(ctx, tx, 0)
+			return err
+		})
 	case scheduler.JobRecoverMetadataAI:
 		if h.metadataAI == nil {
 			return nil

@@ -70,7 +70,7 @@ func maskPrivatePostAccess(err error, postID string) error {
 
 func maskPrivateDomainAccess(err error, domain, resourceID string) error {
 	if err != nil {
-		switch connect.CodeOf(err) {
+		switch errs.CodeOf(err) {
 		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
 			return errs.WithCause(errs.NotFound(domain, resourceID), err)
 		}

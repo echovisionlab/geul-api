@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -104,19 +103,15 @@ func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(
 	var projectionReleaseOnce sync.Once
 	resumeProjection := func() { projectionReleaseOnce.Do(func() { close(projectionRelease) }) }
 	t.Cleanup(resumeProjection)
-	publicService := workpublic.NewWorkService(
-		publicDB,
-		stack.SpiceDBClient,
-		extractedWorkPublicMediaHydrator{},
-		workSnapshotProjectionGate{
+	publicService := newPublicWorkHandler(t, workpublic.Deps{
+		DB: publicDB, SpiceDB: stack.SpiceDBClient, BlockMedia: extractedWorkPublicMediaHydrator{},
+		Assets: workSnapshotProjectionGate{
 			MediaResolver: newPublicWorkRuntimeForTest(publicDB, "https://cdn.example.com"),
 			entered:       projectionEntered,
 			release:       projectionRelease,
 		},
-		workadapter.NewMemberSummaries(publicDB, "https://cdn.example.com"),
-		referencecatalogadapter.PublicMapPlaces{},
-		workpublic.WithWorkContentBlockStore(store),
-	)
+		Members: workadapter.NewMemberSummaries(publicDB, "https://cdn.example.com"), ContentBlocks: store,
+	})
 	getDone := make(chan workReadResult, 1)
 	go func() {
 		response, getErr := publicService.Get(context.Background(), connect.NewRequest(&openv1.GetWorkRequest{Slug: created.Msg.Id}))

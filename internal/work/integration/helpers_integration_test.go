@@ -11,11 +11,15 @@ import (
 	"slices"
 	"testing"
 
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	workdomain "github.com/echovisionlab/geul-api/internal/work"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
@@ -26,7 +30,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -39,6 +42,44 @@ import (
 )
 
 var workIntegrationSuite *testutil.OryIntegrationSuite
+
+// newWorkServiceForTest builds the Work use cases, filling the
+// collaborators deps leaves unset from deps.DB.
+func newWorkServiceForTest(t *testing.T, deps workdomain.Deps) *workdomain.Service {
+	t.Helper()
+	if deps.SpiceDB == nil {
+		deps.SpiceDB = integrationSpiceDB(t)
+	}
+	if deps.Runtime == nil {
+		deps.Runtime = newWorkRuntimeForTest(deps.DB, "")
+	}
+	if deps.Signals == nil {
+		deps.Signals = noopAsyncPublisher{}
+	}
+	if deps.ContentBlocks == nil {
+		store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(deps.SpiceDB))
+		require.NoError(t, err)
+		deps.ContentBlocks = store
+	}
+	if deps.Media == nil {
+		deps.Media = passthroughWorkContentBlockMediaHydrator{}
+	}
+	if deps.Members == nil {
+		deps.Members = workadapter.NewMemberSummaries(deps.DB, "")
+	}
+	if deps.Checkpoints == nil {
+		deps.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)
+	}
+	if deps.ShareLinks == nil {
+		deps.ShareLinks = sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}
+	}
+	if deps.Audit == nil {
+		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
+	}
+	service, err := workdomain.NewService(deps)
+	require.NoError(t, err)
+	return service
+}
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -128,55 +169,6 @@ func (allowWorkFileReuse) AuthorizeFileReuse(
 	contentblock.File,
 ) error {
 	return nil
-}
-
-type fakeIdentityManager struct{ identity *auth.Identity }
-
-func (f *fakeIdentityManager) GetIdentity(_ context.Context, identityID string) (*auth.Identity, error) {
-	if f.identity == nil || f.identity.ID != identityID {
-		return nil, fmt.Errorf("identity not found")
-	}
-	return f.identity, nil
-}
-func (f *fakeIdentityManager) GetIdentityWithIncludeCredential(ctx context.Context, identityID, _ string) (*auth.Identity, error) {
-	return f.GetIdentity(ctx, identityID)
-}
-func (*fakeIdentityManager) ListIdentities(context.Context, int, int) ([]*auth.Identity, int64, error) {
-	return nil, 0, nil
-}
-func (f *fakeIdentityManager) UpdateIdentityTraits(_ context.Context, identityID string, traits structured.Fields) error {
-	if f.identity == nil || f.identity.ID != identityID {
-		return fmt.Errorf("identity not found")
-	}
-	if f.identity.Traits == nil {
-		f.identity.Traits = structured.Fields{}
-	}
-	for key, value := range traits {
-		f.identity.Traits[key] = value
-	}
-	return nil
-}
-func (*fakeIdentityManager) UpdateIdentityMetadataAdmin(context.Context, string, structured.Fields) error {
-	return nil
-}
-func (*fakeIdentityManager) UpdateIdentityVerifiableAddresses(context.Context, string, []auth.VerifiableAddress) error {
-	return nil
-}
-func (*fakeIdentityManager) SetIdentityState(context.Context, string, string) error { return nil }
-func (*fakeIdentityManager) DeleteIdentitySessions(context.Context, string) error   { return nil }
-func (*fakeIdentityManager) DeleteIdentity(context.Context, string) error           { return nil }
-func (f *fakeIdentityManager) GetIdentityEmail(context.Context, string) (string, error) {
-	if f.identity == nil {
-		return "", nil
-	}
-	return f.identity.CurrentEmail(), nil
-}
-
-func postIntegrationIdentity(id, locale string) *auth.Identity {
-	return &auth.Identity{
-		ID: id, State: auth.KratosStateActive,
-		Traits: structured.Fields{"name": "Work Admin", "preferred_locale": locale},
-	}
 }
 
 type noopAsyncPublisher struct{}

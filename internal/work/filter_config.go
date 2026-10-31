@@ -13,9 +13,7 @@ var WorkAdminFilterConfig = &queryutil.FilterConfig{Fields: map[string]queryutil
 		managev1.WorkType_WORK_TYPE_MUSIC_PROJECT.String(), managev1.WorkType_WORK_TYPE_PORTFOLIO.String(),
 		managev1.WorkType_WORK_TYPE_ARTICLE.String(), managev1.WorkType_WORK_TYPE_CONTRIBUTION.String(),
 	}},
-	"status": {Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps, EnumValues: []string{
-		managev1.WorkStatus_WORK_STATUS_DRAFT.String(), managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(), managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-	}},
+	"status":   {Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps, EnumValues: workStatusValues()},
 	"featured": {Column: "featured", Type: queryutil.TypeBool, AllowedOps: queryutil.BoolOps},
 	"map_place_id": {Column: "map_place_id", Type: queryutil.TypeID, AllowedOps: []commonv1.FilterOp{
 		commonv1.FilterOp_FILTER_OP_EQ, commonv1.FilterOp_FILTER_OP_NEQ, commonv1.FilterOp_FILTER_OP_IN,

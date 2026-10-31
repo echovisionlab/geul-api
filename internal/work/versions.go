@@ -8,15 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -28,66 +27,62 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (s *WorkService) ListWorkVersions(
-	ctx context.Context,
-	req *connect.Request[managev1.ListWorkVersionsRequest],
-) (*connect.Response[managev1.ListWorkVersionsResponse], error) {
+// ListWorkVersionsQuery lists a Work's version checkpoints, newest first.
+type ListWorkVersionsQuery struct {
+	WorkID string
+	Page   Page
+}
+
+// RestoreWorkVersionCommand restores a Work's source content to a version.
+type RestoreWorkVersionCommand struct{ WorkID, VersionID string }
+
+func (s *Service) ListWorkVersions(ctx context.Context, query ListWorkVersionsQuery) (*managev1.ListWorkVersionsResponse, error) {
 	var root model.Work
-	if err := s.db.WithContext(ctx).Select("id", "status").Take(&root, "id = ?", req.Msg.WorkId).Error; err != nil {
+	if err := s.db.WithContext(ctx).Select("id", "status").Take(&root, "id = ?", query.WorkID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("work", req.Msg.WorkId)
+			return nil, domainerr.ResourceNotFound("work", query.WorkID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := requireWorkPermission(ctx, s.spiceDB, root, policyv1.Work.View, workAuthorizationRead); err != nil {
 		return nil, err
 	}
-
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
+	limit, offset := int32(20), query.Page.Offset
+	if query.Page.Limit > 0 {
+		limit = query.Page.Limit
 	}
-
 	var total int64
 	if err := s.db.WithContext(ctx).
 		Model(&model.WorkVersion{}).
-		Where("work_id = ?", req.Msg.WorkId).
+		Where("work_id = ?", query.WorkID).
 		Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	var versions []model.WorkVersion
 	if err := s.db.WithContext(ctx).
-		Where("work_id = ?", req.Msg.WorkId).
+		Where("work_id = ?", query.WorkID).
 		Order("version DESC").
 		Limit(int(limit)).
 		Offset(int(offset)).
 		Find(&versions).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	contributorLists := make([][]string, len(versions))
 	for index := range versions {
 		contributorLists[index] = versions[index].ContributorMemberIDs
 	}
 	contributorNames, err := resolveVersionContributorNames(ctx, s.db, contributorLists...)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	protoVersions := make([]*managev1.WorkVersion, len(versions))
 	for index := range versions {
 		protoVersions[index], err = s.toProtoWorkVersion(&versions[index], contributorNames)
 		if err != nil {
-			return nil, errs.WithCause(errs.FailedPrecondition("Work Version typed snapshot is invalid"), failurecause.ServerFault(err))
+			return nil, domainerr.Precondition("Work Version typed snapshot is invalid").WithCause(failurecause.ServerFault(err))
 		}
 	}
-
-	return connect.NewResponse(&managev1.ListWorkVersionsResponse{
+	return &managev1.ListWorkVersionsResponse{
 		Versions: protoVersions,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
@@ -95,49 +90,58 @@ func (s *WorkService) ListWorkVersions(
 			Offset:  offset,
 			HasMore: int64(offset)+int64(limit) < total,
 		},
-	}), nil
+	}, nil
 }
 
 // RestoreWorkVersion replaces the full source-owned graph and locale metadata
 // from one immutable checkpoint. Existing target locale rows and translation
 // jobs remain unchanged, including when the checkpoint switches source-locale
 // authority. Global Work fields remain current.
-func (s *WorkService) RestoreWorkVersion(
-	ctx context.Context,
-	req *connect.Request[managev1.RestoreWorkVersionRequest],
-) (*connect.Response[managev1.Work], error) {
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Work content Block store is not configured")
-	}
-
-	version, err := s.loadWorkVersionForRestore(ctx, req.Msg.VersionId, req.Msg.WorkId)
+func (s *Service) RestoreWorkVersion(ctx context.Context, command RestoreWorkVersionCommand) (*managev1.Work, error) {
+	version, err := s.loadWorkVersionForRestore(ctx, command.VersionID, command.WorkID)
 	if err != nil {
 		return nil, err
 	}
 	envelope, document, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
-		return nil, errs.WithCause(errs.FailedPrecondition("Work Version typed snapshot is invalid"), failurecause.ServerFault(err))
+		return nil, domainerr.Precondition("Work Version typed snapshot is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	if envelope.Title == nil || strings.TrimSpace(*envelope.Title) == "" {
-		return nil, errs.FailedPrecondition("Work Version source title is invalid")
+		return nil, domainerr.Precondition("Work Version source title is invalid")
 	}
-
 	now := time.Now().UTC()
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		restore, lockErr := s.lockWorkVersionRestore(ctx, tx, version.WorkID, envelope, document, now)
-		if lockErr != nil {
-			return lockErr
-		}
-		outcome, restoreErr := restore.Apply(ctx, tx)
-		if restoreErr != nil || !outcome.Changed() {
-			return restoreErr
-		}
-		return s.publishWorkVersionRestore(ctx, tx, version, envelope.SourceLocale, outcome, now)
+	var restore versionrestore.Restore
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[versionrestore.Outcome]{
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+			var err error
+			restore, err = s.lockWorkVersionRestore(ctx, tx, require, version.WorkID, envelope, document, now)
+			return err
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (versionrestore.Outcome, error) {
+			outcome, err := restore.Apply(ctx, tx)
+			if err != nil || !outcome.Changed() {
+				return outcome, err
+			}
+			return outcome, touchWork(ctx, tx, version.WorkID, now)
+		},
+		Audit: func(outcome versionrestore.Outcome) mutation.Audit {
+			if !outcome.Changed() {
+				return mutation.Unchanged()
+			}
+			return workUpdatedAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewWorkVersionRestoreAuditRecord(metadata, version.WorkID, version.ID)
+			})
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, outcome versionrestore.Outcome) error {
+			if !outcome.Changed() {
+				return nil
+			}
+			return s.publishWorkVersionRestore(ctx, tx, version, envelope.SourceLocale, outcome)
+		},
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)
 	}
-
 	work, err := s.loadRestoredWork(ctx, version.WorkID)
 	if err != nil {
 		return nil, err
@@ -147,9 +151,10 @@ func (s *WorkService) RestoreWorkVersion(
 
 // lockWorkVersionRestore locks the Work root, authorizes the caller and
 // returns the restore of envelope and document.
-func (s *WorkService) lockWorkVersionRestore(
+func (s *Service) lockWorkVersionRestore(
 	ctx context.Context,
 	tx *gorm.DB,
+	require mutation.Require,
 	workID string,
 	envelope VersionContentSnapshot,
 	document *contentv1.LocalizedRichTextDocument,
@@ -164,9 +169,9 @@ func (s *WorkService) lockWorkVersionRestore(
 		return versionrestore.Restore{}, err
 	}
 	if work.ID != workID {
-		return versionrestore.Restore{}, errs.FailedPrecondition("Work content document changed during version restore")
+		return versionrestore.Restore{}, domainerr.Precondition("Work content document changed during version restore")
 	}
-	if _, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, workID, policyv1.Work.Edit, workAuthorizationMutation); err != nil {
+	if _, err := requireLockedWorkPermission(ctx, tx, require, workID, policyv1.Work.Edit, workAuthorizationMutation); err != nil {
 		return versionrestore.Restore{}, err
 	}
 	return versionrestore.Restore{
@@ -202,39 +207,21 @@ func (s *WorkService) lockWorkVersionRestore(
 	}, nil
 }
 
-// publishWorkVersionRestore records a restore that changed the Work.
-func (s *WorkService) publishWorkVersionRestore(
+// publishWorkVersionRestore requests the OG image and signals a restore
+// that changed the Work.
+func (s *Service) publishWorkVersionRestore(
 	ctx context.Context,
 	tx *gorm.DB,
 	version model.WorkVersion,
 	sourceLocale string,
 	outcome versionrestore.Outcome,
-	now time.Time,
 ) error {
-	if err := tx.WithContext(ctx).Model(&model.Work{}).
-		Where("id = ?", version.WorkID).
-		UpdateColumn("updated_at", now).Error; err != nil {
-		return err
-	}
 	if outcome.RefreshesOG() {
-		if _, err := s.runtime.RequestCurrentWithDB(
-			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-			version.WorkID, sourceLocale, false, "work_version_restored",
-		); err != nil {
+		if _, err := s.requestWorkOG(ctx, tx, version.WorkID, sourceLocale, "work_version_restored"); err != nil {
 			return err
 		}
 	}
-	if s.auditWriter != nil {
-		if err := domainaudit.AppendRequest(
-			ctx, tx, s.auditWriter, sharedtelemetry.AuditWorkUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewWorkVersionRestoreAuditRecord(metadata, version.WorkID, version.ID)
-			},
-		); err != nil {
-			return err
-		}
-	}
-	return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+	return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
 		EntityID: version.WorkID, Fields: outcome.Fields(),
 		DocumentRevision: outcome.DocumentRevision.String(), Contributors: versionrestore.Contributors(ctx),
 		Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, Locale: sourceLocale,
@@ -242,7 +229,7 @@ func (s *WorkService) publishWorkVersionRestore(
 	}))
 }
 
-func (s *WorkService) loadWorkVersionForRestore(
+func (s *Service) loadWorkVersionForRestore(
 	ctx context.Context,
 	versionID string,
 	expectedWorkID string,
@@ -250,12 +237,12 @@ func (s *WorkService) loadWorkVersionForRestore(
 	var version model.WorkVersion
 	if err := s.db.WithContext(ctx).First(&version, "id = ?", versionID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.WorkVersion{}, errs.NotFound("work_version", versionID)
+			return model.WorkVersion{}, domainerr.ResourceNotFound("work_version", versionID)
 		}
-		return model.WorkVersion{}, errs.Internal(err)
+		return model.WorkVersion{}, err
 	}
 	if expectedWorkID != "" && version.WorkID != expectedWorkID {
-		return model.WorkVersion{}, errs.NotFound("work_version", versionID)
+		return model.WorkVersion{}, domainerr.ResourceNotFound("work_version", versionID)
 	}
 	return version, nil
 }
@@ -282,25 +269,25 @@ func updateWorkVersionSourceMetadata(
 			"updated_at": now,
 		})
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("Work source locale changed during version restore")
+		return domainerr.Precondition("Work source locale changed during version restore")
 	}
 	return nil
 }
 
-func (s *WorkService) loadRestoredWork(ctx context.Context, workID string) (model.Work, error) {
+func (s *Service) loadRestoredWork(ctx context.Context, workID string) (model.Work, error) {
 	var work model.Work
 	if err := s.db.WithContext(ctx).First(&work, "id = ?", workID).Error; err != nil {
-		return model.Work{}, errs.Internal(err)
+		return model.Work{}, err
 	}
 	source, err := LoadRequiredSourceLocaleMetadata(ctx, s.db, work.ID)
 	if err != nil {
 		return model.Work{}, err
 	}
 	if source.Title == nil {
-		return model.Work{}, errs.FailedPrecondition("Work source title is not initialized")
+		return model.Work{}, domainerr.Precondition("Work source title is not initialized")
 	}
 	work.Title = *source.Title
 	work.Summary = cloneOptionalString(source.Summary)
@@ -314,7 +301,7 @@ func (s *WorkService) loadRestoredWork(ctx context.Context, workID string) (mode
 	return work, nil
 }
 
-func (s *WorkService) toProtoWorkVersion(
+func (s *Service) toProtoWorkVersion(
 	version *model.WorkVersion,
 	contributorNames map[string]string,
 ) (*managev1.WorkVersion, error) {

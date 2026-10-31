@@ -9,19 +9,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
-
-func optionalStringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
 
 func hasDraftWorkView(
 	ctx context.Context,
@@ -53,30 +46,30 @@ func requireDraftShareLinkAccess(
 	entityName string,
 ) (*model.ShareLink, error) {
 	if shareToken == "" {
-		return nil, errs.NotFoundMsg(entityName + " not found")
+		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	var link model.ShareLink
 	err := db.WithContext(ctx).
 		Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", shareToken, entityType.String(), entityID, time.Now()).
 		Take(&link).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errs.NotFoundMsg(entityName + " not found")
+		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("validate %s share link: %w", entityName, err))
+		return nil, fmt.Errorf("validate %s share link: %w", entityName, err)
 	}
 	if link.PasswordHash == nil {
 		return &link, nil
 	}
 	if sharePassword == "" {
-		return nil, errs.NotFoundMsg(entityName + " not found")
+		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	match, err := crypto.NewPasswordHasher(nil).Verify(sharePassword, *link.PasswordHash)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("validate %s share link: %w", entityName, err))
+		return nil, fmt.Errorf("validate %s share link: %w", entityName, err)
 	}
 	if !match {
-		return nil, errs.NotFoundMsg(entityName + " not found")
+		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	return &link, nil
 }

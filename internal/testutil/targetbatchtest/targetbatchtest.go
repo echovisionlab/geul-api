@@ -5,8 +5,9 @@
 package targetbatchtest
 
 import (
-	"errors"
 	"testing"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -149,15 +150,16 @@ func Run(t *testing.T, validate Validator, cases []Case) {
 	}
 }
 
-// Describe reduces a validator error to its client-visible Outcome.
+// Describe reduces a validator error, Connect or use-case, to its
+// client-visible Outcome.
 func Describe(t *testing.T, err error) Outcome {
 	t.Helper()
 	if err == nil {
 		return Accepted()
 	}
-	var connectErr *connect.Error
-	if !errors.As(err, &connectErr) {
-		t.Fatalf("error %T is not a connect error: %v", err, err)
+	connectErr, ok := errs.Classified(err)
+	if !ok {
+		t.Fatalf("error %T carries no client classification: %v", err, err)
 	}
 	outcome := Outcome{Code: connectErr.Code(), Message: connectErr.Message()}
 	for _, detail := range connectErr.Details() {

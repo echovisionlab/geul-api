@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +15,7 @@ func TestAssignWorkUpdateRangeOnlyWritesTouchedValues(t *testing.T) {
 	}
 	year := int32(2026)
 
-	fields, err := assignWorkUpdateRange(current, &managev1.UpdateWorkRequest{Year: &year})
+	fields, err := assignWorkUpdateRange(current, UpdateWorkCommand{Year: &year})
 
 	require.NoError(t, err)
 	require.Equal(t, int32(2026), fields["year"])
@@ -34,7 +33,7 @@ func TestAssignWorkUpdateRangeValidatesAgainstLockedCurrentValues(t *testing.T) 
 	}
 	newYear := int32(2027)
 
-	_, err := assignWorkUpdateRange(current, &managev1.UpdateWorkRequest{Year: &newYear})
+	_, err := assignWorkUpdateRange(current, UpdateWorkCommand{Year: &newYear})
 
 	require.Error(t, err, "the locked month 8 makes the current end date earlier than the requested start")
 }
@@ -47,7 +46,7 @@ func TestAssignWorkUpdateRangePresentClearsEndDatePair(t *testing.T) {
 	}
 	isPresent := true
 
-	fields, err := assignWorkUpdateRange(current, &managev1.UpdateWorkRequest{IsPresent: &isPresent})
+	fields, err := assignWorkUpdateRange(current, UpdateWorkCommand{IsPresent: &isPresent})
 
 	require.NoError(t, err)
 	require.Equal(t, true, fields["is_present"])
@@ -67,7 +66,7 @@ func TestAssignWorkUpdateRangeUsesCurrentOtherEndComponent(t *testing.T) {
 	}
 	newUntilYear := int32(2028)
 
-	fields, err := assignWorkUpdateRange(current, &managev1.UpdateWorkRequest{UntilYear: &newUntilYear})
+	fields, err := assignWorkUpdateRange(current, UpdateWorkCommand{UntilYear: &newUntilYear})
 
 	require.NoError(t, err)
 	require.Equal(t, &newUntilYear, fields["until_year"])

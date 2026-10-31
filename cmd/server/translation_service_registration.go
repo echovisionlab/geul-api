@@ -55,6 +55,10 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 	programEventService := r.programEventService
 	seriesService := r.seriesService
 	fileService := r.fileService
+	postInterchange, err := post.NewTranslationInterchange(telemetryWriter)
+	if err != nil {
+		return nil, fmt.Errorf("initialize Post translation interchange: %w", err)
+	}
 	translationInterchangeRegistrations := []translationadapter.InterchangeDomainRegistration{
 		{
 			Domain: translationcore.KindPage,
@@ -64,7 +68,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 		},
 		{
 			Domain: translationcore.KindPost,
-			Port:   translationadapter.NewPostInterchange(post.NewTranslationInterchange(telemetryWriter)),
+			Port:   translationadapter.NewPostInterchange(postInterchange),
 		},
 		{
 			Domain: translationcore.KindWork,

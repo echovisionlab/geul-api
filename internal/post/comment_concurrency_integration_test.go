@@ -45,7 +45,7 @@ func TestListCommentsQueryBudgetStaysConstant(t *testing.T) {
 		Interface: db.Config.Logger,
 		Count:     &queryCount,
 	}})
-	service := postintegration.NewPostCommentService(countedDB, "", nil)
+	service := postintegration.NewPostCommentService(t, countedDB, "", nil)
 	ctx := commentIntegrationUserContext(identityID)
 	listCount := func(limit int32) int64 {
 		queryCount.Store(0)
@@ -105,7 +105,7 @@ func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
 
 			result := make(chan error, 1)
 			go func() {
-				_, err := postintegration.NewPostCommentService(db, "", nil).CreateComment(
+				_, err := postintegration.NewPostCommentService(t, db, "", nil).CreateComment(
 					ctx,
 					connect.NewRequest(&managev1.CreateCommentRequest{
 						PostId:  postID,
@@ -145,7 +145,7 @@ func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := postintegration.NewPostCommentService(db, "", nil).UpdateComment(
+		_, err := postintegration.NewPostCommentService(t, db, "", nil).UpdateComment(
 			commentIntegrationUserContext(userID),
 			connect.NewRequest(&managev1.UpdateCommentRequest{
 				Id:      comment.ID,
@@ -191,7 +191,7 @@ func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 	require.NoError(t, revokeTx.Exec("SELECT id FROM member WHERE id = ?::uuid FOR UPDATE", memberID).Error)
 	result := make(chan error, 1)
 	go func() {
-		_, err := postintegration.NewPostCommentService(db, "", nil).CreateComment(
+		_, err := postintegration.NewPostCommentService(t, db, "", nil).CreateComment(
 			commentIntegrationUserContext(userID),
 			connect.NewRequest(&managev1.CreateCommentRequest{PostId: postID, Content: "must be rejected"}),
 		)
@@ -225,7 +225,7 @@ func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T
 	require.NoError(t, revokeTx.Exec("SELECT id FROM member WHERE id = ?::uuid FOR UPDATE", memberID).Error)
 	result := make(chan error, 1)
 	go func() {
-		_, err := postintegration.NewPostCommentService(db, "", nil).DeleteComment(
+		_, err := postintegration.NewPostCommentService(t, db, "", nil).DeleteComment(
 			commentIntegrationUserContext(userID),
 			connect.NewRequest(&managev1.DeleteCommentRequest{Id: comment.ID}),
 		)
@@ -261,7 +261,7 @@ func TestListCommentsIgnoresCursorFromAnotherPost(t *testing.T) {
 	require.NoError(t, db.Create(&target).Error)
 	require.NoError(t, db.Create(&other).Error)
 
-	response, err := postintegration.NewPostCommentService(db, "", nil).ListCommentsByPost(
+	response, err := postintegration.NewPostCommentService(t, db, "", nil).ListCommentsByPost(
 		commentIntegrationUserContext(userID),
 		connect.NewRequest(&managev1.ListCommentsByPostRequest{
 			PostId: targetPostID,

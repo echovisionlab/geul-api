@@ -2,18 +2,18 @@ package work
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -25,18 +25,21 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// workSortConfig defines allowed sort fields for works
-func (s *WorkService) CheckWorkSlugAvailable(
-	ctx context.Context,
-	req *connect.Request[managev1.CheckWorkSlugAvailableRequest],
-) (*connect.Response[managev1.CheckWorkSlugAvailableResponse], error) {
-	if req.Msg.ExcludeWorkId != nil {
-		if err := RequireExists(ctx, s.db, *req.Msg.ExcludeWorkId); err != nil {
+// CheckWorkSlugAvailableQuery asks whether Slug is free for a new Work, or
+// for ExcludeWorkID's own Work.
+type CheckWorkSlugAvailableQuery struct {
+	Slug          string
+	ExcludeWorkID *string
+}
+
+func (s *Service) CheckWorkSlugAvailable(ctx context.Context, query CheckWorkSlugAvailableQuery) (*managev1.CheckWorkSlugAvailableResponse, error) {
+	if query.ExcludeWorkID != nil {
+		if err := RequireExists(ctx, s.db, *query.ExcludeWorkID); err != nil {
 			return nil, err
 		}
 		var work model.Work
-		if err := s.db.WithContext(ctx).Select("id", "status").Take(&work, "id = ?", *req.Msg.ExcludeWorkId).Error; err != nil {
-			return nil, errs.Internal(err)
+		if err := s.db.WithContext(ctx).Select("id", "status").Take(&work, "id = ?", *query.ExcludeWorkID).Error; err != nil {
+			return nil, err
 		}
 		if err := requireWorkPermission(ctx, s.spiceDB, work, policyv1.Work.Manage, workAuthorizationMutation); err != nil {
 			return nil, err
@@ -44,23 +47,20 @@ func (s *WorkService) CheckWorkSlugAvailable(
 	} else if err := requireWorkCreate(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-	if err := pathslug.Validate(req.Msg.Slug); err != nil {
+	if err := pathslug.Validate(query.Slug); err != nil {
 		return nil, err
 	}
 
 	var count int64
-
-	query := s.db.WithContext(ctx).Model(&model.Work{}).Where("slug = ?", req.Msg.Slug)
-
-	if req.Msg.ExcludeWorkId != nil {
-		query = query.Where("id != ?", *req.Msg.ExcludeWorkId)
+	stored := s.db.WithContext(ctx).Model(&model.Work{}).Where("slug = ?", query.Slug)
+	if query.ExcludeWorkID != nil {
+		stored = stored.Where("id != ?", *query.ExcludeWorkID)
 	}
-
-	if err := query.Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Count(&count).Error; err != nil {
+		return nil, err
 	}
 	if count == 0 {
-		available, err := routeregistry.IsResourceRouteAvailable(ctx, s.db, "works", req.Msg.Slug)
+		available, err := routeregistry.IsResourceRouteAvailable(ctx, s.db, "works", query.Slug)
 		if err != nil {
 			return nil, err
 		}
@@ -69,12 +69,10 @@ func (s *WorkService) CheckWorkSlugAvailable(
 		}
 	}
 
-	return connect.NewResponse(&managev1.CheckWorkSlugAvailableResponse{
-		Available: count == 0,
-	}), nil
+	return &managev1.CheckWorkSlugAvailableResponse{Available: count == 0}, nil
 }
 
-func (s *WorkService) getWorkFeaturedImageAsset(ctx context.Context, workID string) *commonv1.AssetRef {
+func (s *Service) getWorkFeaturedImageAsset(ctx context.Context, workID string) *commonv1.AssetRef {
 	var result struct {
 		FileID *string `gorm:"column:file_id"`
 	}
@@ -101,7 +99,7 @@ func (s *WorkService) getWorkFeaturedImageAsset(ctx context.Context, workID stri
 	return asset
 }
 
-func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*managev1.WorkClient, error) {
+func (s *Service) getWorkClients(ctx context.Context, workID string) ([]*managev1.WorkClient, error) {
 	type clientRow struct {
 		ID          string
 		Name        string
@@ -120,7 +118,7 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*man
 		Scan(&rows).Error
 
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
@@ -157,7 +155,7 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*man
 	return clients, nil
 }
 
-func (s *WorkService) loadReadyWorkOgAssets(
+func (s *Service) loadReadyWorkOgAssets(
 	ctx context.Context,
 	works []model.Work,
 ) (map[string]*commonv1.AssetRef, error) {
@@ -168,11 +166,11 @@ func (s *WorkService) loadReadyWorkOgAssets(
 	return loadReadyManageOgAssetRefs(ctx, s.runtime, s.db, candidates...)
 }
 
-func (s *WorkService) workResponseWithReadyOg(
+func (s *Service) workResponseWithReadyOg(
 	ctx context.Context,
 	work *model.Work,
 	imageAsset *commonv1.AssetRef,
-) (*connect.Response[managev1.Work], error) {
+) (*managev1.Work, error) {
 	if err := s.hydrateWorkContentProjection(ctx, work); err != nil {
 		return nil, err
 	}
@@ -180,27 +178,18 @@ func (s *WorkService) workResponseWithReadyOg(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(s.toProtoWork(ctx, work, imageAsset, ogAsset)), nil
+	return s.toProtoWork(ctx, work, imageAsset, ogAsset), nil
 }
 
-func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *model.Work) error {
-	if work == nil {
-		return errs.InternalMsg("Work is required")
-	}
-	if s.contentBlocks == nil {
-		return errs.InternalMsg("Work content Block store is not configured")
-	}
-	if s.mediaHydrator == nil {
-		return errs.InternalMsg("Work Block media hydrator is not configured")
-	}
+func (s *Service) hydrateWorkContentProjection(ctx context.Context, work *model.Work) error {
 	var source *workSourceLocaleMetadata
 	var snapshot contentblock.Snapshot
 	var mediaItems []*contentv1.ContentBlockMediaItem
 	var principal *auth.UserInfo
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		var loadErr error
 		if _, loadErr = requireLockedWorkPermission(
-			ctx, tx, s.spiceDB, work.ID, policyv1.Work.View, workAuthorizationRead,
+			ctx, tx, freshRequire(ctx, tx, s.spiceDB), work.ID, policyv1.Work.View, workAuthorizationRead,
 		); loadErr != nil {
 			return loadErr
 		}
@@ -225,7 +214,7 @@ func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *mo
 			ctx, tx, work.ID, documentID, principal, mediaItems,
 		)
 		return loadErr
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	if err != nil {
 		return normalizeWorkContentBlockError(err)
 	}
@@ -239,7 +228,7 @@ func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *mo
 	return nil
 }
 
-func (s *WorkService) hydrateWorkContentProjections(ctx context.Context, works []model.Work) error {
+func (s *Service) hydrateWorkContentProjections(ctx context.Context, works []model.Work) error {
 	for index := range works {
 		if err := s.hydrateWorkContentProjection(ctx, &works[index]); err != nil {
 			return err
@@ -257,7 +246,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 	locale string,
 ) (*contentv1.LocalizedRichTextDocument, string, []*contentv1.ContentBlockMediaItem, error) {
 	if tx == nil || store == nil {
-		return nil, "", nil, errs.InternalMsg("Work content projection dependencies are required")
+		return nil, "", nil, errors.New("Work content projection dependencies are required")
 	}
 	source, err := LoadRequiredSourceLocaleMetadata(ctx, tx, workID)
 	if err != nil {
@@ -267,7 +256,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 		locale = source.Locale
 	}
 	if documentID == uuid.Nil {
-		return nil, "", nil, errs.FailedPrecondition("Work content document is not initialized")
+		return nil, "", nil, domainerr.Precondition("Work content document is not initialized")
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, source.Locale)
 	if err != nil {
@@ -288,7 +277,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 }
 
 // toProtoWork converts a model.Work to protobuf Work
-func (s *WorkService) toProtoWork(
+func (s *Service) toProtoWork(
 	ctx context.Context,
 	w *model.Work,
 	imageAsset *commonv1.AssetRef,
@@ -302,7 +291,7 @@ func (s *WorkService) toProtoWork(
 		Month:        w.Month,
 		IsPresent:    w.IsPresent,
 		Featured:     w.Featured,
-		Status:       managev1.WorkStatus(managev1.WorkStatus_value[w.Status]),
+		Status:       workStatusToProto(w.Status),
 		CreatedAt:    timestamppb.New(w.CreatedAt),
 		UpdatedAt:    timestamppb.New(w.UpdatedAt),
 		OgAsset:      ogAsset,
@@ -346,7 +335,7 @@ func (s *WorkService) toProtoWork(
 	return work
 }
 
-func (s *WorkService) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
+func (s *Service) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
 	mapPlaceID := strings.TrimSpace(raw)
 	if mapPlaceID == "" {
 		return nil, nil
@@ -357,10 +346,10 @@ func (s *WorkService) normalizeMapPlaceID(ctx context.Context, raw string) (*str
 		Table("map_place").
 		Where("id = ?", mapPlaceID).
 		Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if count == 0 {
-		return nil, errs.InvalidArgument("map_place_id", "map place does not exist")
+		return nil, domainerr.InvalidField("map_place_id", "map place does not exist")
 	}
 
 	return &mapPlaceID, nil

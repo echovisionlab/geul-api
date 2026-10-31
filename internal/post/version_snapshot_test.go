@@ -35,7 +35,7 @@ func TestPostVersionProtoFormatting(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	version, err := (&PostService{}).toProtoPostVersion(&model.PostVersion{
+	version, err := (&Service{}).toProtoPostVersion(&model.PostVersion{
 		ID: "post-version-1", Version: 2, ContentSnapshot: snapshot,
 		ContributorMemberIDs: []string{"member-2", "member-1", "member-2"},
 		CreatedAt:            createdAt,
@@ -59,7 +59,7 @@ func TestPostVersionProtoFormattingRejectsMissingContributorNickname(t *testing.
 		testPostVersionLocalizedDocument(), "en", nil, nil,
 	)
 	require.NoError(t, err)
-	_, err = (&PostService{}).toProtoPostVersion(
+	_, err = (&Service{}).toProtoPostVersion(
 		&model.PostVersion{ContentSnapshot: snapshot, ContributorMemberIDs: []string{"member-1"}},
 		map[string]string{},
 	)

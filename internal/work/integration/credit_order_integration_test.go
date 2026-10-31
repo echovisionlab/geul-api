@@ -262,7 +262,7 @@ func TestUpdateWorkCreditGroupPreservesRequestEqualToStaleNameIntegration(t *tes
 	require.Equal(t, initialName, persisted.Name)
 }
 
-func createCreditOrderWork(t *testing.T, service *workdomain.WorkService, ctx context.Context, title string) string {
+func createCreditOrderWork(t *testing.T, service *workdomain.ConnectHandler, ctx context.Context, title string) string {
 	t.Helper()
 	isPresent := true
 	created, err := service.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
@@ -277,7 +277,7 @@ func createCreditOrderWork(t *testing.T, service *workdomain.WorkService, ctx co
 	return created.Msg.Id
 }
 
-func createCreditOrderGroup(t *testing.T, service *workdomain.WorkService, ctx context.Context, workID, name string) string {
+func createCreditOrderGroup(t *testing.T, service *workdomain.ConnectHandler, ctx context.Context, workID, name string) string {
 	t.Helper()
 	created, err := service.CreateWorkCreditGroup(ctx, connect.NewRequest(&managev1.CreateWorkCreditGroupRequest{
 		WorkId: workID,
@@ -287,7 +287,7 @@ func createCreditOrderGroup(t *testing.T, service *workdomain.WorkService, ctx c
 	return created.Msg.Id
 }
 
-func createCreditOrderCredit(t *testing.T, service *workdomain.WorkService, ctx context.Context, workID string, groupID *string, name string) string {
+func createCreditOrderCredit(t *testing.T, service *workdomain.ConnectHandler, ctx context.Context, workID string, groupID *string, name string) string {
 	t.Helper()
 	created, err := service.AddWorkCredit(ctx, connect.NewRequest(&managev1.AddWorkCreditRequest{
 		WorkId:  workID,

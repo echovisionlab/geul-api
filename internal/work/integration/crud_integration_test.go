@@ -8,15 +8,13 @@ import (
 
 	"gorm.io/gorm"
 
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
 )
 
 func newWorkIntegrationService(
@@ -24,22 +22,11 @@ func newWorkIntegrationService(
 	db *gorm.DB,
 	adminID string,
 	_ any,
-) *workdomain.WorkService {
+) *workdomain.ConnectHandler {
 	t.Helper()
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(spiceDB))
-	require.NoError(t, err)
-	return workdomain.NewWorkService(
-		db,
-		newWorkRuntimeForTest(db, ""),
-		spiceDB,
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
-		noopAsyncPublisher{},
-		workdomain.WithWorkContentBlockStore(store),
-		workdomain.WithWorkContentBlockMediaHydrator(passthroughWorkContentBlockMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "")),
-	)
+	return workdomain.NewConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB}))
 }
 
 type passthroughWorkContentBlockMediaHydrator struct{}
@@ -74,8 +61,14 @@ func emptyWorkIntegrationDocument(locale string) *contentv1.RichTextDocument {
 	}
 }
 
+// workIntegrationAdminCtx is an administrator's request, so mutations can
+// name their audit records.
 func workIntegrationAdminCtx(id string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.98")
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(id),
 		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(id)),
 		SessionID:     auth.SessionID(testutil.IntegrationUUID()),

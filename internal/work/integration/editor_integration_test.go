@@ -4,7 +4,6 @@ package integration
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -13,9 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
@@ -116,87 +113,8 @@ func newWorkEditorIntegrationService(
 	spiceDB *auth.SpiceDBClient,
 	identities map[string]*auth.Identity,
 	t *testing.T,
-) *workdomain.WorkService {
-	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(spiceDB))
-	require.NoError(t, err)
-	return workdomain.NewWorkService(
-		db,
-		newWorkRuntimeForTest(db, ""),
-		spiceDB,
-		&workEditorIdentityManager{identities: identities},
-		noopAsyncPublisher{},
-		workdomain.WithWorkContentBlockStore(store),
-		workdomain.WithWorkContentBlockMediaHydrator(passthroughWorkContentBlockMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "")),
-	)
-}
-
-type workEditorIdentityManager struct {
-	identities map[string]*auth.Identity
-}
-
-func (m *workEditorIdentityManager) GetIdentity(_ context.Context, identityID string) (*auth.Identity, error) {
-	identity, ok := m.identities[identityID]
-	if !ok {
-		return nil, errors.New("identity not found")
-	}
-	return identity, nil
-}
-
-func (m *workEditorIdentityManager) GetIdentityWithIncludeCredential(
-	ctx context.Context,
-	identityID string,
-	_ string,
-) (*auth.Identity, error) {
-	return m.GetIdentity(ctx, identityID)
-}
-
-func (m *workEditorIdentityManager) ListIdentities(
-	_ context.Context,
-	_ int,
-	_ int,
-) ([]*auth.Identity, int64, error) {
-	return nil, 0, nil
-}
-
-func (m *workEditorIdentityManager) UpdateIdentityTraits(
-	_ context.Context,
-	_ string,
-	_ map[string]interface{},
-) error {
-	return nil
-}
-
-func (m *workEditorIdentityManager) UpdateIdentityMetadataAdmin(
-	_ context.Context,
-	_ string,
-	_ map[string]interface{},
-) error {
-	return nil
-}
-
-func (m *workEditorIdentityManager) UpdateIdentityVerifiableAddresses(
-	_ context.Context,
-	_ string,
-	_ []auth.VerifiableAddress,
-) error {
-	return nil
-}
-
-func (m *workEditorIdentityManager) SetIdentityState(context.Context, string, string) error {
-	return nil
-}
-
-func (m *workEditorIdentityManager) DeleteIdentitySessions(context.Context, string) error {
-	return nil
-}
-
-func (m *workEditorIdentityManager) DeleteIdentity(context.Context, string) error {
-	return nil
-}
-
-func (m *workEditorIdentityManager) GetIdentityEmail(context.Context, string) (string, error) {
-	return "", nil
+) *workdomain.ConnectHandler {
+	return workdomain.NewConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB}))
 }
 
 func workEditorIdentity(id string, name string) *auth.Identity {

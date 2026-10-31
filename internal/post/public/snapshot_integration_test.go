@@ -10,11 +10,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
-	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -43,7 +39,7 @@ func TestPostPublicReadKeepsPublishedStatusAndBodyAcrossUnpublishIntegration(t *
 	adminCtx := testutil.PostIntegrationContext(identityID)
 	store := testutil.NewPostContentBlockStore(t)
 	management := postintegration.NewPostDomainService(
-		t, db, "", spiceDB, testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")), store,
+		t, db, "", spiceDB, store,
 	)
 	blockID := uuid.New()
 	created, err := management.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
@@ -71,11 +67,7 @@ func TestPostPublicReadKeepsPublishedStatusAndBodyAcrossUnpublishIntegration(t *
 			<-release
 		})
 	}))
-	publicService := postpublic.NewPostService(
-		publicDB, "", spiceDB, referenceSearchFileService{}, postadapter.NewLocalization(),
-		referencecatalogadapter.PublicMapPlaces{}, postadapter.NewMemberSummaries(publicDB, ""),
-		postruntime.ShareLinks{}, postpublic.WithPostContentBlockStore(store),
-	)
+	publicService := newPublicPostHandler(t, publicDB, spiceDB, store)
 	getDone := make(chan postReadResult, 1)
 	go func() {
 		response, getErr := publicService.Get(context.Background(), connect.NewRequest(&openv1.GetPostRequest{Slug: created.Msg.Id}))

@@ -8,6 +8,17 @@ import (
 	"github.com/lib/pq"
 )
 
+// WorkStatus is the stored lifecycle state of a Work. The values are the
+// strings work.status already holds.
+type WorkStatus string
+
+const (
+	WorkStatusDraft     WorkStatus = "WORK_STATUS_DRAFT"
+	WorkStatusPublished WorkStatus = "WORK_STATUS_PUBLISHED"
+	// WorkStatusArchived is a legacy state; publishing restores it.
+	WorkStatusArchived WorkStatus = "WORK_STATUS_ARCHIVED"
+)
+
 // Work represents the work table
 type Work struct {
 	ID                   string                             `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
@@ -30,7 +41,7 @@ type Work struct {
 	FeaturedImageFileID  *string                            `gorm:"column:featured_image_file_id;type:uuid"`
 	Metadata             structured.Fields                  `gorm:"column:metadata;type:jsonb;serializer:json"`
 	Featured             bool                               `gorm:"column:featured;type:boolean;not null;default:false"`
-	Status               string                             `gorm:"column:status;type:varchar(50);not null;default:WORK_STATUS_DRAFT"`
+	Status               WorkStatus                         `gorm:"column:status;type:varchar(50);not null;default:WORK_STATUS_DRAFT"`
 	OgAssetID            *string                            `gorm:"-"`
 	CreatedAt            time.Time                          `gorm:"column:created_at;not null;default:now()"`
 	UpdatedAt            time.Time                          `gorm:"column:updated_at;not null;default:now()"`

@@ -8,66 +8,36 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *PostService) preparePostCreate(
-	ctx context.Context,
-	request *managev1.CreatePostRequest,
-) (*model.Post, string, error) {
-	title := strings.TrimSpace(request.Title)
+// preparePostCreate validates command as written; the checks against stored
+// state run in the creating transaction.
+func (s *Service) preparePostCreate(command CreatePostCommand) (*model.Post, string, error) {
+	title := strings.TrimSpace(command.Title)
 	if title == "" {
-		return nil, "", errs.Required("title")
+		return nil, "", domainerr.Required("title")
 	}
-	normalizedSlug, _ := normalizeOptionalNullableString(request.Slug)
-	if err := s.validatePostCreateSlug(ctx, normalizedSlug); err != nil {
-		return nil, "", err
+	normalizedSlug, _ := normalizeOptionalNullableString(command.Slug)
+	if normalizedSlug != nil {
+		if err := pathslug.Validate(*normalizedSlug); err != nil {
+			return nil, "", err
+		}
 	}
-	if err := validateReferenceIDsExist(ctx, s.db, "category", request.CategoryIds); err != nil {
-		return nil, "", err
-	}
-	if err := validateReferenceIDsExist(ctx, s.db, "tag", request.TagIds); err != nil {
-		return nil, "", err
-	}
-
-	post := &model.Post{
+	return &model.Post{
 		Slug:            normalizedSlug,
 		DocumentLayout:  model.DefaultDocumentLayout(),
-		CommentsEnabled: request.CommentsEnabled,
-		Status:          model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		CommentsEnabled: command.CommentsEnabled,
+		Status:          model.PostStatusDraft,
 		CreatedAt:       time.Now(),
-	}
-	if request.MapPlaceId == nil {
-		return post, title, nil
-	}
-	mapPlaceID, err := s.normalizeMapPlaceID(ctx, *request.MapPlaceId)
-	if err != nil {
-		return nil, "", err
-	}
-	post.MapPlaceID = mapPlaceID
-	return post, title, nil
-}
-
-func (s *PostService) validatePostCreateSlug(ctx context.Context, slug *string) error {
-	if slug == nil {
-		return nil
-	}
-	if err := pathslug.Validate(*slug); err != nil {
-		return err
-	}
-	return routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "post", "posts", *slug)
+	}, title, nil
 }
 
 func validateReferenceIDsExist(
@@ -81,121 +51,115 @@ func validateReferenceIDsExist(
 	}
 	var count int64
 	if err := db.WithContext(ctx).Table(table).Where("id IN ?", ids).Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if int(count) != len(ids) {
-		return errs.InvalidArgumentMsg("one or more " + table + " IDs do not exist")
+		return domainerr.New(domainerr.Invalid, "", "one or more "+table+" IDs do not exist")
 	}
 	return nil
 }
 
-func (s *PostService) persistNewPost(
-	ctx context.Context,
-	post *model.Post,
-	request *managev1.CreatePostRequest,
-	title string,
-	memberID string,
-	identityID auth.IdentityID,
-	acceptLanguage string,
-) (auth.ZedToken, error) {
-	if s.contentBlocks == nil {
-		return auth.ZedToken{}, errs.InternalMsg("Post content Block store is not configured")
+// checkNewPostReferences checks the slug route, Categories, Tags and Map
+// Place of a new Post in its creating transaction.
+func (s *Service) checkNewPostReferences(ctx context.Context, tx *gorm.DB, post *model.Post, command CreatePostCommand) error {
+	if post.Slug != nil {
+		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "post", "posts", *post.Slug); err != nil {
+			return err
+		}
 	}
-	return authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := requireLockedPostCreator(ctx, tx, s.spiceDB); err != nil {
-			return err
-		}
-		if err := ensureNewPostRouteAvailable(ctx, tx, post.Slug); err != nil {
-			return err
-		}
-		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, s.kratosClient, request.SourceLocale, acceptLanguage)
-		if err != nil {
-			return err
-		}
-		post.SourceLocale = sourceLocale
-		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
-			Profile:      postContentDocumentProfile,
-			SourceLocale: sourceLocale,
-		})
-		if err != nil {
-			return normalizePostContentBlockError(err)
-		}
-		contentDocumentID := document.Document.ID.String()
-		post.ContentDocumentID = &contentDocumentID
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(post).Error; err != nil {
-			return err
-		}
-		if err := insertPostAuthor(tx, post.ID, memberID); err != nil {
-			return err
-		}
-		if err := insertPostReferences(tx, "post_category", "category_id", post.ID, request.CategoryIds); err != nil {
-			return err
-		}
-		if err := insertPostReferences(tx, "post_tag", "tag_id", post.ID, request.TagIds); err != nil {
-			return err
-		}
-		_, err = s.initializePostContentDocument(
-			ctx,
-			tx,
-			post.ID,
-			sourceLocale,
-			document,
-			request.Document,
-		)
-		if err != nil {
-			return err
-		}
-		if err := s.persistInitialPostDocument(
-			ctx,
-			tx,
-			post,
-			request,
-			title,
-			sourceLocale,
-		); err != nil {
-			return err
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditPostCreated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewPostCreatedAuditRecord(metadata, post.ID)
-				},
-			); err != nil {
-				return err
-			}
-		}
-		creator, err := policyv1.NewAccountIdentityActor(identityID.String())
-		if err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.Post.TouchPolicy(post.ID)
-		if err != nil {
-			return err
-		}
-		authorTouch, err := policyv1.Post.TouchAuthor(post.ID, creator)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.Post.DeletePolicy(post.ID)
-		if err != nil {
-			return err
-		}
-		authorDelete, err := policyv1.Post.DeleteAuthor(post.ID, creator)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{policyTouch, authorTouch},
-			[]policyv1.RelationshipMutation{policyDelete, authorDelete},
-		)
-	})
+	if err := validateReferenceIDsExist(ctx, tx, "category", command.CategoryIDs); err != nil {
+		return err
+	}
+	if err := validateReferenceIDsExist(ctx, tx, "tag", command.TagIDs); err != nil {
+		return err
+	}
+	if command.MapPlaceID == nil {
+		return nil
+	}
+	mapPlaceID, err := normalizeMapPlaceIDWithDB(ctx, tx, *command.MapPlaceID)
+	post.MapPlaceID = mapPlaceID
+	return err
 }
 
-func (s *PostService) initializePostContentDocument(
+func (s *Service) persistNewPost(
+	ctx context.Context,
+	tx *gorm.DB,
+	effects *postEffects,
+	post *model.Post,
+	command CreatePostCommand,
+	title string,
+	memberID string,
+) error {
+	if err := s.checkNewPostReferences(ctx, tx, post, command); err != nil {
+		return err
+	}
+	sourceLocale, err := resolveCreateSourceLocale(ctx, tx, command.SourceLocale, command.AcceptLanguage)
+	if err != nil {
+		return err
+	}
+	post.SourceLocale = sourceLocale
+	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+		Profile:      postContentDocumentProfile,
+		SourceLocale: sourceLocale,
+	})
+	if err != nil {
+		return normalizePostContentBlockError(err)
+	}
+	contentDocumentID := document.Document.ID.String()
+	post.ContentDocumentID = &contentDocumentID
+	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(post).Error; err != nil {
+		return err
+	}
+	if err := insertPostAuthor(tx, post.ID, memberID); err != nil {
+		return err
+	}
+	if err := insertPostReferences(tx, "post_category", "category_id", post.ID, command.CategoryIDs); err != nil {
+		return err
+	}
+	if err := insertPostReferences(tx, "post_tag", "tag_id", post.ID, command.TagIDs); err != nil {
+		return err
+	}
+	if _, err := s.initializePostContentDocument(ctx, tx, post.ID, sourceLocale, document, command.Document); err != nil {
+		return err
+	}
+	if err := savePostSourceLocaleDocumentState(ctx, tx, post.ID, sourceLocale, translationLocaleDocumentSaveInput{
+		Title:   &title,
+		Summary: command.Summary,
+		Now:     time.Now().UTC(),
+	}); err != nil {
+		return err
+	}
+	effects.requestOG(post.ID, sourceLocale, false, "post_created")
+	postID := post.ID
+	effects.audit(sharedtelemetry.AuditPostCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewPostCreatedAuditRecord(metadata, postID)
+	})
+	return nil
+}
+
+// postCreationRelationships returns the new Post's policy and its creator's
+// author relationship, with their exact inverse.
+func postCreationRelationships(postID string, creator policyv1.Actor) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	policyTouch, err := policyv1.Post.TouchPolicy(postID)
+	if err != nil {
+		return nil, nil, err
+	}
+	authorTouch, err := policyv1.Post.TouchAuthor(postID, creator)
+	if err != nil {
+		return nil, nil, err
+	}
+	policyDelete, err := policyv1.Post.DeletePolicy(postID)
+	if err != nil {
+		return nil, nil, err
+	}
+	authorDelete, err := policyv1.Post.DeleteAuthor(postID, creator)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []policyv1.RelationshipMutation{policyTouch, authorTouch}, []policyv1.RelationshipMutation{policyDelete, authorDelete}, nil
+}
+
+func (s *Service) initializePostContentDocument(
 	ctx context.Context,
 	tx *gorm.DB,
 	postID string,
@@ -207,10 +171,10 @@ func (s *PostService) initializePostContentDocument(
 		return contentblock.Result{}, nil
 	}
 	if document.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST {
-		return contentblock.Result{}, errs.InvalidArgument("document.profile", "must be post")
+		return contentblock.Result{}, domainerr.InvalidField("document.profile", "must be post")
 	}
 	if document.GetSourceLocale() != sourceLocale {
-		return contentblock.Result{}, errs.InvalidArgument(
+		return contentblock.Result{}, domainerr.InvalidField(
 			"document.source_locale",
 			"must match the server-selected source locale",
 		)
@@ -235,13 +199,6 @@ func (s *PostService) initializePostContentDocument(
 	return result, nil
 }
 
-func ensureNewPostRouteAvailable(ctx context.Context, tx *gorm.DB, slug *string) error {
-	if slug == nil {
-		return nil
-	}
-	return routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "post", "posts", *slug)
-}
-
 func insertPostAuthor(tx *gorm.DB, postID, memberID string) error {
 	return tx.Exec(
 		`INSERT INTO post_author (post_id, member_id, created_at) VALUES (?::uuid, ?::uuid, NOW())`,
@@ -260,49 +217,14 @@ func insertPostReferences(tx *gorm.DB, table, referenceColumn, postID string, id
 	return nil
 }
 
-func (s *PostService) persistInitialPostDocument(
-	ctx context.Context,
-	tx *gorm.DB,
-	post *model.Post,
-	request *managev1.CreatePostRequest,
-	title string,
-	sourceLocale string,
-) error {
-	now := time.Now().UTC()
-	if err := savePostSourceLocaleDocumentState(ctx, tx, post.ID, sourceLocale, translationLocaleDocumentSaveInput{
-		Title:   &title,
-		Summary: request.Summary,
-		Now:     now,
-	}); err != nil {
-		return err
-	}
-	_, err := s.ogRefresher.RequestCurrentWithDB(
-		ctx,
-		tx,
-		managev1.OgEntityType_OG_ENTITY_TYPE_POST,
-		post.ID,
-		sourceLocale,
-		false,
-		"post_created",
-	)
-	return err
-}
-
-func mapCreatePostError(err error, requestedSlug *string) error {
-	if dberrors.IsUniqueViolation(err) {
-		return errs.WithCause(errs.SlugAlreadyExists("post", ptrStringValue(requestedSlug)), err)
-	}
-	return errs.Internal(err)
-}
-
-func (s *PostService) loadCreatedPost(ctx context.Context, postID string) (*model.Post, error) {
+func (s *Service) loadCreatedPost(ctx context.Context, postID string) (*model.Post, error) {
 	var post model.Post
 	if err := s.db.WithContext(ctx).
 		Preload("Categories").
 		Preload("Tags").
 		Preload("Series").
 		First(&post, "id = ?", postID).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := s.overlayPostSourceLocaleDocument(ctx, &post); err != nil {
 		return nil, err

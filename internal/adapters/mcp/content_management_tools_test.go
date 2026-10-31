@@ -11,10 +11,11 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -198,7 +199,7 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 			}
 		})
 	}
-	if posts.get.Msg.Id != managementPostID || pages.get.ID != managementPageID {
+	if posts.get.ID != managementPostID || pages.get.ID != managementPageID {
 		t.Fatalf("getters changed exact target: %+v %+v", posts.get, pages.get)
 	}
 }
@@ -235,10 +236,10 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.create.Header().Get("Accept-Language") != "ko" || !posts.create.Msg.CommentsEnabled {
+	if posts.create.AcceptLanguage != "ko" || !posts.create.CommentsEnabled {
 		t.Fatalf("Post create = %#v", posts.create)
 	}
-	assertEmptyManagementDocument(t, posts.create.Msg.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, "ko")
+	assertEmptyManagementDocument(t, posts.create.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, "ko")
 	if postResult.StructuredContent["document_id"] != managementPostID || postResult.StructuredContent["configuration_revision"] != managementPostConfigurationRevision {
 		t.Fatalf("Post result = %#v", postResult.StructuredContent)
 	}
@@ -247,13 +248,13 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.create.Header().Get("Accept-Language") != "en" || works.create.Msg.Type != managev1.WorkType_WORK_TYPE_PORTFOLIO || works.create.Msg.Metadata.GetFields()["key"].GetStringValue() != "value" {
-		t.Fatalf("Work create = %#v", works.create.Msg)
+	if works.create.AcceptLanguage != "en" || works.create.Type != managev1.WorkType_WORK_TYPE_PORTFOLIO.String() || works.create.Metadata["key"] != "value" {
+		t.Fatalf("Work create = %#v", works.create)
 	}
-	if works.create.Msg.UntilYear == nil || *works.create.Msg.UntilYear != 2026 || works.create.Msg.UntilMonth == nil || *works.create.Msg.UntilMonth != 8 {
-		t.Fatalf("Work create range = %#v", works.create.Msg)
+	if works.create.UntilYear == nil || *works.create.UntilYear != 2026 || works.create.UntilMonth == nil || *works.create.UntilMonth != 8 {
+		t.Fatalf("Work create range = %#v", works.create)
 	}
-	assertEmptyManagementDocument(t, works.create.Msg.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, "en")
+	assertEmptyManagementDocument(t, works.create.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, "en")
 	if workResult.StructuredContent["document_id"] != managementWorkID {
 		t.Fatalf("Work result = %#v", workResult.StructuredContent)
 	}
@@ -282,11 +283,11 @@ func TestPostSettingsUpdatePassesExactRevisionAndAcknowledgesPersistedRevision(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.updateCalls != 1 || posts.update == nil || posts.update.Msg.ExpectedConfigurationRevision != managementPostConfigurationRevision {
+	if posts.updateCalls != 1 || posts.update == nil || posts.update.ExpectedConfigurationRevision != managementPostConfigurationRevision {
 		t.Fatalf("UpdatePost request = %#v (calls %d)", posts.update, posts.updateCalls)
 	}
-	if posts.update.Msg.Slug == nil || *posts.update.Msg.Slug != "updated-slug" {
-		t.Fatalf("UpdatePost settings = %#v", posts.update.Msg)
+	if posts.update.Slug == nil || *posts.update.Slug != "updated-slug" {
+		t.Fatalf("UpdatePost settings = %#v", posts.update)
 	}
 	if result.StructuredContent["configuration_revision"] != managementPostConfigurationRevisionNext {
 		t.Fatalf("Post settings result = %#v", result.StructuredContent)
@@ -307,7 +308,7 @@ func TestPostSettingsLayoutUsesExactNativeEnumsAndAuthoritativeResponse(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := posts.update.Msg
+	request := posts.update
 	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT || request.DocumentLayout.PageChrome != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || request.DocumentLayout.Footer != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || !request.DocumentLayout.HideTableOfContents {
 		t.Fatalf("layout request=%+v", request)
 	}
@@ -499,7 +500,7 @@ func TestPostSettingsUpdateForwardsMissingMalformedAndStaleRevisionsSafely(t *te
 			if result.Content != nil || !errors.As(err, &executionErr) || executionErr.Message != test.apiMessage {
 				t.Fatalf("Post settings error result = %#v, error = %v", result, err)
 			}
-			if posts.updateCalls != 1 || posts.update == nil || posts.update.Msg.ExpectedConfigurationRevision != test.wantRevision {
+			if posts.updateCalls != 1 || posts.update == nil || posts.update.ExpectedConfigurationRevision != test.wantRevision {
 				t.Fatalf("UpdatePost request = %#v (calls %d), want revision %q", posts.update, posts.updateCalls, test.wantRevision)
 			}
 		})
@@ -516,8 +517,8 @@ func TestPostScheduleUsesExactTimestampAndLifecycleResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.schedule.Msg.ScheduledAt.AsTime().UTC() != time.Date(2026, 8, 31, 18, 0, 0, 0, time.UTC) || posts.schedule.Msg.ScheduledTimeZone != "Asia/Seoul" {
-		t.Fatalf("schedule request = %#v", posts.schedule.Msg)
+	if posts.schedule.ScheduledAt.UTC() != time.Date(2026, 8, 31, 18, 0, 0, 0, time.UTC) || posts.schedule.TimeZone != "Asia/Seoul" {
+		t.Fatalf("schedule request = %#v", posts.schedule)
 	}
 	if result.StructuredContent["status"] != "scheduled" {
 		t.Fatalf("schedule result = %#v", result.StructuredContent)
@@ -540,74 +541,74 @@ const (
 )
 
 type recordingPostManagement struct {
-	managev1connect.UnimplementedPostServiceHandler
-	create         *connect.Request[managev1.CreatePostRequest]
-	update         *connect.Request[managev1.UpdatePostRequest]
-	schedule       *connect.Request[managev1.SchedulePostRequest]
+	PostManagementApplication
+	create         *postdomain.CreatePostCommand
+	update         *postdomain.UpdatePostCommand
+	schedule       *postdomain.SchedulePostCommand
 	updateErr      error
 	updateCalls    int
-	get            *connect.Request[managev1.GetPostRequest]
+	get            *postdomain.GetPostQuery
 	getResponse    *managev1.Post
 	getErr         error
 	updateResponse *managev1.UpdatePostResponse
 }
 
-func (r *recordingPostManagement) GetPost(_ context.Context, req *connect.Request[managev1.GetPostRequest]) (*connect.Response[managev1.Post], error) {
-	r.get = req
+func (r *recordingPostManagement) GetPost(_ context.Context, query postdomain.GetPostQuery) (*managev1.Post, error) {
+	r.get = &query
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingPostManagement) CreatePost(_ context.Context, req *connect.Request[managev1.CreatePostRequest]) (*connect.Response[managev1.Post], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Post{Id: managementPostID, Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, Status: managev1.PostStatus_POST_STATUS_DRAFT, Revision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision}), nil
+func (r *recordingPostManagement) CreatePost(_ context.Context, command postdomain.CreatePostCommand) (*managev1.Post, error) {
+	r.create = &command
+	return &managev1.Post{Id: managementPostID, Title: command.Title, SourceLocale: command.SourceLocale, Status: managev1.PostStatus_POST_STATUS_DRAFT, Revision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision}, nil
 }
-func (r *recordingPostManagement) UpdatePost(_ context.Context, req *connect.Request[managev1.UpdatePostRequest]) (*connect.Response[managev1.UpdatePostResponse], error) {
+func (r *recordingPostManagement) UpdatePost(_ context.Context, command postdomain.UpdatePostCommand) (*managev1.UpdatePostResponse, error) {
 	r.updateCalls++
-	r.update = req
+	r.update = &command
 	if r.updateErr != nil {
 		return nil, r.updateErr
 	}
 	if r.updateResponse != nil {
-		return connect.NewResponse(r.updateResponse), nil
+		return r.updateResponse, nil
 	}
-	return connect.NewResponse(&managev1.UpdatePostResponse{
-		Id: req.Msg.Id, Changed: true, Slug: req.Msg.Slug,
+	return &managev1.UpdatePostResponse{
+		Id: command.ID, Changed: true, Slug: command.Slug,
 		ConfigurationRevision: managementPostConfigurationRevisionNext,
-	}), nil
+	}, nil
 }
-func (r *recordingPostManagement) SchedulePost(_ context.Context, req *connect.Request[managev1.SchedulePostRequest]) (*connect.Response[managev1.PostLifecycleMutationResponse], error) {
-	r.schedule = req
-	return connect.NewResponse(&managev1.PostLifecycleMutationResponse{Id: req.Msg.Id, Changed: true, Status: managev1.PostStatus_POST_STATUS_SCHEDULED, ScheduledAt: req.Msg.ScheduledAt, ScheduledTimeZone: &req.Msg.ScheduledTimeZone, UpdatedAt: timestamppb.Now()}), nil
+func (r *recordingPostManagement) SchedulePost(_ context.Context, command postdomain.SchedulePostCommand) (*managev1.PostLifecycleMutationResponse, error) {
+	r.schedule = &command
+	return &managev1.PostLifecycleMutationResponse{Id: command.ID, Changed: true, Status: managev1.PostStatus_POST_STATUS_SCHEDULED, ScheduledAt: timestamppb.New(*command.ScheduledAt), ScheduledTimeZone: &command.TimeZone, UpdatedAt: timestamppb.Now()}, nil
 }
 
 type recordingWorkManagement struct {
-	managev1connect.UnimplementedWorkServiceHandler
-	create      *connect.Request[managev1.CreateWorkRequest]
-	get         *connect.Request[managev1.GetWorkRequest]
+	WorkManagementApplication
+	create      *work.CreateWorkCommand
+	get         *work.GetWorkQuery
 	getResponse *managev1.Work
 	getErr      error
-	update      *connect.Request[managev1.UpdateWorkRequest]
+	update      *work.UpdateWorkCommand
 }
 
-func (r *recordingWorkManagement) GetWork(_ context.Context, req *connect.Request[managev1.GetWorkRequest]) (*connect.Response[managev1.Work], error) {
-	r.get = req
+func (r *recordingWorkManagement) GetWork(_ context.Context, query work.GetWorkQuery) (*managev1.Work, error) {
+	r.get = &query
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingWorkManagement) UpdateWork(_ context.Context, req *connect.Request[managev1.UpdateWorkRequest]) (*connect.Response[managev1.UpdateWorkResponse], error) {
-	r.update = req
-	return connect.NewResponse(&managev1.UpdateWorkResponse{Id: req.Msg.Id, Changed: true, UpdatedAt: timestamppb.Now()}), nil
+func (r *recordingWorkManagement) UpdateWork(_ context.Context, command work.UpdateWorkCommand) (*managev1.UpdateWorkResponse, error) {
+	r.update = &command
+	return &managev1.UpdateWorkResponse{Id: command.ID, Changed: true, UpdatedAt: timestamppb.Now()}, nil
 }
 
-func (r *recordingWorkManagement) CreateWork(_ context.Context, req *connect.Request[managev1.CreateWorkRequest]) (*connect.Response[managev1.Work], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Work{Id: managementWorkID, Title: req.Msg.Title, Type: req.Msg.Type, SourceLocale: req.Msg.SourceLocale, Status: managev1.WorkStatus_WORK_STATUS_DRAFT, Revision: "work-revision"}), nil
+func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.CreateWorkCommand) (*managev1.Work, error) {
+	r.create = &command
+	return &managev1.Work{Id: managementWorkID, Title: command.Title, Type: managev1.WorkType(managev1.WorkType_value[command.Type]), SourceLocale: command.SourceLocale, Status: managev1.WorkStatus_WORK_STATUS_DRAFT, Revision: "work-revision"}, nil
 }
 
 type recordingPageManagement struct {
@@ -667,7 +668,7 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.get.Msg.Id != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
+	if works.get.ID != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
 		t.Fatalf("settings read = %#v", read.StructuredContent)
 	}
 	encoded, err := json.Marshal(map[string]any{
@@ -681,11 +682,11 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := works.update.Msg
-	if request.Metadata == nil || len(request.Metadata.Fields) != 0 || request.Clients == nil || len(request.Clients.ClientIds) != 0 {
+	request := works.update
+	if request.Metadata == nil || len(request.Metadata) != 0 || request.Clients == nil || len(*request.Clients) != 0 {
 		t.Fatalf("empty desired values lost presence: %#v", request)
 	}
-	if !reflect.DeepEqual(request.ObservedMetadata.AsMap(), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(request.ObservedClients.ClientIds, []string{managementPostID}) {
+	if !reflect.DeepEqual(map[string]any(request.ObservedMetadata), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(*request.ObservedClients, []string{managementPostID}) {
 		t.Fatalf("observed baseline changed: %#v", request)
 	}
 }

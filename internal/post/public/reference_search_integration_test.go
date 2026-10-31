@@ -10,11 +10,13 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
@@ -40,14 +42,9 @@ func TestPostPublicReadSurfacesEnforcePublicStatusFenceIntegration(t *testing.T)
 	store := testutil.NewPostContentBlockStore(t)
 	managePosts := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
 		store,
 	)
-	publicPosts := postpublic.NewPostService(
-		db, "", spiceDB, referenceSearchFileService{}, postadapter.NewLocalization(),
-		referencecatalogadapter.PublicMapPlaces{}, postadapter.NewMemberSummaries(db, ""),
-		postruntime.ShareLinks{}, postpublic.WithPostContentBlockStore(store),
-	)
+	publicPosts := newPublicPostHandler(t, db, spiceDB, store)
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 	mapPlaceID := uuid.NewString()
 	require.NoError(t, db.Exec(`
@@ -200,7 +197,7 @@ func publicPostStatusViewport() *openv1.PostMapViewport {
 
 func createReferenceSearchPost(
 	t *testing.T,
-	service *postdomain.PostService,
+	service postintegration.Posts,
 	ctx context.Context,
 	title string,
 	categoryID string,
@@ -239,3 +236,15 @@ func (referenceSearchFileService) ResolveAuthorizedContentBlockMedia(
 }
 
 var _ postpublic.FileService = referenceSearchFileService{}
+
+// newPublicPostHandler composes the public Post RPCs over db.
+func newPublicPostHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) *postpublic.ConnectHandler {
+	t.Helper()
+	service, err := postpublic.NewService(postpublic.Deps{
+		DB: db, SpiceDB: spiceDB, Files: referenceSearchFileService{}, ContentBlocks: store,
+		Localizer: postadapter.NewLocalization(), MapPlaces: referencecatalogadapter.PublicMapPlaces{},
+		Members: postadapter.NewMemberSummaries(db, ""), ShareLinks: postruntime.ShareLinks{},
+	})
+	require.NoError(t, err)
+	return postpublic.NewConnectHandler(service)
+}

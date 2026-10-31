@@ -8,15 +8,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
 
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"github.com/stretchr/testify/require"
+
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -39,10 +43,6 @@ func (fileService) ResolvePublicDisplayMedia(context.Context, []string) (map[str
 
 type asyncPublisher struct{}
 
-func (asyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
-	return nil
-}
-func (asyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error { return nil }
 func (asyncPublisher) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
 	return nil
 }
@@ -105,18 +105,67 @@ func NewPostOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
 	return og.NewRefresher(planner, resolver)
 }
 
+// Posts is a Post service with its Connect adapters, so a test reaches the
+// RPCs and the use cases only other adapters call (AI documents).
+type Posts struct {
+	*postdomain.ConnectHandler
+	Service *postdomain.Service
+}
+
+// NewService fills the collaborators deps leaves unset with integration-only
+// stubs and the durable audit writer.
+func NewService(t *testing.T, deps postdomain.Deps) *postdomain.Service {
+	t.Helper()
+	if deps.SpiceDB == nil {
+		deps.SpiceDB = testutil.PostIntegrationSpiceDB(t)
+	}
+	if deps.OG == nil {
+		deps.OG = NewPostOGRefresher(deps.DB, deps.CDNDomain)
+	}
+	if deps.Files == nil {
+		deps.Files = fileService{}
+	}
+	if deps.Signals == nil {
+		deps.Signals = asyncPublisher{}
+	}
+	if deps.ShareLinks == nil {
+		deps.ShareLinks = shareLinks{}
+	}
+	if deps.ShareLinkCleanup == nil {
+		deps.ShareLinkCleanup = sharelinkadapter.EntityLinks{Type: sharelink.EntityPost}
+	}
+	if deps.MediaLoader == nil {
+		deps.MediaLoader = mediaLoader{}
+	}
+	if deps.Media == nil {
+		deps.Media = MediaHydrator{}
+	}
+	if deps.Members == nil {
+		deps.Members = postadapter.NewMemberSummaries(deps.DB, deps.CDNDomain)
+	}
+	if deps.VersionRestore == nil {
+		deps.VersionRestore = versionRestore{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = testutil.NewPostContentBlockStore(t)
+	}
+	if deps.Audit == nil {
+		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
+	}
+	service, err := postdomain.NewService(deps)
+	require.NoError(t, err)
+	return service
+}
+
 // NewPostDomainService composes a Post service with integration-only stubs.
 func NewPostDomainService(
 	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	identities auth.IdentityManager,
 	store *contentblock.Store,
-) *postdomain.PostService {
-	return NewPostDomainServiceWithFileService(
-		t, db, cdnDomain, spiceDB, identities, store, fileService{},
-	)
+) Posts {
+	return NewPostDomainServiceWithFileService(t, db, cdnDomain, spiceDB, store, fileService{})
 }
 
 // NewPostDomainServiceWithFileService composes a Post service while allowing
@@ -126,61 +175,44 @@ func NewPostDomainServiceWithFileService(
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	identities auth.IdentityManager,
 	store *contentblock.Store,
 	files postdomain.FileService,
-) *postdomain.PostService {
+) Posts {
 	t.Helper()
-	if store == nil {
-		store = testutil.NewPostContentBlockStore(t)
-	}
-	return postdomain.NewPostService(
-		db,
-		cdnDomain,
-		NewPostOGRefresher(db, cdnDomain),
-		spiceDB,
-		identities,
-		files,
-		asyncPublisher{},
-		shareLinks{},
-		mediaLoader{},
-		postadapter.NewMemberSummaries(db, cdnDomain),
-		versionRestore{},
-		postdomain.WithPostContentBlockStore(store),
-		postdomain.WithPostContentBlockMediaHydrator(MediaHydrator{}),
-	)
+	service := NewService(t, postdomain.Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store, Files: files})
+	return Posts{ConnectHandler: postdomain.NewConnectHandler(service), Service: service}
 }
 
-// NewInternalPostDomainService composes the collaboration-facing Post service.
+// NewInternalPostDomainService composes the collaboration-facing Post RPCs.
 func NewInternalPostDomainService(
 	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
 	store *contentblock.Store,
-) *postdomain.InternalPostService {
+) *postdomain.InternalConnectHandler {
 	t.Helper()
-	if store == nil {
-		store = testutil.NewPostContentBlockStore(t)
-	}
-	return postdomain.NewInternalPostService(
-		db,
-		spiceDB,
-		asyncPublisher{},
-		cdnDomain,
-		NewPostOGRefresher(db, cdnDomain),
-		mediaLoader{},
-		postdomain.WithInternalPostDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		postdomain.WithInternalPostContentBlockStore(store),
-		postdomain.WithInternalPostContentBlockMediaHydrator(MediaHydrator{}),
-	)
+	return postdomain.NewInternalConnectHandler(NewService(t, postdomain.Deps{
+		DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store,
+	}))
 }
 
-// NewPostCommentService composes the Post comment member-summary adapter.
+// NewPostCommentService composes the Post comment RPCs with the member-summary
+// adapter. A nil spiceDB uses the integration stack's client.
 func NewPostCommentService(
+	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-) *postdomain.CommentService {
-	return postdomain.NewCommentService(db, spiceDB, postadapter.NewMemberSummaries(db, cdnDomain))
+) *postdomain.CommentConnectHandler {
+	t.Helper()
+	if spiceDB == nil {
+		spiceDB = testutil.PostIntegrationSpiceDB(t)
+	}
+	comments, err := postdomain.NewCommentService(postdomain.CommentDeps{
+		DB: db, SpiceDB: spiceDB, Members: postadapter.NewMemberSummaries(db, cdnDomain),
+		Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	return postdomain.NewCommentConnectHandler(comments)
 }

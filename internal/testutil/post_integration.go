@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
@@ -93,8 +94,14 @@ func GrantPostIntegrationRole(t *testing.T, spiceDB *auth.SpiceDBClient, identit
 	require.NoError(t, err)
 }
 
+// PostIntegrationContext is an onboarded member's request, so audited
+// mutations can name their actor.
 func PostIntegrationContext(identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.97")
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(PostIntegrationMemberID(identityID)),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})

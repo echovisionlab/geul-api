@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
@@ -61,7 +61,7 @@ func loadPostSourceLocaleDocumentStates(
 		normalized,
 	).Scan(&rows)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 
 	states := make(map[string]*translationLocaleDocumentState, len(rows))
@@ -94,7 +94,7 @@ func loadRequiredPostSourceLocaleDocumentState(
 		return nil, err
 	}
 	if state == nil {
-		return nil, errs.NotFound("post_translation", postID)
+		return nil, domainerr.ResourceNotFound("post_translation", postID)
 	}
 	return state, nil
 }
@@ -116,9 +116,9 @@ func lockPostRootForLocaleWrite(
 		Where("id = ?", postID).
 		Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("post", postID)
+			return domainerr.ResourceNotFound("post", postID)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }

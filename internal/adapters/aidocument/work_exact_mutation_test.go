@@ -24,7 +24,7 @@ type exactWorkDocumentAPI struct {
 	compilerCalls int
 }
 
-func (a *exactWorkDocumentAPI) Load(
+func (a *exactWorkDocumentAPI) LoadAIDocument(
 	context.Context,
 	string,
 	string,

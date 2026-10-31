@@ -30,7 +30,7 @@ type workPort struct {
 }
 
 type workDocumentAPI interface {
-	Load(context.Context, string, string) (workdomain.AIDocumentState, error)
+	LoadAIDocument(context.Context, string, string) (workdomain.AIDocumentState, error)
 	ExecuteAIDocumentMutation(
 		context.Context,
 		string,
@@ -40,10 +40,9 @@ type workDocumentAPI interface {
 	) (workdomain.AIDocumentMutationResult, error)
 }
 
-func NewWorkRegistration(internal *workdomain.InternalWorkService) (DomainRegistration, error) {
-	application, err := workdomain.NewAIDocumentService(internal)
-	if err != nil {
-		return DomainRegistration{}, err
+func NewWorkRegistration(application *workdomain.Service) (DomainRegistration, error) {
+	if application == nil {
+		return DomainRegistration{}, errors.New("work AI document service dependencies are required")
 	}
 	codec, err := NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK)
 	if err != nil {
@@ -71,7 +70,7 @@ func (p *workPort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 	if err := validateWorkIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.application.Load(ctx, string(identity.Reference), string(locale))
+	state, err := p.application.LoadAIDocument(ctx, string(identity.Reference), string(locale))
 	if err != nil {
 		return core.Document{}, err
 	}

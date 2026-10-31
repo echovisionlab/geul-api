@@ -41,7 +41,7 @@ type postDocumentAPI interface {
 	) (postdomain.AIDocumentMutationResult, error)
 }
 
-func NewPostRegistration(service *postdomain.PostService) (DomainRegistration, error) {
+func NewPostRegistration(service *postdomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("post AI document service is required")
 	}

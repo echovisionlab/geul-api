@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/mattn/go-sqlite3"
 	"gorm.io/driver/sqlite"
@@ -95,8 +94,7 @@ func TestWorkClientSetChangedPersistsInsertedClientOrder(t *testing.T) {
 				}
 			}
 			if err := db.Transaction(func(tx *gorm.DB) error {
-				changed, next, err := workClientSetChanged(t.Context(), tx, workID,
-					&managev1.WorkClientsUpdate{ClientIds: test.desired}, &managev1.WorkClientsUpdate{ClientIds: baseline})
+				changed, next, err := workClientSetChanged(t.Context(), tx, workID, &test.desired, &baseline)
 				if err != nil {
 					return err
 				}

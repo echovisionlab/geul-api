@@ -10,9 +10,7 @@
 2 internal/form/public
 2 internal/member/public
 2 internal/menu
-13 internal/post
 2 internal/series
 1 internal/sitesettings
 5 internal/translation/application
-6 internal/work
 2 internal/worker

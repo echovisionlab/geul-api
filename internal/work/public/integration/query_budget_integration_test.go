@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workpublic "github.com/echovisionlab/geul-api/internal/work/public"
@@ -50,15 +49,11 @@ func TestWorkPublicListFeaturedImageQueryBudgetIntegration(t *testing.T) {
 	sqlDB, err := publicDB.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	service := workpublic.NewWorkService(
-		publicDB,
-		stack.SpiceDBClient,
-		extractedWorkPublicMediaHydrator{},
-		newPublicWorkRuntimeForTest(publicDB, "https://cdn.example.com"),
-		workadapter.NewMemberSummaries(publicDB, "https://cdn.example.com"),
-		referencecatalogadapter.PublicMapPlaces{},
-		workpublic.WithWorkContentBlockStore(newPublicWorkContentBlockStore(t)),
-	)
+	service := newPublicWorkHandler(t, workpublic.Deps{
+		DB: publicDB, SpiceDB: stack.SpiceDBClient, BlockMedia: extractedWorkPublicMediaHydrator{},
+		Assets:  newPublicWorkRuntimeForTest(publicDB, "https://cdn.example.com"),
+		Members: workadapter.NewMemberSummaries(publicDB, "https://cdn.example.com"),
+	})
 	recorder := &workListQueryRecorder{}
 	require.NoError(t, publicDB.Callback().Query().After("gorm:query").Register("record_work_list_featured_queries", recorder.record))
 	require.NoError(t, publicDB.Callback().Row().After("gorm:row").Register("record_work_list_featured_rows", recorder.record))

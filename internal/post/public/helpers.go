@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
@@ -21,13 +21,6 @@ import (
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func isValidUUID(value string) bool { return uuidPattern.MatchString(value) }
-
-func optionalStringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
 
 func hasDraftResourceView(
 	ctx context.Context,
@@ -60,14 +53,14 @@ func requireDraftShareLinkAccess(
 	validator postdomain.ShareLinkValidator,
 ) (*model.ShareLink, error) {
 	if shareToken == "" {
-		return nil, errs.NotFoundMsg(entityName + " not found")
+		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	link, err := validator.ValidateShareLinkForEntity(ctx, db, shareToken, sharePassword, entityType, entityID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errs.NotFoundMsg(entityName + " not found")
+		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("validate %s share link: %w", entityName, err))
+		return nil, fmt.Errorf("validate %s share link: %w", entityName, err)
 	}
 	return link, nil
 }

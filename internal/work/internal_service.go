@@ -7,155 +7,113 @@ import (
 	"slices"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
-// InternalWorkService is the trusted typed Block boundary used by the
-// collaboration runtime. Yjs state never crosses this persistence API.
-type InternalWorkService struct {
-	db             *gorm.DB
-	asyncPublisher AsyncPublisher
-	auditWriter    domainaudit.Appender
-	spiceDB        CollaborationPermissionChecker
-	checkpoints    persistencecheckpoint.ContributorFence
-	contentBlocks  *contentblock.Store
-	mediaHydrator  AuthorizedContentBlockMediaHydrator
-	og             OGRequests
+// LoadWorkBlockDocumentQuery loads one collaboration room for the session
+// editor-collab admitted.
+type LoadWorkBlockDocumentQuery struct {
+	WorkID    string
+	Locale    string
+	SessionID string
 }
 
-type InternalWorkServiceOption func(*InternalWorkService)
-
-func WithInternalWorkDomainAuditWriter(writer domainaudit.Appender) InternalWorkServiceOption {
-	return func(service *InternalWorkService) {
-		service.auditWriter = writer
-	}
+// ApplyWorkBlockBatchCommand saves one collaboration room's Block batch.
+type ApplyWorkBlockBatchCommand struct {
+	WorkID                 string
+	Locale                 string
+	Batch                  *contentv1.RichTextBlockMutationBatch
+	AffectedLocaleValues   []*managev1.AIDocumentFieldTarget
+	ExpectedTargetRevision *string
 }
 
-func WithInternalWorkContentBlockStore(store *contentblock.Store) InternalWorkServiceOption {
-	return func(service *InternalWorkService) {
-		service.contentBlocks = store
-	}
+// UpdateWorkLocaleMetadataCommand saves one room's title or summary. A nil
+// Title keeps it; SetSummary replaces the summary with Summary, nil clearing
+// it.
+type UpdateWorkLocaleMetadataCommand struct {
+	WorkID                 string
+	Locale                 string
+	Title                  *string
+	SetSummary             bool
+	Summary                *string
+	ExpectedRevision       string
+	ExpectedTargetRevision *string
+	ContributorMemberIDs   []string
 }
 
-func WithInternalWorkCheckpoints(checkpoints persistencecheckpoint.ContributorFence) InternalWorkServiceOption {
-	return func(service *InternalWorkService) { service.checkpoints = checkpoints }
+// CreateWorkVersionCheckpointCommand records the source room as a version
+// when it differs from the latest one.
+type CreateWorkVersionCheckpointCommand struct {
+	WorkID               string
+	Locale               string
+	ExpectedRevision     string
+	ContributorMemberIDs []string
 }
 
-func WithInternalWorkContentBlockMediaHydrator(
-	hydrator AuthorizedContentBlockMediaHydrator,
-) InternalWorkServiceOption {
-	return func(service *InternalWorkService) {
-		service.mediaHydrator = hydrator
-	}
+// readLocked runs read in one transaction after access, so the rows it
+// locks agree with each other.
+func (s *Service) readLocked(ctx context.Context, access mutation.Access, read func(context.Context, *gorm.DB) error) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Access: access,
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) { return struct{}{}, read(ctx, tx) },
+		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
+	})
+	return err
 }
 
-func NewInternalWorkService(
-	db *gorm.DB,
-	asyncPublisher AsyncPublisher,
-	ogRequests OGRequests,
-	spiceDB CollaborationPermissionChecker,
-	options ...InternalWorkServiceOption,
-) *InternalWorkService {
-	if db == nil {
-		panic("InternalWorkService: db is required")
-	}
-	if asyncPublisher == nil {
-		panic("InternalWorkService: asyncPublisher is required")
-	}
-	if spiceDB == nil {
-		panic("InternalWorkService: SpiceDB checker is required")
-	}
-	if ogRequests == nil {
-		panic("InternalWorkService: OG requests are required")
-	}
-	service := &InternalWorkService{
-		db:             db,
-		asyncPublisher: asyncPublisher,
-		og:             ogRequests,
-		spiceDB:        spiceDB,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
-}
-
-func (s *InternalWorkService) requireContentBlockStore() error {
-	if s.contentBlocks == nil {
-		return errs.InternalMsg("Work content Block store is not configured")
-	}
-	return nil
-}
-
-func (s *InternalWorkService) LoadWorkBlockDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.LoadWorkBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadWorkBlockDocumentResponse], error) {
-	if err := s.requireContentBlockStore(); err != nil {
+func (s *Service) LoadWorkBlockDocument(ctx context.Context, query LoadWorkBlockDocumentQuery) (*intrav1.LoadWorkBlockDocumentResponse, error) {
+	if _, err := parseWorkContentUUID("work_id", query.WorkID); err != nil {
 		return nil, err
 	}
-	if s.mediaHydrator == nil {
-		return nil, errs.InternalMsg("Work Block media hydrator is not configured")
-	}
-	if req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	if _, err := parseWorkContentUUID("work_id", req.Msg.WorkId); err != nil {
-		return nil, err
-	}
-	locale, err := normalizeWorkDocumentLocale(req.Msg.Locale)
+	locale, err := normalizeWorkDocumentLocale(query.Locale)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadWorkContentDocumentID(ctx, s.db, req.Msg.WorkId)
+	documentID, err := loadWorkContentDocumentID(ctx, s.db, query.WorkID)
 	if err != nil {
 		return nil, err
 	}
+	var principal *auth.UserInfo
 	var state workTargetLocaleState
 	var mediaItems []*contentv1.ContentBlockMediaItem
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		principal, authErr := requireWorkLoadPrincipal(
-			ctx, tx, s.spiceDB, req.Msg.WorkId, documentID, req.Msg.Principal,
+	// editor-collab reads as itself on behalf of the admitted session.
+	access := mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		var err error
+		principal, err = requireWorkLoadPrincipal(ctx, tx, s.spiceDB, query.WorkID, documentID, query.SessionID)
+		return err
+	})
+	err = s.readLocked(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
+		var err error
+		if state, err = loadWorkTargetLocaleState(ctx, tx, s.contentBlocks, query.WorkID, documentID, locale, false); err != nil {
+			return err
+		}
+		if mediaItems, err = contentblock.LoadMediaReferences(ctx, tx, documentID); err != nil {
+			return err
+		}
+		mediaItems, err = s.mediaHydrator.HydrateAuthorizedWorkBlockMediaWithDB(
+			auth.WithUser(ctx, principal), tx, query.WorkID, documentID, principal, mediaItems,
 		)
-		if authErr != nil {
-			return authErr
-		}
-		var loadErr error
-		state, loadErr = loadWorkTargetLocaleState(ctx, tx, s.contentBlocks, req.Msg.WorkId, documentID, locale, false)
-		if loadErr != nil {
-			return loadErr
-		}
-		mediaItems, loadErr = contentblock.LoadMediaReferences(ctx, tx, documentID)
-		if loadErr != nil {
-			return loadErr
-		}
-		mediaItems, loadErr = s.mediaHydrator.HydrateAuthorizedWorkBlockMediaWithDB(
-			auth.WithUser(ctx, principal), tx, req.Msg.WorkId, documentID, principal, mediaItems,
-		)
-		return loadErr
+		return err
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)
 	}
 	if state.SourceMetadata.Title == nil || *state.SourceMetadata.Title == "" {
-		return nil, errs.FailedPrecondition("Work source title is not initialized")
+		return nil, domainerr.Precondition("Work source title is not initialized")
 	}
 	document, err := contentblock.MaterializeSnapshotRichTextLocale(state.Snapshot, locale)
 	if err != nil {
@@ -163,7 +121,7 @@ func (s *InternalWorkService) LoadWorkBlockDocument(
 	}
 	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(state.Snapshot, locale)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	response := &intrav1.LoadWorkBlockDocumentResponse{
 		Document:         document,
@@ -185,467 +143,413 @@ func (s *InternalWorkService) LoadWorkBlockDocument(
 		response.TargetRevision = &state.TargetRevision
 	}
 	response.PresentLocaleValues = presentLocaleValues
-	return connect.NewResponse(response), nil
+	return response, nil
 }
 
-type workBlockApplyResult struct {
-	Content        contentblock.Result
-	TargetRevision *string
-	Locale         string
+// workRoomSave is the outcome of one collaboration save.
+type workRoomSave struct {
+	locale         string
+	sourceLocale   string
+	content        contentblock.Result
+	targetRevision *string
+	fields         []string
 }
 
-func (s *InternalWorkService) ApplyWorkBlockBatch(
+// collaborationSave runs a collaboration save of workID's room: editor-collab
+// calls as itself, so the room is locked and its contributors' current
+// permission authorizes the save. change receives the authorized content
+// fence.
+func (s *Service) collaborationSave(
 	ctx context.Context,
-	req *connect.Request[intrav1.ApplyWorkBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyWorkBlockBatchResponse], error) {
-	if err := s.requireContentBlockStore(); err != nil {
+	workID string,
+	documentID uuid.UUID,
+	contributors []string,
+	change func(context.Context, *gorm.DB, contentblock.DomainContext, contentblock.DomainFence) (workRoomSave, error),
+) (workRoomSave, error) {
+	contributorMemberID, err := contentblock.MutationContributor(contributors)
+	if err != nil {
+		return workRoomSave{}, err
+	}
+	var domain contentblock.DomainContext
+	saved, err := mutation.Run(ctx, s.mutations, mutation.Spec[workRoomSave]{
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			domain, err = internalWorkContentFence(s.checkpoints, contributors)(ctx, tx, documentID)
+			return err
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (workRoomSave, error) {
+			saved, err := change(ctx, tx, domain, contentblock.LockedFence(workEntityName, documentID, domain))
+			saved.sourceLocale = domain.SourceLocale
+			return saved, err
+		},
+		Audit: func(saved workRoomSave) mutation.Audit {
+			if !saved.content.Changed {
+				return mutation.Unchanged()
+			}
+			return workLocaleContentAudit(contributorMemberID, workID, saved.locale, sharedtelemetry.AuditItemOperationUpdated)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, saved workRoomSave) error {
+			if !saved.content.Changed {
+				return nil
+			}
+			return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID: workID, Fields: saved.fields,
+				DocumentRevision: saved.content.DocumentRevision.String(), Contributors: contributors,
+				Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale: saved.locale, TargetRevision: saved.targetRevision,
+				DocumentStateChanged: saved.locale == saved.sourceLocale,
+			}))
+		},
+	})
+	if err != nil {
+		return workRoomSave{}, normalizeWorkContentBlockError(err)
+	}
+	return saved, nil
+}
+
+func (s *Service) ApplyWorkBlockBatch(ctx context.Context, command ApplyWorkBlockBatchCommand) (*intrav1.ApplyWorkBlockBatchResponse, error) {
+	if command.Batch == nil {
+		return nil, domainerr.Required("batch")
+	}
+	if _, err := parseWorkContentUUID("work_id", command.WorkID); err != nil {
 		return nil, err
 	}
-	if req.Msg == nil || req.Msg.Batch == nil {
-		return nil, errs.Required("batch")
-	}
-	if _, err := parseWorkContentUUID("work_id", req.Msg.WorkId); err != nil {
-		return nil, err
-	}
-	locale, err := normalizeWorkDocumentLocale(req.Msg.Locale)
+	locale, err := normalizeWorkDocumentLocale(command.Locale)
 	if err != nil {
 		return nil, err
 	}
-	contributorMemberID, err := contentblock.MutationContributor(req.Msg.Batch.ContributorMemberIds)
-	if err != nil {
+	if _, err := contentblock.MutationContributor(command.Batch.ContributorMemberIds); err != nil {
 		return nil, err
 	}
-	documentID, err := loadWorkContentDocumentID(ctx, s.db, req.Msg.WorkId)
+	documentID, err := loadWorkContentDocumentID(ctx, s.db, command.WorkID)
 	if err != nil {
 		return nil, err
 	}
 	storage, err := contentv1.FlattenRichTextMutationBatchStorage(
-		req.Msg.Batch,
+		command.Batch,
 		contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_WRITE,
 	)
 	if err != nil {
-		return nil, errs.InvalidArgument("batch", err.Error())
+		return nil, domainerr.InvalidField("batch", err.Error())
 	}
 	if err := contentblock.RestoreRichTextAffectedLocaleValues(
-		req.Msg.Batch.Profile,
-		locale,
-		&storage,
-		req.Msg.AffectedLocaleValues,
+		command.Batch.Profile, locale, &storage, command.AffectedLocaleValues,
 	); err != nil {
-		return nil, errs.InvalidArgument("affected_locale_values", err.Error())
+		return nil, domainerr.InvalidField("affected_locale_values", err.Error())
 	}
-	batch, err := contentblock.BatchFromRichTextStorage(
-		documentID,
-		req.Msg.Batch.Profile,
-		storage,
+	batch, err := contentblock.BatchFromRichTextStorage(documentID, command.Batch.Profile, storage)
+	if err != nil {
+		return nil, normalizeWorkContentBlockError(err)
+	}
+	now := time.Now().UTC()
+	saved, err := s.collaborationSave(ctx, command.WorkID, documentID, command.Batch.ContributorMemberIds,
+		func(ctx context.Context, tx *gorm.DB, domain contentblock.DomainContext, fence contentblock.DomainFence) (workRoomSave, error) {
+			saved := workRoomSave{locale: locale, fields: []string{"content"}}
+			if locale != domain.SourceLocale {
+				var err error
+				saved.content, saved.targetRevision, err = applyWorkTargetLocaleMutation(
+					ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
+						WorkID: command.WorkID, DocumentID: documentID, Locale: locale, Batch: batch,
+						ExpectedTargetRevision: command.ExpectedTargetRevision, Now: now, Fence: fence,
+					},
+				)
+				return saved, err
+			}
+			if command.ExpectedTargetRevision != nil {
+				return saved, domainerr.InvalidField("expected_target_revision", "source Work room cannot carry a target revision")
+			}
+			if err := validateWorkSourceStorage(storage, domain.SourceLocale); err != nil {
+				return saved, err
+			}
+			result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+			if err != nil {
+				return saved, err
+			}
+			saved.content = result
+			for _, changedLocale := range result.ChangedLocales {
+				if changedLocale != domain.SourceLocale {
+					return saved, domainerr.Precondition("target Work locale changed while saving source content")
+				}
+			}
+			if result.Changed {
+				return saved, touchWork(ctx, tx, command.WorkID, now)
+			}
+			return saved, nil
+		},
 	)
 	if err != nil {
-		return nil, normalizeWorkContentBlockError(err)
+		return nil, err
 	}
+	return &intrav1.ApplyWorkBlockBatchResponse{
+		DocumentRevision: saved.content.DocumentRevision.String(), Changed: saved.content.Changed,
+		SourceChanged:  saved.content.TranslationSourceChanged,
+		ChangedLocales: saved.content.ChangedLocales,
+		Locale:         locale, TargetRevision: saved.targetRevision,
+	}, nil
+}
 
-	var output workBlockApplyResult
-	var sourceLocale string
+// touchWork records a content change on the Work root.
+func touchWork(ctx context.Context, tx *gorm.DB, workID string, now time.Time) error {
+	return tx.WithContext(ctx).Model(&model.Work{}).Where("id = ?", workID).UpdateColumn("updated_at", now).Error
+}
+
+func (s *Service) UpdateWorkLocaleMetadata(ctx context.Context, command UpdateWorkLocaleMetadataCommand) (*intrav1.UpdateWorkLocaleMetadataResponse, error) {
+	documentID, err := loadWorkContentDocumentID(ctx, s.db, command.WorkID)
+	if err != nil {
+		return nil, err
+	}
+	expectedRevision, err := parseWorkContentUUID("expected_revision", command.ExpectedRevision)
+	if err != nil {
+		return nil, err
+	}
+	contributors, err := workContributorUUIDs(command.ContributorMemberIDs)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := contentblock.MutationContributor(command.ContributorMemberIDs); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
-	mutate := func(tx *gorm.DB) error {
-		domain, fenceErr := internalWorkContentFence(
-			s.checkpoints, req.Msg.Batch.ContributorMemberIds,
-		)(ctx, tx, documentID)
-		if fenceErr != nil {
-			return fenceErr
-		}
-		authorizedFence := contentblock.LockedFence(workEntityName, documentID, domain)
-		sourceLocale = domain.SourceLocale
-		output.Locale = locale
-		if locale != domain.SourceLocale {
-			result, targetRevision, targetErr := applyWorkTargetLocaleMutation(
-				ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
-					WorkID: req.Msg.WorkId, DocumentID: documentID, Locale: locale, Batch: batch,
-					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision, Now: now, Fence: authorizedFence,
-				},
-			)
-			if targetErr != nil {
-				return targetErr
+	saved, err := s.collaborationSave(ctx, command.WorkID, documentID, command.ContributorMemberIDs,
+		func(ctx context.Context, tx *gorm.DB, domain contentblock.DomainContext, fence contentblock.DomainFence) (workRoomSave, error) {
+			plan, err := planWorkLocaleMetadataMutation(command, domain.SourceLocale)
+			if err != nil {
+				return workRoomSave{}, err
 			}
-			output.Content, output.TargetRevision = result, targetRevision
-			if result.Changed {
-				return appendWorkMemberLocaleContentAudit(
-					ctx, tx, s.auditWriter, contributorMemberID, req.Msg.WorkId, locale,
-					sharedtelemetry.AuditItemOperationUpdated,
-				)
+			if plan.Locale != domain.SourceLocale {
+				return s.saveWorkTargetLocaleMetadata(ctx, tx, command, plan, contentblock.Batch{
+					DocumentID: documentID, ExpectedRevision: expectedRevision, ContributorMemberIDs: contributors,
+				}, now, fence)
 			}
-			return nil
-		}
-		if req.Msg.ExpectedTargetRevision != nil {
-			return errs.InvalidArgument("expected_target_revision", "source Work room cannot carry a target revision")
-		}
-		if err := validateWorkSourceStorage(storage, domain.SourceLocale); err != nil {
-			return err
-		}
-		result, applyErr := s.contentBlocks.ApplyBatch(
-			ctx,
-			tx,
-			batch,
-			authorizedFence,
-		)
-		if applyErr != nil {
-			return applyErr
-		}
-		output.Content = result
-		for _, changedLocale := range result.ChangedLocales {
-			if changedLocale != domain.SourceLocale {
-				return errs.FailedPrecondition("target Work locale changed while saving source content")
+			if command.ExpectedTargetRevision != nil {
+				return workRoomSave{}, domainerr.InvalidField("expected_target_revision", "source Work metadata cannot carry a target revision")
 			}
-		}
-		if result.Changed {
-			if updateErr := tx.WithContext(ctx).Model(&model.Work{}).
-				Where("id = ?", req.Msg.WorkId).
-				UpdateColumn("updated_at", now).Error; updateErr != nil {
-				return updateErr
-			}
-			return appendWorkMemberLocaleContentAudit(
-				ctx, tx, s.auditWriter, contributorMemberID, req.Msg.WorkId, locale,
-				sharedtelemetry.AuditItemOperationUpdated,
-			)
-		}
-		return nil
-	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := mutate(tx); err != nil || !output.Content.Changed {
-			return err
-		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-			EntityID: req.Msg.WorkId, Fields: []string{"content"},
-			DocumentRevision: output.Content.DocumentRevision.String(),
-			Contributors:     req.Msg.Batch.ContributorMemberIds,
-			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			Locale:           locale, TargetRevision: output.TargetRevision,
-			DocumentStateChanged: locale == sourceLocale,
-		}))
-	})
+			return s.saveWorkSourceLocaleMetadata(ctx, tx, command.WorkID, plan, documentID, expectedRevision, now, fence)
+		},
+	)
 	if err != nil {
-		return nil, normalizeWorkContentBlockError(err)
+		return nil, err
 	}
-	return connect.NewResponse(&intrav1.ApplyWorkBlockBatchResponse{
-		DocumentRevision: output.Content.DocumentRevision.String(), Changed: output.Content.Changed,
-		SourceChanged:  output.Content.TranslationSourceChanged,
-		ChangedLocales: output.Content.ChangedLocales,
-		Locale:         locale, TargetRevision: output.TargetRevision,
-	}), nil
+	return &intrav1.UpdateWorkLocaleMetadataResponse{
+		DocumentRevision: saved.content.DocumentRevision.String(), Changed: saved.content.Changed,
+		SourceChanged: saved.locale == saved.sourceLocale && saved.content.TranslationSourceChanged, ChangedLocales: []string{saved.locale},
+		Locale: saved.locale, TargetRevision: saved.targetRevision,
+	}, nil
 }
 
-type workMetadataUpdateResult struct {
-	Advance        contentblock.AdvanceResult
-	Target         contentblock.Result
-	TargetRevision *string
-	Mutation       workLocaleMetadataMutationResult
-	OgRunID        *string
-}
-
-func (s *InternalWorkService) UpdateWorkLocaleMetadata(
+func (s *Service) saveWorkTargetLocaleMetadata(
 	ctx context.Context,
-	req *connect.Request[intrav1.UpdateWorkLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdateWorkLocaleMetadataResponse], error) {
-	if err := s.requireContentBlockStore(); err != nil {
-		return nil, err
-	}
-	if req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	documentID, err := loadWorkContentDocumentID(ctx, s.db, req.Msg.WorkId)
-	if err != nil {
-		return nil, err
-	}
-	expectedRevision, err := parseWorkContentUUID("expected_revision", req.Msg.ExpectedRevision)
-	if err != nil {
-		return nil, err
-	}
-	contributors, err := workContributorUUIDs(req.Msg.ContributorMemberIds)
-	if err != nil {
-		return nil, err
-	}
-	contributorMemberID, err := contentblock.MutationContributor(req.Msg.ContributorMemberIds)
-	if err != nil {
-		return nil, err
-	}
-
-	var output workMetadataUpdateResult
-	var plan workLocaleMetadataMutationPlan
-	var sourceLocale string
-	now := time.Now().UTC()
-	mutate := func(tx *gorm.DB) error {
-		domain, fenceErr := internalWorkContentFence(
-			s.checkpoints, req.Msg.ContributorMemberIds,
-		)(ctx, tx, documentID)
-		if fenceErr != nil {
-			return fenceErr
-		}
-		sourceLocale = domain.SourceLocale
-		var planErr error
-		plan, planErr = planWorkLocaleMetadataMutation(req.Msg, sourceLocale)
-		if planErr != nil {
-			return planErr
-		}
-		authorizedFence := contentblock.LockedFence(workEntityName, documentID, domain)
-		if plan.Locale != sourceLocale {
-			result, targetRevision, targetErr := applyWorkTargetLocaleMutation(
-				ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
-					WorkID: req.Msg.WorkId, DocumentID: documentID, Locale: plan.Locale,
-					Batch: contentblock.Batch{
-						DocumentID: documentID, ExpectedRevision: expectedRevision,
-						ContributorMemberIDs: contributors,
-					},
-					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					Patch: workTargetMetadataPatch{
-						UpdateTitle: plan.UpdateTitle, Title: plan.Title,
-						UpdateSummary: plan.UpdateSummary, Summary: plan.Summary,
-					},
-					Now: now, Fence: authorizedFence,
-				},
-			)
-			if targetErr != nil {
-				return targetErr
-			}
-			output.Target, output.TargetRevision = result, targetRevision
-			if !result.Changed {
-				return nil
-			}
-			output.Mutation.TitleChanged = plan.UpdateTitle
-			output.Mutation.SummaryChanged = plan.UpdateSummary
-			if err := appendWorkMemberLocaleContentAudit(
-				ctx, tx, s.auditWriter, contributorMemberID, req.Msg.WorkId, plan.Locale,
-				sharedtelemetry.AuditItemOperationUpdated,
-			); err != nil {
-				return err
-			}
-			if plan.UpdateTitle {
-				runID, requestErr := s.og.RequestCurrentWithDB(
-					ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-					req.Msg.WorkId, plan.Locale, false, "work_target_locale_metadata_saved",
-				)
-				if runID != "" {
-					output.OgRunID = &runID
-				}
-				return requestErr
-			}
-			return nil
-		}
-		if req.Msg.ExpectedTargetRevision != nil {
-			return errs.InvalidArgument("expected_target_revision", "source Work metadata cannot carry a target revision")
-		}
-		var advanceErr error
-		output.Advance, advanceErr = s.contentBlocks.AdvanceRevision(
-			ctx,
-			tx,
-			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
-			workSourceRoomFence(plan.Locale, authorizedFence),
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				mutation, mutationErr := applyWorkLocaleMetadataMutation(ctx, tx, req.Msg.WorkId, plan, now)
-				output.Mutation = mutation
-				return mutation.Effect, mutationErr
+	tx *gorm.DB,
+	command UpdateWorkLocaleMetadataCommand,
+	plan workLocaleMetadataMutationPlan,
+	batch contentblock.Batch,
+	now time.Time,
+	fence contentblock.DomainFence,
+) (workRoomSave, error) {
+	result, targetRevision, err := applyWorkTargetLocaleMutation(
+		ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
+			WorkID: command.WorkID, DocumentID: batch.DocumentID, Locale: plan.Locale, Batch: batch,
+			ExpectedTargetRevision: command.ExpectedTargetRevision,
+			Patch: workTargetMetadataPatch{
+				UpdateTitle: plan.UpdateTitle, Title: plan.Title,
+				UpdateSummary: plan.UpdateSummary, Summary: plan.Summary,
 			},
-		)
-		if advanceErr != nil {
-			return advanceErr
-		}
-		if !output.Advance.Changed {
-			return nil
-		}
-		if updateErr := tx.WithContext(ctx).Model(&model.Work{}).
-			Where("id = ?", req.Msg.WorkId).
-			UpdateColumn("updated_at", now).Error; updateErr != nil {
-			return updateErr
-		}
-		if output.Advance.TranslationSourceChanged {
-			runID, requestErr := s.og.RequestCurrentWithDB(
-				ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK,
-				req.Msg.WorkId, plan.Locale, false, "work_locale_metadata_saved",
-			)
-			if runID != "" {
-				output.OgRunID = &runID
-			}
-			if requestErr != nil {
-				return requestErr
-			}
-		}
-		return appendWorkMemberLocaleContentAudit(
-			ctx, tx, s.auditWriter, contributorMemberID, req.Msg.WorkId, plan.Locale,
-			sharedtelemetry.AuditItemOperationUpdated,
-		)
+			Now: now, Fence: fence,
+		},
+	)
+	saved := workRoomSave{locale: plan.Locale, content: result, targetRevision: targetRevision}
+	if err != nil || !result.Changed {
+		return saved, err
 	}
-	resultState := func() (bool, string, bool) {
-		if plan.Locale != sourceLocale {
-			return output.Advance.Changed || output.Target.Changed, output.Target.DocumentRevision.String(), false
-		}
-		return output.Advance.Changed || output.Target.Changed,
-			output.Advance.DocumentRevision.String(), output.Advance.TranslationSourceChanged
+	saved.fields = workLocaleMetadataMutationResult{TitleChanged: plan.UpdateTitle, SummaryChanged: plan.UpdateSummary}.changedFields()
+	if plan.UpdateTitle {
+		_, err = s.requestWorkOG(ctx, tx, command.WorkID, plan.Locale, "work_target_locale_metadata_saved")
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := mutate(tx); err != nil {
-			return err
-		}
-		changed, documentRevision, _ := resultState()
-		if !changed {
-			return nil
-		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-			EntityID: req.Msg.WorkId, Fields: output.Mutation.changedFields(),
-			DocumentRevision: documentRevision, Contributors: req.Msg.ContributorMemberIds,
-			Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			Locale: plan.Locale, TargetRevision: output.TargetRevision,
-			DocumentStateChanged: plan.Locale == sourceLocale,
-		}))
-	})
-	if err != nil {
-		return nil, normalizeWorkContentBlockError(err)
-	}
-
-	changed, documentRevision, sourceChanged := resultState()
-	changedLocales := []string{plan.Locale}
-	return connect.NewResponse(&intrav1.UpdateWorkLocaleMetadataResponse{
-		DocumentRevision: documentRevision, Changed: changed,
-		SourceChanged: sourceChanged, ChangedLocales: changedLocales,
-		Locale: plan.Locale, TargetRevision: output.TargetRevision,
-	}), nil
+	return saved, err
 }
 
-func (s *InternalWorkService) CreateWorkVersionCheckpoint(
+func (s *Service) saveWorkSourceLocaleMetadata(
 	ctx context.Context,
-	req *connect.Request[intrav1.CreateWorkVersionCheckpointRequest],
-) (*connect.Response[intrav1.CreateWorkVersionCheckpointResponse], error) {
-	if err := s.requireContentBlockStore(); err != nil {
+	tx *gorm.DB,
+	workID string,
+	plan workLocaleMetadataMutationPlan,
+	documentID uuid.UUID,
+	expectedRevision uuid.UUID,
+	now time.Time,
+	fence contentblock.DomainFence,
+) (workRoomSave, error) {
+	var mutation workLocaleMetadataMutationResult
+	advance, err := s.contentBlocks.AdvanceRevision(
+		ctx, tx,
+		contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
+		workSourceRoomFence(plan.Locale, fence),
+		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+			var err error
+			mutation, err = applyWorkLocaleMetadataMutation(ctx, tx, workID, plan, now)
+			return mutation.Effect, err
+		},
+	)
+	if err != nil {
+		return workRoomSave{}, err
+	}
+	saved := workRoomSave{
+		locale: plan.Locale,
+		content: contentblock.Result{
+			DocumentRevision: advance.DocumentRevision, Changed: advance.Changed,
+			TranslationSourceChanged: advance.TranslationSourceChanged,
+		},
+		fields: mutation.changedFields(),
+	}
+	if !advance.Changed {
+		return saved, nil
+	}
+	if err := touchWork(ctx, tx, workID, now); err != nil {
+		return saved, err
+	}
+	if advance.TranslationSourceChanged {
+		_, err = s.requestWorkOG(ctx, tx, workID, plan.Locale, "work_locale_metadata_saved")
+	}
+	return saved, err
+}
+
+// requestWorkOG requests the current OG image of workID's locale and
+// returns its run, if one started.
+func (s *Service) requestWorkOG(ctx context.Context, tx *gorm.DB, workID, locale, reason string) (*string, error) {
+	runID, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_WORK, workID, locale, false, reason)
+	if runID == "" {
 		return nil, err
 	}
-	if req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	locale, err := normalizeWorkDocumentLocale(req.Msg.Locale)
+	return &runID, err
+}
+
+// workVersionCheckpoint is the outcome of a checkpoint request.
+type workVersionCheckpoint struct {
+	created  *model.WorkVersion
+	revision string
+}
+
+func (s *Service) CreateWorkVersionCheckpoint(ctx context.Context, command CreateWorkVersionCheckpointCommand) (*intrav1.CreateWorkVersionCheckpointResponse, error) {
+	locale, err := normalizeWorkDocumentLocale(command.Locale)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadWorkContentDocumentID(ctx, s.db, req.Msg.WorkId)
+	documentID, err := loadWorkContentDocumentID(ctx, s.db, command.WorkID)
 	if err != nil {
 		return nil, err
 	}
-	expectedRevision, err := parseWorkContentUUID("expected_revision", req.Msg.ExpectedRevision)
+	expectedRevision, err := parseWorkContentUUID("expected_revision", command.ExpectedRevision)
 	if err != nil {
 		return nil, err
 	}
-	contributors := normalizeContributorMemberIDs(req.Msg.ContributorMemberIds)
-	if !slices.Equal([]string(contributors), req.Msg.ContributorMemberIds) {
-		return nil, errs.InvalidArgument("contributor_member_ids", "must be sorted and unique")
+	contributors := normalizeContributorMemberIDs(command.ContributorMemberIDs)
+	if !slices.Equal([]string(contributors), command.ContributorMemberIDs) {
+		return nil, domainerr.InvalidField("contributor_member_ids", "must be sorted and unique")
 	}
-
-	var created *model.WorkVersion
-	var revision string
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		advance, advanceErr := s.contentBlocks.AdvanceRevision(
-			ctx,
-			tx,
-			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
-			internalWorkContentFence(s.checkpoints, req.Msg.ContributorMemberIds),
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				return contentblock.MetadataEffect{}, nil
-			},
-		)
-		if advanceErr != nil {
-			return advanceErr
-		}
-		revision = advance.DocumentRevision.String()
-		source, sourceErr := LoadRequiredSourceLocaleMetadata(ctx, tx, req.Msg.WorkId)
-		if sourceErr != nil {
-			return sourceErr
-		}
-		if locale != source.Locale {
-			return errs.InvalidArgument("locale", "Work version checkpoints are source-locale only")
-		}
-		if source.Title == nil || *source.Title == "" {
-			return errs.FailedPrecondition("Work source title is not initialized")
-		}
-		snapshot, snapshotErr := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, source.Locale)
-		if snapshotErr != nil {
-			return snapshotErr
-		}
-		document, documentErr := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, source.Locale)
-		if documentErr != nil {
-			return documentErr
-		}
-		encoded, encodeErr := EncodeVersionContentSnapshot(
-			source.Locale,
-			source.Title,
-			source.Summary,
-			document,
-		)
-		if encodeErr != nil {
-			return encodeErr
-		}
-
-		var previous model.WorkVersion
-		previousResult := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("work_id = ?", req.Msg.WorkId).
-			Order("version DESC").
-			First(&previous)
-		if previousResult.Error != nil && !errors.Is(previousResult.Error, gorm.ErrRecordNotFound) {
-			return previousResult.Error
-		}
-		if previousResult.Error == nil {
-			same, sameErr := sameWorkVersionContentSnapshot(previous.ContentSnapshot, encoded)
-			if sameErr != nil {
-				return sameErr
-			}
-			if same {
-				return nil
-			}
-		}
-
-		nextVersion := int32(1)
-		if previousResult.Error == nil {
-			nextVersion = previous.Version + 1
-		}
-		created = &model.WorkVersion{
-			WorkID:               req.Msg.WorkId,
-			Version:              nextVersion,
-			Title:                cloneOptionalString(source.Title),
-			Summary:              cloneOptionalString(source.Summary),
-			ContentSnapshot:      encoded,
-			ContributorMemberIDs: contributors,
-			CreatedAt:            time.Now().UTC(),
-		}
-		if createErr := tx.WithContext(ctx).Create(created).Error; createErr != nil {
-			return createErr
-		}
-		if s.auditWriter != nil {
-			if auditErr := domainaudit.AppendVersion(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditWorkUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewWorkVersionCreatedAuditRecord(
-						metadata,
-						req.Msg.WorkId,
-						created.ID,
-						created.ContributorMemberIDs,
-					)
+	var advance contentblock.AdvanceResult
+	checkpoint, err := mutation.Run(ctx, s.mutations, mutation.Spec[workVersionCheckpoint]{
+		// The checkpoint fence locks the room and authorizes its
+		// contributors while it advances the document revision.
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			advance, err = s.contentBlocks.AdvanceRevision(
+				ctx, tx,
+				contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
+				internalWorkContentFence(s.checkpoints, command.ContributorMemberIDs),
+				func(context.Context, *gorm.DB) (contentblock.MetadataEffect, error) {
+					return contentblock.MetadataEffect{}, nil
 				},
-			); auditErr != nil {
-				return auditErr
+			)
+			return err
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (workVersionCheckpoint, error) {
+			created, err := s.createWorkVersion(ctx, tx, command.WorkID, locale, documentID, contributors)
+			return workVersionCheckpoint{created: created, revision: advance.DocumentRevision.String()}, err
+		},
+		Audit: func(checkpoint workVersionCheckpoint) mutation.Audit {
+			if checkpoint.created == nil {
+				return mutation.Unchanged()
 			}
-		}
-		return nil
+			created := checkpoint.created
+			return mutation.VersionAudit(sharedtelemetry.AuditWorkUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewWorkVersionCreatedAuditRecord(metadata, command.WorkID, created.ID, created.ContributorMemberIDs)
+			})
+		},
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)
 	}
 	response := &intrav1.CreateWorkVersionCheckpointResponse{
-		Created:  created != nil,
-		Revision: revision,
+		Created:  checkpoint.created != nil,
+		Revision: checkpoint.revision,
 		Locale:   locale,
 	}
-	if created != nil {
-		response.VersionId = &created.ID
+	if checkpoint.created != nil {
+		response.VersionId = &checkpoint.created.ID
 	}
-	return connect.NewResponse(response), nil
+	return response, nil
+}
+
+// createWorkVersion records the source locale as the next version, or
+// returns nil when it equals the latest version.
+func (s *Service) createWorkVersion(
+	ctx context.Context,
+	tx *gorm.DB,
+	workID, locale string,
+	documentID uuid.UUID,
+	contributors []string,
+) (*model.WorkVersion, error) {
+	source, err := LoadRequiredSourceLocaleMetadata(ctx, tx, workID)
+	if err != nil {
+		return nil, err
+	}
+	if locale != source.Locale {
+		return nil, domainerr.InvalidField("locale", "Work version checkpoints are source-locale only")
+	}
+	if source.Title == nil || *source.Title == "" {
+		return nil, domainerr.Precondition("Work source title is not initialized")
+	}
+	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, source.Locale)
+	if err != nil {
+		return nil, err
+	}
+	document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, source.Locale)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := EncodeVersionContentSnapshot(source.Locale, source.Title, source.Summary, document)
+	if err != nil {
+		return nil, err
+	}
+	var previous model.WorkVersion
+	previousResult := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Where("work_id = ?", workID).
+		Order("version DESC").
+		First(&previous)
+	if previousResult.Error != nil && !errors.Is(previousResult.Error, gorm.ErrRecordNotFound) {
+		return nil, previousResult.Error
+	}
+	nextVersion := int32(1)
+	if previousResult.Error == nil {
+		same, err := sameWorkVersionContentSnapshot(previous.ContentSnapshot, encoded)
+		if err != nil || same {
+			return nil, err
+		}
+		nextVersion = previous.Version + 1
+	}
+	created := &model.WorkVersion{
+		WorkID:               workID,
+		Version:              nextVersion,
+		Title:                cloneOptionalString(source.Title),
+		Summary:              cloneOptionalString(source.Summary),
+		ContentSnapshot:      encoded,
+		ContributorMemberIDs: contributors,
+		CreatedAt:            time.Now().UTC(),
+	}
+	if err := tx.WithContext(ctx).Create(created).Error; err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func sameWorkVersionContentSnapshot(current []byte, desired []byte) (bool, error) {

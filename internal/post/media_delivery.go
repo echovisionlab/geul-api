@@ -62,7 +62,7 @@ func postPublicDisplayOnly(delivery *commonv1.MediaDelivery) *commonv1.MediaDeli
 	return result
 }
 
-func (s *PostService) loadPostPublicFeaturedImageDeliveries(
+func (s *Service) loadPostPublicFeaturedImageDeliveries(
 	ctx context.Context,
 	posts []model.Post,
 ) (map[string]*commonv1.MediaDelivery, error) {
@@ -78,7 +78,7 @@ func (s *PostService) loadPostPublicFeaturedImageDeliveries(
 	return deliveries, nil
 }
 
-func (s *PostService) resolveAuthorizedPostFeaturedImage(
+func (s *Service) resolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
 	post *model.Post,
 ) (*commonv1.MediaDelivery, error) {

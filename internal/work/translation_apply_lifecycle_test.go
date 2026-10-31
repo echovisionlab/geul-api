@@ -3,6 +3,8 @@ package work
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -64,5 +66,5 @@ func TestWorkTranslationApplyFenceRejectsDeletedRoot(t *testing.T) {
 	require.NoError(t, db.Exec(`DELETE FROM work WHERE id = ?`, workID).Error)
 
 	_, err = workSystemTranslationDocumentFence(workID)(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }

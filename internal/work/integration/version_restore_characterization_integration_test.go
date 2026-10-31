@@ -13,11 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -349,8 +347,8 @@ type workVersionRestoreFixture struct {
 	ctx       context.Context
 	systemCtx context.Context
 	memberID  string
-	manage    *workdomain.WorkService
-	internal  *workdomain.InternalWorkService
+	manage    *workdomain.ConnectHandler
+	internal  *workdomain.InternalConnectHandler
 }
 
 func newWorkVersionRestoreFixture(t *testing.T) *workVersionRestoreFixture {
@@ -368,24 +366,14 @@ func newWorkVersionRestoreFixture(t *testing.T) *workVersionRestoreFixture {
 	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
 	ctx := withWorkAuditedRequestContext(t, workIntegrationAdminCtx(adminID))
+	works := newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB, Signals: publisher, ContentBlocks: store, Audit: writer})
 	return &workVersionRestoreFixture{
 		db:        db,
 		ctx:       ctx,
 		systemCtx: withWorkAuditedCollabRequestContext(t, ctx),
 		memberID:  testutil.PostIntegrationMemberID(adminID),
-		manage: workdomain.NewAuditedWorkService(
-			db, newWorkRuntimeForTest(db, ""), spiceDB,
-			&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")}, publisher, writer,
-			workdomain.WithWorkContentBlockStore(store),
-			workdomain.WithWorkContentBlockMediaHydrator(passthroughWorkContentBlockMediaHydrator{}),
-			workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "")),
-		),
-		internal: workdomain.NewInternalWorkService(
-			db, publisher, newWorkRuntimeForTest(db, ""), spiceDB,
-			workdomain.WithInternalWorkDomainAuditWriter(writer),
-			workdomain.WithInternalWorkContentBlockStore(store),
-			workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		),
+		manage:    workdomain.NewConnectHandler(works),
+		internal:  workdomain.NewInternalConnectHandler(works),
 	}
 }
 

@@ -2,9 +2,9 @@ package public
 
 import (
 	"context"
+	"errors"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"google.golang.org/protobuf/proto"
@@ -20,7 +20,7 @@ func publicDisplayOnlyDelivery(delivery *commonv1.MediaDelivery) *commonv1.Media
 	return result
 }
 
-func (s *PostService) loadPostFeaturedImageDeliveries(
+func (s *Service) loadPostFeaturedImageDeliveries(
 	ctx context.Context,
 	posts []model.Post,
 ) (map[string]*commonv1.MediaDelivery, error) {
@@ -44,7 +44,7 @@ func (s *PostService) loadPostFeaturedImageDeliveries(
 		return result, nil
 	}
 	if s.files == nil {
-		return nil, errs.InternalMsg("Post media resolver is not configured")
+		return nil, errors.New("Post media resolver is not configured")
 	}
 	deliveries, err := s.files.ResolvePublicDisplayMedia(ctx, fileIDs)
 	if err != nil {

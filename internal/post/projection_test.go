@@ -18,7 +18,7 @@ import (
 func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 	for _, locale := range []string{"ko", "en", "pt-BR", "zh-TW"} {
 		t.Run(locale, func(t *testing.T) {
-			service := &PostService{}
+			service := &Service{}
 			response, err := service.toProtoPost(&model.Post{
 				SourceLocale: locale, DocumentLayout: model.DefaultDocumentLayout(),
 				Series: &model.Series{SourceLocale: "ja"},
@@ -49,7 +49,7 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 func TestManagePostProjectionRejectsInvalidStoredDocumentLayout(t *testing.T) {
 	t.Parallel()
 	require.NotPanics(t, func() {
-		response, err := new(PostService).toProtoPost(&model.Post{ID: "post", SourceLocale: "en"}, nil)
+		response, err := new(Service).toProtoPost(&model.Post{ID: "post", SourceLocale: "en"}, nil)
 		require.Error(t, err)
 		require.Nil(t, response)
 	})
@@ -69,7 +69,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	author := &commonv1.MemberSummary{Id: uuid.NewString(), Nickname: "Author"}
 	featured := &commonv1.MediaDelivery{FileId: uuid.NewString()}
 	og := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example/og.webp"}
-	response, err := new(PostService).toProtoPostWithProjection(&model.Post{
+	response, err := new(Service).toProtoPostWithProjection(&model.Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
 		ContentDocument: document, ContentRevision: revision, ConfigurationRevision: configurationRevision,
 		BlockMedia: media, Status: model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),

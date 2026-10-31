@@ -3,6 +3,8 @@ package post
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -33,7 +35,7 @@ func TestCheckSlugAvailable(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			available, err := CheckSlugAvailable(t.Context(), db, test.slug, test.excludePostID)
 			if test.wantErr {
-				require.Equal(t, test.errorCode, connect.CodeOf(err))
+				require.Equal(t, test.errorCode, errs.CodeOf(err))
 				return
 			}
 			require.NoError(t, err)

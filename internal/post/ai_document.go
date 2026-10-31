@@ -11,10 +11,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -62,14 +63,11 @@ type aiDocumentMetadataRow struct {
 // database snapshot before projecting the exact requested locale. Archived
 // Posts remain readable to their Author and Site Admin, but not to a former
 // collaborator-only editor.
-func (s *PostService) LoadAIDocumentState(
+func (s *Service) LoadAIDocumentState(
 	ctx context.Context,
 	postID string,
 	locale string,
 ) (AIDocumentState, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
-		return AIDocumentState{}, errs.DependencyUnavailable("Post AI document")
-	}
 	var err error
 	locale, err = validatePostAIDocumentIdentity(postID, locale)
 	if err != nil {
@@ -77,18 +75,21 @@ func (s *PostService) LoadAIDocumentState(
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.Banned || principal.MemberID == "" {
-		return AIDocumentState{}, errs.AuthenticationRequired()
+		return AIDocumentState{}, domainerr.AuthenticationRequired()
 	}
 
+	var root aiDocumentPostRoot
+	access := mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		var err error
+		if root, err = loadPostAIDocumentRoot(ctx, tx, postID, "KEY SHARE"); err != nil {
+			return err
+		}
+		_, err = requirePostViewForStatus(ctx, s.spiceDB, postID, root.Status)
+		return err
+	})
 	var state AIDocumentState
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadPostAIDocumentRoot(ctx, tx, postID, "KEY SHARE")
-		if err != nil {
-			return err
-		}
-		if _, err := requirePostViewForStatus(ctx, s.spiceDB, postID, root.Status); err != nil {
-			return err
-		}
+	err = s.readLocked(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
+		var err error
 		state, err = s.loadAIDocumentStateAfterAuthorization(
 			ctx,
 			tx,
@@ -106,11 +107,11 @@ func (s *PostService) LoadAIDocumentState(
 
 func validatePostAIDocumentIdentity(postID, locale string) (string, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
-		return "", errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), err)
+		return "", domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
 	normalizedLocale := localization.NormalizeExactSupportedLocale(locale)
 	if normalizedLocale == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalizedLocale, nil
 }
@@ -131,17 +132,17 @@ func loadPostAIDocumentRoot(
 	var root aiDocumentPostRoot
 	if err := query.Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return aiDocumentPostRoot{}, errs.NotFound("post", postID)
+			return aiDocumentPostRoot{}, domainerr.ResourceNotFound("post", postID)
 		}
-		return aiDocumentPostRoot{}, errs.Internal(fmt.Errorf("load Post AI document root: %w", err))
+		return aiDocumentPostRoot{}, fmt.Errorf("load Post AI document root: %w", err)
 	}
 	if root.ContentDocumentID == nil || strings.TrimSpace(*root.ContentDocumentID) == "" {
-		return aiDocumentPostRoot{}, errs.FailedPrecondition("Post content document has not been populated")
+		return aiDocumentPostRoot{}, domainerr.Precondition("Post content document has not been populated")
 	}
 	return root, nil
 }
 
-func (s *PostService) loadAIDocumentStateAfterAuthorization(
+func (s *Service) loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
 	tx *gorm.DB,
 	root aiDocumentPostRoot,
@@ -150,7 +151,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 ) (AIDocumentState, error) {
 	documentID, err := uuidutil.ParseCanonical(*root.ContentDocumentID, "content_document_id")
 	if err != nil {
-		return AIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Post content document identity is invalid"), failurecause.ServerFault(err))
+		return AIDocumentState{}, domainerr.Precondition("Post content document identity is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	domain, err := loadPostContentDomainContext(ctx, tx, root.ID)
 	if err != nil {
@@ -161,7 +162,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 		return AIDocumentState{}, normalizePostContentBlockError(err)
 	}
 	if snapshot.Document.Profile != postContentDocumentProfile {
-		return AIDocumentState{}, errs.FailedPrecondition("Post AI document requires the Post content profile")
+		return AIDocumentState{}, domainerr.Precondition("Post AI document requires the Post content profile")
 	}
 
 	state := AIDocumentState{
@@ -177,7 +178,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 		return AIDocumentState{}, err
 	}
 	if !found {
-		return AIDocumentState{}, errs.FailedPrecondition("Post source locale metadata is missing")
+		return AIDocumentState{}, domainerr.Precondition("Post source locale metadata is missing")
 	}
 	state.SourceMetadata = sourceMetadata
 	if locale == domain.SourceLocale {
@@ -190,7 +191,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 			return AIDocumentState{}, err
 		}
 		if !exists && targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return AIDocumentState{}, errs.FailedPrecondition("Post locale Blocks exist without owning translation metadata")
+			return AIDocumentState{}, domainerr.Precondition("Post locale Blocks exist without owning translation metadata")
 		}
 		state.LocaleExists = exists
 		if exists {
@@ -204,7 +205,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 	}
 	state.CategoryIDs, state.TagIDs, err = loadPostTaxonomyIDs(ctx, tx, root.ID)
 	if err != nil {
-		return AIDocumentState{}, errs.Internal(fmt.Errorf("load Post AI document taxonomy: %w", err))
+		return AIDocumentState{}, fmt.Errorf("load Post AI document taxonomy: %w", err)
 	}
 	state.LocalizedDocument, err = contentblock.SnapshotToLocalizedRichTextDocument(snapshot, locale)
 	if err != nil {
@@ -229,7 +230,7 @@ func loadAIDocumentMetadata(
 		return AIDocumentLocaleMetadata{}, false, nil
 	}
 	if err != nil {
-		return AIDocumentLocaleMetadata{}, false, errs.Internal(fmt.Errorf("load Post AI document locale metadata: %w", err))
+		return AIDocumentLocaleMetadata{}, false, fmt.Errorf("load Post AI document locale metadata: %w", err)
 	}
 	return AIDocumentLocaleMetadata(row), true, nil
 }

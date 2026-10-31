@@ -4,8 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -26,12 +24,10 @@ type FileService interface {
 	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
 }
 
-// AsyncPublisher is the transport surface required by Post domain events.
-// content.updated is scheduled only through the transactional signal method.
-type AsyncPublisher interface {
-	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	NotifyProtobuf(context.Context, string, proto.Message) error
-	contentsignal.Publisher
+// ShareLinkCleanup removes the share links of a Post in the deleting
+// transaction. Share Link owns the rows.
+type ShareLinkCleanup interface {
+	DeleteEntityShareLinks(ctx context.Context, tx *gorm.DB, postID string) error
 }
 
 type CollaborationPermissionChecker interface {

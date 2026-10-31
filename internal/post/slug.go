@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 )
@@ -16,7 +16,7 @@ import (
 // edited and must already have passed authorization at the transport boundary.
 func CheckSlugAvailable(ctx context.Context, db *gorm.DB, slug, excludePostID string) (bool, error) {
 	if strings.Contains(slug, "/") {
-		return false, errs.InvalidArgument("slug", "must not contain '/'")
+		return false, domainerr.InvalidField("slug", "must not contain '/'")
 	}
 
 	query := db.WithContext(ctx).Model(&model.Post{}).Where("slug = ?", slug)
@@ -26,7 +26,7 @@ func CheckSlugAvailable(ctx context.Context, db *gorm.DB, slug, excludePostID st
 
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	if count != 0 {
 		return false, nil

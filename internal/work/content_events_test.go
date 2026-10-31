@@ -65,8 +65,8 @@ func TestBuildWorkTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T)
 }
 
 func TestBuildManageWorkContentUpdatedEventWithGlobalMetadataChange(t *testing.T) {
-	event := buildManageWorkContentUpdatedEvent(&managev1.UpdateWorkRequest{
-		Id:       "work-1",
+	event := buildManageWorkContentUpdatedEvent(UpdateWorkCommand{
+		ID:       "work-1",
 		Featured: new(true),
 	})
 	require.NotNil(t, event)

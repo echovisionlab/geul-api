@@ -38,7 +38,6 @@ func TestPostTargetLocaleCollaborationCASAndSourceSeedIntegration(t *testing.T) 
 	store := testutil.NewPostContentBlockStore(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminIdentityID, "en")),
 		store,
 	)
 	internal := postintegration.NewInternalPostDomainService(t, db, "", spiceDB, store)
@@ -235,14 +234,14 @@ func TestPostTargetLocaleCollaborationCASAndSourceSeedIntegration(t *testing.T) 
 
 func executePostTargetLifecycle(
 	t *testing.T,
-	service *postdomain.PostService,
+	service postintegration.Posts,
 	ctx context.Context,
 	postID string,
 	locale string,
 	deleteTranslation bool,
 ) postdomain.AIDocumentMutationResult {
 	t.Helper()
-	result, err := service.ExecuteAIDocumentMutation(
+	result, err := service.Service.ExecuteAIDocumentMutation(
 		ctx,
 		postID,
 		locale,
@@ -368,7 +367,7 @@ func postFileStructureBatch(expectedRevision string, contributorMemberID string)
 
 func loadPostTargetRoom(
 	t *testing.T,
-	internal *postdomain.InternalPostService,
+	internal *postdomain.InternalConnectHandler,
 	sessionID string,
 	postID string,
 	locale string,

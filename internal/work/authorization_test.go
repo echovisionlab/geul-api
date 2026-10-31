@@ -12,9 +12,9 @@ import (
 	"connectrpc.com/connect"
 	authzedv1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -86,7 +86,7 @@ func TestListWorksAdminPagesKeepTiesUniqueAndRequestedDirection(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := &WorkService{db: db, spiceDB: spiceDB}
+	service := newTestService(t, Deps{DB: db, SpiceDB: spiceDB})
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()), SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true})
 	for _, test := range []struct {
 		name  string
@@ -100,10 +100,10 @@ func TestListWorksAdminPagesKeepTiesUniqueAndRequestedDirection(t *testing.T) {
 			var ids []string
 			for offset := range test.want {
 				selected, statement = nil, ""
-				_, err := service.ListWorksAdmin(ctx, connect.NewRequest(&managev1.ListWorksAdminRequest{
-					Pagination: &commonv1.PaginationRequest{Limit: 1, Offset: int32(offset)},
-					Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: test.order}},
-				}))
+				_, err := service.ListWorksAdmin(ctx, ListWorksAdminQuery{
+					Page:  Page{Limit: 1, Offset: int32(offset)},
+					Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: test.order}},
+				})
 				if err == nil || !strings.Contains(err.Error(), stop.Error()) || len(selected) != 1 {
 					t.Fatalf("list did not reach data query: rows=%+v err=%v", selected, err)
 				}
@@ -136,7 +136,7 @@ func TestGetWorkClientsDistinguishesEmptyResultFromQueryFailure(t *testing.T) {
 	}
 	const workID = "22222222-2222-4222-8222-222222222222"
 	const clientID = "11111111-1111-4111-8111-111111111111"
-	service := &WorkService{db: db}
+	service := newTestService(t, Deps{DB: db})
 	clients, err := service.getWorkClients(t.Context(), workID)
 	if err != nil || len(clients) != 0 {
 		t.Fatalf("empty client read = %+v, err=%v", clients, err)
@@ -163,7 +163,7 @@ func TestGetWorkClientsDistinguishesEmptyResultFromQueryFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	clients, err = service.getWorkClients(t.Context(), workID)
-	if failures != 1 || clients != nil || connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, queryFailure) {
+	if failures != 1 || clients != nil || errs.Wrap(err).Code() != connect.CodeInternal || !errors.Is(err, queryFailure) {
 		t.Fatalf("failed client read = %+v, err=%v, injected failures=%d", clients, err, failures)
 	}
 }
@@ -194,15 +194,15 @@ func TestWorkLifecyclePermissionSelectsExactSinglePermission(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		status string
+		status model.WorkStatus
 		normal workAction
 		use    workAuthorizationUse
 		want   workAction
 	}{
-		{name: "draft publish", status: managev1.WorkStatus_WORK_STATUS_DRAFT.String(), normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.Publish},
-		{name: "archived editor read", status: managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), normal: policyv1.Work.Edit, use: workAuthorizationRead, want: policyv1.Work.ViewArchived},
-		{name: "archived publish mutation", status: managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
-		{name: "archived manage mutation", status: managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), normal: policyv1.Work.Manage, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
+		{name: "draft publish", status: model.WorkStatusDraft, normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.Publish},
+		{name: "archived editor read", status: model.WorkStatusArchived, normal: policyv1.Work.Edit, use: workAuthorizationRead, want: policyv1.Work.ViewArchived},
+		{name: "archived publish mutation", status: model.WorkStatusArchived, normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
+		{name: "archived manage mutation", status: model.WorkStatusArchived, normal: policyv1.Work.Manage, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
 	}
 	for _, test := range tests {
 		test := test

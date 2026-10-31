@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
@@ -208,7 +210,7 @@ func TestArchivedPostMutationDenialDoesNotFallbackToOrdinaryPermission(t *testin
 		policyv1.Post.ManageShareLinks,
 		false,
 	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 	want, err := policyv1.Post.EditArchived("33333333-3333-4333-8333-333333333333")
 	require.NoError(t, err)
 	require.Equal(t, []string{want.Action().Permission()}, checker.permissions)

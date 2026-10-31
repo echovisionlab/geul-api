@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	"github.com/stretchr/testify/require"
 
 	"connectrpc.com/connect"
@@ -192,15 +193,10 @@ func (discovery *recordingPostDocumentDiscovery) ListAIDocuments(
 	return discovery.result, discovery.err
 }
 
-type recordingWorkDocumentDiscovery struct {
-	managev1connect.UnimplementedWorkServiceHandler
-}
+type recordingWorkDocumentDiscovery struct{}
 
-func (*recordingWorkDocumentDiscovery) ListWorksAdmin(
-	context.Context,
-	*connect.Request[managev1.ListWorksAdminRequest],
-) (*connect.Response[managev1.ListWorksAdminResponse], error) {
-	return connect.NewResponse(&managev1.ListWorksAdminResponse{}), nil
+func (*recordingWorkDocumentDiscovery) ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (*managev1.ListWorksAdminResponse, error) {
+	return &managev1.ListWorksAdminResponse{}, nil
 }
 
 type recordingPageDocumentDiscovery struct {

@@ -4,29 +4,26 @@ import (
 	"reflect"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestValidateWorkUpdateObservedFieldsRequiresBaselinesForMetadataAndClients(t *testing.T) {
-	metadata, err := structpb.NewStruct(map[string]any{"field": "value"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	clients := []string{"client-a"}
 	cases := []struct {
 		name    string
-		request *managev1.UpdateWorkRequest
+		command UpdateWorkCommand
 	}{
-		{name: "metadata", request: &managev1.UpdateWorkRequest{Metadata: metadata}},
-		{name: "clients", request: &managev1.UpdateWorkRequest{Clients: &managev1.WorkClientsUpdate{ClientIds: []string{"client-a"}}}},
+		{name: "metadata", command: UpdateWorkCommand{Metadata: structured.Fields{"field": "value"}}},
+		{name: "clients", command: UpdateWorkCommand{Clients: &clients}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateWorkUpdateObservedFields(test.request)
-			if connect.CodeOf(err) != connect.CodeInvalidArgument {
-				t.Fatalf("error code = %s, want InvalidArgument (err=%v)", connect.CodeOf(err), err)
+			err := validateWorkUpdateObservedFields(test.command)
+			if errs.CodeOf(err) != connect.CodeInvalidArgument {
+				t.Fatalf("error code = %s, want InvalidArgument (err=%v)", errs.CodeOf(err), err)
 			}
 		})
 	}
@@ -34,7 +31,7 @@ func TestValidateWorkUpdateObservedFieldsRequiresBaselinesForMetadataAndClients(
 
 func TestValidateWorkUpdateObservedFieldsAllowsUnrelatedWritesWithoutBaseline(t *testing.T) {
 	featured := true
-	if err := validateWorkUpdateObservedFields(&managev1.UpdateWorkRequest{Featured: &featured}); err != nil {
+	if err := validateWorkUpdateObservedFields(UpdateWorkCommand{Featured: &featured}); err != nil {
 		t.Fatalf("scalar-only update unexpectedly requires a baseline: %v", err)
 	}
 }

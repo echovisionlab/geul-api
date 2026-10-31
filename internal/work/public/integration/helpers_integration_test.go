@@ -10,24 +10,26 @@ import (
 	"testing"
 	"time"
 
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -89,8 +91,14 @@ func seedPublicAdminMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, ni
 	return memberID
 }
 
+// publicLegalAdminCtx is an administrator's request, so mutations can name
+// their audit records.
 func publicLegalAdminCtx(memberID, identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.97")
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
 		MemberID: auth.MemberID(memberID), IdentityID: auth.IdentityID(identityID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -105,56 +113,19 @@ func newPublicWorkRuntimeForTest(db *gorm.DB, cdnDomain string) *workadapter.Run
 	)
 }
 
-func newPublicWorkManageService(t *testing.T, db *gorm.DB, adminID string) *workdomain.WorkService {
+func newPublicWorkManageService(t *testing.T, db *gorm.DB, _ string) *workdomain.ConnectHandler {
 	t.Helper()
-	return workdomain.NewWorkService(
-		db,
-		newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
-		publicIntegrationSpiceDBFor(t, db),
-		&publicReferenceIdentityManager{identity: &auth.Identity{
-			ID: adminID, State: auth.KratosStateActive,
-			Traits: map[string]interface{}{"name": "Public Work Admin", "preferred_locale": "en"},
-		}},
-		publicReferenceAsyncPublisher{},
-		workdomain.WithWorkContentBlockStore(newPublicWorkContentBlockStore(t)),
-		workdomain.WithWorkContentBlockMediaHydrator(extractedWorkPublicMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "https://cdn.example.com")),
-	)
-}
-
-type publicReferenceIdentityManager struct{ identity *auth.Identity }
-
-func (m *publicReferenceIdentityManager) GetIdentity(context.Context, string) (*auth.Identity, error) {
-	return m.identity, nil
-}
-func (m *publicReferenceIdentityManager) GetIdentityWithIncludeCredential(context.Context, string, string) (*auth.Identity, error) {
-	return m.identity, nil
-}
-func (m *publicReferenceIdentityManager) ListIdentities(context.Context, int, int) ([]*auth.Identity, int64, error) {
-	return []*auth.Identity{m.identity}, 1, nil
-}
-func (m *publicReferenceIdentityManager) UpdateIdentityTraits(_ context.Context, _ string, traits map[string]interface{}) error {
-	m.identity.Traits = traits
-	return nil
-}
-func (*publicReferenceIdentityManager) UpdateIdentityVerifiableAddresses(context.Context, string, []auth.VerifiableAddress) error {
-	return nil
-}
-func (*publicReferenceIdentityManager) UpdateIdentityMetadataAdmin(context.Context, string, map[string]interface{}) error {
-	return nil
-}
-func (*publicReferenceIdentityManager) SetIdentityState(context.Context, string, string) error {
-	return nil
-}
-func (*publicReferenceIdentityManager) DeleteIdentitySessions(context.Context, string) error {
-	return nil
-}
-func (*publicReferenceIdentityManager) DeleteIdentity(context.Context, string) error { return nil }
-func (m *publicReferenceIdentityManager) GetIdentityEmail(context.Context, string) (string, error) {
-	if m.identity == nil {
-		return "", nil
-	}
-	return m.identity.CurrentEmail(), nil
+	spiceDB := publicIntegrationSpiceDBFor(t, db)
+	service, err := workdomain.NewService(workdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Runtime: newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
+		Signals: publicReferenceAsyncPublisher{}, ContentBlocks: newPublicWorkContentBlockStore(t),
+		Media:       extractedWorkPublicMediaHydrator{},
+		Members:     workadapter.NewMemberSummaries(db, "https://cdn.example.com"),
+		Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}, Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	return workdomain.NewConnectHandler(service)
 }
 
 type publicReferenceAsyncPublisher struct{}

@@ -9,6 +9,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	authzedv1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"google.golang.org/grpc"
@@ -33,7 +38,6 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 	store := testutil.NewPostContentBlockStore(t)
 	creator := postintegration.NewPostDomainService(
 		t, db, "", realSpiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")),
 		store,
 	)
 	slug := "ai-document-exact-mutation-" + testutil.PostIntegrationUUID()
@@ -49,12 +53,11 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 		spiceDB, recorder := newCountingPostPermissionServer(t, true)
 		service := postintegration.NewPostDomainService(
 			t, db, "", spiceDB,
-			testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")),
 			store,
 		)
 		compilerFailure := errors.New("stop after authorized compiler")
 		compilerCalls := 0
-		_, err = service.ExecuteAIDocumentMutation(
+		_, err = service.Service.ExecuteAIDocumentMutation(
 			ctx,
 			created.Msg.Id,
 			"en",
@@ -84,11 +87,10 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 	denyingSpiceDB, recorder := newCountingPostPermissionServer(t, false)
 	deniedService := postintegration.NewPostDomainService(
 		t, db, "", denyingSpiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")),
 		store,
 	)
 	compilerCalls := 0
-	_, err = deniedService.ExecuteAIDocumentMutation(
+	_, err = deniedService.Service.ExecuteAIDocumentMutation(
 		ctx,
 		created.Msg.Id,
 		"en",
@@ -98,7 +100,7 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 			return postdomain.AIDocumentMutation{}, nil
 		},
 	)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Zero(t, compilerCalls, "authorization denial must precede document projection and compilation")
 	requests := recorder.snapshot()
 	require.Len(t, requests, 1)
@@ -161,4 +163,63 @@ func newCountingPostPermissionServer(
 		}
 	})
 	return client, recorder
+}
+
+// An AI edit is a Member's locale content change like a collaboration save,
+// so it leaves the same audit record; a validation dry run leaves none.
+func TestPostAIDocumentEditIsAuditedIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewPostIntegrationDB(t)
+	identityID := testutil.PostIntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Post AI audit")
+	spiceDB := testutil.PostIntegrationSpiceDB(t)
+	testutil.GrantPostIntegrationRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	ctx := testutil.PostIntegrationContext(identityID)
+	posts := postintegration.NewPostDomainService(t, db, "", spiceDB, testutil.NewPostContentBlockStore(t))
+	created, err := posts.CreatePost(ctx, connect.NewRequest(&managev1.CreatePostRequest{
+		Title: "Post AI audit", Document: testutil.EmptyPostDocument("en"),
+	}))
+	require.NoError(t, err)
+	contributor := testutil.PostIntegrationMemberID(identityID)
+	retitle := func(mode postdomain.AIDocumentExecutionMode, title string) {
+		t.Helper()
+		_, err := posts.Service.ExecuteAIDocumentMutation(ctx, created.Msg.Id, "en", mode,
+			func(state postdomain.AIDocumentState) (postdomain.AIDocumentMutation, error) {
+				revision, err := uuid.Parse(state.DocumentRevision)
+				if err != nil {
+					return postdomain.AIDocumentMutation{}, err
+				}
+				documentID, err := uuid.Parse(state.ContentDocumentID)
+				if err != nil {
+					return postdomain.AIDocumentMutation{}, err
+				}
+				contributor := uuid.MustParse(state.ViewerMemberID)
+				return postdomain.AIDocumentMutation{
+					PostID: state.PostID, Locale: state.RequestedLocale,
+					ObservedSourceLocale: state.SourceLocale, ObservedLocaleExists: state.LocaleExists,
+					ExpectedRevision: revision, ContributorMemberID: contributor,
+					Batch: contentblock.Batch{
+						DocumentID: documentID, ExpectedRevision: revision, ContributorMemberIDs: []uuid.UUID{contributor},
+					},
+					Metadata: postdomain.AIDocumentMetadataPatch{SetTitle: true, Title: &title},
+				}, nil
+			})
+		require.NoError(t, err)
+	}
+	records := func() int64 {
+		t.Helper()
+		var count int64
+		require.NoError(t, db.Table("public.domain_audit").
+			Where("target_type = 'post' AND target_id = ? AND action = ?", created.Msg.Id, "post.updated").
+			Where("actor_member_id = ?::uuid AND attributes->'changed_fields' ? 'locale_content'", contributor).
+			Count(&count).Error)
+		return count
+	}
+
+	retitle(postdomain.AIDocumentExecutionValidate, "Validated AI title")
+	require.Zero(t, records())
+	retitle(postdomain.AIDocumentExecutionApply, "Audited AI title")
+	require.EqualValues(t, 1, records())
+	retitle(postdomain.AIDocumentExecutionApply, "Audited AI title")
+	require.EqualValues(t, 1, records(), "an edit that changes nothing leaves no record")
 }

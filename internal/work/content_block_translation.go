@@ -8,7 +8,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -150,7 +149,7 @@ func ApplyTypedTranslationCandidateWithDB(
 	if !targetPreviouslyExists {
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
-	if err := appendWorkMemberTargetLocaleAudit(
+	if err := appendWorkTranslationAudit(
 		ctx, tx, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
 		job.EntityID, job.TargetLocale, operation,
 	); err != nil {
@@ -207,13 +206,13 @@ func applyWorkProviderSourceCandidate(
 		return nil
 	}
 	if !result.TranslationSourceChanged {
-		return errs.InternalMsg("provider source Work translation did not advance source state")
+		return errors.New("provider source Work translation did not advance source state")
 	}
 	if err := tx.WithContext(ctx).Model(&model.Work{}).
 		Where("id = ?", job.EntityID).UpdateColumn("updated_at", entry.Now).Error; err != nil {
 		return err
 	}
-	return appendWorkMemberTargetLocaleAudit(
+	return appendWorkTranslationAudit(
 		ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
 		sharedtelemetry.AuditItemOperationUpdated,
 	)

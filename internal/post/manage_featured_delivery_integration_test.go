@@ -13,7 +13,6 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -88,7 +87,7 @@ func TestManagePostFeaturedImageUsesExactFinalOwnerBoundaryIntegration(t *testin
 
 type managePostFeaturedDeliveryFixture struct {
 	db        *gorm.DB
-	posts     *postdomain.PostService
+	posts     postintegration.Posts
 	files     *postFeaturedManageFiles
 	adminCtx  context.Context
 	editorCtx context.Context
@@ -130,10 +129,6 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 		db,
 		"https://cdn.example.test",
 		spiceDB,
-		testutil.NewPostIdentityManager(
-			testutil.PostIntegrationIdentity(adminID, "en"),
-			testutil.PostIntegrationIdentity(editorID, "en"),
-		),
 		store,
 		postFiles,
 	)

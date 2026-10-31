@@ -2,18 +2,17 @@ package post
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -22,131 +21,34 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// PostService implements the PostService Connect handler
-func (s *PostService) ListMyPosts(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMyPostsRequest],
-) (*connect.Response[managev1.ListMyPostsResponse], error) {
-	var posts []model.Post
-	var total int64
-
-	query, err := s.authorizedPostListQuery(ctx)
+// ListMyPosts returns the Posts the caller may edit.
+func (s *Service) ListMyPosts(ctx context.Context, query ListPostsQuery) (*managev1.ListMyPostsResponse, error) {
+	stored, err := s.authorizedPostListQuery(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	// 1. Handle join filters directly (category_id, tag_id require subqueries)
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range req.Msg.Filters {
-		if f == nil {
-			continue
-		}
-		switch f.GetField() {
-		case "category_id":
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				query = query.Where("id IN (SELECT post_id FROM post_category WHERE category_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				query = query.Where("id IN (SELECT post_id FROM post_category WHERE category_id IN ?)", f.GetValues())
-			}
-		case "tag_id":
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ {
-				query = query.Where("id IN (SELECT post_id FROM post_tag WHERE tag_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN {
-				query = query.Where("id IN (SELECT post_id FROM post_tag WHERE tag_id IN ?)", f.GetValues())
-			}
-		default:
-			remainingFilters = append(remainingFilters, f)
-		}
-	}
-
-	// 2. Apply remaining filters using FilterConfig (status, series_id, published_at)
-	query, err = PostAdminFilterConfig.ApplyFilters(query, remainingFilters)
+	page, err := s.listPostPage(ctx, stored, query, false, "Categories", "Tags", "Series")
 	if err != nil {
 		return nil, err
 	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
-
-	// Apply sorting
-	query, err = postSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
+	if err := s.hydratePostContentProjections(ctx, page.posts); err != nil {
 		return nil, err
 	}
-
-	// Load posts with relations
-	if err := query.
-		Preload("Categories").
-		Preload("Tags").
-		Preload("Series").
-		Limit(int(limit)).
-		Offset(int(offset)).
-		Find(&posts).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.overlayPostSourceLocaleDocuments(ctx, posts); err != nil {
+	if err := s.loadPostListProjections(ctx, &page); err != nil {
 		return nil, err
 	}
-	if err := s.hydratePostContentProjections(ctx, posts); err != nil {
-		return nil, err
-	}
-	readyOgAssets, err := s.loadReadyPostOgAssets(ctx, posts)
-	if err != nil {
-		return nil, err
-	}
-	authorMembers, err := s.loadPostAuthorMembers(ctx, collectManagePostIDs(posts))
-	if err != nil {
-		return nil, err
-	}
-
-	featuredDeliveries, err := s.loadPostPublicFeaturedImageDeliveries(ctx, posts)
-	if err != nil {
-		return nil, err
-	}
-	authorities, err := s.loadCurrentPostAuthorities(ctx, collectManagePostIDs(posts))
-	if err != nil {
-		return nil, err
-	}
-
-	protoPosts := make([]*managev1.Post, len(posts))
-	for i := range posts {
-		protoPosts[i], err = s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
-			readyOgAssets,
-			posts[i].SourceLocaleOgAssetID,
-			posts[i].OgAssetID,
-		), authorMembers[posts[i].ID], featuredDeliveries[posts[i].ID], authorities[posts[i].ID])
-		if err != nil {
+	protoPosts := make([]*managev1.Post, len(page.posts))
+	for i := range page.posts {
+		if protoPosts[i], err = s.projectListedPost(page, i); err != nil {
 			return nil, err
 		}
 	}
-
-	return connect.NewResponse(&managev1.ListMyPostsResponse{
-		Posts: protoPosts,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
+	return &managev1.ListMyPostsResponse{Posts: protoPosts, Pagination: page.pagination()}, nil
 }
 
 // Helper methods
 
-func (s *PostService) overlayPostSourceLocaleDocument(
+func (s *Service) overlayPostSourceLocaleDocument(
 	ctx context.Context,
 	post *model.Post,
 ) error {
@@ -158,7 +60,7 @@ func (s *PostService) overlayPostSourceLocaleDocument(
 	return nil
 }
 
-func (s *PostService) overlayPostSourceLocaleDocuments(
+func (s *Service) overlayPostSourceLocaleDocuments(
 	ctx context.Context,
 	posts []model.Post,
 ) error {
@@ -169,14 +71,14 @@ func (s *PostService) overlayPostSourceLocaleDocuments(
 	for i := range posts {
 		state := sourceStates[posts[i].ID]
 		if state == nil {
-			return errs.NotFound("post_translation", posts[i].ID)
+			return domainerr.ResourceNotFound("post_translation", posts[i].ID)
 		}
 		overlayPostSourceLocaleDocument(&posts[i], state)
 	}
 	return nil
 }
 
-func (s *PostService) loadReadyPostOgAssets(
+func (s *Service) loadReadyPostOgAssets(
 	ctx context.Context,
 	posts []model.Post,
 ) (map[string]*commonv1.AssetRef, error) {
@@ -191,10 +93,10 @@ func (s *PostService) loadReadyPostOgAssets(
 	return loadReadyManageOgAssetRefs(ctx, s.db, s.cdnDomain, candidates...)
 }
 
-func (s *PostService) postResponseWithReadyOg(
+func (s *Service) postResponseWithReadyOg(
 	ctx context.Context,
 	post *model.Post,
-) (*connect.Response[managev1.Post], error) {
+) (*managev1.Post, error) {
 	if err := s.hydratePostContentProjection(ctx, post); err != nil {
 		return nil, err
 	}
@@ -230,27 +132,18 @@ func (s *PostService) postResponseWithReadyOg(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(protoPost), nil
+	return protoPost, nil
 }
 
-func (s *PostService) hydratePostContentProjection(ctx context.Context, post *model.Post) error {
-	if post == nil {
-		return errs.InternalMsg("Post is required")
-	}
-	if s.contentBlocks == nil {
-		return errs.InternalMsg("Post content Block store is not configured")
-	}
+func (s *Service) hydratePostContentProjection(ctx context.Context, post *model.Post) error {
 	if strings.TrimSpace(post.SourceLocale) == "" {
-		return errs.FailedPrecondition("Post source locale is not initialized")
+		return domainerr.Precondition("Post source locale is not initialized")
 	}
 	documentID, err := loadPostContentDocumentID(ctx, s.db, post.ID)
 	if err != nil {
 		return err
 	}
-	if s.mediaHydrator == nil {
-		return errs.InternalMsg("Post Block media hydrator is not configured")
-	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		root, err := lockPostContentDocumentRoot(ctx, tx, post.ID, documentID, true)
 		if err != nil {
 			return err
@@ -259,7 +152,7 @@ func (s *PostService) hydratePostContentProjection(ctx context.Context, post *mo
 			return err
 		}
 		if root.SourceLocale != post.SourceLocale {
-			return errs.FailedPrecondition("Post source locale changed; reload before reading")
+			return domainerr.Precondition("Post source locale changed; reload before reading")
 		}
 		snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, post.SourceLocale)
 		if err != nil {
@@ -277,10 +170,10 @@ func (s *PostService) hydratePostContentProjection(ctx context.Context, post *mo
 		post.ContentRevision = snapshot.Document.Revision.String()
 		post.BlockMedia = mediaItems
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 }
 
-func (s *PostService) hydratePostContentProjections(ctx context.Context, posts []model.Post) error {
+func (s *Service) hydratePostContentProjections(ctx context.Context, posts []model.Post) error {
 	for i := range posts {
 		if err := s.hydratePostContentProjection(ctx, &posts[i]); err != nil {
 			return err
@@ -299,7 +192,7 @@ func LoadLocalizedPostContentProjectionForPublic(
 	locale string,
 ) (*contentv1.LocalizedRichTextDocument, string, error) {
 	if db == nil || store == nil {
-		return nil, "", errs.InternalMsg("Post content projection dependencies are required")
+		return nil, "", errors.New("Post content projection dependencies are required")
 	}
 	var sourceState struct {
 		SourceLocale string `gorm:"column:source_locale"`
@@ -308,12 +201,12 @@ func LoadLocalizedPostContentProjectionForPublic(
 		Table("post").Select("source_locale").Where("id = ?::uuid", postID).
 		Take(&sourceState).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, "", errs.NotFound("post", postID)
+			return nil, "", domainerr.ResourceNotFound("post", postID)
 		}
-		return nil, "", errs.Internal(err)
+		return nil, "", err
 	}
 	if strings.TrimSpace(sourceState.SourceLocale) == "" {
-		return nil, "", errs.FailedPrecondition("Post source locale is not initialized")
+		return nil, "", domainerr.Precondition("Post source locale is not initialized")
 	}
 	if strings.TrimSpace(locale) == "" {
 		locale = sourceState.SourceLocale
@@ -333,7 +226,7 @@ func LoadLocalizedPostContentProjectionForPublic(
 	return document, snapshot.Document.Revision.String(), nil
 }
 
-func (s *PostService) toProtoPostWithProjection(
+func (s *Service) toProtoPostWithProjection(
 	p *model.Post,
 	ogAsset *commonv1.AssetRef,
 	authors []*commonv1.MemberSummary,
@@ -350,7 +243,7 @@ func (s *PostService) toProtoPostWithProjection(
 	return post, nil
 }
 
-func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
+func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
 	result := make(map[string][]*commonv1.MemberSummary, len(postIDs))
 	if len(postIDs) == 0 {
 		return result, nil
@@ -366,7 +259,7 @@ func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []strin
 		Where("post_id IN ?", postIDs).
 		Order("post_id ASC, created_at ASC, member_id ASC").
 		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load post authors: %w", err))
+		return nil, fmt.Errorf("load post authors: %w", err)
 	}
 	memberIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -374,7 +267,7 @@ func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []strin
 	}
 	summaries, err := s.members.LoadMemberSummaries(ctx, memberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		if summary := summaries[row.MemberID]; summary != nil {
@@ -384,7 +277,7 @@ func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []strin
 	return result, nil
 }
 
-func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []string) (map[string]PostAuthority, error) {
+func (s *Service) loadCurrentPostAuthorities(ctx context.Context, postIDs []string) (map[string]PostAuthority, error) {
 	result := make(map[string]PostAuthority, len(postIDs))
 	principal := auth.GetUser(ctx)
 	if principal == nil || len(postIDs) == 0 {
@@ -392,11 +285,11 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	wanted := make(map[string]struct{}, len(postIDs))
 	for _, id := range postIDs {
@@ -421,7 +314,7 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 	for _, item := range lookups {
 		ids, err := s.spiceDB.LookupResources(ctx, item.lookup, actor)
 		if err != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		for _, id := range ids {
 			if _, ok := wanted[id]; !ok {
@@ -430,7 +323,7 @@ func (s *PostService) loadCurrentPostAuthorities(ctx context.Context, postIDs []
 			authority := result[id]
 			can, err := item.action(id)
 			if err != nil {
-				return nil, errs.Internal(err)
+				return nil, err
 			}
 			authority.add(can)
 			result[id] = authority
@@ -449,7 +342,7 @@ func lookupPostResources(
 	for _, lookup := range lookups {
 		ids, err := spiceDB.LookupResources(ctx, lookup, actor)
 		if err != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		for _, id := range ids {
 			seen[id] = struct{}{}
@@ -462,7 +355,7 @@ func lookupPostResources(
 	return result, nil
 }
 
-func (s *PostService) loadPostCommentCounts(ctx context.Context, postIDs []string) (map[string]int32, error) {
+func (s *Service) loadPostCommentCounts(ctx context.Context, postIDs []string) (map[string]int32, error) {
 	result := make(map[string]int32, len(postIDs))
 	if len(postIDs) == 0 {
 		return result, nil
@@ -477,7 +370,7 @@ func (s *PostService) loadPostCommentCounts(ctx context.Context, postIDs []strin
 		Where("post_id IN ?", postIDs).
 		Group("post_id").
 		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		result[row.PostID] = int32(row.Count)
@@ -499,10 +392,10 @@ var postSortConfig = queryutil.SortConfig{
 
 // toProtoPost converts a model.Post to protobuf Post (Domain Object -> DTO)
 // Note: Author is not populated here - use toProtoPostWithAuthor for that
-func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
+func (s *Service) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
 	documentLayout, err := p.DocumentLayout.Proto()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	post := &managev1.Post{
 		Id:                    p.ID,
@@ -512,7 +405,7 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*m
 		Revision:              p.ContentRevision,
 		ConfigurationRevision: p.ConfigurationRevision,
 		BlockMedia:            p.BlockMedia,
-		Status:                managev1.PostStatus(managev1.PostStatus_value[string(p.Status)]),
+		Status:                postStatusToProto(p.Status),
 		CommentsEnabled:       p.CommentsEnabled,
 		DocumentLayout:        documentLayout,
 		CreatedAt:             timestamppb.New(p.CreatedAt),
@@ -590,21 +483,25 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*m
 	return post, nil
 }
 
-func (s *PostService) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
+func (s *Service) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {
+	return normalizeMapPlaceIDWithDB(ctx, s.db, raw)
+}
+
+func normalizeMapPlaceIDWithDB(ctx context.Context, db *gorm.DB, raw string) (*string, error) {
 	mapPlaceID := strings.TrimSpace(raw)
 	if mapPlaceID == "" {
 		return nil, nil
 	}
 
 	var count int64
-	if err := s.db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Table("map_place").
 		Where("id = ?", mapPlaceID).
 		Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if count == 0 {
-		return nil, errs.InvalidArgument("map_place_id", "map place does not exist")
+		return nil, domainerr.InvalidField("map_place_id", "map place does not exist")
 	}
 
 	return &mapPlaceID, nil

@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -340,8 +339,8 @@ type postVersionRestoreFixture struct {
 	ctx       context.Context
 	systemCtx context.Context
 	memberID  string
-	manage    *postdomain.PostService
-	internal  *postdomain.InternalPostService
+	manage    *postdomain.ConnectHandler
+	internal  *postdomain.InternalConnectHandler
 }
 
 func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
@@ -358,25 +357,18 @@ func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
 	writer := apitelemetry.NewDurableWriter(db)
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
+	service := postintegration.NewService(t, postdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: publisher,
+		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		VersionRestore: postruntime.VersionRestore{}, ContentBlocks: contentBlocks, Audit: writer,
+	})
 	return &postVersionRestoreFixture{
 		db:        db,
 		ctx:       withPostAuditedRequestContext(t, testutil.PostIntegrationContext(adminID)),
 		systemCtx: postAuditedSystemRequestContext(t),
 		memberID:  testutil.PostIntegrationMemberID(adminID),
-		manage: postdomain.NewAuditedPostService(
-			db, "", postintegration.NewPostOGRefresher(db, ""), spiceDB,
-			testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
-			postAuditFiles{}, publisher, postruntime.ShareLinks{}, postruntime.ContentBlockMedia{},
-			postadapter.NewMemberSummaries(db, ""), postruntime.VersionRestore{}, writer,
-			postdomain.WithPostContentBlockStore(contentBlocks),
-			postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
-		),
-		internal: postdomain.NewInternalPostService(
-			db, spiceDB, publisher, "", postintegration.NewPostOGRefresher(db, ""), postruntime.ContentBlockMedia{},
-			postdomain.WithInternalPostDomainAuditWriter(writer),
-			postdomain.WithInternalPostContentBlockStore(contentBlocks),
-			postdomain.WithInternalPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
-		),
+		manage:    postdomain.NewConnectHandler(service),
+		internal:  postdomain.NewInternalConnectHandler(service),
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
@@ -47,7 +49,6 @@ func TestPostTranslationInterchangeUsesDerivedTargetRevisionAndStrictTimestampIn
 	store := testutil.NewPostContentBlockStore(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminIdentityID, "en")),
 		store,
 	)
 	internal := postintegration.NewInternalPostDomainService(t, db, "", spiceDB, store)
@@ -69,7 +70,8 @@ func TestPostTranslationInterchangeUsesDerivedTargetRevisionAndStrictTimestampIn
 	require.NoError(t, err)
 
 	capture := &postInterchangeIntegrationAuditCapture{}
-	interchange := postdomain.NewTranslationInterchange(capture)
+	interchange, err := postdomain.NewTranslationInterchange(capture)
+	require.NoError(t, err)
 	job := &model.TranslationJob{
 		EntityType: "post", EntityID: created.Msg.Id, SourceLocale: "en", TargetLocale: "ko",
 		RequestedByMemberID: memberID,
@@ -137,7 +139,7 @@ func TestPostTranslationInterchangeUsesDerivedTargetRevisionAndStrictTimestampIn
 		)
 		return applyErr
 	})
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	secondLoaded := loadPostTargetRoom(t, internal, adminSessionID, created.Msg.Id, "ko")
 	require.Equal(t, sourceWrite.Msg.DocumentRevision, secondLoaded.Msg.DocumentRevision)
 	require.Equal(t, secondResult.Revision, *secondLoaded.Msg.TargetRevision)

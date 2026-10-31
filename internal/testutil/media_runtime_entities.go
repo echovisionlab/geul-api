@@ -117,7 +117,7 @@ func CreateManagedEditorEntity(
 			UntilYear:         &untilYear,
 			UntilMonth:        &untilMonth,
 			IsPresent:         false,
-			Status:            managev1.WorkStatus_WORK_STATUS_DRAFT.String(),
+			Status:            model.WorkStatusDraft,
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		}).Error)

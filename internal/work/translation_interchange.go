@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -119,9 +119,9 @@ func ApplyTranslationInterchange(
 	); err != nil {
 		var conflict *translation.TargetRevisionConflict
 		if errors.As(err, &conflict) {
-			return TranslationInterchangeResult{}, errs.FailedPrecondition(err.Error())
+			return TranslationInterchangeResult{}, domainerr.Precondition(err.Error())
 		}
-		return TranslationInterchangeResult{}, errs.Internal(err)
+		return TranslationInterchangeResult{}, err
 	}
 
 	desired := make(map[string]translation.UnitResult, len(state.targets)+len(mutation.Targets))
@@ -143,7 +143,7 @@ func ApplyTranslationInterchange(
 		mutation.Plan, mutation.Source.ContentBlockDocument, targetDocument, mutation.Targets,
 	)
 	if err != nil {
-		return TranslationInterchangeResult{}, errs.InvalidArgument("file_id", err.Error())
+		return TranslationInterchangeResult{}, domainerr.InvalidField("file_id", err.Error())
 	}
 	batch := contentblock.Batch{
 		DocumentID: state.snapshot.Document.ID, ExpectedRevision: state.snapshot.Document.Revision,
@@ -191,10 +191,10 @@ func ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, normalizeWorkContentBlockError(err)
 	}
 	if result.TranslationSourceChanged {
-		return TranslationInterchangeResult{}, errs.InternalMsg("target Work interchange changed the source-owned Block view")
+		return TranslationInterchangeResult{}, errors.New("target Work interchange changed the source-owned Block view")
 	}
 	if targetRevision == nil {
-		return TranslationInterchangeResult{}, errs.InternalMsg("Work interchange apply did not create its target locale")
+		return TranslationInterchangeResult{}, errors.New("Work interchange apply did not create its target locale")
 	}
 	affected := changedWorkInterchangeHandles(state.targets, mutation.Targets, mutation.UnitHandles)
 	if !result.Changed {
@@ -209,45 +209,45 @@ func ApplyTranslationInterchange(
 func validateWorkInterchangeMutation(mutation TranslationInterchangeMutation) error {
 	if mutation.WorkID == "" || mutation.Source == nil || mutation.Plan == nil || mutation.Targets == nil ||
 		mutation.ProjectTargets == nil || mutation.BuildPatch == nil {
-		return errs.InternalMsg("Work translation interchange mutation is incomplete")
+		return errors.New("Work translation interchange mutation is incomplete")
 	}
 	if mutation.Plan.EntityType != "work" || mutation.Plan.EntityID != mutation.WorkID ||
 		mutation.Plan.SourceLocale != mutation.SourceLocale ||
 		mutation.Plan.TargetLocale != mutation.TargetLocale ||
 		mutation.Source.ContentBlockDocument == nil ||
 		mutation.Source.ContentBlockDocument.GetLocale() != mutation.SourceLocale {
-		return errs.InvalidArgument("file_id", "Work XLIFF identity does not match the current document")
+		return domainerr.InvalidField("file_id", "Work XLIFF identity does not match the current document")
 	}
 	if mutation.SourceLocale == mutation.TargetLocale {
-		return errs.InvalidArgument("target_locale", "Work source translation cannot be imported as a target")
+		return domainerr.InvalidField("target_locale", "Work source translation cannot be imported as a target")
 	}
 	if mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
 		mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
-		return errs.InvalidArgument("mode", "PATCH or REPLACE is required")
+		return domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	known := make(map[string]struct{}, len(mutation.Plan.Units))
 	for _, unit := range mutation.Plan.Units {
 		known[unit.UnitID] = struct{}{}
 	}
 	if len(mutation.Targets) != len(mutation.UnitHandles) {
-		return errs.InvalidArgument("file_id", "Work XLIFF target set does not match its stable unit manifest")
+		return domainerr.InvalidField("file_id", "Work XLIFF target set does not match its stable unit manifest")
 	}
 	seen := make(map[string]struct{}, len(mutation.UnitHandles))
 	for _, handle := range mutation.UnitHandles {
 		if _, duplicate := seen[handle]; duplicate {
-			return errs.InvalidArgument("file_id", "Work XLIFF stable units must be unique")
+			return domainerr.InvalidField("file_id", "Work XLIFF stable units must be unique")
 		}
 		seen[handle] = struct{}{}
 		if _, ok := known[handle]; !ok {
-			return errs.InvalidArgument("file_id", "Work XLIFF contains an unknown stable unit")
+			return domainerr.InvalidField("file_id", "Work XLIFF contains an unknown stable unit")
 		}
 		if target, ok := mutation.Targets[handle]; !ok || target.UnitID != handle {
-			return errs.InvalidArgument("file_id", "Work XLIFF target identity does not match its stable unit")
+			return domainerr.InvalidField("file_id", "Work XLIFF target identity does not match its stable unit")
 		}
 	}
 	for handle := range mutation.Targets {
 		if _, ok := seen[handle]; !ok {
-			return errs.InvalidArgument("file_id", "Work XLIFF target set does not match its stable unit manifest")
+			return domainerr.InvalidField("file_id", "Work XLIFF target set does not match its stable unit manifest")
 		}
 	}
 	return nil
@@ -265,7 +265,7 @@ func loadWorkInterchangeState(
 ) (workInterchangeState, error) {
 	if tx == nil || store == nil || plan == nil || plan.EntityType != "work" ||
 		plan.EntityID != workID || plan.TargetLocale != locale || project == nil {
-		return workInterchangeState{}, errs.InternalMsg("Work translation interchange load identity is invalid")
+		return workInterchangeState{}, errors.New("Work translation interchange load identity is invalid")
 	}
 	root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, lock)
 	if err != nil {
@@ -277,7 +277,7 @@ func loadWorkInterchangeState(
 		return workInterchangeState{}, err
 	}
 	if domain.SourceLocale != plan.SourceLocale || locale == domain.SourceLocale {
-		return workInterchangeState{}, errs.InvalidArgument("target_locale", "Work XLIFF locale role no longer matches the owning document")
+		return workInterchangeState{}, domainerr.InvalidField("target_locale", "Work XLIFF locale role no longer matches the owning document")
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
 	if err != nil {
@@ -403,13 +403,13 @@ func workInterchangeTargetRevision(
 	result := tx.WithContext(ctx).Table("work_translation").Select("updated_at").
 		Where("entity_id = ? AND locale = ?", workID, locale).Take(&row)
 	if result.Error != nil {
-		return "", errs.Internal(result.Error)
+		return "", result.Error
 	}
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &row.UpdatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }

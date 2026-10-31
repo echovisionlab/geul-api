@@ -10,8 +10,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -231,15 +229,7 @@ func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
 	blockID := testutil.IntegrationUUID()
 	workBlocks, blockStoreErr := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(workSpiceDB))
 	require.NoError(t, blockStoreErr)
-	internalWork := workdomain.NewInternalWorkService(
-		db,
-		noopAsyncPublisher{},
-		newWorkRuntimeForTest(db, ""),
-		workSpiceDB,
-		workdomain.WithInternalWorkDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		workdomain.WithInternalWorkContentBlockStore(workBlocks),
-		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, workSpiceDB)),
-	)
+	internalWork := workdomain.NewInternalConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: workSpiceDB, ContentBlocks: workBlocks}))
 	applied, err := internalWork.ApplyWorkBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyWorkBlockBatchRequest{
 		WorkId: created.Msg.Id,
 		Locale: "en",

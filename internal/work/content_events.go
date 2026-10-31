@@ -29,10 +29,7 @@ var workContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
 	"slug":       {path: "settings.slug", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 }
 
-func buildManageWorkContentUpdatedEvent(request *managev1.UpdateWorkRequest) *managev1.ContentUpdatedEvent {
-	if request == nil {
-		return nil
-	}
+func buildManageWorkContentUpdatedEvent(request UpdateWorkCommand) *managev1.ContentUpdatedEvent {
 	fields := make([]string, 0, 11)
 	if request.Slug != nil {
 		fields = append(fields, "slug")
@@ -55,7 +52,7 @@ func buildManageWorkContentUpdatedEvent(request *managev1.UpdateWorkRequest) *ma
 	if request.Month != nil {
 		fields = append(fields, "month")
 	}
-	if request.MapPlaceId != nil {
+	if request.MapPlaceID != nil {
 		fields = append(fields, "mapPlaceId")
 	}
 	if request.UntilYear != nil {
@@ -69,7 +66,7 @@ func buildManageWorkContentUpdatedEvent(request *managev1.UpdateWorkRequest) *ma
 	}
 	return buildContentUpdatedEvent(
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-		request.Id,
+		request.ID,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 		buildContentUpdatedFields(fields, workContentUpdatedFieldSpecs),
 		false, "", nil,

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -83,7 +83,7 @@ func loadPostTargetLocaleStateForDocument(
 	documentLock string,
 ) (postTargetLocaleState, error) {
 	if tx == nil || store == nil || documentID == uuid.Nil {
-		return postTargetLocaleState{}, errs.InternalMsg("Post target locale dependencies are required")
+		return postTargetLocaleState{}, errors.New("Post target locale dependencies are required")
 	}
 	normalizedLocale, err := validatePostAIDocumentIdentity(postID, locale)
 	if err != nil {
@@ -94,7 +94,7 @@ func loadPostTargetLocaleStateForDocument(
 		return postTargetLocaleState{}, err
 	}
 	if normalizedLocale == domain.SourceLocale {
-		return postTargetLocaleState{}, errs.InvalidArgument("locale", "Post target locale must differ from the source locale")
+		return postTargetLocaleState{}, domainerr.InvalidField("locale", "Post target locale must differ from the source locale")
 	}
 
 	if documentLock != "" {
@@ -111,7 +111,7 @@ func loadPostTargetLocaleStateForDocument(
 		return postTargetLocaleState{}, normalizePostContentBlockError(err)
 	}
 	if snapshot.Document.Profile != postContentDocumentProfile {
-		return postTargetLocaleState{}, errs.FailedPrecondition("Post target locale requires the Post content profile")
+		return postTargetLocaleState{}, domainerr.Precondition("Post target locale requires the Post content profile")
 	}
 	sourceMetadata, err := loadPostLocaleMetadataRow(ctx, tx, postID, domain.SourceLocale)
 	if err != nil {
@@ -124,7 +124,7 @@ func loadPostTargetLocaleStateForDocument(
 		return postTargetLocaleState{}, err
 	}
 	if !exists && targetlocale.SnapshotHasLocale(snapshot, normalizedLocale) {
-		return postTargetLocaleState{}, errs.FailedPrecondition("Post target locale Blocks exist without owning metadata")
+		return postTargetLocaleState{}, domainerr.Precondition("Post target locale Blocks exist without owning metadata")
 	}
 	state := postTargetLocaleState{
 		Snapshot: snapshot, SourceLocale: domain.SourceLocale, SourceMetadata: sourceMetadata,
@@ -157,7 +157,7 @@ func loadOptionalPostLocaleMetadataRow(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return postLocaleMetadataRow{}, false, nil
 		}
-		return postLocaleMetadataRow{}, false, errs.Internal(err)
+		return postLocaleMetadataRow{}, false, err
 	}
 	return row, true, nil
 }
@@ -168,7 +168,7 @@ func derivePostTargetRevision(documentRevision string, metadata postLocaleMetada
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -211,7 +211,7 @@ func applyPostTargetLocaleMutation(
 ) (postTargetLocaleMutationResult, error) {
 	if input.ExpectedDocumentRevision == uuid.Nil || strings.TrimSpace(input.PostID) == "" ||
 		strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
-		return postTargetLocaleMutationResult{}, errs.InvalidArgument("target", "Post target identity, revision, and fence are required")
+		return postTargetLocaleMutationResult{}, domainerr.InvalidField("target", "Post target identity, revision, and fence are required")
 	}
 	documentID, err := loadPostContentDocumentID(ctx, tx, input.PostID)
 	if err != nil {
@@ -228,13 +228,13 @@ func applyPostTargetLocaleMutation(
 		return postTargetLocaleMutationResult{}, err
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return postTargetLocaleMutationResult{}, errs.FailedPrecondition("Post source locale changed; reload before saving")
+		return postTargetLocaleMutationResult{}, domainerr.Precondition("Post source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return postTargetLocaleMutationResult{}, contentblockStaleRevision(state.Snapshot.Document.Revision)
 	}
 	if input.Storage != nil && input.Batch != nil {
-		return postTargetLocaleMutationResult{}, errs.InvalidArgument("batch", "Post target accepts one mutation representation")
+		return postTargetLocaleMutationResult{}, domainerr.InvalidField("batch", "Post target accepts one mutation representation")
 	}
 	var batch contentblock.Batch
 	if input.Batch != nil {
@@ -281,7 +281,7 @@ func applyPostTargetLocaleMutation(
 		if err := tx.WithContext(ctx).Model(&model.Post{}).
 			Where("id = ?", input.PostID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return postTargetLocaleMutationResult{}, errs.Internal(err)
+			return postTargetLocaleMutationResult{}, err
 		}
 	}
 	result.TargetRevision, err = derivePostTargetRevision(result.DocumentRevision, write.final)
@@ -330,10 +330,10 @@ func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 			w.input.PostID, w.input.Locale, title, summary, w.now, w.now,
 		)
 		if insert.Error != nil {
-			return contentblock.MetadataEffect{}, errs.Internal(insert.Error)
+			return contentblock.MetadataEffect{}, insert.Error
 		}
 		if insert.RowsAffected != 1 {
-			return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale could not be created")
+			return contentblock.MetadataEffect{}, errors.New("Post target locale could not be created")
 		}
 		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
 	}
@@ -346,10 +346,10 @@ func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 		Where("entity_id = ?::uuid AND locale = ?", w.input.PostID, w.input.Locale).
 		Updates(map[string]any{"title": title, "summary": summary, "updated_at": updatedAt})
 	if update.Error != nil {
-		return contentblock.MetadataEffect{}, errs.Internal(update.Error)
+		return contentblock.MetadataEffect{}, update.Error
 	}
 	if update.RowsAffected != 1 {
-		return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale disappeared while saving")
+		return contentblock.MetadataEffect{}, errors.New("Post target locale disappeared while saving")
 	}
 	w.final = postLocaleMetadataRow{
 		Locale: w.input.Locale, Title: title, Summary: summary, UpdatedAt: updatedAt,
@@ -365,7 +365,7 @@ func deletePostTargetLocale(
 ) (contentblock.Result, error) {
 	if input.ExpectedDocumentRevision == uuid.Nil || strings.TrimSpace(input.PostID) == "" ||
 		strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
-		return contentblock.Result{}, errs.InvalidArgument("target", "Post target delete identity, revision, and fence are required")
+		return contentblock.Result{}, domainerr.InvalidField("target", "Post target delete identity, revision, and fence are required")
 	}
 	documentID, err := loadPostContentDocumentID(ctx, tx, input.PostID)
 	if err != nil {
@@ -382,7 +382,7 @@ func deletePostTargetLocale(
 		return contentblock.Result{}, err
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, errs.FailedPrecondition("Post source locale changed; reload before saving")
+		return contentblock.Result{}, domainerr.Precondition("Post source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return contentblock.Result{}, contentblockStaleRevision(state.Snapshot.Document.Revision)
@@ -413,10 +413,10 @@ func deletePostTargetLocale(
 				input.PostID, input.Locale,
 			)
 			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+				return contentblock.MetadataEffect{}, deleted.Error
 			}
 			if deleted.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale disappeared while deleting")
+				return contentblock.MetadataEffect{}, errors.New("Post target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
 		},
@@ -432,7 +432,7 @@ func deletePostTargetLocale(
 		if err := tx.WithContext(ctx).Model(&model.Post{}).
 			Where("id = ?", input.PostID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return contentblock.Result{}, errs.Internal(err)
+			return contentblock.Result{}, err
 		}
 	}
 	return result, nil
@@ -451,29 +451,29 @@ func validatePostTargetStorage(
 		return nil
 	}
 	if storage.ExpectedRevision != expectedDocumentRevision.String() {
-		return errs.InvalidArgument("batch.expected_revision", "must match the observed shared Post document revision")
+		return domainerr.InvalidField("batch.expected_revision", "must match the observed shared Post document revision")
 	}
 	if len(storage.BaseUpserts) != 0 || len(storage.Deletes) != 0 || len(storage.Moves) != 0 {
-		return errs.CollaborationMutationRejection(
+		return domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
 			"Post target locale cannot mutate the shared Block graph or File ownership",
 		)
 	}
 	if len(storage.LocaleGroups) > 1 {
-		return errs.CollaborationMutationRejection(
+		return domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 			"Post target locale contains multiple locale groups",
 		)
 	}
 	for _, group := range storage.LocaleGroups {
 		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Post target mutation must match the authorized locale",
 			)
 		}
 		if !allowLocaleValueDeletes && len(group.Deletes) != 0 {
-			return errs.CollaborationMutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
 				"Post target patch cannot unset locale Blocks; write explicit empty values instead",
 			)
@@ -488,7 +488,7 @@ func validatePostSourceStorage(
 ) error {
 	for _, group := range storage.LocaleGroups {
 		if group.Locale != sourceLocale {
-			return errs.CollaborationMutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Post source room mutation must match the current source locale",
 			)

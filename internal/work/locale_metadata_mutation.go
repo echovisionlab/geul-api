@@ -11,9 +11,8 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
 type workLocaleMetadataMutationPlan struct {
@@ -33,37 +32,27 @@ type workLocaleMetadataMutationResult struct {
 }
 
 func planWorkLocaleMetadataMutation(
-	request *intrav1.UpdateWorkLocaleMetadataRequest,
+	command UpdateWorkLocaleMetadataCommand,
 	sourceLocale string,
 ) (workLocaleMetadataMutationPlan, error) {
-	if request == nil {
-		return workLocaleMetadataMutationPlan{}, errs.InvalidArgument("request", "is required")
-	}
-	locale, err := normalizeWorkDocumentLocale(request.Locale)
+	locale, err := normalizeWorkDocumentLocale(command.Locale)
 	if err != nil {
 		return workLocaleMetadataMutationPlan{}, err
 	}
 	plan := workLocaleMetadataMutationPlan{Locale: locale}
-	if request.Title != nil {
+	if command.Title != nil {
 		plan.UpdateTitle = true
-		plan.Title = cloneOptionalString(request.Title)
+		plan.Title = cloneOptionalString(command.Title)
 		if locale == sourceLocale && strings.TrimSpace(*plan.Title) == "" {
-			return workLocaleMetadataMutationPlan{}, errs.InvalidArgument("source_title", "cannot be empty")
+			return workLocaleMetadataMutationPlan{}, domainerr.InvalidField("source_title", "cannot be empty")
 		}
 	}
-	switch summary := request.SummaryUpdate.(type) {
-	case nil:
-	case *intrav1.UpdateWorkLocaleMetadataRequest_Summary:
+	if command.SetSummary {
 		plan.UpdateSummary = true
-		plan.Summary = cloneOptionalString(&summary.Summary)
-	case *intrav1.UpdateWorkLocaleMetadataRequest_ClearSummary:
-		plan.UpdateSummary = true
-		plan.Summary = nil
-	default:
-		return workLocaleMetadataMutationPlan{}, errs.InvalidArgument("summary_update", "is invalid")
+		plan.Summary = cloneOptionalString(command.Summary)
 	}
 	if !plan.UpdateTitle && !plan.UpdateSummary {
-		return workLocaleMetadataMutationPlan{}, errs.InvalidArgument("metadata", "source_title or summary_update is required")
+		return workLocaleMetadataMutationPlan{}, domainerr.InvalidField("metadata", "source_title or summary_update is required")
 	}
 	return plan, nil
 }
@@ -84,7 +73,7 @@ func applyWorkLocaleMetadataMutation(
 		Select("source_locale").
 		Where("id = ?", workID).
 		Take(&root).Error; err != nil {
-		return workLocaleMetadataMutationResult{}, errs.Internal(err)
+		return workLocaleMetadataMutationResult{}, err
 	}
 	var row struct {
 		Title   sql.NullString `gorm:"column:title"`
@@ -97,10 +86,10 @@ func applyWorkLocaleMetadataMutation(
 		FOR UPDATE
 	`, workID, plan.Locale).Scan(&row)
 	if result.Error != nil {
-		return workLocaleMetadataMutationResult{}, errs.Internal(result.Error)
+		return workLocaleMetadataMutationResult{}, result.Error
 	}
 	if result.RowsAffected == 0 {
-		return workLocaleMetadataMutationResult{}, errs.NotFound("work_translation", workID+":"+plan.Locale)
+		return workLocaleMetadataMutationResult{}, domainerr.ResourceNotFound("work_translation", workID+":"+plan.Locale)
 	}
 
 	currentTitle := ""
@@ -139,10 +128,10 @@ func applyWorkLocaleMetadataMutation(
 		Where("entity_id = ? AND locale = ?", workID, plan.Locale).
 		Updates(updates)
 	if update.Error != nil {
-		return workLocaleMetadataMutationResult{}, errs.Internal(update.Error)
+		return workLocaleMetadataMutationResult{}, update.Error
 	}
 	if update.RowsAffected != 1 {
-		return workLocaleMetadataMutationResult{}, errs.FailedPrecondition(fmt.Sprintf("work locale %s changed; reload before saving", plan.Locale))
+		return workLocaleMetadataMutationResult{}, domainerr.Precondition(fmt.Sprintf("work locale %s changed; reload before saving", plan.Locale))
 	}
 	return workLocaleMetadataMutationResult{
 		Effect: contentblock.MetadataEffect{

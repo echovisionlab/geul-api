@@ -13,18 +13,13 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
-	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
-	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
-	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
@@ -37,9 +32,6 @@ type internalContentServiceRegistration struct {
 	internalTrust               internalRPCTrustBoundary
 	accountEmailChangeLifecycle *account.AccountEmailChangeLifecycle
 	collaborationRuntime        *collaborationadapter.Runtime
-	workRuntime                 *workadapter.Runtime
-	fileService                 *filemedia.FileService
-	postMedia                   postruntime.ContentBlockMedia
 	programEvents               *programevent.Service
 	emailAuthoringReferences    *emailauthoringadapter.CampaignDeliveryReferences
 	legalRuntime                *legaladapter.Runtime
@@ -51,7 +43,6 @@ type internalContentServiceRegistration struct {
 // internalContentServices exposes the internal services needed by later AI
 // document registration; other services are owned by their registered routes.
 type internalContentServices struct {
-	work           *work.InternalWorkService
 	emailTemplate  *emailauthoring.InternalEmailTemplateService
 	campaign       *campaign.InternalCampaignService
 	form           *formdomain.InternalFormService
@@ -74,14 +65,10 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalRPCTrust := r.internalTrust
 	accountEmailChangeLifecycle := r.accountEmailChangeLifecycle
 	collaborationRuntime := r.collaborationRuntime
-	workRuntime := r.workRuntime
-	fileService := r.fileService
-	postMedia := r.postMedia
 	emailAuthoringReferences := r.emailAuthoringReferences
 	legalRuntime := r.legalRuntime
 	legalDependencies := r.legalDependencies
 	formDependencies := r.formDependencies
-	ogDeps := deps.og
 	// Internal API services are not browser/session authenticated and must not
 	// be exposed via Oathkeeper. Every handler is protected below by the exact
 	// caller-scoped service credential; private-network placement is additional
@@ -102,38 +89,9 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	emailCourierPath, emailCourierHandler := intrav1connect.NewEmailCourierServiceHandler(emaildelivery.NewCourierConnectHandler(emailCourierService), internalHandlerOpts...)
 	mux.Handle(emailCourierPath, internalRPCTrust.identity(emailCourierHandler))
 	slog.Info("Registered internal service", "path", emailCourierPath)
-	internalPostService := post.NewInternalPostService(
-		db,
-		spicedbClient,
-		servicePublisher,
-		cfg.CDNURL,
-		ogDeps.refresher,
-		postMedia,
-		post.WithInternalPostDomainAuditWriter(telemetryWriter),
-		post.WithInternalPostContentBlockStore(contentBlockStore),
-		post.WithInternalPostContentBlockMediaHydrator(fileService),
-	)
-	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(internalPostService, internalHandlerOpts...)
-	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
-	slog.Info("Registered internal service", "path", internalPostPath)
-
 	internalProgramEventPath, internalProgramEventHandler := intrav1connect.NewInternalProgramEventServiceHandler(programevent.NewInternalConnectHandler(r.programEvents), internalHandlerOpts...)
 	mux.Handle(internalProgramEventPath, internalRPCTrust.collab(internalProgramEventHandler))
 	slog.Info("Registered internal service", "path", internalProgramEventPath)
-
-	internalWorkService := work.NewInternalWorkService(
-		db,
-		servicePublisher,
-		workRuntime,
-		spicedbClient,
-		work.WithInternalWorkDomainAuditWriter(telemetryWriter),
-		work.WithInternalWorkCheckpoints(collaborationRuntime.Checkpoints),
-		work.WithInternalWorkContentBlockStore(contentBlockStore),
-		work.WithInternalWorkContentBlockMediaHydrator(fileService),
-	)
-	internalWorkPath, internalWorkHandler := intrav1connect.NewInternalWorkServiceHandler(internalWorkService, internalHandlerOpts...)
-	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
-	slog.Info("Registered internal service", "path", internalWorkPath)
 
 	internalMapPath, internalMapHandler := intrav1connect.NewInternalMapServiceHandler(maptheme.NewInternalConnectHandler(r.mapThemes), internalHandlerOpts...)
 	mux.Handle(internalMapPath, internalRPCTrust.collab(internalMapHandler))
@@ -205,7 +163,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 		return internalContentServices{}, fmt.Errorf("initialize Legal AI document service: %w", err)
 	}
 	return internalContentServices{
-		work:           internalWorkService,
 		emailTemplate:  internalEmailTemplateService,
 		campaign:       internalCampaignService,
 		form:           internalFormService,

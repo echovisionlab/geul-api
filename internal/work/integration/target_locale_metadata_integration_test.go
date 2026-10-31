@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -34,25 +32,19 @@ func TestUpdateWorkLocaleMetadataTrimsTargetTitleIntegration(t *testing.T) {
 	require.NoError(t, err)
 	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(integrationSpiceDB(t)))
 	require.NoError(t, err)
-	internal := workdomain.NewInternalWorkService(
-		db, noopAsyncPublisher{}, newWorkRuntimeForTest(db, ""), integrationSpiceDB(t),
-		workdomain.WithInternalWorkContentBlockStore(store),
-		workdomain.WithInternalWorkDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))),
-	)
-	application, err := workdomain.NewAIDocumentService(internal)
-	require.NoError(t, err)
+	application := newWorkServiceForTest(t, workdomain.Deps{DB: db, ContentBlocks: store})
+	internal := workdomain.NewInternalConnectHandler(application)
 	contributor := testutil.PostIntegrationMemberID(identityID)
-	missing, err := application.Load(ctx, created.Msg.Id, "fr")
+	missing, err := application.LoadAIDocument(ctx, created.Msg.Id, "fr")
 	require.NoError(t, err)
-	_, err = application.Apply(ctx, workAIDocumentIntegrationMutation(missing, contributor, func(mutation *workdomain.AIDocumentMutation) {
+	_, err = applyWorkAIDocument(ctx, application, workAIDocumentIntegrationMutation(missing, contributor, func(mutation *workdomain.AIDocumentMutation) {
 		mutation.CreateTranslation = true
 	}))
 	require.NoError(t, err)
 
 	update := func(title string) *intrav1.UpdateWorkLocaleMetadataResponse {
 		t.Helper()
-		state, loadErr := application.Load(ctx, created.Msg.Id, "fr")
+		state, loadErr := application.LoadAIDocument(ctx, created.Msg.Id, "fr")
 		require.NoError(t, loadErr)
 		response, updateErr := internal.UpdateWorkLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateWorkLocaleMetadataRequest{
 			WorkId: created.Msg.Id, Locale: "fr", Title: &title,

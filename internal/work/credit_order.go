@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -41,7 +41,7 @@ func loadWorkCreditRows(ctx context.Context, db *gorm.DB, workID string) ([]mode
 
 	order, err := buildWorkCreditOrder(groups, credits)
 	if err != nil {
-		return nil, nil, nil, errs.Internal(err)
+		return nil, nil, nil, err
 	}
 	return groups, credits, order, nil
 }
@@ -327,14 +327,14 @@ func validateWorkCreditMoveAnchors(
 			continue
 		}
 		if strings.TrimSpace(anchor.Id) == "" {
-			return errs.InvalidArgument("anchor.id", "must identify an item")
+			return domainerr.InvalidField("anchor.id", "must identify an item")
 		}
 		if anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP &&
 			anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT {
-			return errs.InvalidArgument("anchor.kind", "must identify a group or credit")
+			return domainerr.InvalidField("anchor.kind", "must identify a group or credit")
 		}
 		if anchor.Kind == movingKind && anchor.Id == movingID {
-			return errs.InvalidArgument("anchor", "cannot reference the moved item")
+			return domainerr.InvalidField("anchor", "cannot reference the moved item")
 		}
 
 		index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.Id)
@@ -343,7 +343,7 @@ func validateWorkCreditMoveAnchors(
 				entry := order[index]
 				if anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT ||
 					!sameOptionalString(entry.groupID, targetGroupID) {
-					return errs.InvalidArgument("anchor", "must be a credit in the target group")
+					return domainerr.InvalidField("anchor", "must be a credit in the target group")
 				}
 			}
 			continue
@@ -351,17 +351,17 @@ func validateWorkCreditMoveAnchors(
 
 		parsedID, err := uuid.Parse(anchor.Id)
 		if err != nil {
-			return errs.InvalidArgument("anchor.id", "must be a valid item ID")
+			return domainerr.InvalidField("anchor.id", "must be a valid item ID")
 		}
 		var groupCount, creditCount int64
 		if err := tx.WithContext(ctx).Model(&model.WorkCreditGroup{}).Where("id = ?", parsedID.String()).Count(&groupCount).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if err := tx.WithContext(ctx).Model(&model.WorkCredit{}).Where("id = ?", parsedID.String()).Count(&creditCount).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if groupCount > 0 || creditCount > 0 {
-			return errs.InvalidArgument("anchor", "must reference a compatible item in this Work")
+			return domainerr.InvalidField("anchor", "must reference a compatible item in this Work")
 		}
 	}
 	return nil

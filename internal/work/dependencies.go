@@ -6,8 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -19,13 +18,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// AsyncPublisher is the transport-neutral capability used for coalescible
-// Work content-update signals.
-// content.updated is scheduled only through the transactional signal method.
-type AsyncPublisher interface {
-	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	NotifyProtobuf(context.Context, string, proto.Message) error
-	contentsignal.Publisher
+// ShareLinkCleanup removes the share links of a Work in the deleting
+// transaction. Share Link owns the rows.
+type ShareLinkCleanup interface {
+	DeleteEntityShareLinks(ctx context.Context, tx *gorm.DB, workID string) error
 }
 
 // CollaborationPermissionChecker is the fully-consistent ReBAC read used by
@@ -82,16 +78,16 @@ type Runtime interface {
 
 func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors []string) error {
 	if len(contributors) == 0 {
-		return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires contributors")
+		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
 	normalized := make([]string, 0, len(contributors))
 	for _, contributor := range contributors {
 		contributor = strings.TrimSpace(contributor)
 		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
-			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
 		}
 		if len(normalized) > 0 && normalized[len(normalized)-1] >= contributor {
-			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
 		}
 		normalized = append(normalized, contributor)
 	}
@@ -105,21 +101,10 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 		Select("id::text").
 		Where("id IN ?", normalized).
 		Find(&locked).Error; err != nil {
-		return errs.Internal(fmt.Errorf("lock Work save contributor Members: %w", err))
+		return fmt.Errorf("lock Work save contributor Members: %w", err)
 	}
 	if len(locked) != len(normalized) {
-		return errs.InvalidArgument("contributor_member_ids", "contains a Member that does not exist")
+		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil
-}
-
-// publishWorkContentUpdated schedules content.updated in the caller's
-// mutation transaction so the signal commits or rolls back with the data.
-func publishWorkContentUpdated(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }

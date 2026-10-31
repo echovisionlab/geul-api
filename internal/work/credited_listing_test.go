@@ -10,7 +10,7 @@ import (
 func TestCreditedWorkPreservesWorkSourceLocaleForMemberAndArtistCredits(t *testing.T) {
 	memberID := "member-1"
 	for _, owner := range []*string{nil, &memberID} {
-		response, err := new(WorkService).projectCreditedWork(t.Context(), creditedWorkRow{
+		response, err := new(Service).projectCreditedWork(t.Context(), creditedWorkRow{
 			WorkID: "work-1", SourceLocale: "pt-BR", MemberID: owner,
 		}, memberID, &commonv1.MemberSummary{Nickname: "Member"})
 		require.NoError(t, err)

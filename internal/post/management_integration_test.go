@@ -30,10 +30,9 @@ func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
 	spiceDB := testutil.PostIntegrationSpiceDB(t)
 	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := testutil.PostIntegrationContext(adminID)
-	identityManager := testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en"))
 	contentBlocks := testutil.NewPostContentBlockStore(t)
 	seedService := postintegration.NewPostDomainService(
-		t, db, "", spiceDB, identityManager, contentBlocks,
+		t, db, "", spiceDB, contentBlocks,
 	)
 
 	postIDs := make([]string, 0, 12)
@@ -54,7 +53,7 @@ func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
 		Count:     &queryCount,
 	}})
 	service := postintegration.NewPostDomainService(
-		t, countedDB, "", spiceDB, identityManager, contentBlocks,
+		t, countedDB, "", spiceDB, contentBlocks,
 	)
 	listCount := func(limit int32) int64 {
 		queryCount.Store(0)
@@ -111,10 +110,6 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 
 	postSvc := postintegration.NewPostDomainService(
 		t, db, "https://cdn.example.com", spiceDB,
-		testutil.NewPostIdentityManager(
-			testutil.PostIntegrationIdentity(adminID, "en"),
-			testutil.PostIntegrationIdentity(authorID, "en"),
-		),
 		testutil.NewPostContentBlockStore(t),
 	)
 
@@ -181,7 +176,7 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 	require.NoError(t, err)
 	requirePostIDs(t, myPosts.Msg.Posts, created.Msg.Id)
 
-	discovered, err := postSvc.ListAIDocuments(authorCtx, postdomain.AIDocumentListInput{
+	discovered, err := postSvc.Service.ListAIDocuments(authorCtx, postdomain.AIDocumentListInput{
 		Query: "Participant Workflow", Limit: 10,
 	})
 	require.NoError(t, err)
@@ -192,7 +187,7 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 	require.Equal(t, slug, *discovered.Items[0].Slug)
 	require.Equal(t, "en", discovered.Items[0].SourceLocale)
 
-	literalWildcard, err := postSvc.ListAIDocuments(authorCtx, postdomain.AIDocumentListInput{
+	literalWildcard, err := postSvc.Service.ListAIDocuments(authorCtx, postdomain.AIDocumentListInput{
 		Query: "%" + suffix, Limit: 10,
 	})
 	require.NoError(t, err)
