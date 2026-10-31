@@ -6,13 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -68,13 +66,13 @@ func NewMCPGatewayAuthorAdmissionHandler(
 		}
 		decision, err := mcpGatewayAuthorAdmissionDecision(accountIdentityID)
 		if err != nil {
-			slog.WarnContext(request.Context(), "Operation failed", "reason", "build_gateway_admission_decision", "status_code", http.StatusBadRequest, failurecause.Attr(err))
+			recordAuthenticationFailure(request.Context(), fmt.Errorf("build gateway admission decision: %w", err))
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		allowed, err := checker.Can(request.Context(), decision)
 		if err != nil {
-			slog.ErrorContext(request.Context(), "Operation failed", "reason", "check_gateway_admission", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
+			recordAuthenticationFailure(request.Context(), fmt.Errorf("check gateway admission: %w", err))
 			response.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}

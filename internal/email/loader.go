@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 )
@@ -104,13 +105,13 @@ func (l *AdapterLoader) reload(ctx context.Context) ([]Adapter, error) {
 	for _, dbAdapter := range dbAdapters {
 		adapter, err := l.factory.Create(&dbAdapter)
 		if err != nil {
-			slog.Error("Failed to create mail adapter",
+			slog.ErrorContext(ctx, "Failed to create mail adapter",
 				"domain", "mail",
 				"event", "mail.adapter.load_failed",
 				"adapter_id", dbAdapter.ID,
 				"adapter_name", dbAdapter.Name,
 				"adapter_type", dbAdapter.Type,
-				"error", err,
+				failurecause.Attr(err),
 			)
 			l.mu.Unlock()
 			retireMailAdapters(adapters)
@@ -218,7 +219,7 @@ func closeMailAdapter(adapter Adapter) {
 		return
 	}
 	if err := closer.Close(); err != nil {
-		slog.Warn("Failed to close retired mail adapter", "adapter_id", adapter.ID(), "error", err)
+		slog.Warn("Failed to close retired mail adapter", "adapter_id", adapter.ID(), failurecause.Attr(err))
 	}
 }
 

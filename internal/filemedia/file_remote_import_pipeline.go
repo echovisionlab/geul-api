@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -305,7 +306,6 @@ func (s *FileService) openRemoteImportSourceWithClient(
 ) (*remoteImportSource, error) {
 	parsedURL, err := url.Parse(request.opts.sourceURL)
 	if err != nil {
-		slog.WarnContext(ctx, "Failed to parse remote import URL", failurecause.Attr(err, request.opts.fileName), "file_id", request.identity.fileID)
 		client.CloseIdleConnections()
 		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
 	}
@@ -316,6 +316,10 @@ func (s *FileService) openRemoteImportSourceWithClient(
 	target, err := validateRemoteImportURL(ctx, resolver, parsedURL)
 	if err != nil {
 		client.CloseIdleConnections()
+		if errors.Is(err, errRemoteImportHostnameUnresolved) {
+			// The resolver failure stays out of the client message.
+			return nil, fail(errs.WithCause(errs.InvalidArgument("url", errRemoteImportHostnameUnresolved.Error()), err))
+		}
 		return nil, fail(errs.InvalidArgument("url", err.Error()))
 	}
 	requestContext := context.WithValue(ctx, remoteImportTargetContextKey{}, target)

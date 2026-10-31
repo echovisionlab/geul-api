@@ -90,7 +90,7 @@ func NewKratosPublicProxy(
 		for _, cookie := range request.Cookies() {
 			privateValues = append(privateValues, cookie.Value)
 		}
-		slog.ErrorContext(request.Context(), "Kratos proxy request failed", "status_code", http.StatusBadGateway, failurecause.Attr(err, privateValues...))
+		recordAuthenticationFailure(request.Context(), fmt.Errorf("proxy Kratos request: %w", err), privateValues...)
 		w.WriteHeader(http.StatusBadGateway)
 	}
 
@@ -107,7 +107,6 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	sharedtelemetry.InjectCorrelation(request.Context(), propagation.HeaderCarrier(request.Header))
 	issuance, body, candidate, err := inspectAuthCodeIssuanceRequest(request)
 	if err != nil {
-		slog.WarnContext(request.Context(), "Operation failed", "reason", "inspect_code_request", "status_code", http.StatusRequestEntityTooLarge, failurecause.Attr(err))
 		writeKratosProxyError(request.Context(), w, http.StatusRequestEntityTooLarge, "request body is too large", 0)
 		return
 	}
@@ -122,7 +121,7 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	if strings.TrimSpace(issuance.Recipient) == "" {
 		issuance.Recipient, err = p.resolveFlowRecipient(request, issuance)
 		if err != nil {
-			slog.WarnContext(request.Context(), "Operation failed", "reason", "resolve_flow_recipient", "status_code", http.StatusBadRequest, failurecause.Attr(err), "template_type", issuance.EventKey.String())
+			recordAuthenticationFailure(request.Context(), issuanceFailure("resolve flow recipient", issuance, err))
 			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 			return
 		}
@@ -131,7 +130,7 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	issuance.ClientIP = authCodeClientIP(request)
 	reservation, allowed, retryAfter, err := p.limiter.Reserve(request.Context(), issuance)
 	if err != nil {
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "reserve_code_issuance", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err, issuance.Recipient), "template_type", issuance.EventKey.String())
+		recordAuthenticationFailure(request.Context(), issuanceFailure("reserve code issuance", issuance, err), issuance.Recipient)
 		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
 		return
 	}
@@ -149,7 +148,7 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	)
 	if err != nil {
 		p.releaseReservation(request, reservation)
-		slog.WarnContext(request.Context(), "Operation failed", "reason", "create_issuance_provenance", "status_code", http.StatusBadRequest, failurecause.Attr(err, issuance.Recipient, reservation.token), "template_type", issuance.EventKey.String())
+		recordAuthenticationFailure(request.Context(), issuanceFailure("create issuance provenance", issuance, err), issuance.Recipient, reservation.token)
 		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 		return
 	}
@@ -160,7 +159,7 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	)
 	if err != nil {
 		p.releaseReservation(request, reservation)
-		slog.WarnContext(request.Context(), "Operation failed", "reason", "inject_issuance_provenance", "status_code", http.StatusBadRequest, failurecause.Attr(err, issuance.Recipient, reservation.token), "template_type", issuance.EventKey.String())
+		recordAuthenticationFailure(request.Context(), issuanceFailure("inject issuance provenance", issuance, err), issuance.Recipient, reservation.token)
 		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 		return
 	}
@@ -174,6 +173,12 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	}
 
 	p.releaseReservation(request, reservation)
+}
+
+// issuanceFailure names the failed code issuance step and its template for the
+// request record.
+func issuanceFailure(operation string, issuance AuthCodeIssuanceRequest, err error) error {
+	return failurecause.WithAttrs(fmt.Errorf("%s: %w", operation, err), slog.String("template_type", issuance.EventKey.String()))
 }
 
 func (p *KratosPublicProxy) resolveFlowRecipient(
@@ -250,6 +255,6 @@ func (p *KratosPublicProxy) releaseReservation(
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 2*time.Second)
 	defer cancel()
 	if err := p.limiter.Release(releaseCtx, reservation); err != nil {
-		slog.ErrorContext(releaseCtx, "Operation failed", "reason", "release_code_issuance", failurecause.Attr(err, reservation.token))
+		slog.ErrorContext(releaseCtx, "Auth code issuance reservation release failed", "operation", "release_code_issuance", failurecause.Attr(err, reservation.token))
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +56,7 @@ func TestTranslationTerminalMappingLogsOriginalCause(t *testing.T) {
 	}
 }
 
-func TestTranslationDeliveryLoadFailureLogsCause(t *testing.T) {
+func TestTranslationDeliveryLoadFailureReturnsCauseToQueueConsumer(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	cause := errors.New(`relation "translation_job" unavailable: connection reset token=private-token`)
 	db.AddError(cause)
@@ -66,9 +67,8 @@ func TestTranslationDeliveryLoadFailureLogsCause(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	err := manager.ProcessDelivery(t.Context(), "job-load")
 	require.ErrorIs(t, err, cause)
-	var record map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
-	require.Contains(t, record["failure_cause"], `relation "translation_job" unavailable: connection reset`)
-	require.Equal(t, "job-load", record["job_id"])
-	require.NotContains(t, output.String(), "private-token")
+	// The PGMQ consumer logs the returned failure once; its message ID is the job ID.
+	require.Empty(t, output.String())
+	require.Contains(t, failurecause.Message(err), `relation "translation_job" unavailable: connection reset`)
+	require.NotContains(t, failurecause.Message(err), "private-token")
 }

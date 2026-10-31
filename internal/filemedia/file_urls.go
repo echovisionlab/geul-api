@@ -111,7 +111,7 @@ func (s *FileService) resolveContentFileDeliveries(
 		result[file.ID] = delivery
 	}
 	if err := s.populateFileProcessingStatus(ctx, result); err != nil {
-		slog.Error("Failed to populate content file processing status", failurecause.Attr(err), "fileCount", len(result))
+		slog.ErrorContext(ctx, "Failed to populate content file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 	return result, nil
 }
@@ -301,7 +301,7 @@ func (s *FileService) loadFileURLResponses(
 	}
 
 	if err := s.populateFileProcessingStatus(ctx, deliveries); err != nil {
-		slog.Error("Failed to populate bulk file processing status", failurecause.Attr(err), "fileCount", len(result))
+		slog.ErrorContext(ctx, "Failed to populate bulk file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 
 	return result, nil

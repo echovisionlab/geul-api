@@ -108,8 +108,7 @@ func (s *FileService) attachTrackOriginalAudio(
 			return errs.FailedPrecondition("File ingest attempt does not match")
 		}
 		if _, err := CanonicalMediaObjectTargetForFile(file); err != nil {
-			slog.ErrorContext(ctx, "Invalid verified file metadata", failurecause.Attr(err), "file_id", file.ID)
-			return errs.FailedPrecondition("verified File metadata is not canonical")
+			return errs.WithCause(errs.FailedPrecondition("verified File metadata is not canonical"), failurecause.WithAttrs(err, slog.String("file_id", file.ID)))
 		}
 		var binding model.FileIngestBinding
 		if err := tx.Where("file_id = ?", fileID).Take(&binding).Error; err != nil {

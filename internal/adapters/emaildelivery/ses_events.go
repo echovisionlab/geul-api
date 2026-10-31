@@ -137,7 +137,7 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSNSMessageBytes))
 	if err != nil {
-		slog.WarnContext(r.Context(), "Failed to read SES callback", "failure_cause", failurecause.Message(err))
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(fmt.Errorf("read SES callback: %w", err)))
 		http.Error(w, "invalid SNS message body", http.StatusBadRequest)
 		return
 	}
@@ -155,7 +155,7 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			private = append(private, timeErr.Value, timeErr.ValueElem)
 		}
 
-		slog.WarnContext(r.Context(), "Failed to decode SES callback", "failure_cause", failurecause.Message(err, private...))
+		failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(fmt.Errorf("decode SES callback: %w", err), private...))
 		http.Error(w, "invalid SNS message", http.StatusBadRequest)
 		return
 	}
@@ -184,7 +184,7 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.metrics.record(r.Context(), envelope.Type, "confirmed")
-		slog.Info("SES callback subscription confirmed", "domain", "mail", "event", "mail.provider.subscription_confirmed", "outcome", "succeeded", "message_id", envelope.MessageID)
+		slog.InfoContext(r.Context(), "SES callback subscription confirmed", "domain", "mail", "event", "mail.provider.subscription_confirmed", "outcome", "succeeded", "message_id", envelope.MessageID)
 	case "Notification":
 		var notification sesNotification
 		if err := json.Unmarshal([]byte(envelope.Message), &notification); err != nil {
@@ -199,7 +199,9 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				private = append(private, timeErr.Value, timeErr.ValueElem)
 			}
 
-			slog.WarnContext(r.Context(), "Rejected invalid SES notification", "failure_cause", failurecause.Message(err, private...), "message_id", envelope.MessageID)
+			failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(failurecause.WithAttrs(
+				fmt.Errorf("decode SES notification: %w", err), slog.String("message_id", envelope.MessageID),
+			), private...))
 			http.Error(w, "invalid SES notification", http.StatusBadRequest)
 			return
 		}
@@ -217,7 +219,9 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			h.metrics.record(r.Context(), typeNameForSESMetric(notification), "failed")
-			slog.WarnContext(r.Context(), "Rejected invalid SES notification", "failure_cause", failurecause.Message(err, private...), "message_id", envelope.MessageID)
+			failurecause.RecorderFrom(r.Context()).Record(failurecause.Of(failurecause.WithAttrs(
+				fmt.Errorf("decode SES notification: %w", err), slog.String("message_id", envelope.MessageID),
+			), private...))
 			http.Error(w, "invalid SES notification", http.StatusBadRequest)
 			return
 		}
@@ -230,7 +234,7 @@ func (h *SESEventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.metrics.record(r.Context(), typeNameForSESMetric(notification), "applied")
 	case "UnsubscribeConfirmation":
 		h.metrics.record(r.Context(), envelope.Type, "observed")
-		slog.Warn("SES callback SNS subscription was removed", "domain", "mail", "event", "mail.provider.subscription_removed", "outcome", "observed", "message_id", envelope.MessageID)
+		slog.WarnContext(r.Context(), "SES callback SNS subscription was removed", "domain", "mail", "event", "mail.provider.subscription_removed", "outcome", "observed", "message_id", envelope.MessageID)
 	default:
 		http.Error(w, "unsupported SNS message type", http.StatusBadRequest)
 		return

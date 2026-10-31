@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,19 +19,7 @@ import (
 func (s *TranslationService) ListEntityTranslations(
 	ctx context.Context,
 	req *connect.Request[managev1.ListEntityTranslationsRequest],
-) (_ *connect.Response[managev1.ListEntityTranslationsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "ListEntityTranslations")
-		}
-	}()
+) (*connect.Response[managev1.ListEntityTranslationsResponse], error) {
 	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
 	if err != nil {
 		return nil, err
@@ -60,19 +46,7 @@ func (s *TranslationService) ListEntityTranslations(
 func (s *TranslationService) GetEntityTranslation(
 	ctx context.Context,
 	req *connect.Request[managev1.GetEntityTranslationRequest],
-) (_ *connect.Response[managev1.GetEntityTranslationResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "GetEntityTranslation")
-		}
-	}()
+) (*connect.Response[managev1.GetEntityTranslationResponse], error) {
 	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
 	if err != nil {
 		return nil, err
@@ -91,19 +65,7 @@ func (s *TranslationService) GetEntityTranslation(
 func (s *TranslationService) SetEntitySourceLocale(
 	ctx context.Context,
 	req *connect.Request[managev1.SetEntitySourceLocaleRequest],
-) (_ *connect.Response[managev1.SetEntitySourceLocaleResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "SetEntitySourceLocale")
-		}
-	}()
+) (*connect.Response[managev1.SetEntitySourceLocaleResponse], error) {
 	entityType, entityID, err := parseTranslationTarget(req.Msg.Target)
 	if err != nil {
 		return nil, err
@@ -148,19 +110,7 @@ func (s *TranslationService) SetEntitySourceLocale(
 func (s *TranslationService) RegenerateEntityTranslations(
 	ctx context.Context,
 	req *connect.Request[managev1.RegenerateEntityTranslationsRequest],
-) (_ *connect.Response[managev1.RegenerateEntityTranslationsResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "RegenerateEntityTranslations")
-		}
-	}()
+) (*connect.Response[managev1.RegenerateEntityTranslationsResponse], error) {
 	action := "regenerate_locale"
 	if len(req.Msg.GetLocales()) == 0 {
 		action = "regenerate_all"

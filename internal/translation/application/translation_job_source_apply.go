@@ -207,7 +207,7 @@ func (m *TranslationJobManager) publishLifecycle(
 	}
 	definition, ok := translation.DefinitionForKind(job.EntityType)
 	if !ok {
-		slog.Warn("Skipped lifecycle for unsupported translation entity", "job_id", job.ID, "entity_type", job.EntityType)
+		slog.WarnContext(ctx, "Skipped lifecycle for unsupported translation entity", "job_id", job.ID, "entity_type", job.EntityType)
 		return
 	}
 	event := &managev1.TranslationLifecycleEvent{

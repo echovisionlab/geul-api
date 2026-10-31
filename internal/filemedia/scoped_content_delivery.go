@@ -418,7 +418,7 @@ func (s *FileService) buildLockedInlineDelivery(
 	scopedService := *s
 	scopedService.db = tx
 	if err := scopedService.populateFileProcessingStatus(ctx, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
-		slog.Error("Failed to populate scoped featured-image processing status", failurecause.Attr(err), "fileId", file.ID)
+		slog.ErrorContext(ctx, "Failed to populate scoped featured-image processing status", failurecause.Attr(err), "fileId", file.ID)
 	}
 	return delivery, nil
 }

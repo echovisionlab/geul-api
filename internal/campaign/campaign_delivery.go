@@ -190,7 +190,6 @@ func (d *CampaignDeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Co
 		Order("scheduled_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error; err != nil {
-		slog.ErrorContext(ctx, "Failed to load email delivery runs", "domain", "campaign", "event", "campaign.delivery.failed", "outcome", "failed", "operation", "load_due_delivery_runs", failurecause.Attr(err))
 		return 0, errs.Internal(err)
 	}
 
@@ -198,7 +197,7 @@ func (d *CampaignDeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Co
 	for _, run := range runs {
 		published, err := d.dispatchRun(ctx, run.ID, "SKIP LOCKED")
 		if err != nil {
-			slog.Error("failed to dispatch email delivery run", "run_id", run.ID, "run_kind", run.RunKind, "error", err)
+			slog.ErrorContext(ctx, "failed to dispatch email delivery run", "run_id", run.ID, "run_kind", run.RunKind, failurecause.Attr(err))
 			continue
 		}
 		if published {
@@ -221,7 +220,6 @@ func (d *CampaignDeliveryDispatcher) ResumeActiveEmailDeliveryRuns(ctx context.C
 		Order("updated_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error; err != nil {
-		slog.ErrorContext(ctx, "Failed to load email delivery runs", "domain", "campaign", "event", "campaign.delivery.failed", "outcome", "failed", "operation", "load_active_delivery_runs", failurecause.Attr(err))
 		return 0, errs.Internal(err)
 	}
 
@@ -229,35 +227,29 @@ func (d *CampaignDeliveryDispatcher) ResumeActiveEmailDeliveryRuns(ctx context.C
 	for _, run := range runs {
 		target, err := loadCampaignDeliveryTarget(ctx, d.db, run)
 		if err != nil {
-			slog.Error("failed to load campaign delivery target", "run_id", run.ID, "error", err)
+			slog.ErrorContext(ctx, "failed to load campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
 			continue
 		}
 		if _, err := campaignDeliveryTargetRecipientSelection(target); err != nil {
-			slog.Error("failed to reconstruct campaign delivery target", "run_id", run.ID, "error", err)
+			slog.ErrorContext(ctx, "failed to reconstruct campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
 			continue
 		}
 		job := newEmailDeliveryBulkJob(run.ID)
 		if err := MaterializeCampaignDeliveryRun(ctx, d.db, d.spiceDB, run.ID); err != nil {
-			slog.Error(
-				"failed to recover campaign delivery materialization",
-				"run_id",
-				run.ID,
-				"error",
-				err,
-			)
+			slog.ErrorContext(ctx, "failed to recover campaign delivery materialization", "run_id", run.ID, failurecause.Attr(err))
 			continue
 		}
 
 		pending, err := HasPendingCampaignDeliveryRecipients(ctx, d.db, run.ID)
 		if err != nil {
-			slog.Error("failed to inspect pending campaign recipients", "run_id", run.ID, "error", err)
+			slog.ErrorContext(ctx, "failed to inspect pending campaign recipients", "run_id", run.ID, failurecause.Attr(err))
 			continue
 		}
 		if !pending {
 			continue
 		}
 		if err := d.publisher.PublishSendBulkEmail(ctx, job); err != nil {
-			slog.Error("failed to publish campaign delivery resume job", "run_id", run.ID, "error", err)
+			slog.ErrorContext(ctx, "failed to publish campaign delivery resume job", "run_id", run.ID, failurecause.Attr(err))
 			continue
 		}
 		resumed++

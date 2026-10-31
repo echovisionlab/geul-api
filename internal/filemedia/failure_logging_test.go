@@ -42,7 +42,7 @@ func TestPrepareClientMediaUploadRejectsNilRequestWithoutLogging(t *testing.T) {
 	require.Empty(t, output.String())
 }
 
-func TestClientWaveformDecodeLogsCauseWithoutBody(t *testing.T) {
+func TestClientWaveformDecodeRejectsWithoutLogging(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -50,10 +50,9 @@ func TestClientWaveformDecodeLogsCauseWithoutBody(t *testing.T) {
 
 	err := validateClientWaveform([]byte(`{"private@example.test":`))
 	require.EqualError(t, err, "invalid waveform JSON")
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Contains(t, entry["failure_cause"], "unexpected end of JSON input")
-	require.NotContains(t, output.String(), "private@example.test")
+	// A malformed client artifact is client input; the request record holds
+	// the rejection.
+	require.Empty(t, output.String())
 }
 
 // The HTTP client wraps the transport error with the requested URL. Logging

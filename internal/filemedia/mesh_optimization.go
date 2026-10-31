@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -345,7 +344,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 	}
 	if cleanupOutputID != "" && s.fileDeleter != nil {
 		if err := s.fileDeleter.DeleteFileByID(ctx, cleanupOutputID); err != nil {
-			slog.Error("Failed to delete superseded mesh optimization output", "file_id", cleanupOutputID, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Failed to delete superseded mesh optimization output", "file_id", cleanupOutputID, failurecause.Attr(err))
 		}
 	}
 	return &MeshOptimizationGenerateResult{Candidate: candidate, CacheHit: cacheHit, Enqueued: enqueued}, nil
@@ -434,16 +433,6 @@ func (s *MeshOptimizationService) HandleProgress(
 	ctx context.Context,
 	event *managev1.MeshOptimizationProgressEvent,
 ) (_ *model.MeshOptimizationCandidate, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleProgress", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
-		}
-	}()
 	if event == nil {
 		return nil, errs.Required("event")
 	}
@@ -467,16 +456,6 @@ func (s *MeshOptimizationService) HandleComplete(
 	ctx context.Context,
 	event *managev1.MeshOptimizationCompleteEvent,
 ) (_ *model.MeshOptimizationCandidate, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleComplete", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
-		}
-	}()
 	completion, candidate, err := s.prepareMeshOptimizationCompletion(ctx, event)
 	if err != nil {
 		return nil, err
@@ -688,16 +667,6 @@ func meshOptimizationCompletionUpdates(
 }
 
 func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *managev1.MeshOptimizationFailEvent) (_ *model.MeshOptimizationCandidate, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(resultErr) {
-			case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Mesh optimization result handler failed", failurecause.Attr(resultErr), "operation", "HandleFailed", "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId())
-		}
-	}()
 	if event == nil {
 		return nil, errs.Required("event")
 	}
@@ -1088,13 +1057,11 @@ func (s *MeshOptimizationService) ensureUserCanEditResource(ctx context.Context,
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 	if err != nil {
-		slog.WarnContext(ctx, "ensureUserCanEditResource: AuthenticationRequired", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	ok, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "ensureUserCanEditResource: DependencyUnavailable", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !ok {
 		return errs.NoPermission("optimize mesh for", resourceType)

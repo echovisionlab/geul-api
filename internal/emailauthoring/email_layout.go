@@ -685,10 +685,7 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 		}
 		documentID, parseErr := uuid.Parse(layout.ContentDocumentID)
 		if parseErr != nil || documentID == uuid.Nil {
-			if parseErr != nil {
-				slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "emailauthoring", "event", "emailauthoring.document_invalid", "outcome", "failed", "layout_id", layout.ID, failurecause.Attr(parseErr))
-			}
-			return errs.FailedPrecondition("Email Layout Content Document is not initialized")
+			return errs.WithCause(errs.FailedPrecondition("Email Layout Content Document is not initialized"), failurecause.WithAttrs(parseErr, slog.String("layout_id", layout.ID)))
 		}
 		if err := s.contentBlocks.DeleteDocument(
 			ctx, tx, documentID, emailLayoutContentFence(s.references, layout.ID),

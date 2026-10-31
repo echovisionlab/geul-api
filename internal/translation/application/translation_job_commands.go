@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -20,19 +18,7 @@ import (
 func (s *TranslationService) CancelTranslationJob(
 	ctx context.Context,
 	req *connect.Request[managev1.CancelTranslationJobRequest],
-) (_ *connect.Response[managev1.CancelTranslationJobResponse], retErr error) {
-	defer func() {
-		if retErr != nil {
-			level := slog.LevelError
-			switch connect.CodeOf(retErr) {
-			case connect.CodeCanceled, connect.CodeInvalidArgument, connect.CodeNotFound,
-				connect.CodeAlreadyExists, connect.CodePermissionDenied, connect.CodeUnauthenticated,
-				connect.CodeResourceExhausted, connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-				level = slog.LevelWarn
-			}
-			slog.Log(ctx, level, "Operation failed", "domain", "translation", "event", "translation.rpc.failed", "outcome", "failed", failurecause.Attr(retErr), "operation", "CancelTranslationJob")
-		}
-	}()
+) (*connect.Response[managev1.CancelTranslationJobResponse], error) {
 	outcome := "failed"
 	defer func() { s.metrics.recordAdminAction(ctx, "cancel", outcome) }()
 	if _, err := requireAuthenticatedTranslationRequester(ctx); err != nil {

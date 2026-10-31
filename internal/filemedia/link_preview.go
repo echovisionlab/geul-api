@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -113,8 +111,7 @@ func (s *LinkPreviewService) GetLinkPreview(
 	httpRequest.Header.Set("User-Agent", linkPreviewUserAgent)
 	response, err := client.Do(httpRequest)
 	if err != nil {
-		slog.WarnContext(ctx, "Link preview fetch failed", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("the linked page could not be read")
+		return nil, errs.WithCause(errs.FailedPrecondition("the linked page could not be read"), err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {

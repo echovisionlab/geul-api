@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -77,7 +78,7 @@ func loadEmailRenderDefaults(
 		Take(&settings).Error
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.Warn("Failed to load site settings for email defaults", "error", err)
+			slog.WarnContext(ctx, "Failed to load site settings for email defaults", failurecause.Attr(err))
 		}
 		return nil, emailLogoURLs{}
 	}
@@ -286,7 +287,7 @@ func resolveEmailLogoURL(ctx context.Context, db *gorm.DB, cdnDomain string, log
 	asset, _, err := mediaasset.NewLifecycle(db, cdnDomain).
 		ReadyBrandingAssetRef(ctx, strings.TrimSpace(*logoFileID), mediaasset.BrandingKindEmailImage)
 	if err != nil {
-		slog.Warn("Failed to resolve ready email logo asset", "fileId", *logoFileID, "error", err)
+		slog.WarnContext(ctx, "Failed to resolve ready email logo asset", "fileId", *logoFileID, failurecause.Attr(err))
 		return nil
 	}
 	if asset.GetMimeType() == "" || asset.GetUrl() == "" {

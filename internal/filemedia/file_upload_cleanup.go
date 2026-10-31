@@ -75,8 +75,10 @@ func (s *FileService) abortUploadSession(
 		if IsMissingMultipartUploadAbortError(abortErr) {
 			slog.Info("Upload session was already absent in object storage", "uploadId", session.UploadID, "fileId", session.FileID)
 		} else {
-			slog.ErrorContext(ctx, "Failed to abort upload session", "uploadId", session.UploadID, "fileId", session.FileID, failurecause.Attr(abortErr))
-			return fmt.Errorf("failed to abort upload session %s: %w", session.UploadID, abortErr)
+			return failurecause.WithAttrs(
+				fmt.Errorf("failed to abort upload session %s: %w", session.UploadID, abortErr),
+				slog.String("file_id", session.FileID),
+			)
 		}
 	}
 	progressEmitter := newFileIngestEventEmitter(

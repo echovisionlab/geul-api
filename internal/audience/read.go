@@ -68,7 +68,7 @@ func (s *AudienceService) GetSegment(
 	if count, err := s.estimateCount(ctx, &segment); err == nil {
 		proto.EstimatedCount = &count
 	} else {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "audience", "event", "audience.operation_failed", "operation", "estimate_segment_count", "outcome", "failed", "segment_id", segment.ID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Audience segment count estimate failed; returning segment without a count", "domain", "audience", "event", "audience.operation_failed", "operation", "estimate_segment_count", "outcome", "failed", "segment_id", segment.ID, failurecause.Attr(err))
 	}
 	return connect.NewResponse(proto), nil
 }

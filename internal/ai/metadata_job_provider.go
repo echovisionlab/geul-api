@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -17,14 +16,9 @@ import (
 func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retErr error) {
 	var job metadataJobRecord
 	defer func() {
-		if retErr == nil {
-			return
-		}
-		level := slog.LevelError
-		if errors.Is(retErr, context.Canceled) || errors.Is(retErr, errMetadataAIJobLeaseUnavailable) {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Metadata AI job processing failed", "domain", "ai", "event", "ai.metadata.delivery_failed", "job_id", jobID, "target_type", job.TargetType, "target_id", job.TargetID, failurecause.Attr(retErr, job.Context, job.Prompt))
+		// The PGMQ consumer logs a returned failure, which can quote the job's
+		// context and prompt.
+		retErr = failurecause.WithPrivate(retErr, job.Context, job.Prompt)
 	}()
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
@@ -56,7 +50,7 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retE
 
 	userPrompt := metadataAIUserPrompt(job.Context, job.Prompt)
 
-	responseSchema := buildMetadataResponseJSONSchema(userPrompt)
+	responseSchema := buildMetadataResponseJSONSchema(ctx, userPrompt)
 	responseText, err := m.provider.GenerateText(ctx, llm.GenerationRequest{
 		RequestID:          job.ID,
 		Action:             "metadata-json",

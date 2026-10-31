@@ -49,7 +49,7 @@ func (g *aiTranslationGenerator) Translate(
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), translationAISessionCloseTimeout)
 		defer cancel()
 		if logErr := session.Close(closeCtx); logErr != nil {
-			LogProviderEvent(ctx, slog.LevelError, "Operation failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(logErr), "request_id", req.RequestID)
+			LogProviderEvent(ctx, slog.LevelError, "Translation provider session close failed", "domain", "translation", "event", "translation.provider.close_failed", "outcome", "failed", failurecause.Attr(logErr), "request_id", req.RequestID)
 		}
 	}()
 

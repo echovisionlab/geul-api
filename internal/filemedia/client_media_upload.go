@@ -171,16 +171,10 @@ func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, file
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
-		level := slog.LevelError
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Failed to load media artifact upload session", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
-		return session, nil, errs.NotFoundMsg("upload session not found")
+		return session, nil, errs.WithCause(errs.NotFoundMsg("upload session not found"), failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
-		slog.WarnContext(ctx, "authorizeMediaArtifact: PermissionDenied", failurecause.Attr(err), "upload_id", uploadID, "file_id", fileID)
-		return session, nil, errs.PermissionDenied("artifact upload permission denied")
+		return session, nil, errs.WithCause(errs.PermissionDenied("artifact upload permission denied"), failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
 	writable, err := s.clientMediaArtifactWritable(ctx, session)
 	if err != nil {
@@ -219,10 +213,7 @@ func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string,
 	}()
 	size, digest, err := hashArtifactBody(request.Body, tmp, artifact.Size)
 	if err != nil || size != artifact.Size || digest != artifact.SHA256 {
-		if err != nil {
-			slog.WarnContext(request.Context(), "Failed to read media artifact", failurecause.Attr(err), "bundle_id", bundleID)
-		}
-		return errs.InvalidArgument("body", "artifact size or SHA256 mismatch")
+		return errs.WithCause(errs.InvalidArgument("body", "artifact size or SHA256 mismatch"), failurecause.WithAttrs(err, slog.String("bundle_id", bundleID)))
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return errs.Internal(err)

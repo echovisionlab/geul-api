@@ -32,7 +32,6 @@ func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request)
 	}
 	opts, err := parseUploadSourceQuery(r.URL.RawQuery)
 	if err != nil {
-		slog.WarnContext(r.Context(), "Invalid upload source query", failurecause.Attr(err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -102,7 +101,6 @@ func (r *uploadSourceContextReader) Read(p []byte) (int, error) {
 func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	query, err := url.ParseQuery(rawQuery)
 	if err != nil {
-		slog.Warn("Failed to parse upload source query", failurecause.Attr(err))
 		return remoteFileImportOptions{}, fmt.Errorf("invalid query")
 	}
 	for key, values := range query {
@@ -112,7 +110,6 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	}
 	value, err := strconv.ParseInt(query.Get("uploadType"), 10, 32)
 	if err != nil {
-		slog.Warn("Failed to parse upload source uploadType", failurecause.Attr(err))
 		return remoteFileImportOptions{}, fmt.Errorf("invalid uploadType")
 	}
 	if _, ok := managev1.UploadType_name[int32(value)]; !ok || value == 0 {
@@ -131,14 +128,12 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	}
 	if opts.entityID != "" {
 		if _, err := uuid.Parse(opts.entityID); err != nil {
-			slog.Warn("Failed to parse upload source entity ID", failurecause.Attr(err))
 			return opts, fmt.Errorf("invalid entityId")
 		}
 	}
 	if query.Has("entityType") {
 		value, err := strconv.ParseInt(query.Get("entityType"), 10, 32)
 		if err != nil {
-			slog.Warn("Failed to parse upload source entityType", failurecause.Attr(err))
 			return opts, fmt.Errorf("invalid entityType")
 		}
 		if _, ok := managev1.TranscodeEntityType_name[int32(value)]; !ok || value == 0 {

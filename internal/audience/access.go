@@ -2,7 +2,6 @@ package audience
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -91,13 +89,11 @@ func requireDownloadPolicyAuthor(ctx context.Context, spiceDB *auth.SpiceDBClien
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation rejected", "domain", "audience", "event", "audience.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "audience", "event", "audience.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return nil, errs.AuthorRequired()

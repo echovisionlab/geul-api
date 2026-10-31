@@ -37,8 +37,7 @@ func newStableFileIngestAudioTranscodeJob(
 ) (*managev1.TranscodeAudioEvent, bool, error) {
 	source, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid transcode source file metadata", failurecause.Attr(err), "file_id", file.ID, "entity_type", entityType.String(), "entity_id", entityID)
-		return nil, false, errs.FailedPrecondition("source file metadata is not canonical")
+		return nil, false, errs.WithCause(errs.FailedPrecondition("source file metadata is not canonical"), failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID)))
 	}
 	hls, spectrogram, shouldPublish, err := ensureStableFileIngestAudioOutputs(ctx, db, file.ID)
 	if err != nil {
@@ -64,8 +63,7 @@ func newStableFileIngestVideoTranscodeJob(
 ) (*managev1.TranscodeVideoEvent, bool, error) {
 	source, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid transcode source file metadata", failurecause.Attr(err), "file_id", file.ID, "entity_type", entityType.String(), "entity_id", entityID)
-		return nil, false, errs.FailedPrecondition("source file metadata is not canonical")
+		return nil, false, errs.WithCause(errs.FailedPrecondition("source file metadata is not canonical"), failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID)))
 	}
 	hls, thumbnail, shouldPublish, err := ensureStableFileIngestVideoOutputs(ctx, db, file.ID)
 	if err != nil {

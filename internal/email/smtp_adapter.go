@@ -373,10 +373,6 @@ func (a *SMTPAdapter) acquireConn(ctx context.Context) (*smtpConn, error) {
 			// Pool empty, create new connection
 			sc, err := a.newConn(ctx)
 			if err != nil {
-				slog.Error("Failed to create SMTP connection",
-					"adapter_id", a.id,
-					"failure_cause", failurecause.Message(err, a.user, a.password, a.from),
-				)
 				return nil, err
 			}
 			if a.closed.Load() {

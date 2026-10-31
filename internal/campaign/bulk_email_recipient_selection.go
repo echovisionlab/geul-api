@@ -3,13 +3,11 @@ package campaign
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -304,8 +302,7 @@ func resolveBulkEmailRecipientSelectionPermissions(ctx context.Context, spiceDB 
 	for _, lookup := range lookups {
 		subjects, lookupErr := spiceDB.LookupGlobalSubjects(ctx, lookup)
 		if lookupErr != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "campaign", "event", "campaign.operation_failed", "operation", "authorize", "outcome", "failed", failurecause.Attr(lookupErr))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), lookupErr)
 		}
 		for _, subject := range subjects {
 			identityID := subject.ID.String()

@@ -228,7 +228,7 @@ func LogProviderResponseFailure(ctx context.Context, req ProviderRequest, err er
 	if req.Profile.TargetLocale != "" {
 		fields = append(fields, "target_locale", req.Profile.TargetLocale)
 	}
-	LogProviderEvent(ctx, slog.LevelError, "Operation failed", fields...)
+	LogProviderEvent(ctx, slog.LevelError, "Translation provider response rejected", fields...)
 }
 
 type providerLogContextKey struct{}

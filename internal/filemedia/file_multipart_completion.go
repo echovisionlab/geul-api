@@ -317,8 +317,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 
 	target, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		slog.ErrorContext(ctx, "Invalid completed file object target", failurecause.Attr(err), "file_id", file.ID)
-		return nil, errs.FailedPrecondition("completed file object target is invalid")
+		return nil, errs.WithCause(errs.FailedPrecondition("completed file object target is invalid"), failurecause.WithAttrs(err, slog.String("file_id", file.ID)))
 	}
 	if err := s.verifyCompletedObjectContent(ctx, target.ObjectKey, file.FileSize, file.MimeType, uploadType); err != nil {
 		return nil, errs.Internal(fmt.Errorf("verify completed file object: %w", err))

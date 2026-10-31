@@ -3,7 +3,6 @@ package emailauthoring
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -92,11 +91,11 @@ func requireCampaignEmailDocumentLoad(
 	}
 	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
 	if err != nil {
+		// The boundary keeps *_id request fields; this one is a session secret.
+		err = failurecause.WithPrivate(err, principal.GetSessionId())
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Collaboration principal rejected", "domain", "emailauthoring", "event", "emailauthoring.principal_rejected", "outcome", "blocked", failurecause.Attr(err, principal.GetSessionId()))
-			return errs.AuthenticationRequired()
+			return errs.WithCause(errs.AuthenticationRequired(), err)
 		}
-		slog.ErrorContext(ctx, "Operation failed", "domain", "emailauthoring", "event", "emailauthoring.operation_failed", "operation", "resolve_collaboration_principal", "outcome", "failed", failurecause.Attr(err, principal.GetSessionId()))
 		return errs.Internal(err)
 	}
 	if resolved == nil || !resolved.Authenticated {
@@ -121,8 +120,7 @@ func requireCampaignEmailDocumentLoad(
 	authorizationCtx := auth.WithUser(ctx, resolved)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation rejected", "domain", "emailauthoring", "event", "emailauthoring.operation_rejected", "operation", "authorization_decision", "outcome", "blocked", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := spiceDB.Can(authorizationCtx, decision)
 	if err != nil {

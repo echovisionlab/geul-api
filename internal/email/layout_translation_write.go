@@ -3,12 +3,10 @@ package email
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -114,8 +112,7 @@ func PrepareLayoutSourceLocaleSwitch(
 		)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout locale markers require repair before source-locale switching"), err)
 	}
 	if entry == nil {
 		return UpsertLayoutTranslationEntry(ctx, db, layoutID, requestedLocale, translation.EntryWrite{
@@ -166,8 +163,7 @@ func normalizeLayoutTargetRepresentations(
 			row.ContentHTML.String,
 		)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-			return errs.FailedPrecondition("Email Layout target markers require backfill before source editing")
+			return errs.WithCause(errs.FailedPrecondition("Email Layout target markers require backfill before source editing"), err)
 		}
 		if dereferenceString(nextHTML) == row.ContentHTML.String &&
 			row.ContentText.Valid && dereferenceString(nextText) == row.ContentText.String {
@@ -209,8 +205,7 @@ func SeedLayoutTranslationEntryFromSource(
 	sourceHTML := dereferenceString(source.ContentHTML)
 	units, err := ExtractLayoutContentUnits(sourceHTML)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "email", "event", "email.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-		return errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target")
+		return errs.WithCause(errs.FailedPrecondition("Email Layout source unit markers require repair before creating a target"), err)
 	}
 	values := make(map[string]string, len(units))
 	for _, unit := range units {

@@ -336,7 +336,7 @@ func (s *FileService) abortMultipartUploadAfterInsertFailure(
 		Bucket: aws.String(s.s3Bucket), Key: aws.String(fileKey), UploadId: uploadID,
 	})
 	if err != nil {
-		slog.Error("Failed to abort multipart upload after session insert failure", failurecause.Attr(err), "fileKey", fileKey)
+		slog.ErrorContext(ctx, "Failed to abort multipart upload after session insert failure", failurecause.Attr(err), "fileKey", fileKey)
 	}
 }
 

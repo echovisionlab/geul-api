@@ -68,7 +68,7 @@ func newCancelSubscriber(
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Error("PostgreSQL signal listener stopped; reconnecting", "signal", signal, "ready", becameReady, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "PostgreSQL signal listener stopped; reconnecting", "signal", signal, "ready", becameReady, failurecause.Attr(err))
 			timer := time.NewTimer(time.Second)
 			select {
 			case <-ctx.Done():

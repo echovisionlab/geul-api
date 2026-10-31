@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
@@ -678,10 +676,9 @@ func (s *CampaignService) DeleteCampaign(
 		}
 		if err := tx.Delete(&campaign).Error; err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
-				slog.WarnContext(ctx, "Campaign deletion rejected", "domain", "campaign", "event", "campaign.delete_rejected", "outcome", "blocked", "campaign_id", campaign.ID, failurecause.Attr(err))
-				return errs.FailedPrecondition(
+				return errs.WithCause(errs.FailedPrecondition(
 					"campaign delivery history or another durable reference exists",
-				)
+				), err)
 			}
 			return errs.Internal(err)
 		}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
@@ -30,7 +31,7 @@ func newTranslationMetrics() translationMetrics {
 		otelmetric.WithDescription("Counts explicit translation commands queued by entity type and locale."),
 	)
 	if err != nil {
-		slog.Warn("failed to create translation queued job counter", "error", err)
+		slog.Warn("failed to create translation queued job counter", failurecause.Attr(err))
 	} else {
 		metrics.queuedJobCounter = queuedJobCounter
 	}
@@ -40,7 +41,7 @@ func newTranslationMetrics() translationMetrics {
 		otelmetric.WithDescription("Counts translation job status transitions by entity type, locale, and status."),
 	)
 	if err != nil {
-		slog.Warn("failed to create translation job status counter", "error", err)
+		slog.Warn("failed to create translation job status counter", failurecause.Attr(err))
 	} else {
 		metrics.jobStatusCounter = jobStatusCounter
 	}
@@ -50,7 +51,7 @@ func newTranslationMetrics() translationMetrics {
 		otelmetric.WithDescription("Records end-to-end translation job duration in seconds for final states."),
 	)
 	if err != nil {
-		slog.Warn("failed to create translation job duration histogram", "error", err)
+		slog.Warn("failed to create translation job duration histogram", failurecause.Attr(err))
 	} else {
 		metrics.jobDurationHistogram = jobDurationHistogram
 	}
@@ -60,7 +61,7 @@ func newTranslationMetrics() translationMetrics {
 		otelmetric.WithDescription("Counts explicit Translation administrator actions by action and outcome."),
 	)
 	if err != nil {
-		slog.Warn("failed to create translation administrator action counter", "error", err)
+		slog.Warn("failed to create translation administrator action counter", failurecause.Attr(err))
 	} else {
 		metrics.adminActionCounter = adminActionCounter
 	}
@@ -70,7 +71,7 @@ func newTranslationMetrics() translationMetrics {
 		otelmetric.WithDescription("Counts authoritative translation-to-OG handoff transaction outcomes."),
 	)
 	if err != nil {
-		slog.Warn("failed to create translation OG handoff counter", "error", err)
+		slog.Warn("failed to create translation OG handoff counter", failurecause.Attr(err))
 	} else {
 		metrics.ogHandoffCounter = ogHandoffCounter
 	}

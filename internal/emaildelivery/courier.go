@@ -183,7 +183,7 @@ func (s *EmailCourierService) SendEmail(
 		job.Locale = &targetLocale
 	}
 	if ok := applyAuthRecipientContext(job, templateType, req.Msg.Recipient, identityID); !ok {
-		slog.Warn("Skipped identity courier email without required authority context",
+		slog.WarnContext(ctx, "Skipped identity courier email without required authority context",
 			"template_type", req.Msg.TemplateType,
 		)
 		return connect.NewResponse(&intrav1.SendEmailResponse{Queued: false}), nil
@@ -195,7 +195,7 @@ func (s *EmailCourierService) SendEmail(
 			return nil, errs.Internal(err)
 		}
 		if !allowed {
-			slog.Warn("Skipped login-code email before queue",
+			slog.WarnContext(ctx, "Skipped login-code email before queue",
 				"identity_id", identityID,
 				"template_type", req.Msg.TemplateType,
 				"reason", reason,
@@ -206,9 +206,6 @@ func (s *EmailCourierService) SendEmail(
 
 	codeKey := templateEvent.String()
 	if strings.TrimSpace(templateData[codeKey]) == "" {
-		slog.Error("Rejected identity courier email without a generated code",
-			"template_type", req.Msg.TemplateType,
-		)
 		return nil, errs.InvalidArgument(codeKey, "generated authentication code is required")
 	}
 	expiresAt, err := authCodeExpiry(issuance.IssuedAt, s.codeLifespan, templateData)

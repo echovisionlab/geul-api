@@ -33,7 +33,7 @@ func TestBuildTranslationProviderConfigReusesExistingLLMSecretAndDefaults(t *tes
 		Temperature:                   &temperature,
 	}))
 
-	cfg, err := buildTranslationProviderConfig(
+	cfg, err := buildTranslationProviderConfig(t.Context(),
 		model.TranslationProviderTypeLLM,
 		&managev1.LLMTranslationProviderConfig{
 			SupportsJsonMode: false,
@@ -65,7 +65,7 @@ func TestBuildTranslationProviderConfigReusesDeepLSecretAndDefaultsBaseURL(t *te
 		APIKey: "stored-deepl-key",
 	}))
 
-	cfg, err := buildTranslationProviderConfig(
+	cfg, err := buildTranslationProviderConfig(t.Context(),
 		model.TranslationProviderTypeDeepL,
 		nil,
 		&managev1.DeepLTranslationProviderConfig{},
@@ -82,13 +82,13 @@ func TestBuildTranslationProviderConfigReusesDeepLSecretAndDefaultsBaseURL(t *te
 func TestBuildTranslationProviderConfigRejectsMissingConfigAndUnknownType(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildTranslationProviderConfig(model.TranslationProviderTypeLLM, nil, nil, nil)
+	_, err := buildTranslationProviderConfig(t.Context(), model.TranslationProviderTypeLLM, nil, nil, nil)
 	require.ErrorContains(t, err, "LLM config is required")
 
-	_, err = buildTranslationProviderConfig(model.TranslationProviderTypeDeepL, nil, nil, nil)
+	_, err = buildTranslationProviderConfig(t.Context(), model.TranslationProviderTypeDeepL, nil, nil, nil)
 	require.ErrorContains(t, err, "DeepL config is required")
 
-	_, err = buildTranslationProviderConfig("unknown", nil, nil, nil)
+	_, err = buildTranslationProviderConfig(t.Context(), "unknown", nil, nil, nil)
 	require.ErrorContains(t, err, "unknown translation provider type")
 }
 
@@ -119,7 +119,7 @@ func TestTranslationProviderProtoConversionMasksSecrets(t *testing.T) {
 		Temperature:                  &temperature,
 	}))
 
-	masked := toProtoTranslationProvider(provider, false)
+	masked := toProtoTranslationProvider(t.Context(), provider, false)
 	require.NotNil(t, masked)
 	assert.Equal(t, "provider-1", masked.Id)
 	assert.Equal(t, managev1.TranslationProviderType_TRANSLATION_PROVIDER_TYPE_LLM, masked.Type)
@@ -136,7 +136,7 @@ func TestTranslationProviderProtoConversionMasksSecrets(t *testing.T) {
 	assert.Equal(t, &maxOutputTokens, llmMasked.MaxOutputTokens)
 	assert.Equal(t, &temperature, llmMasked.Temperature)
 
-	withSecrets := toProtoTranslationProvider(provider, true)
+	withSecrets := toProtoTranslationProvider(t.Context(), provider, true)
 	require.NotNil(t, withSecrets.GetLlmConfig())
 	assert.Equal(t, "secret-key", withSecrets.GetLlmConfig().ApiKey)
 }
@@ -144,7 +144,7 @@ func TestTranslationProviderProtoConversionMasksSecrets(t *testing.T) {
 func TestTranslationProviderProtoConversionHandlesDeepLNilAndUnknown(t *testing.T) {
 	t.Parallel()
 
-	assert.Nil(t, toProtoTranslationProvider(nil, false))
+	assert.Nil(t, toProtoTranslationProvider(t.Context(), nil, false))
 
 	deepl := &model.TranslationProviderConfig{
 		ID:        "provider-2",
@@ -158,15 +158,15 @@ func TestTranslationProviderProtoConversionHandlesDeepLNilAndUnknown(t *testing.
 		APIBaseURL: "https://api-free.deepl.com",
 	}))
 
-	masked := toProtoTranslationProvider(deepl, false)
+	masked := toProtoTranslationProvider(t.Context(), deepl, false)
 	require.NotNil(t, masked.GetDeeplConfig())
 	assert.Empty(t, masked.GetDeeplConfig().ApiKey)
 	assert.Equal(t, "https://api-free.deepl.com", masked.GetDeeplConfig().GetApiBaseUrl())
 
-	withSecrets := toProtoTranslationProvider(deepl, true)
+	withSecrets := toProtoTranslationProvider(t.Context(), deepl, true)
 	assert.Equal(t, "deepl-secret", withSecrets.GetDeeplConfig().ApiKey)
 
-	unknown := toProtoTranslationProvider(&model.TranslationProviderConfig{
+	unknown := toProtoTranslationProvider(t.Context(), &model.TranslationProviderConfig{
 		Type:      "unknown",
 		CreatedAt: time.Unix(1_700_001_300, 0).UTC(),
 		UpdatedAt: time.Unix(1_700_001_400, 0).UTC(),

@@ -136,7 +136,7 @@ func (s *FileService) deleteS3ObjectBestEffort(ctx context.Context, fileKey stri
 		Bucket: aws.String(s.s3Bucket),
 		Key:    aws.String(fileKey),
 	}); err != nil {
-		slog.Error("Failed to delete temporary S3 object", failurecause.Attr(err), "fileKey", fileKey)
+		slog.ErrorContext(ctx, "Failed to delete temporary S3 object", failurecause.Attr(err), "fileKey", fileKey)
 	}
 }
 

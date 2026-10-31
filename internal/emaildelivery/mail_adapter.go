@@ -160,7 +160,7 @@ func (s *MailAdapterService) Create(
 	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_CREATED)
 
 	return connect.NewResponse(&managev1.CreateMailAdapterResponse{
-		Adapter: toProtoMailAdapter(adapter),
+		Adapter: toProtoMailAdapter(ctx, adapter),
 	}), nil
 }
 
@@ -244,9 +244,8 @@ func (s *MailAdapterService) update(
 				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
 					if senderChanged {
 						// Provider diagnostics can contain credentials. Keep their cause
-						// in redacted logs, never in an actionable MCP error.
-						slog.ErrorContext(ctx, "mail adapter sender verification failed", "adapter_id", adapter.ID, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
-						return errs.InvalidArgument("config", "sender configuration verification failed; check provider configuration and sender verification")
+						// for the redacted request record, never in an actionable MCP error.
+						return errs.WithCause(errs.InvalidArgument("config", "sender configuration verification failed; check provider configuration and sender verification"), err)
 					}
 					return errs.InvalidArgument("config", err.Error())
 				}
@@ -299,13 +298,17 @@ func (s *MailAdapterService) update(
 	})
 	if err != nil {
 		if sender != nil {
-			slog.ErrorContext(ctx, "mail adapter sender update failed", "adapter_id", req.Msg.Id, failurecause.Attr(err, mailAdapterPrivateValues(&adapter)...))
+			err = failurecause.WithAttrs(
+				failurecause.WithPrivate(err, mailAdapterPrivateValues(&adapter)...),
+				slog.String("adapter_id", req.Msg.Id),
+			)
 		}
 		if connectErr, ok := errors.AsType[*connect.Error](err); ok {
 			if sender != nil {
-				// The outer context can carry provider credentials and was logged
-				// redacted above; the classified error alone is client-safe.
-				return nil, connectErr
+				// The outer context can carry provider credentials. The client sees
+				// the classified error alone; the request record keeps the redacted
+				// cause.
+				return nil, errs.WithCause(connectErr, err)
 			}
 			return nil, errs.Internal(err)
 		}
@@ -313,12 +316,12 @@ func (s *MailAdapterService) update(
 			return nil, errs.NotFound("mail adapter", req.Msg.Id)
 		}
 		if sender != nil {
-			return nil, errs.InternalMsg("mail adapter sender update failed")
+			return nil, errs.WithCause(errs.InternalMsg("mail adapter sender update failed"), err)
 		}
 		return nil, errs.Internal(err)
 	}
 	if !changed {
-		return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: toProtoMailAdapter(&adapter)}), nil
+		return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: toProtoMailAdapter(ctx, &adapter)}), nil
 	}
 
 	// Invalidate local cache
@@ -330,7 +333,7 @@ func (s *MailAdapterService) update(
 	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_UPDATED)
 
 	return connect.NewResponse(&managev1.UpdateMailAdapterResponse{
-		Adapter: toProtoMailAdapter(&adapter),
+		Adapter: toProtoMailAdapter(ctx, &adapter),
 	}), nil
 }
 
@@ -420,7 +423,7 @@ func (s *MailAdapterService) ListMailAdaptersAdmin(
 
 	protoAdapters := make([]*managev1.MailAdapter, len(adapters))
 	for i := range adapters {
-		protoAdapters[i] = toProtoMailAdapter(&adapters[i])
+		protoAdapters[i] = toProtoMailAdapter(ctx, &adapters[i])
 	}
 
 	return connect.NewResponse(&managev1.ListMailAdaptersAdminResponse{
@@ -469,7 +472,7 @@ func (s *MailAdapterService) TestConfig(
 	factory := email.NewAdapterFactory()
 	adapter, err := factory.Create(tempAdapter)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
+		slog.ErrorContext(ctx, "Mail adapter test failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
 		return connect.NewResponse(&managev1.TestMailAdapterResponse{
 			Success: false,
@@ -518,7 +521,7 @@ func (s *MailAdapterService) Test(
 	factory := email.NewAdapterFactory()
 	adapter, err := factory.Create(&dbAdapter)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
+		slog.ErrorContext(ctx, "Mail adapter test failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
 		return connect.NewResponse(&managev1.TestMailAdapterResponse{
 			Success: false,
@@ -624,7 +627,7 @@ func sendAdapterTestEmail(
 		if recipient, parseErr := mail.ParseAddress(testEmail); parseErr == nil {
 			private = append(private, recipient.Name)
 		}
-		slog.ErrorContext(ctx, "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
+		slog.ErrorContext(ctx, "Mail adapter test failed", "domain", "mail", "event", "mail.operation_failed", "operation", "test_adapter", "outcome", "failed", failurecause.Attr(err, private...))
 		errStr := err.Error()
 		return connect.NewResponse(&managev1.TestMailAdapterResponse{
 			Success: false,
@@ -741,7 +744,7 @@ func (s *MailAdapterService) buildConfig(
 }
 
 // toProtoMailAdapter never exposes the SES secret access key or SMTP password.
-func toProtoMailAdapter(a *model.MailAdapter) *managev1.MailAdapter {
+func toProtoMailAdapter(ctx context.Context, a *model.MailAdapter) *managev1.MailAdapter {
 	proto := &managev1.MailAdapter{
 		Id:        a.ID,
 		Name:      a.Name,
@@ -768,7 +771,7 @@ func toProtoMailAdapter(a *model.MailAdapter) *managev1.MailAdapter {
 			}
 			proto.Config = &managev1.MailAdapter_SesConfig{SesConfig: sesConfig}
 		} else {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_ses_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Stored mail adapter config decode failed; returning adapter without config", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_ses_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
 		}
 
 	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
@@ -785,7 +788,7 @@ func toProtoMailAdapter(a *model.MailAdapter) *managev1.MailAdapter {
 			}
 			proto.Config = &managev1.MailAdapter_SmtpConfig{SmtpConfig: smtpConfig}
 		} else {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_smtp_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Stored mail adapter config decode failed; returning adapter without config", "domain", "mail", "event", "mail.operation_failed", "operation", "decode_smtp_config", "outcome", "failed", "adapter_id", a.ID, failurecause.Attr(err))
 		}
 	}
 
@@ -806,14 +809,14 @@ func (s *MailAdapterService) publishAdapterChangedEvent(ctx context.Context, ada
 	}
 
 	if err := s.publisher.PublishMailAdapterChanged(ctx, event); err != nil {
-		slog.Error("Failed to publish mail adapter changed event",
+		slog.ErrorContext(ctx, "Failed to publish mail adapter changed event",
 			"domain", "mail",
 			"event", "mail.adapter.invalidation_publish_failed",
 			"adapter_id", adapterID,
 			"change_type", changeType.String(),
 			"mutation_applied", true,
 			"cache_ttl_seconds", int(email.AdapterCacheTTL.Seconds()),
-			"error", err,
+			failurecause.Attr(err),
 		)
 		return
 	}

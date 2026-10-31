@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -252,6 +253,10 @@ func isInternalIP(ip net.IP) bool {
 	return false
 }
 
+// errRemoteImportHostnameUnresolved is the client text of a failed DNS lookup;
+// the resolver error it wraps is server-side diagnosis.
+var errRemoteImportHostnameUnresolved = errors.New("failed to resolve hostname")
+
 func validateRemoteImportURL(ctx context.Context, resolver remoteImportResolver, parsedURL *url.URL) (remoteImportTarget, error) {
 	if parsedURL == nil || parsedURL.Scheme != "https" {
 		return remoteImportTarget{}, fmt.Errorf("only HTTPS URLs allowed")
@@ -272,11 +277,11 @@ func validateRemoteImportURL(ctx context.Context, resolver remoteImportResolver,
 	}
 
 	ips, err := resolver.LookupIP(ctx, "ip", hostname)
-	if err != nil || len(ips) == 0 {
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to resolve remote import hostname", failurecause.Attr(err))
-		}
-		return remoteImportTarget{}, fmt.Errorf("failed to resolve hostname")
+	if err != nil {
+		return remoteImportTarget{}, fmt.Errorf("%w: %w", errRemoteImportHostnameUnresolved, err)
+	}
+	if len(ips) == 0 {
+		return remoteImportTarget{}, errRemoteImportHostnameUnresolved
 	}
 	if slices.ContainsFunc(ips, isInternalIP) {
 		return remoteImportTarget{}, fmt.Errorf("internal URLs not allowed")
