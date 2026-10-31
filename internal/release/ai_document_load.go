@@ -8,6 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -105,7 +106,7 @@ func (s *InternalReleaseService) loadAIDocumentStateAfterAuthorization(
 	if err != nil {
 		return AIDocumentState{}, normalizeReleaseContentBlockError(err)
 	}
-	if !exists && releaseSnapshotContainsLocale(target.Snapshot, locale) {
+	if !exists && targetlocale.SnapshotHasLocale(target.Snapshot, locale) {
 		return AIDocumentState{}, errs.InternalMsg("Release locale overlay exists without translation metadata")
 	}
 	creditIDs, err := loadReleaseCreditIDs(ctx, tx, root.ID)

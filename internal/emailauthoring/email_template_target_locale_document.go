@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -22,8 +22,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// emailTemplateTargetEntity names the owner in shared target-locale messages.
-const emailTemplateTargetEntity = "Email Template"
+// emailTemplateEntityName names the owner in shared content document messages.
+const emailTemplateEntityName = "Email Template"
 
 type emailTemplateExactLocaleMetadata struct {
 	Locale    string         `gorm:"column:locale"`
@@ -37,6 +37,13 @@ type emailTemplateExactLocaleState struct {
 	SourceMetadata emailTemplateExactLocaleMetadata
 	TargetMetadata *emailTemplateExactLocaleMetadata
 	TargetRevision string
+}
+
+func (state emailTemplateExactLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: emailTemplateEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 func normalizeEmailTemplateDocumentLocale(value string) (string, error) {
@@ -120,7 +127,7 @@ func loadEmailTemplateExactLocaleState(
 		return emailTemplateExactLocaleState{}, err
 	}
 	if !exists {
-		if emailTemplateSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return emailTemplateExactLocaleState{}, errs.FailedPrecondition("Email Template target locale Blocks exist without owning metadata")
 		}
 		return state, nil
@@ -131,15 +138,6 @@ func loadEmailTemplateExactLocaleState(
 		return emailTemplateExactLocaleState{}, err
 	}
 	return state, nil
-}
-
-func emailTemplateSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale && len(overlay.Blocks) != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func deriveEmailTemplateTargetRevision(documentRevision string, metadata emailTemplateExactLocaleMetadata) (string, error) {
@@ -183,7 +181,7 @@ func materializeEmailTemplateExactLocaleDocument(
 	return document, nil
 }
 
-type emailTemplateTargetMutationInput struct {
+type emailTemplateTargetLocaleMutationInput struct {
 	TemplateID               string
 	DocumentID               uuid.UUID
 	Locale                   string
@@ -191,81 +189,52 @@ type emailTemplateTargetMutationInput struct {
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
 	ExpectedLocaleExists     *bool
-	AllowCreate              bool
-	// SeedSourceOnCreate is the DCDP bootstrap behavior. Provider and
-	// interchange whole replacements keep omitted/new source units absent.
-	SeedSourceOnCreate bool
-	// AllowLocaleDeletes is reserved for authoritative whole replacement.
-	AllowLocaleDeletes bool
-	// OverwriteCurrentTargetCAS applies an accepted provider result over the
-	// current target while preserving the source/document fence.
-	OverwriteCurrentTargetCAS bool
-	SetSubject                bool
-	Subject                   *string
-	Now                       time.Time
-	Fence                     contentblock.DomainFence
+	Policy                   targetlocale.Policy
+	SetSubject               bool
+	Subject                  *string
+	Now                      time.Time
+	Fence                    contentblock.DomainFence
 }
 
-type emailTemplateTargetMutationResult struct {
+type emailTemplateTargetLocaleMutationResult struct {
 	Result         contentblock.Result
 	TargetRevision string
 	LocaleCreated  bool
 }
 
-func applyEmailTemplateTargetMutation(
+func applyEmailTemplateTargetLocaleMutation(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	input emailTemplateTargetMutationInput,
-) (emailTemplateTargetMutationResult, error) {
+	input emailTemplateTargetLocaleMutationInput,
+) (emailTemplateTargetLocaleMutationResult, error) {
 	domain, err := input.Fence(ctx, tx, input.DocumentID)
 	if err != nil {
-		return emailTemplateTargetMutationResult{}, err
+		return emailTemplateTargetLocaleMutationResult{}, err
 	}
 	state, err := loadEmailTemplateExactLocaleState(
 		ctx, tx, store, input.TemplateID, input.DocumentID, input.Locale, true,
 	)
 	if err != nil {
-		return emailTemplateTargetMutationResult{}, err
+		return emailTemplateTargetLocaleMutationResult{}, err
 	}
 	if input.Locale == state.SourceLocale || domain.SourceLocale != state.SourceLocale {
-		return emailTemplateTargetMutationResult{}, errs.FailedPrecondition("Email Template target locale source changed; reload before saving")
+		return emailTemplateTargetLocaleMutationResult{}, errs.FailedPrecondition("Email Template target locale source changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
-		return emailTemplateTargetMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
+		return emailTemplateTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if input.ExpectedLocaleExists != nil && *input.ExpectedLocaleExists != (state.TargetMetadata != nil) {
-		return emailTemplateTargetMutationResult{}, errs.FailedPrecondition(
+		return emailTemplateTargetLocaleMutationResult{}, errs.FailedPrecondition(
 			"Email Template target locale presence changed; reload before saving",
 		)
 	}
-	if err := contentblock.ValidateTargetLocaleBatch(emailTemplateTargetEntity,
-		input.Batch, input.DocumentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes,
-	); err != nil {
-		return emailTemplateTargetMutationResult{}, err
+	batch, err := input.Policy.Admit(state.locked(), input.Locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
+		return emailTemplateTargetLocaleMutationResult{}, err
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
-	); err != nil {
-		return emailTemplateTargetMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return emailTemplateTargetMutationResult{}, errs.FailedPrecondition(
-			"Email Template target locale must be explicitly created before collaboration",
-		)
-	}
-	batch := contentblock.CloneBatch(input.Batch)
-	if state.TargetMetadata == nil && input.SeedSourceOnCreate {
-		batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-		if err != nil {
-			return emailTemplateTargetMutationResult{}, err
-		}
-	}
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
-	output := emailTemplateTargetMutationResult{LocaleCreated: state.TargetMetadata == nil}
+	now := targetlocale.WriteTime(input.Now)
+	output := emailTemplateTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	var final emailTemplateExactLocaleMetadata
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, input.Locale, input.Fence,
@@ -314,26 +283,26 @@ func applyEmailTemplateTargetMutation(
 		},
 	)
 	if err != nil {
-		return emailTemplateTargetMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
+		return emailTemplateTargetLocaleMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 	}
 	output.Result = result
 	output.TargetRevision, err = deriveEmailTemplateTargetRevision(result.DocumentRevision.String(), final)
 	if err != nil {
-		return emailTemplateTargetMutationResult{}, err
+		return emailTemplateTargetLocaleMutationResult{}, err
 	}
 	if result.Changed {
 		if err := tx.WithContext(ctx).Table("email_template").Where("id = ?", input.TemplateID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return emailTemplateTargetMutationResult{}, errs.Internal(err)
+			return emailTemplateTargetLocaleMutationResult{}, errs.Internal(err)
 		}
 		snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, input.DocumentID, state.SourceLocale)
 		if loadErr != nil {
-			return emailTemplateTargetMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, loadErr)
+			return emailTemplateTargetLocaleMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, loadErr)
 		}
 		if projectErr := projectEmailTemplateTargetMaterializedContent(
 			ctx, tx, input.TemplateID, snapshot, input.Locale,
 		); projectErr != nil {
-			return emailTemplateTargetMutationResult{}, projectErr
+			return emailTemplateTargetLocaleMutationResult{}, projectErr
 		}
 	}
 	return output, nil
@@ -366,26 +335,13 @@ func deleteEmailTemplateTargetLocale(
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(expectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,
 		ContributorMemberIDs: append([]uuid.UUID(nil), contributors...),
-	}
-	group := contentblock.LocaleMutationGroup{Locale: locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale != locale {
-			continue
-		}
-		for _, block := range overlay.Blocks {
-			group.Deletes = append(group.Deletes, block.BlockID)
-		}
-		break
-	}
-	sort.Slice(group.Deletes, func(i, j int) bool { return group.Deletes[i].String() < group.Deletes[j].String() })
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
+		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, locale, fence,

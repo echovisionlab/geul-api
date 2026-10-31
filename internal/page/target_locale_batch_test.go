@@ -9,7 +9,7 @@ import (
 func TestValidatePageTargetBatchAuthorityOutcomes(t *testing.T) {
 	identity := tb.Invalid("batch: Page target document identity and revision must match the locked state")
 	graph := tb.Rejected(tb.NonSourceStructureForbidden, "Page target locale cannot mutate the shared Block graph or File ownership")
-	tb.Run(t, tb.Shared(pageTargetEntity), []tb.Case{
+	tb.Run(t, tb.Shared(pageEntityName), []tb.Case{
 		{Kind: tb.DocumentMismatch, Want: identity},
 		{Kind: tb.RevisionMismatch, Want: identity},
 		{Kind: tb.GraphUpsert, Want: graph},

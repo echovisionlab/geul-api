@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -353,14 +354,15 @@ func (s *PostService) applyAIDocumentMutationInTransaction(
 			ExpectedDocumentRevision: mutation.ExpectedRevision,
 			ExpectedTargetRevision:   mutation.ExpectedTargetRevision,
 			Batch:                    &mutation.Batch,
-			AllowCreate:              mutation.Metadata.EnsureLocale,
-			SeedSourceOnCreate:       mutation.Metadata.EnsureLocale,
-			SetTitle:                 mutation.Metadata.SetTitle,
-			Title:                    mutation.Metadata.Title,
-			SetSummary:               mutation.Metadata.SetSummary,
-			Summary:                  mutation.Metadata.Summary,
-			Now:                      now,
-			Fence:                    fence,
+			Policy: targetlocale.Policy{
+				AllowCreate: mutation.Metadata.EnsureLocale, SeedSource: mutation.Metadata.EnsureLocale,
+			},
+			SetTitle:   mutation.Metadata.SetTitle,
+			Title:      mutation.Metadata.Title,
+			SetSummary: mutation.Metadata.SetSummary,
+			Summary:    mutation.Metadata.Summary,
+			Now:        now,
+			Fence:      fence,
 		})
 		if err != nil {
 			return AIDocumentMutationResult{}, err

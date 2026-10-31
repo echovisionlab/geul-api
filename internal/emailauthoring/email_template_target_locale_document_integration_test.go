@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -65,20 +66,19 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	require.NoError(t, err)
 	expectedDocumentRevision := uuid.MustParse(sourceWrite.Msg.DocumentRevision)
 	expectedMissing := false
-	var createdTarget emailTemplateTargetMutationResult
+	var createdTarget emailTemplateTargetLocaleMutationResult
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var createErr error
-		createdTarget, createErr = applyEmailTemplateTargetMutation(
+		createdTarget, createErr = applyEmailTemplateTargetLocaleMutation(
 			ctx, tx, store,
-			emailTemplateTargetMutationInput{
+			emailTemplateTargetLocaleMutationInput{
 				TemplateID: template.Msg.Id, DocumentID: documentID, Locale: "ko",
 				Batch: contentblock.Batch{
 					DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,
 				},
 				ExpectedDocumentRevision: expectedDocumentRevision,
 				ExpectedLocaleExists:     &expectedMissing,
-				AllowCreate:              true,
-				SeedSourceOnCreate:       true,
+				Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true},
 				Now:                      time.Now().UTC(),
 				Fence: campaignEmailContentFence(
 					references, emailTemplateContentEntity, template.Msg.Id,

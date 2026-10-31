@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -464,7 +465,7 @@ func (s *LabelService) applyAIDocumentMode(
 			target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
 				LabelID: input.LabelID, Locale: input.Locale,
 				ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
-				Batch: batch, AllowCreate: createTarget, SeedSource: createTarget, Fence: fence,
+				Batch: batch, Policy: targetlocale.Policy{AllowCreate: createTarget, SeedSource: createTarget}, Fence: fence,
 			})
 			if err != nil {
 				return AIDocumentMutationResult{}, err
@@ -481,8 +482,8 @@ func (s *LabelService) applyAIDocumentMode(
 		target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
 			LabelID: input.LabelID, Locale: input.Locale,
 			ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
-			Batch:       contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}},
-			AllowCreate: true, SeedSource: true, Fence: fence,
+			Batch:  contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}},
+			Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true}, Fence: fence,
 		})
 		if err != nil {
 			return AIDocumentMutationResult{}, err

@@ -12,7 +12,7 @@ import (
 func TestValidatePostTargetBatchOutcomes(t *testing.T) {
 	identity := tb.Invalid("batch: Post target document identity and revision must match the locked state")
 	graph := tb.Rejected(tb.NonSourceStructureForbidden, "Post target locale cannot mutate the shared Block graph or File ownership")
-	tb.Run(t, tb.Shared(postTargetEntity), []tb.Case{
+	tb.Run(t, tb.Shared(postEntityName), []tb.Case{
 		{Kind: tb.DocumentMismatch, Want: identity},
 		{Kind: tb.RevisionMismatch, Want: identity},
 		{Kind: tb.GraphUpsert, Want: graph},
@@ -67,7 +67,7 @@ func TestValidatePostTargetStorageMatchesBatchOutcomes(t *testing.T) {
 			tc.storage.ExpectedRevision = revision.String()
 			tc.batch.DocumentID, tc.batch.ExpectedRevision = documentID, revision
 			fromStorage := tb.Describe(t, validatePostTargetStorage(&tc.storage, revision, "ko", false))
-			fromBatch := tb.Describe(t, contentblock.ValidateTargetLocaleBatch(postTargetEntity, tc.batch, documentID, revision, "ko", false))
+			fromBatch := tb.Describe(t, contentblock.ValidateTargetLocaleBatch(postEntityName, tc.batch, documentID, revision, "ko", false))
 			if fromStorage != fromBatch {
 				t.Fatalf("storage outcome = %+v, batch outcome = %+v", fromStorage, fromBatch)
 			}

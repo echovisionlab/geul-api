@@ -9,7 +9,7 @@ import (
 func TestValidateArtistTargetBatchAuthorityOutcomes(t *testing.T) {
 	identity := tb.Invalid("batch: Artist target document identity and revision must match the locked state")
 	graph := tb.Rejected(tb.NonSourceStructureForbidden, "Artist target locale cannot mutate the shared Block graph or File ownership")
-	tb.Run(t, tb.Shared(artistTargetEntity), []tb.Case{
+	tb.Run(t, tb.Shared(artistEntityName), []tb.Case{
 		{Kind: tb.DocumentMismatch, Want: identity},
 		{Kind: tb.RevisionMismatch, Want: identity},
 		{Kind: tb.GraphUpsert, Want: graph},

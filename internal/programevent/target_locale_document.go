@@ -3,14 +3,13 @@ package programevent
 import (
 	"context"
 	"errors"
-	"sort"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -19,8 +18,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// programEventTargetEntity names the owner in shared target-locale messages.
-const programEventTargetEntity = "Program Event"
+// programEventEntityName names the owner in shared content document messages.
+const programEventEntityName = "Program Event"
 
 type programEventLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
@@ -34,6 +33,13 @@ type programEventExactLocaleState struct {
 	SourceMetadata programEventLocaleMetadataRow
 	TargetMetadata *programEventLocaleMetadataRow
 	TargetRevision string
+}
+
+func (state programEventExactLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: programEventEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 func normalizeProgramEventDocumentLocale(value string) (string, error) {
@@ -76,15 +82,6 @@ func deriveProgramEventTargetRevision(documentRevision string, metadata programE
 		return "", errs.Internal(err)
 	}
 	return revision, nil
-}
-
-func programEventSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale && len(overlay.Blocks) != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func loadProgramEventExactLocaleState(
@@ -132,7 +129,7 @@ func loadProgramEventExactLocaleState(
 		return programEventExactLocaleState{}, err
 	}
 	if !exists {
-		if programEventSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return programEventExactLocaleState{}, errs.FailedPrecondition("Program Event target locale Blocks exist without owning metadata")
 		}
 		return state, nil
@@ -173,7 +170,7 @@ func programEventLocaleMetadataProjection(
 	return projected
 }
 
-type programEventTargetMutationInput struct {
+type programEventTargetLocaleMutationInput struct {
 	EventID                  string
 	DocumentID               uuid.UUID
 	Locale                   string
@@ -181,85 +178,55 @@ type programEventTargetMutationInput struct {
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
 	ExpectedLocaleExists     *bool
-	AllowCreate              bool
-	// SeedSourceOnCreate is the DCDP create/bootstrap contract. Provider and
-	// interchange whole replacements leave omitted/new source units absent.
-	SeedSourceOnCreate bool
-	// AllowLocaleDeletes is reserved for authoritative whole-replacement
-	// provider/interchange delivery. Interactive editing writes explicit empty.
-	AllowLocaleDeletes bool
-	// OverwriteCurrentTargetCAS lets an accepted provider response replace the
-	// current target. Source/document coherence is still checked independently.
-	OverwriteCurrentTargetCAS bool
-	SetSummary                bool
-	Summary                   *string
-	Now                       time.Time
-	Fence                     contentblock.DomainFence
+	Policy                   targetlocale.Policy
+	SetSummary               bool
+	Summary                  *string
+	Now                      time.Time
+	Fence                    contentblock.DomainFence
 }
 
-type programEventTargetMutationResult struct {
+type programEventTargetLocaleMutationResult struct {
 	Result         contentblock.Result
 	TargetRevision string
 	LocaleCreated  bool
 }
 
-func applyProgramEventTargetMutation(
+func applyProgramEventTargetLocaleMutation(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	input programEventTargetMutationInput,
-) (programEventTargetMutationResult, error) {
+	input programEventTargetLocaleMutationInput,
+) (programEventTargetLocaleMutationResult, error) {
 	domain, err := input.Fence(ctx, tx, input.DocumentID)
 	if err != nil {
-		return programEventTargetMutationResult{}, err
+		return programEventTargetLocaleMutationResult{}, err
 	}
 	state, err := loadProgramEventExactLocaleState(
 		ctx, tx, store, input.EventID, input.DocumentID, input.Locale, true,
 	)
 	if err != nil {
-		return programEventTargetMutationResult{}, err
+		return programEventTargetLocaleMutationResult{}, err
 	}
 	if input.Locale == state.SourceLocale {
-		return programEventTargetMutationResult{}, errs.InvalidArgument("locale", "Program Event target locale must differ from source locale")
+		return programEventTargetLocaleMutationResult{}, errs.InvalidArgument("locale", "Program Event target locale must differ from source locale")
 	}
 	if domain.SourceLocale != state.SourceLocale {
-		return programEventTargetMutationResult{}, errs.FailedPrecondition("Program Event source locale changed; reload before saving")
+		return programEventTargetLocaleMutationResult{}, errs.FailedPrecondition("Program Event source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
-		return programEventTargetMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
+		return programEventTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if input.ExpectedLocaleExists != nil && *input.ExpectedLocaleExists != (state.TargetMetadata != nil) {
-		return programEventTargetMutationResult{}, errs.FailedPrecondition(
+		return programEventTargetLocaleMutationResult{}, errs.FailedPrecondition(
 			"Program Event target locale presence changed; reload before saving",
 		)
 	}
-	if err := contentblock.ValidateTargetLocaleBatch(programEventTargetEntity,
-		input.Batch, input.DocumentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes,
-	); err != nil {
-		return programEventTargetMutationResult{}, err
+	batch, err := input.Policy.Admit(state.locked(), input.Locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
+		return programEventTargetLocaleMutationResult{}, err
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
-	); err != nil {
-		return programEventTargetMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return programEventTargetMutationResult{}, errs.FailedPrecondition(
-			"Program Event target locale must be explicitly created before collaboration",
-		)
-	}
-	batch := contentblock.CloneBatch(input.Batch)
-	if state.TargetMetadata == nil && input.SeedSourceOnCreate {
-		batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-		if err != nil {
-			return programEventTargetMutationResult{}, err
-		}
-	}
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
-	output := programEventTargetMutationResult{LocaleCreated: state.TargetMetadata == nil}
+	now := targetlocale.WriteTime(input.Now)
+	output := programEventTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	var final programEventLocaleMetadataRow
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, input.Locale, input.Fence,
@@ -305,17 +272,17 @@ func applyProgramEventTargetMutation(
 		},
 	)
 	if err != nil {
-		return programEventTargetMutationResult{}, normalizeProgramEventContentBlockError(err)
+		return programEventTargetLocaleMutationResult{}, normalizeProgramEventContentBlockError(err)
 	}
 	output.Result = result
 	output.TargetRevision, err = deriveProgramEventTargetRevision(result.DocumentRevision.String(), final)
 	if err != nil {
-		return programEventTargetMutationResult{}, err
+		return programEventTargetLocaleMutationResult{}, err
 	}
 	if result.Changed {
 		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).
 			Where("id = ?", input.EventID).UpdateColumn("updated_at", now).Error; err != nil {
-			return programEventTargetMutationResult{}, errs.Internal(err)
+			return programEventTargetLocaleMutationResult{}, errs.Internal(err)
 		}
 	}
 	return output, nil
@@ -351,26 +318,13 @@ func deleteProgramEventTargetLocale(
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(expectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,
 		ContributorMemberIDs: append([]uuid.UUID(nil), contributors...),
-	}
-	group := contentblock.LocaleMutationGroup{Locale: locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale != locale {
-			continue
-		}
-		for _, block := range overlay.Blocks {
-			group.Deletes = append(group.Deletes, block.BlockID)
-		}
-		break
-	}
-	sort.Slice(group.Deletes, func(i, j int) bool { return group.Deletes[i].String() < group.Deletes[j].String() })
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
+		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, locale, fence,

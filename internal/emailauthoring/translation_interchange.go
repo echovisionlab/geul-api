@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -170,15 +171,15 @@ func ApplyTemplateTranslationInterchange(
 	if err != nil {
 		return TemplateTranslationInterchangeMutationResult{}, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
 	}
-	result, err := applyEmailTemplateTargetMutation(
+	result, err := applyEmailTemplateTargetLocaleMutation(
 		ctx, tx, store,
-		emailTemplateTargetMutationInput{
+		emailTemplateTargetLocaleMutationInput{
 			TemplateID: templateID, DocumentID: documentID, Locale: input.TargetLocale,
 			Batch: batch, ExpectedDocumentRevision: expectedRevision,
 			ExpectedLocaleExists:   &input.ExpectedPresence,
 			ExpectedTargetRevision: input.ExpectedTargetRevision,
-			AllowCreate:            true, AllowLocaleDeletes: true,
-			SetSubject: true, Subject: cloneEmailAIDocumentString(input.Subject), Now: input.Now,
+			Policy:                 targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true},
+			SetSubject:             true, Subject: cloneEmailAIDocumentString(input.Subject), Now: input.Now,
 			Fence: campaignEmailContentFence(references, emailTemplateContentEntity, templateID),
 		},
 	)

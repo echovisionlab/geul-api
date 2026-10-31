@@ -9,7 +9,7 @@ import (
 func TestValidateLabelTargetBatchOutcomes(t *testing.T) {
 	identity := tb.Invalid("batch: Label target document identity and revision must match the locked state")
 	graph := tb.Rejected(tb.NonSourceStructureForbidden, "Label target locale cannot mutate the shared Block graph or File ownership")
-	tb.Run(t, tb.Shared(labelTargetEntity), []tb.Case{
+	tb.Run(t, tb.Shared(labelEntityName), []tb.Case{
 		{Kind: tb.DocumentMismatch, Want: identity},
 		{Kind: tb.RevisionMismatch, Want: identity},
 		{Kind: tb.GraphUpsert, Want: graph},

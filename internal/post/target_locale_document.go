@@ -3,7 +3,6 @@ package post
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
@@ -12,16 +11,16 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
-// postTargetEntity names the owner in shared target-locale messages.
-const postTargetEntity = "Post"
+// postEntityName names the owner in shared content document messages.
+const postEntityName = "Post"
 
 type postTargetLocaleMutationInput struct {
 	PostID                   string
@@ -30,10 +29,7 @@ type postTargetLocaleMutationInput struct {
 	ExpectedTargetRevision   *string
 	Storage                  *contentv1.ContentStorageMutationBatch
 	Batch                    *contentblock.Batch
-	AllowLocaleValueDeletes  bool
-	AllowCreate              bool
-	SeedSourceOnCreate       bool
-	UseCurrentTargetRevision bool
+	Policy                   targetlocale.Policy
 	SetTitle                 bool
 	Title                    *string
 	SetSummary               bool
@@ -68,6 +64,13 @@ type postTargetLocaleState struct {
 	SourceMetadata postLocaleMetadataRow
 	TargetMetadata *postLocaleMetadataRow
 	TargetRevision string
+}
+
+func (state postTargetLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: postEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 func loadPostTargetLocaleStateForDocument(
@@ -120,7 +123,7 @@ func loadPostTargetLocaleStateForDocument(
 	if err != nil {
 		return postTargetLocaleState{}, err
 	}
-	if !exists && snapshotContainsLocale(snapshot, normalizedLocale) {
+	if !exists && targetlocale.SnapshotHasLocale(snapshot, normalizedLocale) {
 		return postTargetLocaleState{}, errs.FailedPrecondition("Post target locale Blocks exist without owning metadata")
 	}
 	state := postTargetLocaleState{
@@ -230,47 +233,18 @@ func applyPostTargetLocaleMutation(
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return postTargetLocaleMutationResult{}, contentblockStaleRevision(state.Snapshot.Document.Revision)
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil,
-		input.UseCurrentTargetRevision,
-	); err != nil {
-		return postTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return postTargetLocaleMutationResult{}, errs.FailedPrecondition(
-			"Post target locale must be explicitly created before collaboration",
-		)
-	}
 	if input.Storage != nil && input.Batch != nil {
 		return postTargetLocaleMutationResult{}, errs.InvalidArgument("batch", "Post target accepts one mutation representation")
 	}
-	if err := validatePostTargetStorage(
-		input.Storage,
-		input.ExpectedDocumentRevision,
-		input.Locale,
-		input.AllowLocaleValueDeletes,
-	); err != nil {
-		return postTargetLocaleMutationResult{}, err
-	}
 	var batch contentblock.Batch
 	if input.Batch != nil {
-		batch = contentblock.CloneBatch(*input.Batch)
-		if err := contentblock.ValidateTargetLocaleBatch(postTargetEntity,
-			batch,
-			documentID,
-			input.ExpectedDocumentRevision,
-			input.Locale,
-			input.AllowLocaleValueDeletes,
+		batch = *input.Batch
+	} else {
+		if err := validatePostTargetStorage(
+			input.Storage, input.ExpectedDocumentRevision, input.Locale, input.Policy.AllowLocaleDeletes,
 		); err != nil {
 			return postTargetLocaleMutationResult{}, err
 		}
-		if state.TargetMetadata == nil && input.SeedSourceOnCreate {
-			batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-			if err != nil {
-				return postTargetLocaleMutationResult{}, err
-			}
-		}
-	} else {
 		storage := contentv1.ContentStorageMutationBatch{
 			ExpectedRevision: input.ExpectedDocumentRevision.String(),
 		}
@@ -283,44 +257,28 @@ func applyPostTargetLocaleMutation(
 		if err != nil {
 			return postTargetLocaleMutationResult{}, normalizePostContentBlockError(err)
 		}
-		if state.TargetMetadata == nil && input.SeedSourceOnCreate {
-			batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-			if err != nil {
-				return postTargetLocaleMutationResult{}, err
-			}
-		}
 	}
-
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
+	batch, err = input.Policy.Admit(state.locked(), input.Locale, batch, input.ExpectedTargetRevision)
+	if err != nil {
+		return postTargetLocaleMutationResult{}, err
 	}
+	now := targetlocale.WriteTime(input.Now)
 	result := postTargetLocaleMutationResult{
 		DocumentRevision: state.Snapshot.Document.Revision.String(),
 		LocaleCreated:    state.TargetMetadata == nil,
 	}
 	var finalMetadata postLocaleMetadataRow
-	authorizedFence := func(
-		_ context.Context,
-		_ *gorm.DB,
-		requestedDocumentID uuid.UUID,
-	) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post content document changed; reload before saving")
-		}
-		return domain, nil
-	}
 	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx,
 		tx,
 		batch,
 		input.Locale,
-		authorizedFence,
+		contentblock.LockedFence(postEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			current := postLocaleMetadataRow{Locale: input.Locale}
 			if state.TargetMetadata != nil {
 				current = *state.TargetMetadata
-			} else if input.SeedSourceOnCreate {
+			} else if input.Policy.SeedSource {
 				current = state.SourceMetadata
 			}
 			title := current.Title
@@ -422,10 +380,8 @@ func deletePostTargetLocale(
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return contentblock.Result{}, contentblockStaleRevision(state.Snapshot.Document.Revision)
 	}
-	if err := translation.ValidateExpectedTargetRevision(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil,
-	); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(input.ExpectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{
@@ -436,39 +392,14 @@ func deletePostTargetLocale(
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: input.ExpectedDocumentRevision,
 		ContributorMemberIDs: append([]uuid.UUID(nil), input.ContributorMemberIDs...),
-	}
-	group := contentblock.LocaleMutationGroup{Locale: input.Locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale != input.Locale {
-			continue
-		}
-		for _, block := range overlay.Blocks {
-			group.Deletes = append(group.Deletes, block.BlockID)
-		}
-		break
-	}
-	sort.Slice(group.Deletes, func(i, j int) bool {
-		return group.Deletes[i].String() < group.Deletes[j].String()
-	})
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
-	}
-	authorizedFence := func(
-		_ context.Context,
-		_ *gorm.DB,
-		requestedDocumentID uuid.UUID,
-	) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post content document changed; reload before saving")
-		}
-		return domain, nil
+		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, input.Locale),
 	}
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx,
 		tx,
 		batch,
 		input.Locale,
-		authorizedFence,
+		contentblock.LockedFence(postEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
 			deleted := tx.WithContext(ctx).Exec(
 				"DELETE FROM post_translation WHERE entity_id = ?::uuid AND locale = ?",

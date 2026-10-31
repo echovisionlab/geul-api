@@ -128,14 +128,14 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 			if err := requireEmailTemplateCollaborationContributors(ctx, tx, s.checkpoints, templateID, contributors); err != nil {
 				return err
 			}
-			output, applyErr := applyEmailTemplateTargetMutation(
+			output, applyErr := applyEmailTemplateTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				emailTemplateTargetMutationInput{
+				emailTemplateTargetLocaleMutationInput{
 					TemplateID: templateID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, Now: now,
-					Fence: campaignEmailContentFence(s.references, emailTemplateContentEntity, templateID),
+					Now:                    now,
+					Fence:                  campaignEmailContentFence(s.references, emailTemplateContentEntity, templateID),
 				},
 			)
 			if applyErr != nil {
@@ -276,7 +276,7 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 	if locale != domain.SourceLocale {
 		contributors := req.Msg.GetContributorMemberIds()
 		batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
-		var output emailTemplateTargetMutationResult
+		var output emailTemplateTargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			originMemberID, err := requireEmailAuthoringMutationContributor(ctx, tx, contributors)
 			if err != nil {
@@ -286,13 +286,13 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 				return err
 			}
 			var applyErr error
-			output, applyErr = applyEmailTemplateTargetMutation(
+			output, applyErr = applyEmailTemplateTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				emailTemplateTargetMutationInput{
+				emailTemplateTargetLocaleMutationInput{
 					TemplateID: templateID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, SetSubject: true, Subject: req.Msg.Subject, Now: now,
+					SetSubject:             true, Subject: req.Msg.Subject, Now: now,
 					Fence: campaignEmailContentFence(s.references, emailTemplateContentEntity, templateID),
 				},
 			)

@@ -12,6 +12,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -178,7 +179,7 @@ func (s *InternalLabelService) LoadLabelBlockDocument(
 	if requestedLocale == bootstrap.Source.SourceLocale && !localeExists {
 		return nil, errs.InternalMsg("Label source locale metadata is missing")
 	}
-	if !localeExists && labelSnapshotContainsLocale(bootstrap.Snapshot, requestedLocale) {
+	if !localeExists && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, requestedLocale) {
 		return nil, errs.FailedPrecondition("Label target locale Blocks exist without owning metadata")
 	}
 	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, requestedLocale)

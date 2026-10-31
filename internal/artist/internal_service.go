@@ -239,11 +239,11 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 			if batchErr != nil {
 				return normalizeCreativeContentBlockError(artistContentEntity, batchErr)
 			}
-			result, targetRevision, err = applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.ArtistId, documentID, locale, batch,
-				req.Msg.ExpectedTargetRevision, false, now,
-				internalCreativeContentFence(req.Msg.ArtistId),
-			)
+			result, targetRevision, err = applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+				ArtistID: req.Msg.ArtistId, DocumentID: documentID, Locale: locale, Batch: batch,
+				ExpectedTargetRevision: req.Msg.ExpectedTargetRevision, Now: now,
+				Fence: internalCreativeContentFence(req.Msg.ArtistId),
+			})
 			if err != nil {
 				return err
 			}

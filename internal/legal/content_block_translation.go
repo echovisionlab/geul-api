@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -275,8 +276,10 @@ func ApplyTypedTranslationCandidateWithDB(
 		legalTargetLocaleMutationInput{
 			EntityType: job.EntityType, EntityID: job.EntityID, Locale: job.TargetLocale,
 			ExpectedDocumentRevision: snapshot.Document.Revision,
-			Batch:                    batch, AllowCreate: true, SeedSourceOnCreate: true,
-			OverwriteExistingTarget: true, AllowLocaleDeletes: true,
+			Batch:                    batch,
+			Policy: targetlocale.Policy{
+				AllowCreate: true, SeedSource: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent,
+			},
 			SetTitle: true, Title: &title, Now: now,
 			Fence: legalTranslationJobApplyDocumentFence(job.EntityType, job.EntityID),
 		},

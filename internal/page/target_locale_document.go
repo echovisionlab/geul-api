@@ -6,17 +6,17 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// pageTargetEntity names the owner in shared target-locale messages.
-const pageTargetEntity = "Page"
+// pageEntityName names the owner in shared content document messages.
+const pageEntityName = "Page"
 
 type pageLocaleMetadataRow struct {
 	Locale        string    `gorm:"column:locale"`
@@ -32,6 +32,13 @@ type pageTargetLocaleState struct {
 	SourceMetadata pageLocaleMetadataRow
 	TargetMetadata *pageLocaleMetadataRow
 	TargetRevision string
+}
+
+func (state pageTargetLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: pageEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 type pageTargetMetadataPatch struct {
@@ -104,15 +111,6 @@ func derivePageTargetRevision(documentRevision string, metadata pageLocaleMetada
 	return revision, nil
 }
 
-func pageSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale && len(overlay.Blocks) != 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func loadPageTargetLocaleState(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -165,7 +163,7 @@ func loadPageTargetLocaleState(
 		return pageTargetLocaleState{}, err
 	}
 	if !exists {
-		if pageSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return pageTargetLocaleState{}, errs.FailedPrecondition("Page target locale Blocks exist without owning metadata")
 		}
 		return state, nil
@@ -178,64 +176,27 @@ func loadPageTargetLocaleState(
 	return state, nil
 }
 
-func applyPageTargetLocaleBatch(
-	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	pageID string,
-	documentID uuid.UUID,
-	locale string,
-	batch contentblock.Batch,
-	expectedTargetRevision *string,
-	patch pageTargetMetadataPatch,
-	allowCreate bool,
-	allowLocaleDeletes bool,
-	now time.Time,
-	fence contentblock.DomainFence,
-) (contentblock.Result, *string, error) {
-	return applyPageTargetLocaleBatchWithRevisionPolicy(
-		ctx, tx, store, pageID, documentID, locale, batch, expectedTargetRevision,
-		patch, allowCreate, allowLocaleDeletes, false, now, fence,
-	)
+// pageTargetLocaleMutationInput is one write to a Page target locale.
+type pageTargetLocaleMutationInput struct {
+	PageID                 string
+	DocumentID             uuid.UUID
+	Locale                 string
+	Batch                  contentblock.Batch
+	ExpectedTargetRevision *string
+	Patch                  pageTargetMetadataPatch
+	Policy                 targetlocale.Policy
+	Now                    time.Time
+	Fence                  contentblock.DomainFence
 }
 
-func applyPageTargetLocaleBatchUsingCurrentRevision(
+func applyPageTargetLocaleMutation(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	pageID string,
-	documentID uuid.UUID,
-	locale string,
-	batch contentblock.Batch,
-	patch pageTargetMetadataPatch,
-	allowCreate bool,
-	allowLocaleDeletes bool,
-	now time.Time,
-	fence contentblock.DomainFence,
+	input pageTargetLocaleMutationInput,
 ) (contentblock.Result, *string, error) {
-	return applyPageTargetLocaleBatchWithRevisionPolicy(
-		ctx, tx, store, pageID, documentID, locale, batch, nil,
-		patch, allowCreate, allowLocaleDeletes, true, now, fence,
-	)
-}
-
-func applyPageTargetLocaleBatchWithRevisionPolicy(
-	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	pageID string,
-	documentID uuid.UUID,
-	locale string,
-	batch contentblock.Batch,
-	expectedTargetRevision *string,
-	patch pageTargetMetadataPatch,
-	allowCreate bool,
-	allowLocaleDeletes bool,
-	useCurrentTargetRevision bool,
-	now time.Time,
-	fence contentblock.DomainFence,
-) (contentblock.Result, *string, error) {
-	domain, err := fence(ctx, tx, documentID)
+	pageID, documentID, locale, patch := input.PageID, input.DocumentID, input.Locale, input.Patch
+	domain, err := input.Fence(ctx, tx, documentID)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
@@ -249,44 +210,23 @@ func applyPageTargetLocaleBatchWithRevisionPolicy(
 	if state.SourceLocale != domain.SourceLocale {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Page source locale changed; reload before saving")
 	}
-	if err := contentblock.ValidateTargetLocaleBatch(pageTargetEntity, batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes); err != nil {
-		return contentblock.Result{}, nil, err
-	}
-	if err := translation.ValidateTargetRevisionWrite(
-		expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, useCurrentTargetRevision,
-	); err != nil {
-		return contentblock.Result{}, nil, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(batch.LocaleGroups) != 0) {
+	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(input.Batch.LocaleGroups) != 0) {
 		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "Page translation deletion must be exclusive")
 	}
-	if state.TargetMetadata == nil && !allowCreate {
-		return contentblock.Result{}, nil, errs.FailedPrecondition("Page target locale must be explicitly created before collaboration")
+	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
+		return contentblock.Result{}, nil, err
 	}
 	if patch.DeleteLocale && state.TargetMetadata == nil {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Page target locale must exist before deletion")
 	}
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
-	now = now.UTC().Truncate(time.Microsecond)
+	now := targetlocale.WriteTime(input.Now)
 	if patch.DeleteLocale {
-		group := contentblock.LocaleMutationGroup{Locale: locale}
-		for _, overlay := range state.Snapshot.LocaleOverlays {
-			if overlay.Locale == locale {
-				for _, block := range overlay.Blocks {
-					group.Deletes = append(group.Deletes, block.BlockID)
-				}
-				break
-			}
-		}
-		if len(group.Deletes) != 0 {
-			batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
-		}
+		batch.LocaleGroups = targetlocale.DeleteGroups(state.Snapshot, locale)
 	}
 	var final pageLocaleMetadataRow
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, pageLockedTargetFence(documentID, domain),
+		ctx, tx, batch, locale, contentblock.LockedFence(pageEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			if patch.DeleteLocale {
 				deleted := tx.WithContext(ctx).Exec("DELETE FROM page_translation WHERE entity_id = ?::uuid AND locale = ?", pageID, locale)
@@ -354,15 +294,6 @@ func applyPageTargetLocaleBatchWithRevisionPolicy(
 		return contentblock.Result{}, nil, err
 	}
 	return result, &targetRevision, nil
-}
-
-func pageLockedTargetFence(documentID uuid.UUID, domain contentblock.DomainContext) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Page content document changed; reload before saving")
-		}
-		return domain, nil
-	}
 }
 
 func pageContributorUUIDs(values []string) ([]uuid.UUID, error) {

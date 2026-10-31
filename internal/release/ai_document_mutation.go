@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -174,8 +175,8 @@ func (s *InternalReleaseService) applyAIDocumentMode(ctx context.Context, tx *go
 			// A missing target is an explicit lifecycle boundary.  Editing a
 			// sparse target must not silently create its metadata/overlay; callers
 			// create it with the dedicated CreateTranslation operation first.
-			AllowCreate: input.CreateTranslation,
-			Batch:       batch, SetTitle: input.SetTitle, Title: input.Title,
+			Policy: targetlocale.Policy{AllowCreate: input.CreateTranslation, SeedSource: true},
+			Batch:  batch, SetTitle: input.SetTitle, Title: input.Title,
 			CreditNotePatch: input.CreditNotePatch, Now: time.Now().UTC(), Fence: fence,
 		})
 		if err != nil {

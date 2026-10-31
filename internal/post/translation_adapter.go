@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -126,8 +127,7 @@ func applyTypedTranslationCandidateWithDB(
 			PostID: job.EntityID, Locale: job.TargetLocale,
 			ExpectedDocumentRevision: state.Snapshot.Document.Revision,
 			Batch:                    &batch,
-			AllowCreate:              true,
-			UseCurrentTargetRevision: true,
+			Policy:                   targetlocale.Policy{AllowCreate: true, RevisionMode: targetlocale.RevisionCurrent},
 			SetTitle:                 candidate.ProviderUnitRequested("entity:title"),
 			Title:                    candidate.Title,
 			SetSummary:               candidate.ProviderUnitRequested("entity:summary"),

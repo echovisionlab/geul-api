@@ -203,18 +203,6 @@ func postSystemTranslationDocumentFence(postID string) contentblock.DomainFence 
 	}
 }
 
-func postAuthorizedDocumentFence(
-	documentID uuid.UUID,
-	domain contentblock.DomainContext,
-) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post content document changed; reload before saving")
-		}
-		return domain, nil
-	}
-}
-
 func loadPostContentDomainContext(
 	ctx context.Context,
 	db *gorm.DB,

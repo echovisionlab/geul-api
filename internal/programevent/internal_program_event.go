@@ -223,13 +223,13 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 	if locale != sourceState.SourceLocale {
 		var targetRevision string
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			output, applyErr := applyProgramEventTargetMutation(
+			output, applyErr := applyProgramEventTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				programEventTargetMutationInput{
+				programEventTargetLocaleMutationInput{
 					EventID: req.Msg.EventId, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, Now: now, Fence: fence,
+					Now:                    now, Fence: fence,
 				},
 			)
 			if applyErr != nil {
@@ -375,16 +375,16 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 				ctx, tx, s.checkpoints, req.Msg.EventId, req.Msg.ContributorMemberIds,
 			)
 		})
-		var output programEventTargetMutationResult
+		var output programEventTargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var applyErr error
-			output, applyErr = applyProgramEventTargetMutation(
+			output, applyErr = applyProgramEventTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				programEventTargetMutationInput{
+				programEventTargetLocaleMutationInput{
 					EventID: req.Msg.EventId, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, SetSummary: patchSummary, Summary: summary,
+					SetSummary:             patchSummary, Summary: summary,
 					Now: now, Fence: fence,
 				},
 			)

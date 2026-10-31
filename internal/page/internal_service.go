@@ -246,13 +246,13 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			if err := validatePageSourceLocaleMutations(req.Msg.PageId, domain.SourceLocale, batch.LocaleGroups); err != nil {
 				return err
 			}
-			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(locale, pageLockedTargetFence(documentID, domain)))
+			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(locale, contentblock.LockedFence(pageEntityName, documentID, domain)))
 		} else {
-			result, targetRevision, err = applyPageTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.PageId, documentID, locale, batch,
-				req.Msg.ExpectedTargetRevision, pageTargetMetadataPatch{}, false, false, now,
-				pageLockedTargetFence(documentID, domain),
-			)
+			result, targetRevision, err = applyPageTargetLocaleMutation(ctx, tx, s.contentBlocks, pageTargetLocaleMutationInput{
+				PageID: req.Msg.PageId, DocumentID: documentID, Locale: locale, Batch: batch,
+				ExpectedTargetRevision: req.Msg.ExpectedTargetRevision, Now: now,
+				Fence: contentblock.LockedFence(pageEntityName, documentID, domain),
+			})
 		}
 		if err != nil {
 			return err
@@ -431,13 +431,13 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 			if contributorErr != nil {
 				return contributorErr
 			}
-			targetResult, targetRevision, err = applyPageTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.PageId, documentID, locale,
-				contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision, ContributorMemberIDs: contributors},
-				req.Msg.ExpectedTargetRevision,
-				pageTargetMetadataPatch{UpdateTitle: plan.UpdateTitle, Title: plan.Title, UpdateSummary: plan.UpdateSummary, Summary: plan.Summary},
-				false, false, now, pageLockedTargetFence(documentID, domain),
-			)
+			targetResult, targetRevision, err = applyPageTargetLocaleMutation(ctx, tx, s.contentBlocks, pageTargetLocaleMutationInput{
+				PageID: req.Msg.PageId, DocumentID: documentID, Locale: locale,
+				Batch:                  contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision, ContributorMemberIDs: contributors},
+				ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
+				Patch:                  pageTargetMetadataPatch{UpdateTitle: plan.UpdateTitle, Title: plan.Title, UpdateSummary: plan.UpdateSummary, Summary: plan.Summary},
+				Now:                    now, Fence: contentblock.LockedFence(pageEntityName, documentID, domain),
+			})
 			if err != nil {
 				return err
 			}
@@ -470,7 +470,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 				DocumentID:       documentID,
 				ExpectedRevision: expectedRevision,
 			},
-			pageSourceRoomFence(locale, pageLockedTargetFence(documentID, domain)),
+			pageSourceRoomFence(locale, contentblock.LockedFence(pageEntityName, documentID, domain)),
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 				var mutationErr error
 				mutation, mutationErr = applyPageLocaleMetadataMutation(

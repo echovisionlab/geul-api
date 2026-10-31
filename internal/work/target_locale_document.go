@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -17,8 +18,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// workTargetEntity names the owner in shared target-locale messages.
-const workTargetEntity = "Work"
+// workEntityName names the owner in shared content document messages.
+const workEntityName = "Work"
 
 type workLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
@@ -33,6 +34,13 @@ type workTargetLocaleState struct {
 	SourceMetadata workLocaleMetadataRow
 	TargetMetadata *workLocaleMetadataRow
 	TargetRevision string
+}
+
+func (state workTargetLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: workEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 type workTargetMetadataPatch struct {
@@ -121,15 +129,6 @@ func deriveWorkTargetRevision(documentRevision string, metadata workLocaleMetada
 	return revision, nil
 }
 
-func workSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale {
-			return true
-		}
-	}
-	return false
-}
-
 func validateWorkSourceStorage(
 	storage contentv1.ContentStorageMutationBatch,
 	sourceLocale string,
@@ -189,7 +188,7 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 		return workTargetLocaleState{}, err
 	}
 	if !exists {
-		if workSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return workTargetLocaleState{}, errs.FailedPrecondition("Work target locale Blocks exist without owning metadata")
 		}
 		return state, nil
@@ -202,24 +201,27 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 	return state, nil
 }
 
-func applyWorkTargetLocaleBatch(
+// workTargetLocaleMutationInput is one write to a Work target locale.
+type workTargetLocaleMutationInput struct {
+	WorkID                 string
+	DocumentID             uuid.UUID
+	Locale                 string
+	Batch                  contentblock.Batch
+	ExpectedTargetRevision *string
+	Patch                  workTargetMetadataPatch
+	Policy                 targetlocale.Policy
+	Now                    time.Time
+	Fence                  contentblock.DomainFence
+}
+
+func applyWorkTargetLocaleMutation(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	workID string,
-	documentID uuid.UUID,
-	locale string,
-	batch contentblock.Batch,
-	expectedTargetRevision *string,
-	patch workTargetMetadataPatch,
-	allowCreate bool,
-	seedSource bool,
-	allowLocaleDeletes bool,
-	useCurrentTargetRevision bool,
-	now time.Time,
-	fence contentblock.DomainFence,
+	input workTargetLocaleMutationInput,
 ) (contentblock.Result, *string, error) {
-	domain, err := fence(ctx, tx, documentID)
+	workID, documentID, locale, patch := input.WorkID, input.DocumentID, input.Locale, input.Patch
+	domain, err := input.Fence(ctx, tx, documentID)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
@@ -233,19 +235,12 @@ func applyWorkTargetLocaleBatch(
 	if state.SourceLocale != domain.SourceLocale {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Work source locale changed; reload before saving")
 	}
-	if err := contentblock.ValidateTargetLocaleBatch(workTargetEntity, batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes); err != nil {
-		return contentblock.Result{}, nil, err
-	}
-	if err := translation.ValidateTargetRevisionWrite(
-		expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, useCurrentTargetRevision,
-	); err != nil {
-		return contentblock.Result{}, nil, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(batch.LocaleGroups) != 0) {
+	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(input.Batch.LocaleGroups) != 0) {
 		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "Work translation deletion must be exclusive")
 	}
-	if state.TargetMetadata == nil && !allowCreate {
-		return contentblock.Result{}, nil, errs.FailedPrecondition("Work target locale must be explicitly created before collaboration")
+	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
+		return contentblock.Result{}, nil, err
 	}
 	if patch.DeleteLocale && state.TargetMetadata == nil {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Work target locale must exist before deletion")
@@ -254,33 +249,13 @@ func applyWorkTargetLocaleBatch(
 		trimmed := strings.TrimSpace(*patch.Title)
 		patch.Title = &trimmed
 	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	now = now.UTC().Truncate(time.Microsecond)
-	if state.TargetMetadata == nil && seedSource {
-		batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, locale)
-		if err != nil {
-			return contentblock.Result{}, nil, err
-		}
-	}
+	now := targetlocale.WriteTime(input.Now)
 	if patch.DeleteLocale {
-		group := contentblock.LocaleMutationGroup{Locale: locale}
-		for _, overlay := range state.Snapshot.LocaleOverlays {
-			if overlay.Locale == locale {
-				for _, block := range overlay.Blocks {
-					group.Deletes = append(group.Deletes, block.BlockID)
-				}
-				break
-			}
-		}
-		if len(group.Deletes) != 0 {
-			batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
-		}
+		batch.LocaleGroups = targetlocale.DeleteGroups(state.Snapshot, locale)
 	}
 	var final workLocaleMetadataRow
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, workLockedTargetFence(documentID, domain),
+		ctx, tx, batch, locale, contentblock.LockedFence(workEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			if patch.DeleteLocale {
 				deleted := tx.WithContext(ctx).Exec("DELETE FROM work_translation WHERE entity_id = ?::uuid AND locale = ?", workID, locale)
@@ -294,7 +269,7 @@ func applyWorkTargetLocaleBatch(
 			}
 			if state.TargetMetadata == nil {
 				title, summary := patch.Title, patch.Summary
-				if seedSource {
+				if input.Policy.SeedSource {
 					title = cloneOptionalString(state.SourceMetadata.Title)
 					summary = cloneOptionalString(state.SourceMetadata.Summary)
 					if patch.UpdateTitle {
@@ -358,15 +333,6 @@ func applyWorkTargetLocaleBatch(
 		return contentblock.Result{}, nil, err
 	}
 	return result, &revision, nil
-}
-
-func workLockedTargetFence(documentID uuid.UUID, domain contentblock.DomainContext) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Work content document changed; reload before saving")
-		}
-		return domain, nil
-	}
 }
 
 func workContributorUUIDs(values []string) ([]uuid.UUID, error) {

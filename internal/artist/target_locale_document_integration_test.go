@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -76,11 +77,11 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	var result contentblock.Result
 	var nextKOToken string
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		result, nextKOToken, err = applyArtistTargetLocaleBatch(
-			t.Context(), tx, store, artistID, documentID, "ko", batch,
-			&koState.TargetRevision, false, now.Add(3*time.Second),
-			internalCreativeContentFence(artistID),
-		)
+		result, nextKOToken, err = applyArtistTargetLocaleMutation(t.Context(), tx, store, artistTargetLocaleMutationInput{
+			ArtistID: artistID, DocumentID: documentID, Locale: "ko", Batch: batch,
+			ExpectedTargetRevision: &koState.TargetRevision, Now: now.Add(3 * time.Second),
+			Fence: internalCreativeContentFence(artistID),
+		})
 		return err
 	}))
 	require.True(t, result.Changed)
@@ -116,7 +117,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	require.NotEqual(t, nextKOToken, providerState.TargetRevision)
 	require.NotNil(t, providerState.TargetMetadata)
 	require.Equal(t, replacementTitle, *providerState.TargetMetadata.Title)
-	require.False(t, artistSnapshotContainsLocale(providerState.Snapshot, "ko"))
+	require.False(t, targetlocale.SnapshotHasLocale(providerState.Snapshot, "ko"))
 	nextKOToken = providerState.TargetRevision
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
@@ -134,7 +135,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	require.Zero(t, koCount)
 	loaded, err := store.LoadSnapshot(context.Background(), db, documentID, "en")
 	require.NoError(t, err)
-	require.False(t, artistSnapshotContainsLocale(loaded, "ko"))
+	require.False(t, targetlocale.SnapshotHasLocale(loaded, "ko"))
 
 	providerLocale := "fr"
 	providerTitle := "Titre fourni"

@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -197,18 +198,20 @@ func ApplyTranslationInterchange(
 	}
 
 	metadataPatch := pageInterchangeMetadataPatch(mutation.Plan, desired)
-	result, targetRevision, err := applyPageTargetLocaleBatch(
-		ctx, tx, store, mutation.PageID, state.snapshot.Document.ID, mutation.TargetLocale,
-		batch, mutation.ExpectedRevision,
-		pageTargetMetadataPatch{
+	result, targetRevision, err := applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+		PageID: mutation.PageID, DocumentID: state.snapshot.Document.ID, Locale: mutation.TargetLocale,
+		Batch: batch, ExpectedTargetRevision: mutation.ExpectedRevision,
+		Patch: pageTargetMetadataPatch{
 			EnsureLocale: metadataPatch.EnsureLocale,
 			UpdateTitle:  metadataPatch.SetTitle, Title: metadataPatch.Title,
 			UpdateSummary: metadataPatch.SetSummary, Summary: metadataPatch.Summary,
 		},
-		true,
-		mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
-		mutation.Now.UTC(), pageSystemTranslationDocumentFence(mutation.PageID),
-	)
+		Policy: targetlocale.Policy{
+			AllowCreate:        true,
+			AllowLocaleDeletes: mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		},
+		Now: mutation.Now.UTC(), Fence: pageSystemTranslationDocumentFence(mutation.PageID),
+	})
 	if err != nil {
 		return TranslationInterchangeResult{}, normalizePageContentBlockError(err)
 	}

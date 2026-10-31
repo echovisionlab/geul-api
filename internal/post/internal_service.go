@@ -26,6 +26,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -158,7 +159,7 @@ func (s *InternalPostService) LoadPostBlockDocument(
 			if loadErr != nil {
 				return loadErr
 			}
-			if !exists && snapshotContainsLocale(snapshot, locale) {
+			if !exists && targetlocale.SnapshotHasLocale(snapshot, locale) {
 				return errs.FailedPrecondition("Post target locale Blocks exist without owning metadata")
 			}
 			if exists {
@@ -269,7 +270,7 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 			return fenceErr
 		}
 		sourceLocale = domain.SourceLocale
-		authorizedFence := postAuthorizedDocumentFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(postEntityName, documentID, domain)
 		if locale != domain.SourceLocale {
 			targetResult, err = applyPostTargetLocaleMutation(ctx, tx, s.contentBlocks, postTargetLocaleMutationInput{
 				PostID: req.Msg.PostId, Locale: locale,
@@ -425,7 +426,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 			return fenceErr
 		}
 		sourceLocale = domain.SourceLocale
-		authorizedFence := postAuthorizedDocumentFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(postEntityName, documentID, domain)
 		if locale != domain.SourceLocale {
 			title, titleSet, changeErr := postOptionalMetadataChangeValue(req.Msg.TitleChange)
 			if changeErr != nil {

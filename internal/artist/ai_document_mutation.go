@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -226,10 +227,10 @@ func (s *InternalArtistService) applyAIDocumentMode(ctx context.Context, tx *gor
 		if input.Batch != nil {
 			batch := *input.Batch
 			batch.ExpectedRevision, batch.ContributorMemberIDs = expected, []uuid.UUID{memberID}
-			result, revision, err := applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, batch,
-				input.ExpectedTargetRevision, false, time.Now().UTC(), fence,
-			)
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
+				ExpectedTargetRevision: input.ExpectedTargetRevision, Now: time.Now().UTC(), Fence: fence,
+			})
 			return result, &revision, err
 		}
 		if input.CreateTranslation {
@@ -237,10 +238,11 @@ func (s *InternalArtistService) applyAIDocumentMode(ctx context.Context, tx *gor
 				DocumentID: documentID, ExpectedRevision: expected,
 				ContributorMemberIDs: []uuid.UUID{memberID},
 			}
-			result, revision, err := applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, batch,
-				input.ExpectedTargetRevision, true, time.Now().UTC(), fence,
-			)
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
+				ExpectedTargetRevision: input.ExpectedTargetRevision, Policy: targetlocale.Policy{AllowCreate: true},
+				Now: time.Now().UTC(), Fence: fence,
+			})
 			return result, &revision, err
 		}
 		result, err := deleteArtistTargetLocale(

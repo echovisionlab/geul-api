@@ -3,21 +3,20 @@ package label
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// labelTargetEntity names the owner in shared target-locale messages.
-const labelTargetEntity = "Label"
+// labelEntityName names the owner in shared content document messages.
+const labelEntityName = "Label"
 
 type labelTargetLocaleState struct {
 	Snapshot       contentblock.Snapshot
@@ -25,6 +24,13 @@ type labelTargetLocaleState struct {
 	SourceMetadata labelLocaleMetadataRow
 	TargetMetadata *labelLocaleMetadataRow
 	TargetRevision string
+}
+
+func (state labelTargetLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: labelEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 type labelLocaleMetadataRow struct {
@@ -40,17 +46,7 @@ type labelTargetLocaleMutationInput struct {
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
 	Batch                    contentblock.Batch
-	AllowCreate              bool
-	SeedSource               bool
-	// AllowLocaleDeletes is reserved for authoritative whole-replacement
-	// translation-provider delivery. Interactive Collab and DCDP mutations
-	// preserve every locale unit; they represent an intentional empty value as
-	// an upsert instead of deleting the locale row.
-	AllowLocaleDeletes bool
-	// Translation provider delivery intentionally accepts the target current
-	// at delivery time and overwrites those exact locale values under this row
-	// lock. Interactive DCDP and Collab callers provide their observed CAS.
-	UseCurrentTargetRevision bool
+	Policy                   targetlocale.Policy
 	Now                      time.Time
 	Fence                    contentblock.DomainFence
 }
@@ -115,7 +111,7 @@ func loadLabelTargetLocaleState(
 	if err != nil {
 		return labelTargetLocaleState{}, err
 	}
-	if !exists && labelSnapshotContainsLocale(snapshot, locale) {
+	if !exists && targetlocale.SnapshotHasLocale(snapshot, locale) {
 		return labelTargetLocaleState{}, errs.FailedPrecondition("Label target locale Blocks exist without owning metadata")
 	}
 	state := labelTargetLocaleState{Snapshot: snapshot, SourceLocale: source.SourceLocale, SourceMetadata: sourceMetadata}
@@ -197,36 +193,13 @@ func applyLabelTargetLocaleMutation(
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return labelTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.UseCurrentTargetRevision,
-	); err != nil {
-		return labelTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return labelTargetLocaleMutationResult{}, errs.FailedPrecondition("Label target locale must be explicitly created before collaboration")
-	}
-	batch := contentblock.CloneBatch(input.Batch)
-	if err := contentblock.ValidateTargetLocaleBatch(labelTargetEntity, batch, documentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes); err != nil {
+	batch, err := input.Policy.Admit(state.locked(), input.Locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
 		return labelTargetLocaleMutationResult{}, err
 	}
-	if state.TargetMetadata == nil && input.SeedSource {
-		batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-		if err != nil {
-			return labelTargetLocaleMutationResult{}, err
-		}
-	}
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
+	now := targetlocale.WriteTime(input.Now)
 	var finalUpdatedAt time.Time
-	authorizedFence := func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Label content document changed; reload before saving")
-		}
-		return domain, nil
-	}
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, input.Locale, authorizedFence,
+	result, err := store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, input.Locale, contentblock.LockedFence(labelEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			if state.TargetMetadata == nil {
 				created := tx.WithContext(ctx).Exec(`
@@ -298,32 +271,17 @@ func deleteLabelTargetLocale(
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(expectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{DocumentRevision: state.Snapshot.Document.Revision}, nil
 	}
-	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedDocumentRevision, ContributorMemberIDs: contributors}
-	group := contentblock.LocaleMutationGroup{Locale: locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale == locale {
-			for _, block := range overlay.Blocks {
-				group.Deletes = append(group.Deletes, block.BlockID)
-			}
-		}
+	batch := contentblock.Batch{
+		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision, ContributorMemberIDs: contributors,
+		LocaleGroups: targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
-	sort.Slice(group.Deletes, func(i, j int) bool { return group.Deletes[i].String() < group.Deletes[j].String() })
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
-	}
-	authorizedFence := func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Label content document changed; reload before saving")
-		}
-		return domain, nil
-	}
-	return store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, authorizedFence,
+	return store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, contentblock.LockedFence(labelEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
 			deleted := tx.WithContext(ctx).Exec("DELETE FROM label_translation WHERE entity_id = ?::uuid AND locale = ?", labelID, locale)
 			if deleted.Error != nil {
@@ -334,13 +292,4 @@ func deleteLabelTargetLocale(
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		})
-}
-
-func labelSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale && len(overlay.Blocks) != 0 {
-			return true
-		}
-	}
-	return false
 }

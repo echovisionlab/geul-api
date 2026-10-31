@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -44,12 +45,12 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 		t.Helper()
 		var token *string
 		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-			_, token, err = applyPageTargetLocaleBatch(
-				ctx, tx, store, created.Msg.Id, documentID, locale,
-				contentblock.Batch{DocumentID: documentID, ExpectedRevision: sharedRevision},
-				nil, pageTargetMetadataPatch{EnsureLocale: true}, true, false, at,
-				lockedPageContentFence(created.Msg.Id),
-			)
+			_, token, err = applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+				PageID: created.Msg.Id, DocumentID: documentID, Locale: locale,
+				Batch: contentblock.Batch{DocumentID: documentID, ExpectedRevision: sharedRevision},
+				Patch: pageTargetMetadataPatch{EnsureLocale: true}, Policy: targetlocale.Policy{AllowCreate: true},
+				Now: at, Fence: lockedPageContentFence(created.Msg.Id),
+			})
 			return err
 		}))
 		require.NotNil(t, token)
@@ -97,12 +98,12 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 
 	var deleted contentblock.Result
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		deleted, _, err = applyPageTargetLocaleBatch(
-			ctx, tx, store, created.Msg.Id, documentID, "ko",
-			contentblock.Batch{DocumentID: documentID, ExpectedRevision: sharedRevision},
-			updated.Msg.TargetRevision, pageTargetMetadataPatch{DeleteLocale: true}, false, false,
-			now.Add(3*time.Second), lockedPageContentFence(created.Msg.Id),
-		)
+		deleted, _, err = applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+			PageID: created.Msg.Id, DocumentID: documentID, Locale: "ko",
+			Batch:                  contentblock.Batch{DocumentID: documentID, ExpectedRevision: sharedRevision},
+			ExpectedTargetRevision: updated.Msg.TargetRevision, Patch: pageTargetMetadataPatch{DeleteLocale: true},
+			Now: now.Add(3 * time.Second), Fence: lockedPageContentFence(created.Msg.Id),
+		})
 		return err
 	}))
 	require.True(t, deleted.Changed)

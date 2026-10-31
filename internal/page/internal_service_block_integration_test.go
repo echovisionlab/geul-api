@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"google.golang.org/protobuf/proto"
 
@@ -133,24 +134,16 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	require.NoError(t, err)
 	var targetRevision *string
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		_, targetRevision, err = applyPageTargetLocaleBatch(
-			ctx,
-			tx,
-			store,
-			created.Msg.Id,
-			documentID,
-			"ko",
-			contentblock.Batch{
+		_, targetRevision, err = applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+			PageID: created.Msg.Id, DocumentID: documentID, Locale: "ko",
+			Batch: contentblock.Batch{
 				DocumentID:       documentID,
 				ExpectedRevision: uuid.MustParse(afterApplied.Msg.DocumentRevision),
 			},
-			nil,
-			pageTargetMetadataPatch{EnsureLocale: true},
-			true,
-			false,
-			time.Now().UTC(),
-			lockedPageContentFence(created.Msg.Id),
-		)
+			Patch:  pageTargetMetadataPatch{EnsureLocale: true},
+			Policy: targetlocale.Policy{AllowCreate: true},
+			Now:    time.Now().UTC(), Fence: lockedPageContentFence(created.Msg.Id),
+		})
 		return err
 	}))
 	require.NotNil(t, targetRevision)

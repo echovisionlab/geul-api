@@ -252,15 +252,15 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 		if fenceErr != nil {
 			return fenceErr
 		}
-		authorizedFence := workLockedTargetFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(workEntityName, documentID, domain)
 		sourceLocale = domain.SourceLocale
 		output.Locale = locale
 		if locale != domain.SourceLocale {
-			result, targetRevision, targetErr := applyWorkTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.WorkId, documentID, locale, batch,
-				req.Msg.ExpectedTargetRevision, workTargetMetadataPatch{},
-				false, false, false, false, now,
-				authorizedFence,
+			result, targetRevision, targetErr := applyWorkTargetLocaleMutation(
+				ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
+					WorkID: req.Msg.WorkId, DocumentID: documentID, Locale: locale, Batch: batch,
+					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision, Now: now, Fence: authorizedFence,
+				},
 			)
 			if targetErr != nil {
 				return targetErr
@@ -388,21 +388,22 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 		if planErr != nil {
 			return planErr
 		}
-		authorizedFence := workLockedTargetFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(workEntityName, documentID, domain)
 		if plan.Locale != sourceLocale {
-			result, targetRevision, targetErr := applyWorkTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.WorkId, documentID, plan.Locale,
-				contentblock.Batch{
-					DocumentID: documentID, ExpectedRevision: expectedRevision,
-					ContributorMemberIDs: contributors,
+			result, targetRevision, targetErr := applyWorkTargetLocaleMutation(
+				ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
+					WorkID: req.Msg.WorkId, DocumentID: documentID, Locale: plan.Locale,
+					Batch: contentblock.Batch{
+						DocumentID: documentID, ExpectedRevision: expectedRevision,
+						ContributorMemberIDs: contributors,
+					},
+					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
+					Patch: workTargetMetadataPatch{
+						UpdateTitle: plan.UpdateTitle, Title: plan.Title,
+						UpdateSummary: plan.UpdateSummary, Summary: plan.Summary,
+					},
+					Now: now, Fence: authorizedFence,
 				},
-				req.Msg.ExpectedTargetRevision,
-				workTargetMetadataPatch{
-					UpdateTitle: plan.UpdateTitle, Title: plan.Title,
-					UpdateSummary: plan.UpdateSummary, Summary: plan.Summary,
-				},
-				false, false, false, false, now,
-				authorizedFence,
 			)
 			if targetErr != nil {
 				return targetErr

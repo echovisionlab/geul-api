@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -477,17 +478,18 @@ func ApplyTranslationCandidateWithDB(
 		return normalizePageContentBlockError(err)
 	}
 	if candidate.HasProviderUnitPatch() {
-		result, _, applyErr := applyPageTargetLocaleBatchUsingCurrentRevision(
-			ctx, tx, store, job.EntityID, documentID, job.TargetLocale, batch,
-			pageTargetMetadataPatch{
+		result, _, applyErr := applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+			PageID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
+			Patch: pageTargetMetadataPatch{
 				EnsureLocale:  true,
 				UpdateTitle:   candidate.ProviderUnitRequested("entity:title"),
 				Title:         candidate.Title,
 				UpdateSummary: candidate.ProviderUnitRequested("entity:summary"),
 				Summary:       candidate.Summary,
 			},
-			true, false, entry.Now, pageSystemTranslationDocumentFence(job.EntityID),
-		)
+			Policy: targetlocale.Policy{AllowCreate: true, RevisionMode: targetlocale.RevisionCurrent},
+			Now:    entry.Now, Fence: pageSystemTranslationDocumentFence(job.EntityID),
+		})
 		if applyErr != nil {
 			return applyErr
 		}

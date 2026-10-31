@@ -4,22 +4,21 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// releaseTargetEntity names the owner in shared target-locale messages.
-const releaseTargetEntity = "Release"
+// releaseEntityName names the owner in shared content document messages.
+const releaseEntityName = "Release"
 
 type releaseLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
@@ -37,25 +36,29 @@ type releaseTargetLocaleState struct {
 	TargetRevision string
 }
 
+func (state releaseTargetLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: releaseEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
+}
+
 type releaseTargetLocaleMutationInput struct {
 	ReleaseID                string
 	DocumentID               uuid.UUID
 	Locale                   string
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
-	AllowCreate              bool
-	// AllowLocaleDeletes is reserved for authoritative whole-replacement
-	// translation delivery. Interactive Collab and DCDP mutations preserve
-	// locale units and represent an intentional empty value as an upsert.
-	AllowLocaleDeletes        bool
-	OverwriteCurrentTargetCAS bool
-	Batch                     contentblock.Batch
-	SetTitle                  bool
-	Title                     *string
-	CreditNotePatch           map[string]string
-	ReplaceCreditNotes        *map[string]string
-	Now                       time.Time
-	Fence                     contentblock.DomainFence
+	// Policy.SeedSource is always set: a created Release target starts from
+	// the current source values.
+	Policy             targetlocale.Policy
+	Batch              contentblock.Batch
+	SetTitle           bool
+	Title              *string
+	CreditNotePatch    map[string]string
+	ReplaceCreditNotes *map[string]string
+	Now                time.Time
+	Fence              contentblock.DomainFence
 }
 
 type releaseTargetLocaleMutationResult struct {
@@ -94,18 +97,6 @@ func loadOptionalReleaseLocaleMetadataRow(
 		return releaseLocaleMetadataRow{}, false, errs.Internal(err)
 	}
 	return row, true, nil
-}
-
-func releaseSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		// Overlay presence is the durable locale resource boundary. An empty
-		// overlay can still contain explicit-empty leaf values after restore,
-		// and must not be mistaken for a missing target.
-		if overlay.Locale == locale {
-			return true
-		}
-	}
-	return false
 }
 
 func deriveReleaseTargetRevision(documentRevision string, metadata releaseLocaleMetadataRow) (string, error) {
@@ -174,7 +165,7 @@ func loadReleaseTargetLocaleState(
 		return releaseTargetLocaleState{}, err
 	}
 	if !exists {
-		if releaseSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return releaseTargetLocaleState{}, errs.FailedPrecondition("Release target locale Blocks exist without owning metadata")
 		}
 		return state, nil
@@ -218,46 +209,15 @@ func applyReleaseTargetLocaleMutation(
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return releaseTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
-	); err != nil {
-		return releaseTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return releaseTargetLocaleMutationResult{}, errs.FailedPrecondition(
-			"Release target locale must be explicitly created before collaboration",
-		)
-	}
-	if err := contentblock.ValidateTargetLocaleBatch(releaseTargetEntity,
-		input.Batch,
-		input.DocumentID,
-		input.ExpectedDocumentRevision,
-		input.Locale,
-		input.AllowLocaleDeletes,
-	); err != nil {
+	batch, err := input.Policy.Admit(state.locked(), input.Locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
 		return releaseTargetLocaleMutationResult{}, err
 	}
-	batch := contentblock.CloneBatch(input.Batch)
-	if state.TargetMetadata == nil {
-		batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-		if err != nil {
-			return releaseTargetLocaleMutationResult{}, err
-		}
-	}
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
+	now := targetlocale.WriteTime(input.Now)
 	result := releaseTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	var finalMetadata releaseLocaleMetadataRow
-	authorizedFence := func(_ context.Context, _ *gorm.DB, requested uuid.UUID) (contentblock.DomainContext, error) {
-		if requested != input.DocumentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Release content document changed; reload before saving")
-		}
-		return domain, nil
-	}
 	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, input.Locale, authorizedFence,
+		ctx, tx, batch, input.Locale, contentblock.LockedFence(releaseEntityName, input.DocumentID, domain),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			currentMetadata := state.SourceMetadata
 			currentNotes := maps.Clone(state.SourceNotes)
@@ -390,32 +350,18 @@ func deleteReleaseTargetLocale(
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(expectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{DocumentRevision: state.Snapshot.Document.Revision}, nil
 	}
-	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedDocumentRevision, ContributorMemberIDs: append([]uuid.UUID(nil), contributors...)}
-	group := contentblock.LocaleMutationGroup{Locale: locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale == locale {
-			for _, block := range overlay.Blocks {
-				group.Deletes = append(group.Deletes, block.BlockID)
-			}
-		}
+	batch := contentblock.Batch{
+		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,
+		ContributorMemberIDs: append([]uuid.UUID(nil), contributors...),
+		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
-	sort.Slice(group.Deletes, func(i, j int) bool { return group.Deletes[i].String() < group.Deletes[j].String() })
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
-	}
-	authorizedFence := func(_ context.Context, _ *gorm.DB, requested uuid.UUID) (contentblock.DomainContext, error) {
-		if requested != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Release content document changed; reload before saving")
-		}
-		return domain, nil
-	}
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, authorizedFence, func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
+	result, err := store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, contentblock.LockedFence(releaseEntityName, documentID, domain), func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
 		if _, err := deleteReleaseAIDocumentTranslation(ctx, tx, releaseID, locale); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}

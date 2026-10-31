@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -22,8 +22,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// campaignTargetEntity names the owner in shared target-locale messages.
-const campaignTargetEntity = "Campaign"
+// campaignEntityName names the owner in shared content document messages.
+const campaignEntityName = "Campaign"
 
 type campaignExactLocaleMetadata struct {
 	Locale    string         `gorm:"column:locale"`
@@ -37,6 +37,13 @@ type campaignExactLocaleState struct {
 	SourceMetadata campaignExactLocaleMetadata
 	TargetMetadata *campaignExactLocaleMetadata
 	TargetRevision string
+}
+
+func (state campaignExactLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: campaignEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
 }
 
 func normalizeCampaignDocumentLocale(value string) (string, error) {
@@ -114,7 +121,7 @@ func loadCampaignExactLocaleState(
 		return campaignExactLocaleState{}, err
 	}
 	if !exists {
-		if campaignSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return campaignExactLocaleState{}, errs.FailedPrecondition("Campaign target locale Blocks exist without owning metadata")
 		}
 		return state, nil
@@ -125,15 +132,6 @@ func loadCampaignExactLocaleState(
 		return campaignExactLocaleState{}, err
 	}
 	return state, nil
-}
-
-func campaignSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale && len(overlay.Blocks) != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func deriveCampaignTargetRevision(documentRevision string, metadata campaignExactLocaleMetadata) (string, error) {
@@ -177,7 +175,7 @@ func materializeCampaignExactLocaleDocument(
 	return document, nil
 }
 
-type campaignTargetMutationInput struct {
+type campaignTargetLocaleMutationInput struct {
 	CampaignID               string
 	DocumentID               uuid.UUID
 	Locale                   string
@@ -185,82 +183,53 @@ type campaignTargetMutationInput struct {
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
 	ExpectedLocaleExists     *bool
-	AllowCreate              bool
-	// SeedSourceOnCreate is reserved for DCDP bootstrap. Provider and
-	// interchange replacements keep omitted/new source units absent.
-	SeedSourceOnCreate bool
-	// AllowLocaleDeletes is reserved for authoritative whole replacement.
-	AllowLocaleDeletes bool
-	// OverwriteCurrentTargetCAS applies an accepted provider result over the
-	// current target while the source/document fence remains authoritative.
-	OverwriteCurrentTargetCAS bool
-	SetSubject                bool
-	Subject                   *string
-	ContributorMember         uuid.UUID
-	Now                       time.Time
-	Fence                     contentblock.DomainFence
+	Policy                   targetlocale.Policy
+	SetSubject               bool
+	Subject                  *string
+	ContributorMember        uuid.UUID
+	Now                      time.Time
+	Fence                    contentblock.DomainFence
 }
 
-type campaignTargetMutationResult struct {
+type campaignTargetLocaleMutationResult struct {
 	Result         contentblock.Result
 	TargetRevision string
 	LocaleCreated  bool
 }
 
-func applyCampaignTargetMutation(
+func applyCampaignTargetLocaleMutation(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	input campaignTargetMutationInput,
-) (campaignTargetMutationResult, error) {
+	input campaignTargetLocaleMutationInput,
+) (campaignTargetLocaleMutationResult, error) {
 	domain, err := input.Fence(ctx, tx, input.DocumentID)
 	if err != nil {
-		return campaignTargetMutationResult{}, err
+		return campaignTargetLocaleMutationResult{}, err
 	}
 	state, err := loadCampaignExactLocaleState(
 		ctx, tx, store, input.CampaignID, input.DocumentID, input.Locale, true,
 	)
 	if err != nil {
-		return campaignTargetMutationResult{}, err
+		return campaignTargetLocaleMutationResult{}, err
 	}
 	if input.Locale == state.SourceLocale || domain.SourceLocale != state.SourceLocale {
-		return campaignTargetMutationResult{}, errs.FailedPrecondition("Campaign target locale source changed; reload before saving")
+		return campaignTargetLocaleMutationResult{}, errs.FailedPrecondition("Campaign target locale source changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
-		return campaignTargetMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
+		return campaignTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if input.ExpectedLocaleExists != nil && *input.ExpectedLocaleExists != (state.TargetMetadata != nil) {
-		return campaignTargetMutationResult{}, errs.FailedPrecondition(
+		return campaignTargetLocaleMutationResult{}, errs.FailedPrecondition(
 			"Campaign target locale presence changed; reload before saving",
 		)
 	}
-	if err := contentblock.ValidateTargetLocaleBatch(campaignTargetEntity,
-		input.Batch, input.DocumentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes,
-	); err != nil {
-		return campaignTargetMutationResult{}, err
+	batch, err := input.Policy.Admit(state.locked(), input.Locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
+		return campaignTargetLocaleMutationResult{}, err
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteCurrentTargetCAS,
-	); err != nil {
-		return campaignTargetMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return campaignTargetMutationResult{}, errs.FailedPrecondition(
-			"Campaign target locale must be explicitly created before collaboration",
-		)
-	}
-	batch := contentblock.CloneBatch(input.Batch)
-	if state.TargetMetadata == nil && input.SeedSourceOnCreate {
-		batch, err = contentblock.SeedTargetLocaleBatch(batch, state.Snapshot, state.SourceLocale, input.Locale)
-		if err != nil {
-			return campaignTargetMutationResult{}, err
-		}
-	}
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
-	output := campaignTargetMutationResult{LocaleCreated: state.TargetMetadata == nil}
+	now := targetlocale.WriteTime(input.Now)
+	output := campaignTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	var final campaignExactLocaleMetadata
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, input.Locale, input.Fence,
@@ -309,26 +278,26 @@ func applyCampaignTargetMutation(
 		},
 	)
 	if err != nil {
-		return campaignTargetMutationResult{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+		return campaignTargetLocaleMutationResult{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 	}
 	output.Result = result
 	output.TargetRevision, err = deriveCampaignTargetRevision(result.DocumentRevision.String(), final)
 	if err != nil {
-		return campaignTargetMutationResult{}, err
+		return campaignTargetLocaleMutationResult{}, err
 	}
 	if result.Changed {
 		if err := tx.WithContext(ctx).Table("campaign").Where("id = ?", input.CampaignID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return campaignTargetMutationResult{}, errs.Internal(err)
+			return campaignTargetLocaleMutationResult{}, errs.Internal(err)
 		}
 		snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, input.DocumentID, state.SourceLocale)
 		if loadErr != nil {
-			return campaignTargetMutationResult{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, loadErr)
+			return campaignTargetLocaleMutationResult{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, loadErr)
 		}
 		if projectErr := projectCampaignTargetMaterializedContent(
 			ctx, tx, input.CampaignID, snapshot, input.Locale,
 		); projectErr != nil {
-			return campaignTargetMutationResult{}, projectErr
+			return campaignTargetLocaleMutationResult{}, projectErr
 		}
 	}
 	return output, nil
@@ -361,26 +330,13 @@ func deleteCampaignTargetLocale(
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateExpectedTargetRevision(expectedTargetRevision, state.TargetRevision, true); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(expectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,
 		ContributorMemberIDs: append([]uuid.UUID(nil), contributors...),
-	}
-	group := contentblock.LocaleMutationGroup{Locale: locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale != locale {
-			continue
-		}
-		for _, block := range overlay.Blocks {
-			group.Deletes = append(group.Deletes, block.BlockID)
-		}
-		break
-	}
-	sort.Slice(group.Deletes, func(i, j int) bool { return group.Deletes[i].String() < group.Deletes[j].String() })
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
+		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, locale, fence,

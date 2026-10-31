@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -154,12 +155,12 @@ func ApplyTemplateTranslationCandidate(
 			emailAuthoringLocaleContentOperation(true, false, false, true),
 		)
 	}
-	output, err := applyEmailTemplateTargetMutation(
+	output, err := applyEmailTemplateTargetLocaleMutation(
 		ctx, tx, store,
-		emailTemplateTargetMutationInput{
+		emailTemplateTargetLocaleMutationInput{
 			TemplateID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale,
 			Batch: batch, ExpectedDocumentRevision: currentSnapshot.Document.Revision,
-			AllowCreate: true, AllowLocaleDeletes: true, OverwriteCurrentTargetCAS: true,
+			Policy:     targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent},
 			SetSubject: true, Subject: candidate.Title, Now: input.Now, Fence: applyFence,
 		},
 	)

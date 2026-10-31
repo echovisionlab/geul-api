@@ -133,14 +133,14 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			if err := requireCampaignCollaborationContributors(ctx, tx, s.checkpoints, campaignID, contributors); err != nil {
 				return err
 			}
-			output, applyErr := applyCampaignTargetMutation(
+			output, applyErr := applyCampaignTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				campaignTargetMutationInput{
+				campaignTargetLocaleMutationInput{
 					CampaignID: campaignID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedDocumentRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, Now: now,
-					Fence: campaignEmailContentFence(campaignID),
+					Now:                    now,
+					Fence:                  campaignEmailContentFence(campaignID),
 				},
 			)
 			if applyErr != nil {
@@ -265,7 +265,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 		}
 		originMemberID := contributors[0]
 		batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
-		var output campaignTargetMutationResult
+		var output campaignTargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := requireCampaignContributors(ctx, tx, contributors); err != nil {
 				return err
@@ -274,13 +274,13 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 				return err
 			}
 			var applyErr error
-			output, applyErr = applyCampaignTargetMutation(
+			output, applyErr = applyCampaignTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				campaignTargetMutationInput{
+				campaignTargetLocaleMutationInput{
 					CampaignID: campaignID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, SetSubject: true, Subject: req.Msg.Subject, Now: now,
+					SetSubject:             true, Subject: req.Msg.Subject, Now: now,
 					Fence: campaignEmailContentFence(campaignID),
 				},
 			)
