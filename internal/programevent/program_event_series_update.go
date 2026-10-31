@@ -20,11 +20,40 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// programEventSeriesUpdate is a validated series update; nil fields are left
+// alone. posterChanged with a nil posterFileID removes the poster.
 type programEventSeriesUpdate struct {
-	fields        structured.Fields
+	title         *string
+	summary       *string
+	description   *string
+	status        *string
 	slug          *string
 	posterFileID  *string
 	posterChanged bool
+}
+
+// columns is the program_event_series row update for the fields the request
+// sets.
+func (u programEventSeriesUpdate) columns(updatedAt time.Time) structured.Fields {
+	columns := structured.Fields{"updated_at": updatedAt}
+	for column, value := range map[string]*string{
+		"title":       u.title,
+		"summary":     u.summary,
+		"description": u.description,
+		"status":      u.status,
+		"slug":        u.slug,
+	} {
+		if value != nil {
+			columns[column] = *value
+		}
+	}
+	if u.posterChanged {
+		columns["poster_file_id"] = nil
+		if u.posterFileID != nil {
+			columns["poster_file_id"] = *u.posterFileID
+		}
+	}
+	return columns
 }
 
 func programEventSeriesUpdateCan(request *managev1.UpdateProgramEventSeriesRequest) (policyv1.Can, error) {
@@ -63,31 +92,24 @@ func (s *ProgramEventSeriesService) prepareProgramEventSeriesUpdate(
 	ctx context.Context,
 	request *managev1.UpdateProgramEventSeriesRequest,
 ) (programEventSeriesUpdate, error) {
-	update := programEventSeriesUpdate{fields: structured.Fields{}}
+	update := programEventSeriesUpdate{summary: request.Summary, description: request.Description}
 	if request.Title != nil {
 		title := strings.TrimSpace(request.GetTitle())
 		if title == "" {
 			return update, errs.Required("title")
 		}
-		update.fields["title"] = title
-	}
-	if request.Summary != nil {
-		update.fields["summary"] = request.Summary
-	}
-	if request.Description != nil {
-		update.fields["description"] = request.Description
+		update.title = &title
 	}
 	if request.PosterFileId != nil {
 		update.posterChanged = true
 		update.posterFileID = nullableString(request.PosterFileId)
-		update.fields["poster_file_id"] = update.posterFileID
 	}
 	if request.Status != nil && request.GetStatus() != managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
 		status, err := programEventSeriesStatusStorageValue(request.GetStatus())
 		if err != nil {
 			return update, err
 		}
-		update.fields["status"] = status
+		update.status = &status
 	}
 	if request.Slug != nil {
 		slug, err := validateProgramEventSlug(request.GetSlug())
@@ -98,7 +120,6 @@ func (s *ProgramEventSeriesService) prepareProgramEventSeriesUpdate(
 			return update, err
 		}
 		update.slug = &slug
-		update.fields["slug"] = slug
 	}
 	return update, nil
 }
@@ -123,8 +144,8 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
-		changedFields := programEventSeriesMetadataChangedFields(current, update.fields)
-		statusChanged := programEventSeriesStatusChanged(current, update.fields)
+		changedFields := programEventSeriesMetadataChangedFields(current, update)
+		statusChanged := update.status != nil && *update.status != current.Status
 		posterChanged := update.posterChanged && !sameNullableString(current.PosterFileID, update.posterFileID)
 		if posterChanged && update.posterFileID != nil {
 			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{*update.posterFileID}); err != nil {
@@ -136,8 +157,7 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 		}
 		previousStatus := current.Status
 		previousPosterFileID := current.PosterFileID
-		update.fields["updated_at"] = time.Now().UTC()
-		if err := tx.Model(&current).Updates(update.fields).Error; err != nil {
+		if err := tx.Model(&current).Updates(update.columns(time.Now().UTC())).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) && update.slug != nil {
 				return errs.WithCause(errs.SlugAlreadyExists("program event series", request.GetSlug()), err)
 			}
@@ -170,7 +190,7 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 		}
 		if statusChanged {
 			return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventSeriesLifecycleAuditRecord(metadata, current.ID, programEventSeriesAuditState(previousStatus), programEventSeriesAuditState(update.fields["status"].(string)))
+				return sharedtelemetry.NewProgramEventSeriesLifecycleAuditRecord(metadata, current.ID, programEventSeriesAuditState(previousStatus), programEventSeriesAuditState(*update.status))
 			})
 		}
 		return nil
@@ -189,26 +209,21 @@ func lockProgramEventSeriesForUpdate(tx *gorm.DB, seriesID string) (model.Progra
 	return series, nil
 }
 
-func programEventSeriesMetadataChangedFields(series model.ProgramEventSeries, fields structured.Fields) []string {
+func programEventSeriesMetadataChangedFields(series model.ProgramEventSeries, update programEventSeriesUpdate) []string {
 	changed := make([]string, 0, 4)
-	if value, ok := fields["slug"].(string); ok && value != series.Slug {
+	if update.slug != nil && *update.slug != series.Slug {
 		changed = append(changed, "slug")
 	}
-	if value, ok := fields["title"].(string); ok && value != series.Title {
+	if update.title != nil && *update.title != series.Title {
 		changed = append(changed, "title")
 	}
-	if value, ok := fields["summary"].(*string); ok && !sameNullableString(series.Summary, value) {
+	if update.summary != nil && !sameNullableString(series.Summary, update.summary) {
 		changed = append(changed, "summary")
 	}
-	if value, ok := fields["description"].(*string); ok && !sameNullableString(series.Description, value) {
+	if update.description != nil && !sameNullableString(series.Description, update.description) {
 		changed = append(changed, "description")
 	}
 	return changed
-}
-
-func programEventSeriesStatusChanged(series model.ProgramEventSeries, fields structured.Fields) bool {
-	value, ok := fields["status"].(string)
-	return ok && value != series.Status
 }
 
 func sameNullableString(left, right *string) bool {
