@@ -87,12 +87,12 @@ func TestRunWritesRelationshipsWithTheChangeIntegration(t *testing.T) {
 // takes them.
 func TestLockedReadTakesRowLocksInOneSnapshotIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := testutil.SetupOryStack(t).DB
 	tag := model.UserTag{Name: "locked-read-" + uuid.NewString()}
 	require.NoError(t, db.Create(&tag).Error)
 	lockTag := func(tx *gorm.DB) error {
 		var locked model.UserTag
-		return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&locked, "id = ?", tag.ID).Error
+		return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Take(&locked, "id = ?", tag.ID).Error
 	}
 
 	require.Error(t, Read(t.Context(), db, lockTag))
