@@ -381,7 +381,7 @@ func (s *Service) SchedulePolicy(ctx context.Context, kind PolicyKind, command S
 		if row.Status != string(descriptor.draft) {
 			return domainerr.Precondition(descriptor.scheduleNonDraft)
 		}
-		if err := EnsureLegalNoticeScheduleSlotWithDB(ctx, tx, descriptor.entity(), row.ID); err != nil {
+		if err := ensureScheduleSlot(ctx, tx, descriptor, row.ID); err != nil {
 			return err
 		}
 		mutationNow := dbtime.Now()
@@ -406,11 +406,12 @@ func (s *Service) SchedulePolicy(ctx context.Context, kind PolicyKind, command S
 		if err != nil {
 			return err
 		}
-		return appendLegalPolicyLifecycleAudit(
-			ctx, tx, s.auditWriter, descriptor.entity(), row.ID, row.Version,
-			[]string{"effective_at", "status"}, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStateScheduled,
-			&effectiveFrom, nil,
-		)
+		return appendLegalPolicyLifecycleAudit(ctx, tx, s.auditWriter, legalLifecycleChange{
+			kind: descriptor.entity(), policyID: row.ID, version: row.Version,
+			changedFields: []string{"effective_at", "status"},
+			previous:      sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStateScheduled,
+			effectiveAt: &effectiveFrom,
+		})
 	}); err != nil {
 		return PolicyLifecycle{}, err
 	}
@@ -492,11 +493,12 @@ func (s *Service) CancelPolicySchedule(ctx context.Context, kind PolicyKind, com
 			return err
 		}
 		row.Status, row.EffectiveFrom, row.UpdatedAt = string(descriptor.draft), nil, mutationNow
-		if err := appendLegalPolicyLifecycleAudit(
-			ctx, tx, s.auditWriter, descriptor.entity(), row.ID, row.Version,
-			[]string{"effective_at", "status"}, sharedtelemetry.AuditStateScheduled, sharedtelemetry.AuditStateDraft,
-			cancelledEffectiveAt, nil,
-		); err != nil {
+		if err := appendLegalPolicyLifecycleAudit(ctx, tx, s.auditWriter, legalLifecycleChange{
+			kind: descriptor.entity(), policyID: row.ID, version: row.Version,
+			changedFields: []string{"effective_at", "status"},
+			previous:      sharedtelemetry.AuditStateScheduled, next: sharedtelemetry.AuditStateDraft,
+			effectiveAt: cancelledEffectiveAt,
+		}); err != nil {
 			return err
 		}
 		if currentBefore == nil || currentBefore.ID != row.ID {
@@ -580,16 +582,21 @@ func (s *Service) ActivatePolicyNow(ctx context.Context, kind PolicyKind, comman
 		if err := verifyLegalExpectedRevisionWithDB(ctx, tx, s.contentBlocks, descriptor.entity(), command.ID, command.ExpectedRevision); err != nil {
 			return err
 		}
-		activated, run, err := ActivateAuditedLegalNoticeDocumentWithEffectiveRunWithDB(
-			ctx, tx, s.auditWriter, s.legalOG, s.notice, descriptor.entity(), command.ID,
-			LegalNoticeActivationImmediate, descriptor.effectiveEvent.String(),
+		activation, _, err := activatePolicyVersion(ctx, tx, s.legalOG, descriptor, command.ID, true, now)
+		if err != nil {
+			return err
+		}
+		for _, change := range activation.lifecycleChanges() {
+			if err := appendLegalPolicyLifecycleAudit(ctx, tx, s.auditWriter, change); err != nil {
+				return err
+			}
+		}
+		run, err := s.notice.CreateRun(
+			ctx, tx, descriptor.entity(), command.ID, descriptor.effectiveEvent.String(),
 			map[string]string{descriptor.effectiveURLKey: policyURL}, now,
 		)
 		if err != nil {
 			return err
-		}
-		if !activated {
-			return gorm.ErrRecordNotFound
 		}
 		if err := s.legalOG.RequestSaved(ctx, tx, descriptor.entity(), command.ID, "", true, descriptor.entity()+"_activated"); err != nil {
 			return err

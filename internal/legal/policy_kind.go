@@ -6,6 +6,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // PolicyKind names a legal policy kind. Terms and Privacy share every use
@@ -102,5 +103,22 @@ func PolicyStatus(kind PolicyKind, state string) (model.LegalPolicyStatus, bool)
 		return descriptor.archived, true
 	default:
 		return "", false
+	}
+}
+
+// auditState names status in audit records; a status of another kind has
+// none.
+func (k *policyKind) auditState(status model.LegalPolicyStatus) sharedtelemetry.AuditState {
+	switch status {
+	case k.draft:
+		return sharedtelemetry.AuditStateDraft
+	case k.scheduled:
+		return sharedtelemetry.AuditStateScheduled
+	case k.active:
+		return sharedtelemetry.AuditStateActive
+	case k.archived:
+		return sharedtelemetry.AuditStateArchived
+	default:
+		return ""
 	}
 }

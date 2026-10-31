@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -434,16 +435,13 @@ func (p *Projection) Complete(
 }
 
 func historySpec(kind string) (table, active, scheduled string, err error) {
-	switch strings.TrimSpace(kind) {
-	case "privacy":
-		return "privacy_history", managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(),
-			managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(), nil
-	case "terms":
-		return "terms_history", managev1.TermsStatus_TERMS_STATUS_ACTIVE.String(),
-			managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(), nil
-	default:
+	kind = strings.TrimSpace(kind)
+	activeStatus, known := legaldomain.PolicyStatus(legaldomain.PolicyKind(kind), "active")
+	scheduledStatus, _ := legaldomain.PolicyStatus(legaldomain.PolicyKind(kind), "scheduled")
+	if !known {
 		return "", "", "", fmt.Errorf("unsupported legal OG entity type %q", kind)
 	}
+	return kind + "_history", string(activeStatus), string(scheduledStatus), nil
 }
 
 func backgroundColumn(kind string) string {

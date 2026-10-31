@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
@@ -49,16 +48,21 @@ func automaticLegalNoticePreviewToken(previewURL string) (string, bool) {
 	return token, true
 }
 
-func legalNoticePreviewReference(run model.CampaignDeliveryRun) (string, string, string, bool) {
+// noticePreviewPolicy returns the kind and version an update notice run
+// previews; any other run previews nothing.
+func noticePreviewPolicy(run model.CampaignDeliveryRun) (*policyKind, string, bool) {
 	eventKey := strings.TrimSpace(ptrStringValue(run.TemplateEventKey))
-	switch eventKey {
-	case "privacy_update":
-		return "privacy_history", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(), strings.TrimSpace(ptrStringValue(run.PrivacyID)), true
-	case "terms_update":
-		return "terms_history", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String(), strings.TrimSpace(ptrStringValue(run.TermsID)), true
-	default:
-		return "", "", "", false
+	for _, kind := range policyKinds {
+		if eventKey != kind.updateEvent.String() {
+			continue
+		}
+		reference := run.TermsID
+		if kind.kind == Privacy {
+			reference = run.PrivacyID
+		}
+		return kind, strings.TrimSpace(ptrStringValue(reference)), true
 	}
+	return nil, "", false
 }
 
 // PrepareAutomaticNoticePreviewShareLink materializes the bounded share link
@@ -70,7 +74,7 @@ func PrepareAutomaticNoticePreviewShareLink(
 	run model.CampaignDeliveryRun,
 	now time.Time,
 ) error {
-	tableName, entityType, entityID, relevant := legalNoticePreviewReference(run)
+	kind, entityID, relevant := noticePreviewPolicy(run)
 	if !relevant {
 		return nil
 	}
@@ -90,11 +94,11 @@ func PrepareAutomaticNoticePreviewShareLink(
 	}
 
 	var policy struct {
-		Status        string     `gorm:"column:status"`
-		EffectiveFrom *time.Time `gorm:"column:effective_from"`
+		Status        model.LegalPolicyStatus `gorm:"column:status"`
+		EffectiveFrom *time.Time              `gorm:"column:effective_from"`
 	}
 	result := tx.WithContext(ctx).
-		Table(tableName).
+		Table(kind.table).
 		Select("status", "effective_from").
 		Where("id = ?", entityID).
 		Take(&policy)
@@ -104,16 +108,12 @@ func PrepareAutomaticNoticePreviewShareLink(
 	if policy.EffectiveFrom == nil || !policy.EffectiveFrom.After(now) {
 		return fmt.Errorf("legal update preview is no longer available before its effective time")
 	}
-	expectedStatus := managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String()
-	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS.String() {
-		expectedStatus = managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String()
-	}
-	if policy.Status != expectedStatus {
+	if policy.Status != kind.scheduled {
 		return fmt.Errorf("legal update preview policy is no longer scheduled")
 	}
 
 	return links.CreateAutomaticPreview(ctx, tx, AutomaticPreview{
-		Token: token, EntityType: entityType, EntityID: entityID,
+		Token: token, EntityType: kind.shareLinkEntityType, EntityID: entityID,
 		CreatedAt: now.UTC(), ExpiresAt: policy.EffectiveFrom.UTC(),
 	})
 }

@@ -45,35 +45,34 @@ func appendLegalPolicyIdentityAudit(
 	})
 }
 
+// legalLifecycleChange is the lifecycle record of one version.
+type legalLifecycleChange struct {
+	kind          string
+	policyID      string
+	version       int
+	changedFields []string
+	previous      sharedtelemetry.AuditState
+	next          sharedtelemetry.AuditState
+	effectiveAt   *time.Time
+}
+
+func (c legalLifecycleChange) record(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	policyType, err := legalPolicyAuditType(c.kind)
+	if err != nil {
+		return sharedtelemetry.AuditRecord{}, err
+	}
+	return sharedtelemetry.NewLegalPolicyLifecycleAuditRecord(
+		metadata, c.policyID, policyType, int64(c.version), c.changedFields, c.previous, c.next, c.effectiveAt,
+	)
+}
+
 func appendLegalPolicyLifecycleAudit(
 	ctx context.Context,
 	tx *gorm.DB,
 	writer domainaudit.Appender,
-	entityType string,
-	policyID string,
-	version int,
-	changedFields []string,
-	previousState sharedtelemetry.AuditState,
-	newState sharedtelemetry.AuditState,
-	effectiveAt *time.Time,
-	systemService *sharedtelemetry.ServiceName,
+	change legalLifecycleChange,
 ) error {
-	if writer == nil {
-		return nil
-	}
-	policyType, err := legalPolicyAuditType(entityType)
-	if err != nil {
-		return err
-	}
-	build := func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		return sharedtelemetry.NewLegalPolicyLifecycleAuditRecord(
-			metadata, policyID, policyType, int64(version), changedFields, previousState, newState, effectiveAt,
-		)
-	}
-	if systemService != nil {
-		return domainaudit.AppendSystem(ctx, tx, writer, *systemService, sharedtelemetry.AuditLegalPolicyUpdated, build)
-	}
-	return domainaudit.AppendRequest(ctx, tx, writer, sharedtelemetry.AuditLegalPolicyUpdated, build)
+	return domainaudit.AppendRequest(ctx, tx, writer, sharedtelemetry.AuditLegalPolicyUpdated, change.record)
 }
 
 func appendLegalTargetLocaleContentAudit(

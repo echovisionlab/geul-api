@@ -75,7 +75,7 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 	var effectiveRun *model.CampaignDeliveryRun
 	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		activated, effectiveRun, err = legaldomain.ActivateAuditedLegalNoticeDocumentWithEffectiveRunWithDB(
+		activated, effectiveRun, err = legaldomain.ActivateDuePolicyWithEffectiveRun(
 			ctx,
 			tx,
 			h.auditWriter,
@@ -83,7 +83,6 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 			noticeRuntime,
 			spec.referenceType,
 			documentID,
-			legaldomain.LegalNoticeActivationScheduledDue,
 			spec.effectiveEvent,
 			map[string]string{spec.resource + "_url": fmt.Sprintf("%s/%s", h.config.SiteOrigin, spec.resource)},
 			now,
