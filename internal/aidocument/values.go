@@ -101,11 +101,7 @@ func (v Value) validateDepth(depth int) error {
 		if v.Text == "" || strings.TrimSpace(v.Text) != v.Text || len(v.Inline) != 0 || len(v.List) != 0 || len(v.Object) != 0 {
 			return errors.New("number must be a non-empty canonical decimal string")
 		}
-		number, err := strconv.ParseFloat(v.Text, 64)
-		if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
-			return fmt.Errorf("invalid number %q", v.Text)
-		}
-		return nil
+		return validateFiniteNumber(v.Text)
 	case ValueKindInline:
 		if v.Text != "" || len(v.List) != 0 || len(v.Object) != 0 {
 			return errors.New("inline value cannot contain another value representation")
@@ -115,66 +111,70 @@ func (v Value) validateDepth(depth int) error {
 		if v.Text != "" || len(v.Inline) != 0 || len(v.Object) != 0 {
 			return errors.New("list value cannot contain another value representation")
 		}
-		stable := len(v.List) > 0 && v.List[0].ID != ""
-		seen := make(map[RelationItemID]struct{}, len(v.List))
-		for index, item := range v.List {
-			if (item.ID != "") != stable {
-				return errors.New("list item handles must be either present for every item or absent for every item")
-			}
-			if stable {
-				if err := validateStableID("list item handle", string(item.ID), maxHandleLength); err != nil {
-					return err
-				}
-				if _, duplicate := seen[item.ID]; duplicate {
-					return fmt.Errorf("duplicate list item handle %q", item.ID)
-				}
-				seen[item.ID] = struct{}{}
-			}
-			if err := item.Value.validateDepth(depth + 1); err != nil {
-				return fmt.Errorf("list item %d: %w", index, err)
-			}
-		}
-		return nil
+		return validateListItems(v.List, depth)
 	case ValueKindObject:
 		if v.Text != "" || len(v.Inline) != 0 || len(v.List) != 0 {
 			return errors.New("object value cannot contain another value representation")
 		}
-		seen := make(map[FieldID]struct{}, len(v.Object))
-		for _, field := range v.Object {
-			if err := validateStableID("object field ID", string(field.ID), maxCatalogIDLength); err != nil {
-				return err
-			}
-			if _, duplicate := seen[field.ID]; duplicate {
-				return fmt.Errorf("duplicate object field %q", field.ID)
-			}
-			seen[field.ID] = struct{}{}
-			if err := field.Value.validateDepth(depth + 1); err != nil {
-				return fmt.Errorf("object field %q: %w", field.ID, err)
-			}
-		}
-		return nil
+		return validateObjectFields(v.Object, depth)
 	default:
 		return fmt.Errorf("unsupported value kind %q", v.Kind)
 	}
 }
 
+func validateFiniteNumber(text string) error {
+	number, err := strconv.ParseFloat(text, 64)
+	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
+		return fmt.Errorf("invalid number %q", text)
+	}
+	return nil
+}
+
+// validateListItems requires every item of a list to carry a unique stable
+// handle or none to carry one.
+func validateListItems(items []ListItem, depth int) error {
+	stable := len(items) > 0 && items[0].ID != ""
+	seen := make(map[RelationItemID]struct{}, len(items))
+	for index, item := range items {
+		if (item.ID != "") != stable {
+			return errors.New("list item handles must be either present for every item or absent for every item")
+		}
+		if stable {
+			if err := validateStableID("list item handle", string(item.ID), maxHandleLength); err != nil {
+				return err
+			}
+			if _, duplicate := seen[item.ID]; duplicate {
+				return fmt.Errorf("duplicate list item handle %q", item.ID)
+			}
+			seen[item.ID] = struct{}{}
+		}
+		if err := item.Value.validateDepth(depth + 1); err != nil {
+			return fmt.Errorf("list item %d: %w", index, err)
+		}
+	}
+	return nil
+}
+
+func validateObjectFields(fields []ObjectField, depth int) error {
+	seen := make(map[FieldID]struct{}, len(fields))
+	for _, field := range fields {
+		if err := validateStableID("object field ID", string(field.ID), maxCatalogIDLength); err != nil {
+			return err
+		}
+		if _, duplicate := seen[field.ID]; duplicate {
+			return fmt.Errorf("duplicate object field %q", field.ID)
+		}
+		seen[field.ID] = struct{}{}
+		if err := field.Value.validateDepth(depth + 1); err != nil {
+			return fmt.Errorf("object field %q: %w", field.ID, err)
+		}
+	}
+	return nil
+}
+
 func (i InlineItem) validate(depth int) error {
 	if depth > 32 {
 		return errors.New("inline nesting exceeds 32 levels")
-	}
-	children := func(required bool) error {
-		if required && len(i.Children) == 0 {
-			return fmt.Errorf("inline item %q requires children", i.Kind)
-		}
-		if i.Text != "" {
-			return fmt.Errorf("inline item %q cannot contain scalar text", i.Kind)
-		}
-		for _, child := range i.Children {
-			if err := child.validate(depth + 1); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
 	if i.Linked && i.Kind != InlineKindSiteVariable {
 		return errors.New("linked is only valid for siteVariable")
@@ -197,17 +197,17 @@ func (i InlineItem) validate(depth int) error {
 		if i.Target != "" {
 			return fmt.Errorf("inline item %q cannot contain a target", i.Kind)
 		}
-		return children(true)
+		return i.validateChildren(depth)
 	case InlineKindTextColor, InlineKindBackground:
 		if err := validateOpaque("inline mark parameter", i.Target, 64); err != nil {
 			return err
 		}
-		return children(true)
+		return i.validateChildren(depth)
 	case InlineKindLink:
 		if err := validateOpaque("inline link target", i.Target, 2048); err != nil {
 			return err
 		}
-		return children(true)
+		return i.validateChildren(depth)
 	case InlineKindHardBreak:
 		if i.Text != "" || i.Target != "" || len(i.Children) != 0 {
 			return errors.New("hard break cannot contain payload")
@@ -226,4 +226,21 @@ func (i InlineItem) validate(depth int) error {
 	default:
 		return fmt.Errorf("unsupported inline item kind %q", i.Kind)
 	}
+}
+
+// validateChildren checks a mark or link, which wraps at least one child and
+// carries no scalar text of its own.
+func (i InlineItem) validateChildren(depth int) error {
+	if len(i.Children) == 0 {
+		return fmt.Errorf("inline item %q requires children", i.Kind)
+	}
+	if i.Text != "" {
+		return fmt.Errorf("inline item %q cannot contain scalar text", i.Kind)
+	}
+	for _, child := range i.Children {
+		if err := child.validate(depth + 1); err != nil {
+			return err
+		}
+	}
+	return nil
 }
