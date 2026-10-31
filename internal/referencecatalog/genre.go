@@ -60,9 +60,10 @@ var genreSortConfig = queryutil.SortConfig{
 }
 
 var genreCRUD = referenceCRUD[model.Genre]{
-	resource: "genre",
-	filters:  genreFilterConfig,
-	sorts:    &genreSortConfig,
+	resource:  "genre",
+	maxLength: referenceValueMaxLength,
+	filters:   genreFilterConfig,
+	sorts:     &genreSortConfig,
 	newRecord: func(name, slug string, description *string) *model.Genre {
 		return &model.Genre{Name: name, Slug: slug, Description: description, CreatedAt: dbtime.Now()}
 	},

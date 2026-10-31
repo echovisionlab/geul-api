@@ -62,9 +62,10 @@ var formatSortConfig = queryutil.SortConfig{
 }
 
 var formatCRUD = referenceCRUD[model.Format]{
-	resource: "format",
-	filters:  formatFilterConfig,
-	sorts:    &formatSortConfig,
+	resource:  "format",
+	maxLength: shortReferenceValueMaxLength,
+	filters:   formatFilterConfig,
+	sorts:     &formatSortConfig,
 	newRecord: func(name, slug string, _ *string) *model.Format {
 		return &model.Format{Name: name, Slug: slug}
 	},

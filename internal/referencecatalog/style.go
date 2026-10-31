@@ -60,9 +60,10 @@ var styleSortConfig = queryutil.SortConfig{
 }
 
 var styleCRUD = referenceCRUD[model.Style]{
-	resource: "style",
-	filters:  styleFilterConfig,
-	sorts:    &styleSortConfig,
+	resource:  "style",
+	maxLength: referenceValueMaxLength,
+	filters:   styleFilterConfig,
+	sorts:     &styleSortConfig,
 	newRecord: func(name, slug string, description *string) *model.Style {
 		return &model.Style{Name: name, Slug: slug, Description: description, CreatedAt: dbtime.Now()}
 	},

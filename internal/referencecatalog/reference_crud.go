@@ -16,6 +16,7 @@ import (
 
 type referenceCRUD[T interface{}] struct {
 	resource    string
+	maxLength   int
 	filters     *queryutil.FilterConfig
 	sorts       *queryutil.SortConfig
 	newRecord   func(name, slug string, description *string) *T
@@ -59,7 +60,7 @@ func (c referenceCRUD[T]) create(
 	slug *string,
 	description *string,
 ) (*T, error) {
-	name, err := normalizeReferenceName(name)
+	name, err := normalizeReferenceName(name, c.maxLength)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +69,7 @@ func (c referenceCRUD[T]) create(
 	if slug != nil {
 		normalizedSlug = *slug
 	}
-	normalizedSlug, err = normalizeReferenceSlug(normalizedSlug)
+	normalizedSlug, err = normalizeReferenceSlug(normalizedSlug, c.maxLength)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +113,7 @@ func (c referenceCRUD[T]) updateLocked(
 	updates := structured.Fields{}
 	changedFields := make([]string, 0, 3)
 	if name != nil {
-		nextName, err := normalizeReferenceName(*name)
+		nextName, err := normalizeReferenceName(*name, c.maxLength)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -123,7 +124,7 @@ func (c referenceCRUD[T]) updateLocked(
 		}
 	}
 	if slug != nil {
-		nextSlug, err := normalizeReferenceSlug(*slug)
+		nextSlug, err := normalizeReferenceSlug(*slug, c.maxLength)
 		if err != nil {
 			return nil, nil, err
 		}

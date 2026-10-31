@@ -35,9 +35,10 @@ var tagSortConfig = queryutil.SortConfig{
 }
 
 var tagListCRUD = referenceCRUD[model.Tag]{
-	resource: "tag",
-	filters:  tagFilterConfig,
-	sorts:    &tagSortConfig,
+	resource:  "tag",
+	maxLength: shortReferenceValueMaxLength,
+	filters:   tagFilterConfig,
+	sorts:     &tagSortConfig,
 	newRecord: func(name, slug string, _ *string) *model.Tag {
 		return &model.Tag{Name: name, Slug: slug, CreatedAt: dbtime.Now()}
 	},

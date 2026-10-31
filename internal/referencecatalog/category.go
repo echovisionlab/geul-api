@@ -36,9 +36,10 @@ var categorySortConfig = queryutil.SortConfig{
 }
 
 var categoryListCRUD = referenceCRUD[model.Category]{
-	resource: "category",
-	filters:  categoryFilterConfig,
-	sorts:    &categorySortConfig,
+	resource:  "category",
+	maxLength: referenceValueMaxLength,
+	filters:   categoryFilterConfig,
+	sorts:     &categorySortConfig,
 	newRecord: func(name, slug string, description *string) *model.Category {
 		return &model.Category{Name: name, Slug: slug, Description: description, CreatedAt: dbtime.Now()}
 	},
