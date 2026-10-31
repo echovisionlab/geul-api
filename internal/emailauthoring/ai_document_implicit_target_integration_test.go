@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -80,15 +82,15 @@ func TestEmailTemplateAIDocumentImplicitTargetWriteIntegration(t *testing.T) {
 						[]string{missing.ViewerMemberID}))
 				require.NoError(t, err)
 			}
-			mutation := AIDocumentMutation{
-				TemplateID: missing.TemplateID, Locale: missing.Locale,
+			mutation := emailcontent.AIDocumentMutation{
+				Reference: missing.Reference, Locale: missing.Locale,
 				ExpectedDocumentRevision: missing.DocumentRevision, ExpectedSource: missing.SourceLocale,
 				ExpectedPresence: false, ContributorMember: uuid.MustParse(missing.ViewerMemberID),
 				Batch: &batch, SetSubject: test.setSubject, Subject: "Target subject",
 			}
-			compiler := func(AIDocumentState) (AIDocumentMutation, error) { return mutation, nil }
+			compiler := func(emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) { return mutation, nil }
 			validated, err := application.ExecuteAIDocumentMutation(
-				ctx, template.Msg.Id, "ko", AIDocumentExecutionValidate, compiler)
+				ctx, template.Msg.Id, "ko", emailcontent.AIDocumentExecutionValidate, compiler)
 			require.NoError(t, err)
 			require.True(t, validated.Changed)
 			require.Equal(t, source.DocumentRevision, validated.DocumentRevision)
@@ -100,7 +102,7 @@ func TestEmailTemplateAIDocumentImplicitTargetWriteIntegration(t *testing.T) {
 			require.True(t, proto.Equal(missing.Document, afterValidate.Document))
 
 			accepted, err := application.ExecuteAIDocumentMutation(
-				ctx, template.Msg.Id, "ko", AIDocumentExecutionApply, compiler)
+				ctx, template.Msg.Id, "ko", emailcontent.AIDocumentExecutionApply, compiler)
 			require.NoError(t, err)
 			require.True(t, accepted.Changed)
 			require.Equal(t, source.DocumentRevision, accepted.DocumentRevision)
@@ -131,8 +133,8 @@ func TestEmailTemplateAIDocumentImplicitTargetWriteIntegration(t *testing.T) {
 			require.True(t, proto.Equal(source.Document, sourceAfter.Document))
 
 			_, err = application.ExecuteAIDocumentMutation(
-				ctx, template.Msg.Id, "ko", AIDocumentExecutionApply, compiler)
-			var conflict *AIDocumentRevisionConflictError
+				ctx, template.Msg.Id, "ko", emailcontent.AIDocumentExecutionApply, compiler)
+			var conflict *emailcontent.AIDocumentRevisionConflictError
 			require.ErrorAs(t, err, &conflict)
 			require.Equal(t, accepted.DocumentRevision, conflict.CurrentDocumentRevision)
 			require.Equal(t, accepted.TargetRevision, conflict.CurrentTargetRevision)

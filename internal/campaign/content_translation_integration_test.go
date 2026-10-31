@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -98,7 +100,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	).Error)
 	documentID, err := loadCampaignEmailContentDocumentID(ctx, db, campaignContentEntity, created.Msg.Campaign.Id)
 	require.NoError(t, err)
-	targetState, err := loadCampaignExactLocaleState(
+	targetState, err := campaignContent.LoadExactLocaleState(
 		ctx, db, store, created.Msg.Campaign.Id, documentID, "ko", false,
 	)
 	require.NoError(t, err)
@@ -132,7 +134,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	err = db.Transaction(func(tx *gorm.DB) error {
 		_, applyErr := ApplyTranslationInterchange(
 			ctx, tx, store, created.Msg.Campaign.Id, "en",
-			TranslationInterchangeMutation{
+			emailcontent.InterchangeMutation{
 				TargetLocale: "ko", ExpectedDocumentRevision: sourceWrite.Msg.DocumentRevision,
 				ExpectedTargetRevision: &staleTargetRevision, ExpectedPresence: true,
 				Subject: &staleInterchangeSubject, ContributorMemberID: contributorID, Now: time.Now().UTC(),
@@ -142,7 +144,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	})
 	var targetConflict *translation.TargetRevisionConflict
 	require.ErrorAs(t, err, &targetConflict)
-	afterStaleInterchange, err := loadCampaignExactLocaleState(
+	afterStaleInterchange, err := campaignContent.LoadExactLocaleState(
 		ctx, db, store, created.Msg.Campaign.Id, documentID, "ko", false,
 	)
 	require.NoError(t, err)

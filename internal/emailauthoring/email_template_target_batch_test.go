@@ -9,7 +9,7 @@ import (
 func TestValidateEmailTemplateTargetBatchOutcomes(t *testing.T) {
 	identity := tb.Invalid("batch: Email Template target document identity and revision must match the locked state")
 	graph := tb.Rejected(tb.NonSourceStructureForbidden, "Email Template target locale cannot mutate the shared Block graph or File ownership")
-	tb.Run(t, tb.Shared(emailTemplateEntityName), []tb.Case{
+	tb.Run(t, tb.Shared(emailTemplateContent.Name), []tb.Case{
 		{Kind: tb.DocumentMismatch, Want: identity},
 		{Kind: tb.RevisionMismatch, Want: identity},
 		{Kind: tb.GraphUpsert, Want: graph},

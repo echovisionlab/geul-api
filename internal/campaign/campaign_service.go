@@ -298,7 +298,7 @@ func (s *CampaignService) CreateCampaign(
 			SourceLocale: sourceLocale,
 		})
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+			return campaignContent.NormalizeContentBlockError(err)
 		}
 		documentID := document.Document.ID.String()
 		campaign.ContentDocumentID = &documentID
@@ -662,7 +662,7 @@ func (s *CampaignService) DeleteCampaign(
 			documentID,
 			campaignEmailDeleteContentFence(campaignContentEntity, campaign.ID),
 		); err != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+			return campaignContent.NormalizeContentBlockError(err)
 		}
 		if err := tx.Delete(&campaign).Error; err != nil {
 			if dberrors.IsForeignKeyViolation(err) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -90,7 +92,7 @@ func (a *EmailTemplateInterchange) ApplyTranslationInterchange(
 		a.references,
 		command.EntityID,
 		command.SourceLocale,
-		emaildomain.TemplateTranslationInterchangeMutation{
+		emailcontent.InterchangeMutation{
 			TargetLocale: command.TargetLocale, ExpectedDocumentRevision: command.Source.ContentDocumentRevision,
 			ExpectedTargetRevision: command.ExpectedRevision,
 			ExpectedPresence:       current.state.Exists, Subject: candidate.Title,

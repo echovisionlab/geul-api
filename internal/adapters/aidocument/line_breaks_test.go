@@ -1,12 +1,13 @@
 package aidocumentadapter
 
 import (
+	"testing"
+
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"testing"
 )
 
 func TestAIDocumentLineBreakExportImport(t *testing.T) {

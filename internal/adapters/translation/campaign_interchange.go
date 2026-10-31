@@ -3,6 +3,8 @@ package translationadapter
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"gorm.io/gorm"
 
 	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
@@ -77,7 +79,7 @@ func (a *CampaignInterchange) ApplyTranslationInterchange(
 		store,
 		command.EntityID,
 		command.SourceLocale,
-		campaigndomain.TranslationInterchangeMutation{
+		emailcontent.InterchangeMutation{
 			TargetLocale: command.TargetLocale, ExpectedDocumentRevision: command.Source.ContentDocumentRevision,
 			ExpectedTargetRevision: command.ExpectedRevision,
 			ExpectedPresence:       current.state.Exists, Subject: candidate.Title,

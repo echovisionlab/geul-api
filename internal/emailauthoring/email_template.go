@@ -398,7 +398,7 @@ func (s *EmailTemplateService) CreateEmailTemplate(
 			SourceLocale: sourceLocale,
 		})
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
+			return emailTemplateContent.NormalizeContentBlockError(err)
 		}
 		documentID := document.Document.ID.String()
 		template.ContentDocumentID = &documentID
@@ -514,7 +514,7 @@ func (s *EmailTemplateService) DeleteEmailTemplate(
 			documentID,
 			campaignEmailDeleteContentFence(s.references, emailTemplateContentEntity, template.ID),
 		); err != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
+			return emailTemplateContent.NormalizeContentBlockError(err)
 		}
 		if err := tx.WithContext(ctx).Delete(&template).Error; err != nil {
 			return err

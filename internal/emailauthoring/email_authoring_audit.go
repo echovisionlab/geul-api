@@ -99,24 +99,6 @@ func appendEmailLayoutLocaleContentAudit(
 	})
 }
 
-func emailAuthoringLocaleContentOperation(
-	source bool,
-	create bool,
-	remove bool,
-	previouslyExists bool,
-) sharedtelemetry.AuditItemOperation {
-	switch {
-	case source:
-		return sharedtelemetry.AuditItemOperationUpdated
-	case remove:
-		return sharedtelemetry.AuditItemOperationDeleted
-	case create || !previouslyExists:
-		return sharedtelemetry.AuditItemOperationCreated
-	default:
-		return sharedtelemetry.AuditItemOperationUpdated
-	}
-}
-
 func appendEmailEventMappingAudit(ctx context.Context, tx *gorm.DB, writer domainaudit.Appender, eventName, previousTemplateID, nextTemplateID string) error {
 	if writer == nil || previousTemplateID == nextTemplateID {
 		return nil

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -51,11 +53,11 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 	compilerFailure := errors.New("stop after authorized Campaign compiler")
 	compilerCalls := 0
 	_, err = application.ExecuteAIDocumentMutation(
-		ctx, campaignID, "en", AIDocumentExecutionValidate,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, campaignID, "en", emailcontent.AIDocumentExecutionValidate,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			compilerCalls++
-			require.Equal(t, campaignID, state.CampaignID)
-			return AIDocumentMutation{}, compilerFailure
+			require.Equal(t, campaignID, state.Reference)
+			return emailcontent.AIDocumentMutation{}, compilerFailure
 		},
 	)
 	require.ErrorIs(t, err, compilerFailure)
@@ -73,12 +75,12 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 		WHERE campaign.id = ?
 	`, campaignID).Row().Scan(&subjectBefore, &revisionBefore))
 	result, err := application.ExecuteAIDocumentMutation(
-		ctx, campaignID, "en", AIDocumentExecutionValidate,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, campaignID, "en", emailcontent.AIDocumentExecutionValidate,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			memberID := uuid.MustParse(state.ViewerMemberID)
 			revision := uuid.MustParse(state.DocumentRevision)
-			return AIDocumentMutation{
-				CampaignID: state.CampaignID, Locale: state.Locale,
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale,
 				ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 				SetSubject: true, Subject: "Campaign changed only inside Validate",
@@ -108,11 +110,11 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 
 	applySubject := "Campaign changed by Apply"
 	result, err = application.ExecuteAIDocumentMutation(
-		ctx, campaignID, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, campaignID, "en", emailcontent.AIDocumentExecutionApply,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			memberID := uuid.MustParse(state.ViewerMemberID)
-			return AIDocumentMutation{
-				CampaignID: state.CampaignID, Locale: state.Locale,
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale,
 				ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 				SetSubject: true, Subject: applySubject,
@@ -129,11 +131,11 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 	requireCampaignAIDocumentLocaleAudits(t, db, campaignID, "en", 1)
 
 	result, err = application.ExecuteAIDocumentMutation(
-		ctx, campaignID, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, campaignID, "en", emailcontent.AIDocumentExecutionApply,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			memberID := uuid.MustParse(state.ViewerMemberID)
-			return AIDocumentMutation{
-				CampaignID: state.CampaignID, Locale: state.Locale,
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale,
 				ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 				SetSubject: true, Subject: applySubject,
@@ -152,10 +154,10 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 	checker.allowed = false
 	compilerCalls = 0
 	_, err = application.ExecuteAIDocumentMutation(
-		ctx, campaignID, "en", AIDocumentExecutionApply,
-		func(AIDocumentState) (AIDocumentMutation, error) {
+		ctx, campaignID, "en", emailcontent.AIDocumentExecutionApply,
+		func(emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			compilerCalls++
-			return AIDocumentMutation{}, nil
+			return emailcontent.AIDocumentMutation{}, nil
 		},
 	)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))

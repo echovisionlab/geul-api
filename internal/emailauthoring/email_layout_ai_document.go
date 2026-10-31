@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -128,7 +130,7 @@ func (s *EmailLayoutAIDocumentService) Load(
 	layoutID string,
 	locale string,
 ) (EmailLayoutAIDocumentState, error) {
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", layoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}
@@ -179,7 +181,7 @@ func (s *EmailLayoutAIDocumentService) ExecuteAIDocumentMutation(
 	if mode != EmailLayoutAIDocumentExecutionValidate && mode != EmailLayoutAIDocumentExecutionApply {
 		return EmailLayoutAIDocumentMutationResult{}, errs.InvalidArgument("mode", "is not supported")
 	}
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", layoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutAIDocumentMutationResult{}, err
 	}
@@ -324,7 +326,7 @@ func (s *EmailLayoutAIDocumentService) applyAIDocumentMutationInTransaction(
 		if err := appendEmailLayoutLocaleContentAudit(
 			ctx, tx, s.layouts.auditWriter, mutation.ContributorMemberID.String(),
 			mutation.LayoutID, mutation.Locale,
-			emailAuthoringLocaleContentOperation(
+			emailcontent.LocaleContentOperation(
 				mutation.Locale == current.SourceLocale,
 				mutation.CreateTranslation, mutation.DeleteTranslation, mutation.ExpectedPresence,
 			),
@@ -469,7 +471,7 @@ func validateCompiledEmailLayoutAIDocumentMutation(
 func validateEmailLayoutAIDocumentMutation(
 	input EmailLayoutAIDocumentMutation,
 ) (EmailLayoutAIDocumentMutation, error) {
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", input.LayoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", input.LayoutID)
 	if err != nil {
 		return input, err
 	}

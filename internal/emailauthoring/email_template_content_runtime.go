@@ -68,11 +68,11 @@ func loadCampaignEmailEditorProjection(ctx context.Context, db *gorm.DB, store *
 	}
 	snapshot, err := store.LoadSnapshot(ctx, db, documentID, domain.SourceLocale)
 	if err != nil {
-		return campaignEmailEditorProjection{}, normalizeCampaignEmailContentBlockError(entityType, err)
+		return campaignEmailEditorProjection{}, emailTemplateContent.NormalizeContentBlockError(err)
 	}
 	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
 	if err != nil {
-		return campaignEmailEditorProjection{}, normalizeCampaignEmailContentBlockError(entityType, err)
+		return campaignEmailEditorProjection{}, emailTemplateContent.NormalizeContentBlockError(err)
 	}
 	return campaignEmailEditorProjection{Document: document, Revision: snapshot.Document.Revision.String(), SourceLocale: domain.SourceLocale}, nil
 }
