@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -51,16 +52,16 @@ var referenceDiscoveryTools = []mcpserver.Tool{
 }
 
 type CategoryReferenceDiscovery interface {
-	ListCategories(context.Context, *connect.Request[managev1.ListCategoriesRequest]) (*connect.Response[managev1.ListCategoriesResponse], error)
+	ListCategories(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Category], error)
 }
 type TagReferenceDiscovery interface {
-	ListTags(context.Context, *connect.Request[managev1.ListTagsRequest]) (*connect.Response[managev1.ListTagsResponse], error)
+	ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Tag], error)
 }
 type ClientReferenceDiscovery interface {
-	SearchClients(context.Context, *connect.Request[managev1.SearchClientsRequest]) (*connect.Response[managev1.SearchClientsResponse], error)
+	SearchClients(context.Context, referencecatalog.SearchClientsQuery) ([]*managev1.Client, error)
 }
 type MapPlaceReferenceDiscovery interface {
-	SearchMapPlaces(context.Context, *connect.Request[managev1.SearchMapPlacesRequest]) (*connect.Response[managev1.SearchMapPlacesResponse], error)
+	SearchMapPlaces(context.Context, referencecatalog.SearchMapPlacesQuery) ([]*managev1.MapPlaceBasic, error)
 }
 type MemberReferenceDiscovery interface {
 	SearchMembers(context.Context, member.SearchMembersQuery) ([]*commonv1.MemberSummary, error)
@@ -138,45 +139,45 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 	pagination := &commonv1.PaginationRequest{Limit: input.Limit}
 	switch input.ReferenceType {
 	case "category":
-		response, err := tools.categories.ListCategories(ctx, connect.NewRequest(&managev1.ListCategoriesRequest{Pagination: pagination, Filters: searchFilter}))
+		page, err := tools.categories.ListCategories(ctx, referencecatalog.ReferenceListQuery{Filters: searchFilter, Limit: input.Limit})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = response.Msg.Pagination.GetHasMore()
-		for _, item := range response.Msg.Categories {
+		hasMore = page.Pagination.GetHasMore()
+		for _, item := range page.Items {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", "", false))
 			}
 		}
 	case "tag":
-		response, err := tools.tags.ListTags(ctx, connect.NewRequest(&managev1.ListTagsRequest{Pagination: pagination, Filters: searchFilter}))
+		page, err := tools.tags.ListTags(ctx, referencecatalog.ReferenceListQuery{Filters: searchFilter, Limit: input.Limit})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = response.Msg.Pagination.GetHasMore()
-		for _, item := range response.Msg.Tags {
+		hasMore = page.Pagination.GetHasMore()
+		for _, item := range page.Items {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", "", false))
 			}
 		}
 	case "client":
-		response, err := tools.clients.SearchClients(ctx, connect.NewRequest(&managev1.SearchClientsRequest{Query: input.Query, Limit: min(input.Limit+1, maximum)}))
+		clients, err := tools.clients.SearchClients(ctx, referencecatalog.SearchClientsQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = quickSearchHasMore(len(response.Msg.Clients), input.Limit, maximum)
-		for _, item := range response.Msg.Clients[:min(len(response.Msg.Clients), int(input.Limit))] {
+		hasMore = quickSearchHasMore(len(clients), input.Limit, maximum)
+		for _, item := range clients[:min(len(clients), int(input.Limit))] {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Name, nil, "", "", false))
 			}
 		}
 	case "map_place":
-		response, err := tools.mapPlaces.SearchMapPlaces(ctx, connect.NewRequest(&managev1.SearchMapPlacesRequest{Query: input.Query, Limit: min(input.Limit+1, maximum)}))
+		places, err := tools.mapPlaces.SearchMapPlaces(ctx, referencecatalog.SearchMapPlacesQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = quickSearchHasMore(len(response.Msg.Places), input.Limit, maximum)
-		for _, item := range response.Msg.Places[:min(len(response.Msg.Places), int(input.Limit))] {
+		hasMore = quickSearchHasMore(len(places), input.Limit, maximum)
+		for _, item := range places[:min(len(places), int(input.Limit))] {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Name, nil, item.Address, "", false))
 			}

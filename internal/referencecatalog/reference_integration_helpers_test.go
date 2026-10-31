@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -19,6 +20,66 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+var errUnusedTestDependency = errors.New("test did not configure this Reference Catalog dependency")
+
+// newTestService builds the Reference Catalog use cases through NewService.
+// Unset collaborators get inert assets, members that fail when reached, the
+// menu target lifecycle, Work counts read from work_client and a recording
+// audit appender.
+func newTestService(t *testing.T, deps Deps) *Service {
+	t.Helper()
+	if deps.Audit == nil {
+		deps.Audit = &audittest.Recorder{}
+	}
+	if deps.Assets == nil {
+		deps.Assets = referenceCatalogTestAssets{}
+	}
+	if deps.Members == nil {
+		deps.Members = unusedMemberSummaries{}
+	}
+	if deps.MenuTargets == nil {
+		deps.MenuTargets = referenceMenuTargetsForTest(deps.Audit)
+	}
+	if deps.ClientWorks == nil {
+		deps.ClientWorks = referenceClientWorks{}
+	}
+	service, err := NewService(deps)
+	require.NoError(t, err)
+	return service
+}
+
+type unusedMemberSummaries struct{}
+
+func (unusedMemberSummaries) Resolve(context.Context, *gorm.DB, []string) (map[string]*commonv1.MemberSummary, error) {
+	return nil, errUnusedTestDependency
+}
+
+type referenceClientWorks struct{}
+
+func (referenceClientWorks) CountByClient(ctx context.Context, db *gorm.DB, clientIDs []string) (map[string]int32, error) {
+	var rows []struct {
+		ClientID string
+		Count    int32
+	}
+	if err := db.WithContext(ctx).Table("work_client").Select("client_id, COUNT(*) AS count").
+		Where("client_id IN ?", clientIDs).Group("client_id").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int32, len(rows))
+	for _, row := range rows {
+		counts[row.ClientID] = row.Count
+	}
+	return counts, nil
+}
+
+// adminRequestContext is an administrator request with the request context a
+// request-attributed audit record needs.
+func adminRequestContext(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
+	t.Helper()
+	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	return referenceAuditedRequestContext(t, ctx), spiceDB
+}
 
 type referenceMenuTargetsTestAdapter struct {
 	lifecycle menudomain.TargetLifecycle

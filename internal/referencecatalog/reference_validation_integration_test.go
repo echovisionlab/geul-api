@@ -16,7 +16,7 @@ import (
 func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.PrepareOryIntegrationConcurrentTest(t).DB
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := adminRequestContext(t, db)
 	suffix := testutil.IntegrationUUID()[:8]
 
 	tests := []struct {
@@ -29,11 +29,11 @@ func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *
 			name:      "genre",
 			maxLength: 100,
 			create: func(name string, slug string) error {
-				_, err := NewGenreService(db, spiceDB).CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{Name: name, Slug: &slug}))
+				_, err := NewGenreConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{Name: name, Slug: &slug}))
 				return err
 			},
 			update: func(id string, name *string, slug *string) error {
-				_, err := NewGenreService(db, spiceDB).UpdateGenre(ctx, connect.NewRequest(&managev1.UpdateGenreRequest{Id: id, Name: name, Slug: slug}))
+				_, err := NewGenreConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).UpdateGenre(ctx, connect.NewRequest(&managev1.UpdateGenreRequest{Id: id, Name: name, Slug: slug}))
 				return err
 			},
 		},
@@ -41,11 +41,11 @@ func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *
 			name:      "style",
 			maxLength: 100,
 			create: func(name string, slug string) error {
-				_, err := NewStyleService(db, spiceDB).CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{Name: name, Slug: &slug}))
+				_, err := NewStyleConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{Name: name, Slug: &slug}))
 				return err
 			},
 			update: func(id string, name *string, slug *string) error {
-				_, err := NewStyleService(db, spiceDB).UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{Id: id, Name: name, Slug: slug}))
+				_, err := NewStyleConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{Id: id, Name: name, Slug: slug}))
 				return err
 			},
 		},
@@ -53,11 +53,11 @@ func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *
 			name:      "tag",
 			maxLength: 50,
 			create: func(name string, slug string) error {
-				_, err := NewTagService(db, referenceMenuTargetsForTest(nil), spiceDB).CreateTag(ctx, connect.NewRequest(&managev1.CreateTagRequest{Name: name, Slug: &slug}))
+				_, err := NewTagConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateTag(ctx, connect.NewRequest(&managev1.CreateTagRequest{Name: name, Slug: &slug}))
 				return err
 			},
 			update: func(id string, name *string, slug *string) error {
-				_, err := NewTagService(db, referenceMenuTargetsForTest(nil), spiceDB).UpdateTag(ctx, connect.NewRequest(&managev1.UpdateTagRequest{Id: id, Name: name, Slug: slug}))
+				_, err := NewTagConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).UpdateTag(ctx, connect.NewRequest(&managev1.UpdateTagRequest{Id: id, Name: name, Slug: slug}))
 				return err
 			},
 		},
@@ -65,11 +65,11 @@ func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *
 			name:      "format",
 			maxLength: 50,
 			create: func(name string, slug string) error {
-				_, err := NewFormatService(db, spiceDB).CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{Name: name, Slug: &slug}))
+				_, err := NewFormatConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{Name: name, Slug: &slug}))
 				return err
 			},
 			update: func(id string, name *string, slug *string) error {
-				_, err := NewFormatService(db, spiceDB).UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{Id: id, Name: name, Slug: slug}))
+				_, err := NewFormatConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{Id: id, Name: name, Slug: slug}))
 				return err
 			},
 		},

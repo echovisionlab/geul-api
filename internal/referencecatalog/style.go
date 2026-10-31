@@ -3,36 +3,14 @@ package referencecatalog
 import (
 	"context"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-type StyleService struct {
-	managev1connect.UnimplementedStyleServiceHandler
-	referenceService
-}
-
-func NewStyleService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *StyleService {
-	return &StyleService{referenceService: newReferenceService(db, spiceDB)}
-}
-
-func NewAuditedStyleService(db *gorm.DB, auditWriter domainaudit.Appender, spiceDB *auth.SpiceDBClient) *StyleService {
-	requireReferenceAuditWriter("style", auditWriter)
-	service := NewStyleService(db, spiceDB)
-	service.auditWriter = auditWriter
-	return service
-}
 
 var styleKind = referenceKind[model.Style]{
 	resource:  "style",
@@ -63,65 +41,28 @@ var styleKind = referenceKind[model.Style]{
 	description: func(style *model.Style) *string { return style.Description },
 }
 
-func (s *StyleService) ListStyles(
-	ctx context.Context,
-	req *connect.Request[managev1.ListStylesRequest],
-) (*connect.Response[managev1.ListStylesResponse], error) {
-	styles, total, page, err := styleKind.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ListStylesResponse{
-		Styles: mapReferences(styles, toProtoStyle), Pagination: page.BuildResponse(total),
-	}), nil
+func (s *Service) ListStyles(ctx context.Context, query ReferenceListQuery) (Page[*managev1.Style], error) {
+	return listReferences(ctx, s, styleKind, query, toProtoStyle)
 }
 
-func (s *StyleService) ListStylesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListStylesAdminRequest],
-) (*connect.Response[managev1.ListStylesAdminResponse], error) {
-	styles, usage, total, page, err := styleKind.listAdmin(ctx, s.referenceService, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
-	if err != nil {
-		return nil, err
-	}
-	result := mapReferences(styles, func(style *model.Style) *managev1.StyleWithStats {
-		return &managev1.StyleWithStats{Style: toProtoStyle(style), ReleaseCount: usage[style.ID]}
+func (s *Service) ListStylesAdmin(ctx context.Context, query ReferenceListQuery) (Page[*managev1.StyleWithStats], error) {
+	return listReferencesAdmin(ctx, s, styleKind, query, func(style *model.Style, usage int32) *managev1.StyleWithStats {
+		return &managev1.StyleWithStats{Style: toProtoStyle(style), ReleaseCount: usage}
 	})
-	return connect.NewResponse(&managev1.ListStylesAdminResponse{
-		Styles: result, Pagination: page.BuildResponse(total),
-	}), nil
 }
 
-func (s *StyleService) CreateStyle(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateStyleRequest],
-) (*connect.Response[managev1.Style], error) {
-	style, err := styleKind.createAudited(ctx, s.referenceService, req.Msg.Name, req.Msg.Slug, req.Msg.Description)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(toProtoStyle(style)), nil
+func (s *Service) CreateStyle(ctx context.Context, command CreateReferenceCommand) (*managev1.Style, error) {
+	style, err := styleKind.create(ctx, s, command)
+	return projectReference(style, err, toProtoStyle)
 }
 
-func (s *StyleService) UpdateStyle(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateStyleRequest],
-) (*connect.Response[managev1.Style], error) {
-	style, err := styleKind.updateAudited(ctx, s.referenceService, req.Msg.Id, req.Msg.Name, req.Msg.Slug, req.Msg.Description)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(toProtoStyle(style)), nil
+func (s *Service) UpdateStyle(ctx context.Context, command UpdateReferenceCommand) (*managev1.Style, error) {
+	style, err := styleKind.update(ctx, s, command)
+	return projectReference(style, err, toProtoStyle)
 }
 
-func (s *StyleService) DeleteStyle(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteStyleRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if err := styleKind.deleteAudited(ctx, s.referenceService, req.Msg.Id); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+func (s *Service) DeleteStyle(ctx context.Context, command DeleteReferenceCommand) error {
+	return styleKind.delete(ctx, s, command)
 }
 
 func toProtoStyle(style *model.Style) *managev1.Style {

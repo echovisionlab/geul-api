@@ -16,7 +16,6 @@
 12 internal/page
 13 internal/post
 5 internal/programevent
-3 internal/referencecatalog
 14 internal/release
 2 internal/series
 1 internal/sitesettings

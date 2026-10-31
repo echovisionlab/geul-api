@@ -126,9 +126,13 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicWorkPath, publicWorkHandler)
 	slog.Info("Registered public service", "path", publicWorkPath)
 
-	publicReferenceCatalogAssets := referencecatalogadapter.NewPublicAssets(cfg.CDNURL)
-	publicClientService := publicreferencecatalog.NewClientService(db, publicReferenceCatalogAssets)
-	publicClientPath, publicClientHandler := openv1connect.NewClientServiceHandler(publicClientService, publicHandlerOpts...)
+	publicReferenceCatalog, err := publicreferencecatalog.NewService(publicreferencecatalog.Deps{
+		DB: db, Assets: referencecatalogadapter.NewPublicAssets(cfg.CDNURL),
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public reference catalog service: %w", err)
+	}
+	publicClientPath, publicClientHandler := openv1connect.NewClientServiceHandler(publicreferencecatalog.NewClientConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicClientPath, publicClientHandler)
 	slog.Info("Registered public service", "path", publicClientPath)
 
@@ -165,8 +169,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicTermsPath, publicTermsHandler)
 	slog.Info("Registered public service", "path", publicTermsPath)
 
-	publicCategoryService := publicreferencecatalog.NewCategoryService(db)
-	publicCategoryPath, publicCategoryHandler := openv1connect.NewCategoryServiceHandler(publicCategoryService, publicHandlerOpts...)
+	publicCategoryPath, publicCategoryHandler := openv1connect.NewCategoryServiceHandler(publicreferencecatalog.NewCategoryConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicCategoryPath, publicCategoryHandler)
 	slog.Info("Registered public service", "path", publicCategoryPath)
 
@@ -178,8 +181,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicSeriesPath, publicSeriesHandler)
 	slog.Info("Registered public service", "path", publicSeriesPath)
 
-	publicTagService := publicreferencecatalog.NewTagService(db)
-	publicTagPath, publicTagHandler := openv1connect.NewTagServiceHandler(publicTagService, publicHandlerOpts...)
+	publicTagPath, publicTagHandler := openv1connect.NewTagServiceHandler(publicreferencecatalog.NewTagConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicTagPath, publicTagHandler)
 	slog.Info("Registered public service", "path", publicTagPath)
 
@@ -188,8 +190,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicNewsletterPath, publicNewsletterHandler)
 	slog.Info("Registered public service", "path", publicNewsletterPath)
 
-	publicMapPlaceService := publicreferencecatalog.NewMapPlaceService(db, publicReferenceCatalogAssets)
-	publicMapPlacePath, publicMapPlaceHandler := openv1connect.NewMapPlaceServiceHandler(publicMapPlaceService, publicHandlerOpts...)
+	publicMapPlacePath, publicMapPlaceHandler := openv1connect.NewMapPlaceServiceHandler(publicreferencecatalog.NewMapPlaceConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicMapPlacePath, publicMapPlaceHandler)
 	slog.Info("Registered public service", "path", publicMapPlacePath)
 

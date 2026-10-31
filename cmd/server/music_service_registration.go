@@ -171,15 +171,8 @@ func (m musicServiceRegistration) registerRelease() (*releasepkg.ReleaseService,
 	return releaseService, internalReleaseService, trackService
 }
 
-func (m musicServiceRegistration) registerTaxonomy() (*referencecatalog.GenreService, *referencecatalog.StyleService, *referencecatalog.FormatService) {
-	deps := m.dependencies
-	genreService := referencecatalog.NewAuditedGenreService(deps.db, deps.telemetryWriter, deps.spicedbClient)
-	m.registerManage(managev1connect.NewGenreServiceHandler(genreService, m.manageOptions...))
-
-	styleService := referencecatalog.NewAuditedStyleService(deps.db, deps.telemetryWriter, deps.spicedbClient)
-	m.registerManage(managev1connect.NewStyleServiceHandler(styleService, m.manageOptions...))
-
-	formatService := referencecatalog.NewAuditedFormatService(deps.db, deps.telemetryWriter, deps.spicedbClient)
-	m.registerManage(managev1connect.NewFormatServiceHandler(formatService, m.manageOptions...))
-	return genreService, styleService, formatService
+func (m musicServiceRegistration) registerTaxonomy(catalog *referencecatalog.Service) {
+	m.registerManage(managev1connect.NewGenreServiceHandler(referencecatalog.NewGenreConnectHandler(catalog), m.manageOptions...))
+	m.registerManage(managev1connect.NewStyleServiceHandler(referencecatalog.NewStyleConnectHandler(catalog), m.manageOptions...))
+	m.registerManage(managev1connect.NewFormatServiceHandler(referencecatalog.NewFormatConnectHandler(catalog), m.manageOptions...))
 }

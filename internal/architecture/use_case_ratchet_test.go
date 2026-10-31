@@ -23,6 +23,7 @@ var pipelineDomains = []string{
 	"internal/maptheme",
 	"internal/member",
 	"internal/menu",
+	"internal/referencecatalog",
 	"internal/series",
 	"internal/sharelink",
 }

@@ -257,7 +257,6 @@
 1 internal/programevent/public -> content_block_attachment
 1 internal/programevent/public -> file
 1 internal/programevent/public -> label
-1 internal/referencecatalog -> work_client
 2 internal/referencecatalog/public -> post
 1 internal/referencecatalog/public -> post_category
 1 internal/referencecatalog/public -> post_tag

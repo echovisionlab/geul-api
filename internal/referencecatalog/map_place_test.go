@@ -13,7 +13,7 @@ import (
 func TestMapPlaceServiceSearchBlankQueryReturnsEmptyWithoutDatabase(t *testing.T) {
 	t.Parallel()
 
-	resp, err := (&MapPlaceService{}).SearchMapPlaces(context.Background(), connect.NewRequest(&managev1.SearchMapPlacesRequest{
+	resp, err := NewMapPlaceConnectHandler(&Service{}).SearchMapPlaces(context.Background(), connect.NewRequest(&managev1.SearchMapPlacesRequest{
 		Query: "   ",
 	}))
 

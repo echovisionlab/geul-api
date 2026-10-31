@@ -89,13 +89,10 @@ func TestMapPlaceAuthorizationIsSynchronousIntegration(t *testing.T) {
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.122")
 	require.NoError(t, err)
 	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), admin.AuthUserInfo())
-	service := NewAuditedMapPlaceService(
-		db,
-		apitelemetry.NewDurableWriter(db),
-		mapPlaceTestAssets{},
-		mapPlaceTestMembers{db: db},
-		stack.SpiceDBClient,
-	)
+	service := NewMapPlaceConnectHandler(newTestService(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(db),
+		Assets: mapPlaceTestAssets{}, Members: mapPlaceTestMembers{db: db},
+	}))
 
 	created, err := service.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name: "Synchronous map place", Address: "Causal Road", Lat: 37.5, Lng: 127.0,
@@ -103,9 +100,10 @@ func TestMapPlaceAuthorizationIsSynchronousIntegration(t *testing.T) {
 	require.NoError(t, err)
 	requireMapPlacePermission(t, stack.SpiceDBClient, created.Msg.Id, admin.IdentityID, true)
 
-	failing := NewAuditedMapPlaceService(
-		db, failingMapPlaceAuditAppender{}, mapPlaceTestAssets{}, mapPlaceTestMembers{db: db}, stack.SpiceDBClient,
-	)
+	failing := NewMapPlaceConnectHandler(newTestService(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient, Audit: failingMapPlaceAuditAppender{},
+		Assets: mapPlaceTestAssets{}, Members: mapPlaceTestMembers{db: db},
+	}))
 	_, err = failing.DeleteMapPlace(ctx, connect.NewRequest(&managev1.DeleteMapPlaceRequest{Id: created.Msg.Id}))
 	require.Error(t, err)
 	requireMapPlacePermission(t, stack.SpiceDBClient, created.Msg.Id, admin.IdentityID, true)

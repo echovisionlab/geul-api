@@ -6,225 +6,209 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// CreateClientCommand creates a Client.
+type CreateClientCommand struct {
+	Name    string
+	Website *string
+}
+
+// UpdateClientCommand changes the supplied fields of Client ID.
+type UpdateClientCommand struct {
+	ID      string
+	Name    *string
+	Website *string
+}
+
+// DeleteClientCommand deletes Client ID when nothing references it.
+type DeleteClientCommand struct {
+	ID string
+}
+
+func duplicateClientName(err error) error {
+	if dberrors.IsUniqueViolation(err) {
+		return domainerr.New(domainerr.AlreadyExists, "name", "client with this name already exists").WithCause(err)
+	}
+	return err
+}
+
+// lockClient takes the Client row for a mutation.
+func lockClient(ctx context.Context, tx *gorm.DB, id string) (*model.Client, error) {
+	var client model.Client
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&client, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerr.ResourceNotFound("client", id)
+		}
+		return nil, err
+	}
+	return &client, nil
+}
+
 // CreateClient creates a new client (admin only)
-func (s *ClientService) CreateClient(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateClientRequest],
-) (*connect.Response[managev1.Client], error) {
+func (s *Service) CreateClient(ctx context.Context, command CreateClientCommand) (*managev1.Client, error) {
 	can, err := policyv1.Client.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
-
-	// Validate required fields
-	name := strings.TrimSpace(req.Msg.Name)
+	name := strings.TrimSpace(command.Name)
 	if name == "" {
-		return nil, errs.Required("name")
+		return nil, domainerr.Required("name")
 	}
 
-	client := model.Client{
-		Name: name,
-	}
-
-	if req.Msg.Website != nil {
-		client.Website = req.Msg.Website
-	}
-
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}}}).Create(&client).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) {
-				return errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
+	client, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.Client]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(_ context.Context, tx *gorm.DB) (*model.Client, error) {
+			client := &model.Client{Name: name, Website: command.Website}
+			if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}}}).Create(client).Error; err != nil {
+				return nil, duplicateClientName(err)
 			}
-			return errs.Internal(err)
-		}
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditClientCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewClientCreatedAuditRecord(metadata, client.ID)
-		}); err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.Client.TouchPolicy(client.ID)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.Client.DeletePolicy(client.ID)
-		if err != nil {
-			return err
-		}
-		return write([]policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete})
+			return client, nil
+		},
+		Audit: func(client *model.Client) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditClientCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewClientCreatedAuditRecord(metadata, client.ID)
+			})
+		},
+		Relationships: func(client *model.Client) (apply, compensate []policyv1.RelationshipMutation, err error) {
+			return referencePolicyRelationships(policyv1.Client, client.ID, true)
+		},
 	})
 	if err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			return nil, errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
-		}
 		return nil, err
 	}
-
-	return connect.NewResponse(s.toProtoClient(&client, nil)), nil
+	return s.toProtoClient(client, nil), nil
 }
 
 // UpdateClient updates a client (admin only)
-func (s *ClientService) UpdateClient(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateClientRequest],
-) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
+func (s *Service) UpdateClient(ctx context.Context, command UpdateClientCommand) (_ *managev1.Client, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", command.ID))
 
-	can, err := policyv1.Client.Edit(req.Msg.Id)
+	can, err := policyv1.Client.Edit(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
 
-	var client model.Client
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("client", req.Msg.Id)
-			}
-			return errs.Internal(err)
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
+	var client *model.Client
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[[]string]{
+		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
+			client, err = lockClient(ctx, tx, command.ID)
 			return err
-		}
-
-		updates := structured.Fields{}
-		changedFields := make([]string, 0, 2)
-		if req.Msg.Name != nil {
-			name := strings.TrimSpace(*req.Msg.Name)
-			if name == "" {
-				return errs.Required("name")
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) ([]string, error) {
+			return updateLockedClient(ctx, tx, client, command)
+		},
+		Audit: func(changedFields []string) mutation.Audit {
+			if len(changedFields) == 0 {
+				return mutation.Unchanged()
 			}
-			if name != client.Name {
-				updates["name"] = name
-				changedFields = append(changedFields, "name")
-			}
-		}
-		if req.Msg.Website != nil && (client.Website == nil || *req.Msg.Website != *client.Website) {
-			updates["website"] = *req.Msg.Website
-			changedFields = append(changedFields, "website")
-		}
-		if len(updates) == 0 {
-			return nil
-		}
-		if err := s.applyClientUpdates(ctx, tx, &client, updates); err != nil {
-			return err
-		}
-		if err := tx.First(&client, "id = ?", client.ID).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditClientUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewClientMetadataUpdatedAuditRecord(metadata, client.ID, changedFields)
-		})
-	}); err != nil {
+			return mutation.RequestAudit(sharedtelemetry.AuditClientUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewClientMetadataUpdatedAuditRecord(metadata, client.ID, changedFields)
+			})
+		},
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	logoAssets := s.getClientLogoAssets(ctx, client.ID)
-	return connect.NewResponse(s.toProtoClient(&client, logoAssets)), nil
+	return s.toProtoClient(client, s.getClientLogoAssets(ctx, client.ID)), nil
 }
 
-func (s *ClientService) applyClientUpdates(ctx context.Context, db *gorm.DB, client *model.Client, updates structured.Fields) error {
-	if len(updates) == 0 {
-		return nil
-	}
-	if err := db.WithContext(ctx).Model(client).Updates(updates).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			return errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
+// updateLockedClient applies command to the locked client, rereads it, and
+// returns the changed fields.
+func updateLockedClient(ctx context.Context, tx *gorm.DB, client *model.Client, command UpdateClientCommand) ([]string, error) {
+	updates := structured.Fields{}
+	changedFields := make([]string, 0, 2)
+	if command.Name != nil {
+		name := strings.TrimSpace(*command.Name)
+		if name == "" {
+			return nil, domainerr.Required("name")
 		}
-		return errs.Internal(err)
+		if name != client.Name {
+			updates["name"] = name
+			changedFields = append(changedFields, "name")
+		}
 	}
-	return nil
+	if command.Website != nil && (client.Website == nil || *command.Website != *client.Website) {
+		updates["website"] = *command.Website
+		changedFields = append(changedFields, "website")
+	}
+	if len(updates) == 0 {
+		return nil, nil
+	}
+	if err := tx.WithContext(ctx).Model(client).Updates(updates).Error; err != nil {
+		return nil, duplicateClientName(err)
+	}
+	if err := tx.First(client, "id = ?", client.ID).Error; err != nil {
+		return nil, err
+	}
+	return changedFields, nil
 }
 
 // DeleteClient deletes a client (admin only)
-func (s *ClientService) DeleteClient(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteClientRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
+func (s *Service) DeleteClient(ctx context.Context, command DeleteClientCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", command.ID))
 
-	can, err := policyv1.Client.Delete(req.Msg.Id)
+	can, err := policyv1.Client.Delete(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
+		return err
 	}
 
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		var client model.Client
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("client", req.Msg.Id)
+	var client *model.Client
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[*model.Client]{
+		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
+			client, err = lockClient(ctx, tx, command.ID)
+			return err
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (*model.Client, error) {
+			for _, relation := range []struct{ table string }{{"work_client"}, {"program_event_client"}} {
+				var count int64
+				if err := tx.Table(relation.table).Where("client_id = ?", client.ID).Limit(1).Count(&count).Error; err != nil {
+					return nil, err
+				}
+				if count > 0 {
+					return nil, domainerr.Precondition("client is still referenced")
+				}
 			}
-			return errs.Internal(err)
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		for _, relation := range []struct{ table string }{{"work_client"}, {"program_event_client"}} {
-			var count int64
-			if err := tx.Table(relation.table).Where("client_id = ?", client.ID).Limit(1).Count(&count).Error; err != nil {
-				return errs.Internal(err)
+			if err := tx.Delete(client).Error; err != nil {
+				return nil, err
 			}
-			if count > 0 {
-				return errs.FailedPrecondition("client is still referenced")
-			}
-		}
-		if err := tx.Delete(&client).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := s.assets.Release(ctx, tx, AssetRelease{
-			Owner:         AssetOwner{Type: "client", ID: client.ID},
-			BindingPrefix: "logo",
-		}); err != nil {
-			return err
-		}
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditClientDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewClientDeletedAuditRecord(metadata, client.ID)
-		}); err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.Client.DeletePolicy(client.ID)
-		if err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.Client.TouchPolicy(client.ID)
-		if err != nil {
-			return err
-		}
-		return write([]policyv1.RelationshipMutation{policyDelete}, []policyv1.RelationshipMutation{policyTouch})
+			return client, s.assets.Release(ctx, tx, AssetRelease{
+				Owner:         AssetOwner{Type: "client", ID: client.ID},
+				BindingPrefix: "logo",
+			})
+		},
+		Audit: func(client *model.Client) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditClientDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewClientDeletedAuditRecord(metadata, client.ID)
+			})
+		},
+		Relationships: func(client *model.Client) (apply, compensate []policyv1.RelationshipMutation, err error) {
+			return referencePolicyRelationships(policyv1.Client, client.ID, false)
+		},
 	})
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
+	return err
 }

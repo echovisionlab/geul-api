@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -50,8 +51,8 @@ func TestReferenceSearchBuildsExactCategoryRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if categories.request.Msg.Pagination.Limit != 12 || len(categories.request.Msg.Filters) != 1 || categories.request.Msg.Filters[0].Field != "search" || categories.request.Msg.Filters[0].Value != "Sound" {
-		t.Fatalf("category request = %#v", categories.request.Msg)
+	if categories.query.Limit != 12 || len(categories.query.Filters) != 1 || categories.query.Filters[0].Field != "search" || categories.query.Filters[0].Value != "Sound" {
+		t.Fatalf("category query = %#v", categories.query)
 	}
 	items := result.StructuredContent["items"].([]any)
 	if len(items) != 1 || items[0].(map[string]any)["id"] != "11111111-1111-4111-8111-111111111111" {
@@ -125,47 +126,50 @@ func newRecordingReferenceDiscoveryTools(t *testing.T) *ReferenceDiscoveryTools 
 }
 
 type recordingCategoryReferences struct {
-	managev1connect.UnimplementedCategoryServiceHandler
-	request *connect.Request[managev1.ListCategoriesRequest]
+	query *referencecatalog.ReferenceListQuery
 }
 
-func (r *recordingCategoryReferences) ListCategories(_ context.Context, request *connect.Request[managev1.ListCategoriesRequest]) (*connect.Response[managev1.ListCategoriesResponse], error) {
-	r.request = request
+func (r *recordingCategoryReferences) ListCategories(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Category], error) {
+	r.query = &query
 	slug := "sound"
-	return connect.NewResponse(&managev1.ListCategoriesResponse{Categories: []*managev1.Category{{Id: "11111111-1111-4111-8111-111111111111", Name: "Sound", Slug: &slug}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: request.Msg.Pagination.Limit}}), nil
+	return referencecatalog.Page[*managev1.Category]{
+		Items:      []*managev1.Category{{Id: "11111111-1111-4111-8111-111111111111", Name: "Sound", Slug: &slug}},
+		Pagination: &commonv1.PaginationResponse{Total: 1, Limit: query.Limit},
+	}, nil
 }
 
-type recordingTagReferences struct {
-	managev1connect.UnimplementedTagServiceHandler
+type recordingTagReferences struct{}
+
+func (recordingTagReferences) ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Tag], error) {
+	return referencecatalog.Page[*managev1.Tag]{}, errors.New("unexpected tag search")
 }
+
 type recordingClientReferences struct {
-	managev1connect.UnimplementedClientServiceHandler
-	request *connect.Request[managev1.SearchClientsRequest]
-	count   int
+	query *referencecatalog.SearchClientsQuery
+	count int
 }
 
-func (r *recordingClientReferences) SearchClients(_ context.Context, request *connect.Request[managev1.SearchClientsRequest]) (*connect.Response[managev1.SearchClientsResponse], error) {
-	r.request = request
+func (r *recordingClientReferences) SearchClients(_ context.Context, query referencecatalog.SearchClientsQuery) ([]*managev1.Client, error) {
+	r.query = &query
 	items := make([]*managev1.Client, r.count)
 	for index := range items {
 		items[index] = &managev1.Client{Id: managementWorkID, Name: "Client"}
 	}
-	return connect.NewResponse(&managev1.SearchClientsResponse{Clients: items}), nil
+	return items, nil
 }
 
 type recordingMapPlaceReferences struct {
-	managev1connect.UnimplementedMapPlaceServiceHandler
-	request *connect.Request[managev1.SearchMapPlacesRequest]
-	count   int
+	query *referencecatalog.SearchMapPlacesQuery
+	count int
 }
 
-func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, request *connect.Request[managev1.SearchMapPlacesRequest]) (*connect.Response[managev1.SearchMapPlacesResponse], error) {
-	r.request = request
+func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, query referencecatalog.SearchMapPlacesQuery) ([]*managev1.MapPlaceBasic, error) {
+	r.query = &query
 	items := make([]*managev1.MapPlaceBasic, r.count)
 	for index := range items {
 		items[index] = &managev1.MapPlaceBasic{Id: managementWorkID, Name: "Place"}
 	}
-	return connect.NewResponse(&managev1.SearchMapPlacesResponse{Places: items}), nil
+	return items, nil
 }
 
 type recordingMemberReferences struct {
@@ -229,9 +233,9 @@ func TestReferenceQuickSearchProbesTruncationWithinServiceCaps(t *testing.T) {
 				requestLimit := int32(0)
 				switch referenceType {
 				case "client":
-					requestLimit = clients.request.Msg.Limit
+					requestLimit = clients.query.Limit
 				case "map_place":
-					requestLimit = places.request.Msg.Limit
+					requestLimit = places.query.Limit
 				case "member":
 					requestLimit = members.query.Limit
 				}

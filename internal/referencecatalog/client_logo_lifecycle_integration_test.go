@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -21,7 +20,8 @@ func TestClientThemeLogoSlotsDoNotDeleteSharedFilesIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
-	service := referencecatalog.NewClientService(db, referencecatalogadapter.NewAssets("https://cdn.example.com"), spiceDB)
+	ctx = withRequest(t, ctx)
+	service := referencecatalog.NewClientConnectHandler(catalogForTest(t, db, "https://cdn.example.com", spiceDB, nil))
 
 	created, err := service.CreateClient(ctx, connect.NewRequest(&managev1.CreateClientRequest{
 		Name: "Client Shared Logo " + testutil.IntegrationUUID(),

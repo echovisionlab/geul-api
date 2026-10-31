@@ -9,19 +9,47 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
+
+// ReferenceListQuery pages one reference kind. The Genre, Style, Format, Tag
+// and Category lists share it.
+type ReferenceListQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	// Limit is 100 when not positive.
+	Limit  int32
+	Offset int32
+}
+
+// CreateReferenceCommand creates a reference. Slug derives from Name when
+// nil; Description is ignored by kinds without one.
+type CreateReferenceCommand struct {
+	Name        string
+	Slug        *string
+	Description *string
+}
+
+// UpdateReferenceCommand changes the supplied fields of reference ID.
+type UpdateReferenceCommand struct {
+	ID          string
+	Name        *string
+	Slug        *string
+	Description *string
+}
+
+// DeleteReferenceCommand deletes reference ID when nothing references it.
+type DeleteReferenceCommand struct {
+	ID string
+}
 
 // referencePolicy is the SpiceDB contract of an admin-managed reference kind,
 // such as policyv1.Genre.
@@ -30,6 +58,11 @@ type referencePolicy interface {
 	Create() (policyv1.Can, error)
 	Edit(id string) (policyv1.Can, error)
 	Delete(id string) (policyv1.Can, error)
+	policyRelations
+}
+
+// policyRelations writes the policy relationship of a catalog row.
+type policyRelations interface {
 	TouchPolicy(id string) (policyv1.RelationshipMutation, error)
 	DeletePolicy(id string) (policyv1.RelationshipMutation, error)
 }
@@ -50,8 +83,8 @@ type referenceRelation struct {
 }
 
 // referenceKind describes one reference catalog kind. The kind files hold the
-// descriptor, the Connect surface and the proto mapping; the list, create,
-// update and delete flows below are shared.
+// descriptor, the use cases and the proto mapping; the list, create, update
+// and delete flows below are shared.
 type referenceKind[T any] struct {
 	resource  string
 	maxLength int
@@ -71,39 +104,6 @@ type referenceKind[T any] struct {
 	description func(*T) *string
 }
 
-// referenceService holds what every reference kind service needs.
-type referenceService struct {
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
-	auditWriter domainaudit.Appender
-	menuTargets MenuTargets
-}
-
-func newReferenceService(db *gorm.DB, spiceDB *auth.SpiceDBClient) referenceService {
-	if db == nil {
-		panic("db is required")
-	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
-	}
-	return referenceService{db: db, spiceDB: spiceDB}
-}
-
-func newMenuTargetReferenceService(db *gorm.DB, menuTargets MenuTargets, spiceDB *auth.SpiceDBClient) referenceService {
-	service := newReferenceService(db, spiceDB)
-	if menuTargets == nil {
-		panic("menu targets are required")
-	}
-	service.menuTargets = menuTargets
-	return service
-}
-
-func requireReferenceAuditWriter(resource string, auditWriter domainaudit.Appender) {
-	if auditWriter == nil {
-		panic(resource + " audit writer is required")
-	}
-}
-
 func mapReferences[T, P any](records []T, project func(*T) P) []P {
 	result := make([]P, len(records))
 	for i := range records {
@@ -112,361 +112,323 @@ func mapReferences[T, P any](records []T, project func(*T) P) []P {
 	return result
 }
 
-func (k referenceKind[T]) list(
-	ctx context.Context,
-	db *gorm.DB,
-	filters []*commonv1.FilterSpec,
-	sorts []*commonv1.SortSpec,
-	request *commonv1.PaginationRequest,
-) ([]T, int64, queryutil.Pagination, error) {
+// projectReference maps the result of a create or update.
+func projectReference[T, P any](record *T, err error, project func(*T) P) (P, error) {
+	if err != nil {
+		var zero P
+		return zero, err
+	}
+	return project(record), nil
+}
+
+func (k referenceKind[T]) list(ctx context.Context, db *gorm.DB, query ReferenceListQuery) ([]T, *commonv1.PaginationResponse, error) {
 	var records []T
 	var total int64
 
-	query, err := k.filters.ApplyFilters(db.WithContext(ctx).Model(new(T)), filters)
+	scoped, err := k.filters.ApplyFilters(db.WithContext(ctx).Model(new(T)), query.Filters)
 	if err != nil {
-		return nil, 0, queryutil.Pagination{}, err
+		return nil, nil, err
 	}
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, queryutil.Pagination{}, errs.Internal(err)
+	if err := scoped.Count(&total).Error; err != nil {
+		return nil, nil, err
 	}
-	query, err = k.sorts.ApplySort(query, sorts)
+	scoped, err = k.sorts.ApplySort(scoped, query.Sorts)
 	if err != nil {
-		return nil, 0, queryutil.Pagination{}, err
+		return nil, nil, err
 	}
 
-	page := referencePagination(request)
-	if err := page.Apply(query).Find(&records).Error; err != nil {
-		return nil, 0, queryutil.Pagination{}, errs.Internal(err)
+	page := queryutil.Pagination{Limit: 100, Offset: query.Offset}
+	if query.Limit > 0 {
+		page.Limit = query.Limit
 	}
-	return records, total, page, nil
+	if err := page.Apply(scoped).Find(&records).Error; err != nil {
+		return nil, nil, err
+	}
+	return records, page.BuildResponse(total), nil
 }
 
-// listAdmin lists the kind for administrators with each row's usage count.
-func (k referenceKind[T]) listAdmin(
-	ctx context.Context,
-	service referenceService,
-	filters []*commonv1.FilterSpec,
-	sorts []*commonv1.SortSpec,
-	request *commonv1.PaginationRequest,
-) ([]T, map[string]int32, int64, queryutil.Pagination, error) {
-	can, err := k.policy.List()
+func listReferences[T, P any](ctx context.Context, s *Service, kind referenceKind[T], query ReferenceListQuery, project func(*T) P) (Page[P], error) {
+	records, pagination, err := kind.list(ctx, s.db, query)
 	if err != nil {
-		return nil, nil, 0, queryutil.Pagination{}, errs.Internal(err)
+		return Page[P]{}, err
 	}
-	if err := authz.RequireAdminCan(ctx, service.spiceDB, can); err != nil {
-		return nil, nil, 0, queryutil.Pagination{}, err
-	}
-	records, total, page, err := k.list(ctx, service.db, filters, sorts, request)
+	return Page[P]{Items: mapReferences(records, project), Pagination: pagination}, nil
+}
+
+// listReferencesAdmin lists the kind for administrators with each row's usage
+// count.
+func listReferencesAdmin[T, P any](
+	ctx context.Context, s *Service, kind referenceKind[T], query ReferenceListQuery, project func(record *T, usage int32) P,
+) (Page[P], error) {
+	can, err := kind.policy.List()
 	if err != nil {
-		return nil, nil, 0, queryutil.Pagination{}, err
+		return Page[P]{}, err
+	}
+	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
+		return Page[P]{}, err
+	}
+	records, pagination, err := kind.list(ctx, s.db, query)
+	if err != nil {
+		return Page[P]{}, err
 	}
 	ids := make([]string, len(records))
 	for i := range records {
-		ids[i], _, _ = k.values(&records[i])
+		ids[i], _, _ = kind.values(&records[i])
 	}
 	usage := make(map[string]int32, len(ids))
-	for _, relation := range k.relations {
-		counts, err := loadReferenceCounts(ctx, service.db, relation.table, relation.column, ids)
+	for _, relation := range kind.relations {
+		counts, err := loadReferenceCounts(ctx, s.db, relation.table, relation.column, ids)
 		if err != nil {
-			return nil, nil, 0, queryutil.Pagination{}, err
+			return Page[P]{}, err
 		}
 		for id, count := range counts {
 			usage[id] += count
 		}
 	}
-	return records, usage, total, page, nil
+	items := make([]P, len(records))
+	for i := range records {
+		items[i] = project(&records[i], usage[ids[i]])
+	}
+	return Page[P]{Items: items, Pagination: pagination}, nil
 }
 
-func (k referenceKind[T]) createAudited(
-	ctx context.Context,
-	service referenceService,
-	name string,
-	slug *string,
-	description *string,
-) (*T, error) {
+func (k referenceKind[T]) create(ctx context.Context, s *Service, command CreateReferenceCommand) (*T, error) {
 	can, err := k.policy.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
-	var record *T
-	_, err = authzmutation.Execute(ctx, service.db, service.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, service.spiceDB, can); err != nil {
-			return err
-		}
-		var err error
-		record, err = k.create(ctx, tx, name, slug, description)
-		if err != nil {
-			return err
-		}
-		id, _, _ := k.values(record)
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, service.auditWriter, k.audit.created, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return k.audit.newCreated(metadata, id)
-		}); err != nil {
-			return err
-		}
-		policyTouch, err := k.policy.TouchPolicy(id)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := k.policy.DeletePolicy(id)
-		if err != nil {
-			return err
-		}
-		return write([]policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete})
+	return mutation.Run(ctx, s.mutations, mutation.Spec[*T]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (*T, error) {
+			return k.insert(ctx, tx, command)
+		},
+		Audit: func(record *T) mutation.Audit {
+			id, _, _ := k.values(record)
+			return mutation.RequestAudit(k.audit.created, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return k.audit.newCreated(metadata, id)
+			})
+		},
+		Relationships: func(record *T) (apply, compensate []policyv1.RelationshipMutation, err error) {
+			id, _, _ := k.values(record)
+			return referencePolicyRelationships(k.policy, id, true)
+		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return record, nil
 }
 
-func (k referenceKind[T]) updateAudited(
-	ctx context.Context,
-	service referenceService,
-	id string,
-	name *string,
-	slug *string,
-	description *string,
-) (_ *T, returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String(k.resource+"_id", id))
+type updatedReference[T any] struct {
+	record  *T
+	changed []string
+}
 
-	can, err := k.policy.Edit(id)
+func (k referenceKind[T]) update(ctx context.Context, s *Service, command UpdateReferenceCommand) (_ *T, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String(k.resource+"_id", command.ID))
+
+	can, err := k.policy.Edit(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
 	var record *T
-	err = service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		record, err = k.lockForMutation(ctx, tx, id)
-		if err != nil {
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[updatedReference[T]]{
+		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
+			record, err = k.lockForMutation(ctx, tx, command.ID)
 			return err
-		}
-		_, _, previousSlug := k.values(record)
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, service.spiceDB, can); err != nil {
-			return err
-		}
-		var changedFields []string
-		record, changedFields, err = k.updateLocked(ctx, tx, id, record, name, slug, description)
-		if err != nil || len(changedFields) == 0 {
-			return err
-		}
-		recordID, _, nextSlug := k.values(record)
-		if k.menuLinkType != "" && previousSlug != nextSlug {
-			if err := service.menuTargets.UpdateSlug(ctx, tx, MenuTargetSlugChange{
-				Target:   MenuTarget{LinkType: k.menuLinkType, ID: recordID, Slug: previousSlug},
-				NextSlug: nextSlug,
-			}); err != nil {
-				return err
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (updatedReference[T], error) {
+			_, _, previousSlug := k.values(record)
+			changed, err := k.updateLocked(ctx, tx, record, command)
+			if err != nil || len(changed) == 0 {
+				return updatedReference[T]{record: record}, err
 			}
-		}
-		return domainaudit.AppendOptionalRequest(ctx, tx, service.auditWriter, k.audit.updated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return k.audit.newUpdated(metadata, recordID, changedFields)
-		})
+			recordID, _, nextSlug := k.values(record)
+			if k.menuLinkType != "" && previousSlug != nextSlug {
+				if err := s.menuTargets.UpdateSlug(ctx, tx, MenuTargetSlugChange{
+					Target:   MenuTarget{LinkType: k.menuLinkType, ID: recordID, Slug: previousSlug},
+					NextSlug: nextSlug,
+				}); err != nil {
+					return updatedReference[T]{}, err
+				}
+			}
+			return updatedReference[T]{record: record, changed: changed}, nil
+		},
+		Audit: func(result updatedReference[T]) mutation.Audit {
+			if len(result.changed) == 0 {
+				return mutation.Unchanged()
+			}
+			recordID, _, _ := k.values(result.record)
+			return mutation.RequestAudit(k.audit.updated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return k.audit.newUpdated(metadata, recordID, result.changed)
+			})
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	return record, nil
+	return result.record, nil
 }
 
-func (k referenceKind[T]) deleteAudited(ctx context.Context, service referenceService, id string) (returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String(k.resource+"_id", id))
+func (k referenceKind[T]) delete(ctx context.Context, s *Service, command DeleteReferenceCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String(k.resource+"_id", command.ID))
 
-	can, err := k.policy.Delete(id)
+	can, err := k.policy.Delete(command.ID)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return err
 	}
-	_, err = authzmutation.Execute(ctx, service.db, service.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		record, err := k.lockForMutation(ctx, tx, id)
-		if err != nil {
+	var record *T
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
+			record, err = k.lockForMutation(ctx, tx, command.ID)
 			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, service.spiceDB, can); err != nil {
-			return err
-		}
-		if err := k.deleteLocked(ctx, tx, id, record); err != nil {
-			return err
-		}
-		recordID, _, recordSlug := k.values(record)
-		if k.menuLinkType != "" {
-			if err := service.menuTargets.Remove(ctx, tx, MenuTarget{LinkType: k.menuLinkType, ID: recordID, Slug: recordSlug}); err != nil {
-				return err
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+			if err := k.deleteLocked(ctx, tx, command.ID, record); err != nil {
+				return "", err
 			}
-		}
-		if err := domainaudit.AppendOptionalRequest(ctx, tx, service.auditWriter, k.audit.deleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return k.audit.newDeleted(metadata, recordID)
-		}); err != nil {
-			return err
-		}
-		policyDelete, err := k.policy.DeletePolicy(recordID)
-		if err != nil {
-			return err
-		}
-		policyTouch, err := k.policy.TouchPolicy(recordID)
-		if err != nil {
-			return err
-		}
-		return write([]policyv1.RelationshipMutation{policyDelete}, []policyv1.RelationshipMutation{policyTouch})
+			recordID, _, recordSlug := k.values(record)
+			if k.menuLinkType != "" {
+				if err := s.menuTargets.Remove(ctx, tx, MenuTarget{LinkType: k.menuLinkType, ID: recordID, Slug: recordSlug}); err != nil {
+					return "", err
+				}
+			}
+			return recordID, nil
+		},
+		Audit: func(recordID string) mutation.Audit {
+			return mutation.RequestAudit(k.audit.deleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return k.audit.newDeleted(metadata, recordID)
+			})
+		},
+		Relationships: func(recordID string) (apply, compensate []policyv1.RelationshipMutation, err error) {
+			return referencePolicyRelationships(k.policy, recordID, false)
+		},
 	})
 	return err
 }
 
-func (k referenceKind[T]) create(
-	ctx context.Context,
-	db *gorm.DB,
-	name string,
-	slug *string,
-	description *string,
-) (*T, error) {
-	name, err := normalizeReferenceName(name, k.maxLength)
+// referencePolicyRelationships is the policy write of a created (touch) or
+// deleted catalog row, and its exact inverse.
+func referencePolicyRelationships(policy policyRelations, id string, created bool) (apply, compensate []policyv1.RelationshipMutation, err error) {
+	touch, err := policy.TouchPolicy(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	remove, err := policy.DeletePolicy(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if created {
+		return []policyv1.RelationshipMutation{touch}, []policyv1.RelationshipMutation{remove}, nil
+	}
+	return []policyv1.RelationshipMutation{remove}, []policyv1.RelationshipMutation{touch}, nil
+}
+
+func (k referenceKind[T]) insert(ctx context.Context, db *gorm.DB, command CreateReferenceCommand) (*T, error) {
+	name, err := normalizeReferenceName(command.Name, k.maxLength)
 	if err != nil {
 		return nil, err
 	}
 
 	normalizedSlug := strings.ToLower(strings.NewReplacer("/", "-", " ", "-").Replace(name))
-	if slug != nil {
-		normalizedSlug = *slug
+	if command.Slug != nil {
+		normalizedSlug = *command.Slug
 	}
 	normalizedSlug, err = normalizeReferenceSlug(normalizedSlug, k.maxLength)
 	if err != nil {
 		return nil, err
 	}
 
-	record := k.newRecord(name, normalizedSlug, description)
+	record := k.newRecord(name, normalizedSlug, command.Description)
 	if err := db.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(record).Error; err != nil {
 		return nil, classifyReferenceUniqueViolation(k.resource, name, normalizedSlug, err)
 	}
 	return record, nil
 }
 
-func (k referenceKind[T]) lockForMutation(
-	ctx context.Context,
-	db *gorm.DB,
-	id string,
-) (*T, error) {
+func (k referenceKind[T]) lockForMutation(ctx context.Context, db *gorm.DB, id string) (*T, error) {
 	record := new(T)
 	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(record, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound(k.resource, id)
+			return nil, domainerr.ResourceNotFound(k.resource, id)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return record, nil
 }
 
-func (k referenceKind[T]) updateLocked(
-	ctx context.Context,
-	db *gorm.DB,
-	id string,
-	record *T,
-	name *string,
-	slug *string,
-	description *string,
-) (*T, []string, error) {
-	if record == nil {
-		return nil, nil, errs.InternalMsg(k.resource + " mutation requires a locked row")
-	}
-
+// updateLocked applies command to the locked record, rereads it, and returns
+// the changed fields.
+func (k referenceKind[T]) updateLocked(ctx context.Context, db *gorm.DB, record *T, command UpdateReferenceCommand) ([]string, error) {
 	_, currentName, currentSlug := k.values(record)
 	nextName, nextSlug := currentName, currentSlug
 	updates := structured.Fields{}
 	changedFields := make([]string, 0, 3)
 	var err error
-	if name != nil {
-		if nextName, err = normalizeReferenceName(*name, k.maxLength); err != nil {
-			return nil, nil, err
+	if command.Name != nil {
+		if nextName, err = normalizeReferenceName(*command.Name, k.maxLength); err != nil {
+			return nil, err
 		}
 		if nextName != currentName {
 			updates["name"] = nextName
 			changedFields = append(changedFields, "name")
 		}
 	}
-	if slug != nil {
-		if nextSlug, err = normalizeReferenceSlug(*slug, k.maxLength); err != nil {
-			return nil, nil, err
+	if command.Slug != nil {
+		if nextSlug, err = normalizeReferenceSlug(*command.Slug, k.maxLength); err != nil {
+			return nil, err
 		}
 		if nextSlug != currentSlug {
 			updates["slug"] = nextSlug
 			changedFields = append(changedFields, "slug")
 		}
 	}
-	if description != nil {
+	if command.Description != nil {
 		if k.description == nil {
-			return nil, nil, errs.InvalidArgument("description", "is not supported")
+			return nil, domainerr.InvalidField("description", "is not supported")
 		}
 		currentDescription := k.description(record)
-		if currentDescription == nil || *currentDescription != *description {
-			updates["description"] = *description
+		if currentDescription == nil || *currentDescription != *command.Description {
+			updates["description"] = *command.Description
 			changedFields = append(changedFields, "description")
 		}
 	}
 
 	if len(updates) > 0 {
 		if err := db.WithContext(ctx).Model(record).Updates(updates).Error; err != nil {
-			return nil, nil, classifyReferenceUniqueViolation(k.resource, nextName, nextSlug, err)
+			return nil, classifyReferenceUniqueViolation(k.resource, nextName, nextSlug, err)
 		}
 	}
-	if err := db.WithContext(ctx).First(record, "id = ?", id).Error; err != nil {
-		return nil, nil, errs.Internal(err)
+	if err := db.WithContext(ctx).First(record, "id = ?", command.ID).Error; err != nil {
+		return nil, err
 	}
-	return record, changedFields, nil
+	return changedFields, nil
 }
 
 // deleteLocked relies on the caller's root row lock. PostgreSQL then
 // serializes any FK insertion against that lock, so the count and delete are
 // one authority boundary rather than a stale UI-derived decision.
-func (k referenceKind[T]) deleteLocked(
-	ctx context.Context,
-	db *gorm.DB,
-	id string,
-	record *T,
-) error {
-	if record == nil {
-		return errs.InternalMsg(k.resource + " deletion requires a locked row")
-	}
+func (k referenceKind[T]) deleteLocked(ctx context.Context, db *gorm.DB, id string, record *T) error {
 	for _, relation := range k.relations {
 		var count int64
 		if err := db.WithContext(ctx).Table(relation.table).Where(relation.column+" = ?", id).Limit(1).Count(&count).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if count != 0 {
-			return errs.FailedPrecondition(k.resource + " is still referenced")
+			return domainerr.Precondition(k.resource + " is still referenced")
 		}
 	}
-	if err := db.WithContext(ctx).Delete(record).Error; err != nil {
-		return errs.Internal(err)
-	}
-	return nil
+	return db.WithContext(ctx).Delete(record).Error
 }
 
-func referencePagination(request *commonv1.PaginationRequest) queryutil.Pagination {
-	page := queryutil.Pagination{Limit: 100}
-	if request == nil {
-		return page
-	}
-	if request.Limit > 0 {
-		page.Limit = request.Limit
-	}
-	page.Offset = request.Offset
-	return page
-}
-
-func loadReferenceCounts(
-	ctx context.Context,
-	db *gorm.DB,
-	table string,
-	column string,
-	ids []string,
-) (map[string]int32, error) {
+func loadReferenceCounts(ctx context.Context, db *gorm.DB, table string, column string, ids []string) (map[string]int32, error) {
 	counts := make(map[string]int32, len(ids))
 	if len(ids) == 0 {
 		return counts, nil
@@ -482,7 +444,7 @@ func loadReferenceCounts(
 		Where(column+" IN ?", ids).
 		Group(column).
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		counts[row.ID] = int32(row.Count)

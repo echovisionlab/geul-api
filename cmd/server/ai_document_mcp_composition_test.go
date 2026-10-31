@@ -28,6 +28,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -467,18 +468,6 @@ type compositionProgramEventApplication struct {
 	managev1connect.UnimplementedProgramEventServiceHandler
 }
 
-type compositionCategoryReferences struct {
-	managev1connect.UnimplementedCategoryServiceHandler
-}
-type compositionTagReferences struct {
-	managev1connect.UnimplementedTagServiceHandler
-}
-type compositionClientReferences struct {
-	managev1connect.UnimplementedClientServiceHandler
-}
-type compositionMapPlaceReferences struct {
-	managev1connect.UnimplementedMapPlaceServiceHandler
-}
 type compositionArtistReferences struct {
 	managev1connect.UnimplementedArtistServiceHandler
 }
@@ -498,18 +487,6 @@ type compositionLabelReferences struct {
 	managev1connect.UnimplementedLabelServiceHandler
 }
 
-type compositionGenreReferences struct {
-	managev1connect.UnimplementedGenreServiceHandler
-}
-
-type compositionStyleReferences struct {
-	managev1connect.UnimplementedStyleServiceHandler
-}
-
-type compositionFormatReferences struct {
-	managev1connect.UnimplementedFormatServiceHandler
-}
-
 type compositionFormReferences struct {
 	managev1connect.UnimplementedFormServiceHandler
 }
@@ -521,19 +498,19 @@ type compositionTrackReferences struct {
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
 		legalPolicies: &legal.Service{},
-		categories:    &compositionCategoryReferences{},
-		tags:          &compositionTagReferences{},
-		clients:       &compositionClientReferences{},
-		mapPlaces:     &compositionMapPlaceReferences{},
+		categories:    &referencecatalog.Service{},
+		tags:          &referencecatalog.Service{},
+		clients:       &referencecatalog.Service{},
+		mapPlaces:     &referencecatalog.Service{},
 		members:       &member.Service{},
 		artists:       &compositionArtistReferences{},
 		files:         &compositionFileReferences{},
 		eventTypes:    &compositionProgramEventTypeReferences{},
 		eventSeries:   &compositionProgramEventSeriesReferences{},
 		labels:        &compositionLabelReferences{},
-		genres:        &compositionGenreReferences{},
-		styles:        &compositionStyleReferences{},
-		formats:       &compositionFormatReferences{},
+		genres:        &referencecatalog.Service{},
+		styles:        &referencecatalog.Service{},
+		formats:       &referencecatalog.Service{},
 		forms:         &compositionFormReferences{},
 		postSeries:    &series.Service{},
 		tracks:        &compositionTrackReferences{},

@@ -26,7 +26,7 @@ func TestMapPlaceImageAssetLifecycleIntegration(t *testing.T) {
 	db := stack.DB
 	user := stack.CreateUser(t, policyv1.Role.Author().ID())
 	spiceDB := stack.SpiceDBClient
-	ctx := auth.WithUser(context.Background(), user.AuthUserInfo())
+	ctx := withRequest(t, auth.WithUser(context.Background(), user.AuthUserInfo()))
 	service := mapPlaceServiceForTest(t, db, "https://cdn.example.com", spiceDB)
 
 	firstFileID := testutil.IntegrationUUID()

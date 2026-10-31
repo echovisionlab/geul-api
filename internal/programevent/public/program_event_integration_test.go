@@ -5,6 +5,10 @@ package public
 import (
 	"context"
 
+	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
+	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+
 	"strings"
 	"testing"
 	"time"
@@ -86,12 +90,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	placeSvc := referencecatalog.NewMapPlaceService(
-		db,
-		referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
-		publicIntegrationSpiceDB(t),
-	)
+	placeSvc := referencecatalog.NewMapPlaceConnectHandler(referenceCatalogForTest(t, db, "https://cdn.example.com", publicIntegrationSpiceDB(t)))
 	googlePlaceID := "google-place-" + suffix
 	placeResp, err := placeSvc.CreateMapPlace(adminCtx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name:          "Public Event Venue " + suffix,
@@ -688,4 +687,19 @@ func (publicProgramEventSignals) EnqueueProtobuf(context.Context, string, string
 
 func (publicProgramEventSignals) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
 	return nil
+}
+
+// referenceCatalogForTest builds the Reference Catalog use cases with the
+// production adapters and in-memory audit.
+func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
+	t.Helper()
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
+		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	return catalog
 }

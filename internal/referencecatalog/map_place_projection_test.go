@@ -24,7 +24,7 @@ func (members mapPlaceMemberSummariesStub) Resolve(
 func TestMapPlaceMemberProjectionFailsClosedWhenMemberIsUnresolved(t *testing.T) {
 	memberID := "unresolved-member"
 	place := model.MapPlace{CreatedByMemberID: &memberID, UpdatedByMemberID: &memberID}
-	service := &MapPlaceService{members: mapPlaceMemberSummariesStub{}}
+	service := &Service{members: mapPlaceMemberSummariesStub{}}
 
 	_, err := service.resolveMembersForPlaces(t.Context(), []model.MapPlace{place})
 	require.ErrorContains(t, err, "map place references unresolved member "+memberID)

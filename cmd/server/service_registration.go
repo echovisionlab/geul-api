@@ -440,7 +440,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	artistService, internalArtistService := music.registerArtist()
 	labelService := music.registerLabel()
 	releaseService, internalReleaseService, trackService := music.registerRelease()
-	genreService, styleService, formatService := music.registerTaxonomy()
+	referenceCatalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter,
+		Assets:      referencecatalogadapter.NewAssets(cfg.CDNURL),
+		Members:     referencecatalogadapter.NewMemberSummaries(cfg.CDNURL),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(telemetryWriter),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize reference catalog service: %w", err)
+	}
+	music.registerTaxonomy(referenceCatalog)
 
 	aiService := ai.NewService(metadataAIJobs)
 	aiPath, aiHandler := managev1connect.NewAIServiceHandler(aiService, handlerOpts...)
@@ -493,9 +503,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(postPath, postHandler)
 	slog.Info("Registered service", "path", postPath)
 
-	referenceCatalogMenuTargets := referencecatalogmenuadapter.NewTargets(telemetryWriter)
-	categoryService := referencecatalog.NewAuditedCategoryService(db, telemetryWriter, referenceCatalogMenuTargets, spicedbClient)
-	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(categoryService, handlerOpts...)
+	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(referencecatalog.NewCategoryConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(categoryPath, categoryHandler)
 	slog.Info("Registered service", "path", categoryPath)
 
@@ -522,8 +530,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(programEventPath, programEventHandler)
 	slog.Info("Registered service", "path", programEventPath)
 
-	tagService := referencecatalog.NewAuditedTagService(db, telemetryWriter, referenceCatalogMenuTargets, spicedbClient)
-	tagPath, tagHandler := managev1connect.NewTagServiceHandler(tagService, handlerOpts...)
+	tagPath, tagHandler := managev1connect.NewTagServiceHandler(referencecatalog.NewTagConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(tagPath, tagHandler)
 	slog.Info("Registered service", "path", tagPath)
 
@@ -585,10 +592,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalPostSeriesPath, internalRPCTrust.collab(internalPostSeriesHandler))
 	slog.Info("Registered internal service", "path", internalPostSeriesPath)
 
-	referenceCatalogAssets := referencecatalogadapter.NewAssets(cfg.CDNURL)
-	referenceCatalogMembers := referencecatalogadapter.NewMemberSummaries(cfg.CDNURL)
-	clientService := referencecatalog.NewAuditedClientService(db, telemetryWriter, referenceCatalogAssets, spicedbClient)
-	clientPath, clientHandler := managev1connect.NewClientServiceHandler(clientService, handlerOpts...)
+	clientPath, clientHandler := managev1connect.NewClientServiceHandler(referencecatalog.NewClientConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
@@ -612,10 +616,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(termsPath, termsHandler)
 	slog.Info("Registered service", "path", termsPath)
 
-	mapPlaceService := referencecatalog.NewAuditedMapPlaceService(
-		db, telemetryWriter, referenceCatalogAssets, referenceCatalogMembers, spicedbClient,
-	)
-	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(mapPlaceService, handlerOpts...)
+	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(referencecatalog.NewMapPlaceConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(mapPlacePath, mapPlaceHandler)
 	slog.Info("Registered service", "path", mapPlacePath)
 
@@ -839,19 +840,19 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		artistService,
 		contentMCPApplications{
 			legalPolicies: legalPolicyService,
-			categories:    categoryService,
-			tags:          tagService,
-			clients:       clientService,
-			mapPlaces:     mapPlaceService,
+			categories:    referenceCatalog,
+			tags:          referenceCatalog,
+			clients:       referenceCatalog,
+			mapPlaces:     referenceCatalog,
 			members:       memberService,
 			artists:       artistService,
 			files:         fileService,
 			eventTypes:    programEventTypeService,
 			eventSeries:   programEventSeriesService,
 			labels:        labelService,
-			genres:        genreService,
-			styles:        styleService,
-			formats:       formatService,
+			genres:        referenceCatalog,
+			styles:        referenceCatalog,
+			formats:       referenceCatalog,
 			forms:         formService,
 			postSeries:    seriesService,
 			tracks:        trackService,

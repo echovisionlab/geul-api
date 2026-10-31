@@ -3,32 +3,23 @@ package public
 import (
 	"context"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-// TagService implements the public TagService
-type TagService struct {
-	openv1connect.UnimplementedTagServiceHandler
-	db *gorm.DB
+// ListTagsQuery pages the tags with their published Post counts.
+type ListTagsQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	// Limit is 100 when not positive.
+	Limit  int32
+	Offset int32
 }
 
-// NewTagService creates a new public TagService
-func NewTagService(db *gorm.DB) *TagService {
-	return &TagService{db: db}
-}
-
-// List returns all tags with post counts
-func (s *TagService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListTagsRequest],
-) (*connect.Response[openv1.ListTagsResponse], error) {
+// ListTags returns all tags with post counts
+func (s *Service) ListTags(ctx context.Context, query ListTagsQuery) (referencecatalog.Page[*openv1.Tag], error) {
 	type TagResult struct {
 		ID        string
 		Name      string
@@ -53,33 +44,33 @@ func (s *TagService) List(
 		Group("t.id, t.name, t.slug")
 
 	// 1. Apply filters (currently none, but for consistency)
-	query, err := tagFilterConfig.ApplyFilters(baseQuery, req.Msg.Filters)
+	scoped, err := tagFilterConfig.ApplyFilters(baseQuery, query.Filters)
 	if err != nil {
-		return nil, err
+		return referencecatalog.Page[*openv1.Tag]{}, err
 	}
 
 	// Count total (must use subquery approach for aggregated query)
-	countQuery := s.db.WithContext(ctx).Table("(?) as subq", query)
+	countQuery := s.db.WithContext(ctx).Table("(?) as subq", scoped)
 	if err := countQuery.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+		return referencecatalog.Page[*openv1.Tag]{}, err
 	}
 
 	// 2. Apply sort
-	query, err = tagSortConfig.ApplySort(query, req.Msg.Sorts)
+	scoped, err = tagSortConfig.ApplySort(scoped, query.Sorts)
 	if err != nil {
-		return nil, err
+		return referencecatalog.Page[*openv1.Tag]{}, err
 	}
 
 	// 3. Apply pagination
 	pagination := queryutil.GetPaginationParams(
-		req.Msg.Pagination.GetLimit(),
-		req.Msg.Pagination.GetOffset(),
+		query.Limit,
+		query.Offset,
 		100, // default limit for tags
 	)
-	query = queryutil.ApplyPagination(query, pagination)
+	scoped = queryutil.ApplyPagination(scoped, pagination)
 
-	if err := query.Scan(&results).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := scoped.Scan(&results).Error; err != nil {
+		return referencecatalog.Page[*openv1.Tag]{}, err
 	}
 
 	tags := make([]*openv1.Tag, 0, len(results))
@@ -92,13 +83,13 @@ func (s *TagService) List(
 		})
 	}
 
-	return connect.NewResponse(&openv1.ListTagsResponse{
-		Tags: tags,
+	return referencecatalog.Page[*openv1.Tag]{
+		Items: tags,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
 			Limit:   pagination.Limit,
 			Offset:  pagination.Offset,
 			HasMore: pagination.Offset+int32(len(results)) < int32(total),
 		},
-	}), nil
+	}, nil
 }

@@ -284,6 +284,7 @@ type Audit struct {
 	memberID  string
 	unchanged bool
 	all       []Audit
+	each      []Audit
 }
 
 // RequestAudit attributes the record to the request's member actor.
@@ -330,6 +331,8 @@ func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) erro
 		return nil
 	case audit.unchanged:
 		return nil
+	case len(audit.each) != 0:
+		return r.appendEach(ctx, tx, audit.each)
 	case audit.action == "" || audit.build == nil:
 		return errors.New("mutation audit record is required; return Unchanged when nothing changed")
 	case audit.memberID != "":

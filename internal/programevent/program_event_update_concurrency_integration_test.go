@@ -6,6 +6,12 @@ import (
 	"testing"
 	"time"
 
+	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
+	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"gorm.io/gorm"
+
 	"connectrpc.com/connect"
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -34,14 +40,11 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 	)
 	require.NoError(t, err)
 
-	places := referencecatalog.NewMapPlaceService(
-		db,
-		referencecatalogadapter.NewAssets(""),
-		referencecatalogadapter.NewMemberSummaries(""),
-		spiceDB,
-	)
+	places := referencecatalog.NewMapPlaceConnectHandler(referenceCatalogForTest(t, db, "", spiceDB))
+	principal := auth.GetUser(ctx)
+	placeCtx := programEventAuditedMemberContext(t, principal.IdentityID.String(), principal.MemberID.String())
 	createPlace := func(name string) string {
-		place, err := places.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
+		place, err := places.CreateMapPlace(placeCtx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
 			Name:          name,
 			Address:       "1 Concurrent Way, Seoul",
 			Lat:           37.57,
@@ -190,4 +193,19 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 		require.Equal(t, peerRole, *after[1].Role, "an unseen concurrent addition survives")
 		require.Equal(t, originalRole, *after[2].Role, "the intended local addition is applied")
 	})
+}
+
+// referenceCatalogForTest builds the Reference Catalog use cases with the
+// production adapters and in-memory audit.
+func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
+	t.Helper()
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
+		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	return catalog
 }

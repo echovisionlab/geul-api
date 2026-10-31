@@ -34,7 +34,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 	memberID := auth.GetUser(ctx).MemberID.String()
 	writer := apitelemetry.NewDurableWriter(db)
 
-	category := NewAuditedCategoryService(db, writer, referenceMenuTargetsForTest(writer), spiceDB)
+	category := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer}))
 	categorySlug := "reference-audit-category"
 	categoryDescription := "audited category"
 	createdCategory, err := category.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{Name: "Reference audit category", Slug: &categorySlug, Description: &categoryDescription}))
@@ -49,7 +49,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 	_, err = category.DeleteCategory(ctx, connect.NewRequest(&managev1.DeleteCategoryRequest{Id: createdCategory.Msg.Id}))
 	require.NoError(t, err)
 
-	tag := NewAuditedTagService(db, writer, referenceMenuTargetsForTest(writer), spiceDB)
+	tag := NewTagConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer}))
 	tagSlug := "reference-audit-tag"
 	createdTag, err := tag.CreateTag(ctx, connect.NewRequest(&managev1.CreateTagRequest{Name: "Reference audit tag", Slug: &tagSlug}))
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 	_, err = tag.DeleteTag(ctx, connect.NewRequest(&managev1.DeleteTagRequest{Id: createdTag.Msg.Id}))
 	require.NoError(t, err)
 
-	genre := NewAuditedGenreService(db, writer, spiceDB)
+	genre := NewGenreConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer}))
 	genreSlug := "reference-audit-genre"
 	genreDescription := "audited genre"
 	createdGenre, err := genre.CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{Name: "Reference audit genre", Slug: &genreSlug, Description: &genreDescription}))
@@ -77,7 +77,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 	_, err = genre.DeleteGenre(ctx, connect.NewRequest(&managev1.DeleteGenreRequest{Id: createdGenre.Msg.Id}))
 	require.NoError(t, err)
 
-	style := NewAuditedStyleService(db, writer, spiceDB)
+	style := NewStyleConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer}))
 	styleSlug := "reference-audit-style"
 	styleDescription := "audited style"
 	createdStyle, err := style.CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{Name: "Reference audit style", Slug: &styleSlug, Description: &styleDescription}))
@@ -92,7 +92,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 	_, err = style.DeleteStyle(ctx, connect.NewRequest(&managev1.DeleteStyleRequest{Id: createdStyle.Msg.Id}))
 	require.NoError(t, err)
 
-	format := NewAuditedFormatService(db, writer, spiceDB)
+	format := NewFormatConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer}))
 	formatSlug := "reference-audit-format"
 	createdFormat, err := format.CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{Name: "Reference audit format", Slug: &formatSlug}))
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestReferenceDataAuditAppendFailureRollsBackCreateIntegration(t *testing.T)
 	slug := "reference-audit-rollback"
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	ctx = referenceAuditedRequestContext(t, ctx)
-	_, err := NewAuditedCategoryService(db, referenceFailingAuditAppender{}, referenceMenuTargetsForTest(referenceFailingAuditAppender{}), spiceDB).CreateCategory(
+	_, err := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: referenceFailingAuditAppender{}})).CreateCategory(
 		ctx,
 		connect.NewRequest(&managev1.CreateCategoryRequest{Name: name, Slug: &slug}),
 	)
@@ -155,13 +155,13 @@ func TestReferenceDataAuditAppendFailureRollsBackCreateIntegration(t *testing.T)
 	require.Zero(t, count)
 
 	styleSlug := "reference-audit-failing-style"
-	createdStyle, err := NewStyleService(db, spiceDB).CreateStyle(
+	createdStyle, err := NewStyleConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateStyle(
 		ctx,
 		connect.NewRequest(&managev1.CreateStyleRequest{Name: "Reference audit failing style", Slug: &styleSlug}),
 	)
 	require.NoError(t, err)
 	updatedName := "must roll back"
-	_, err = NewAuditedStyleService(db, referenceFailingAuditAppender{}, spiceDB).UpdateStyle(
+	_, err = NewStyleConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: referenceFailingAuditAppender{}})).UpdateStyle(
 		ctx,
 		connect.NewRequest(&managev1.UpdateStyleRequest{Id: createdStyle.Msg.Id, Name: &updatedName}),
 	)
@@ -179,12 +179,12 @@ func TestReferenceDataMenuTargetRewritesAuditAndRollBackTogetherIntegration(t *t
 	memberID := auth.GetUser(ctx).MemberID.String()
 
 	categorySlug := "reference-menu-category"
-	category, err := NewCategoryService(db, referenceMenuTargetsForTest(nil), spiceDB).CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
+	category, err := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
 		Name: "Reference menu category", Slug: &categorySlug,
 	}))
 	require.NoError(t, err)
 	tagSlug := "reference-menu-tag"
-	tag, err := NewTagService(db, referenceMenuTargetsForTest(nil), spiceDB).CreateTag(ctx, connect.NewRequest(&managev1.CreateTagRequest{
+	tag, err := NewTagConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateTag(ctx, connect.NewRequest(&managev1.CreateTagRequest{
 		Name: "Reference menu tag", Slug: &tagSlug,
 	}))
 	require.NoError(t, err)
@@ -199,11 +199,11 @@ func TestReferenceDataMenuTargetRewritesAuditAndRollBackTogetherIntegration(t *t
 
 	writer := apitelemetry.NewDurableWriter(db)
 	updatedCategorySlug := "reference-menu-category-updated"
-	_, err = NewAuditedCategoryService(db, writer, referenceMenuTargetsForTest(writer), spiceDB).UpdateCategory(ctx, connect.NewRequest(&managev1.UpdateCategoryRequest{
+	_, err = NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer})).UpdateCategory(ctx, connect.NewRequest(&managev1.UpdateCategoryRequest{
 		Id: category.Msg.Id, Slug: &updatedCategorySlug,
 	}))
 	require.NoError(t, err)
-	_, err = NewAuditedTagService(db, writer, referenceMenuTargetsForTest(writer), spiceDB).DeleteTag(ctx, connect.NewRequest(&managev1.DeleteTagRequest{Id: tag.Msg.Id}))
+	_, err = NewTagConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: writer})).DeleteTag(ctx, connect.NewRequest(&managev1.DeleteTagRequest{Id: tag.Msg.Id}))
 	require.NoError(t, err)
 
 	var records []referenceDataAuditRecord
@@ -251,7 +251,7 @@ func TestReferenceDataMenuTargetRewritesAuditAndRollBackTogetherIntegration(t *t
 	require.NotContains(t, tagItems, tag.Msg.Id)
 
 	failingSlug := "reference-menu-failing"
-	failingCategory, err := NewCategoryService(db, referenceMenuTargetsForTest(nil), spiceDB).CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
+	failingCategory, err := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB})).CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
 		Name: "Reference menu failing category", Slug: &failingSlug,
 	}))
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestReferenceDataMenuTargetRewritesAuditAndRollBackTogetherIntegration(t *t
 		TargetID: &failingCategory.Msg.Id, TargetSlug: &failingSlug,
 	})
 	rolledBackSlug := "reference-menu-failing-updated"
-	_, err = NewAuditedCategoryService(db, referenceFailingAuditAppender{}, referenceMenuTargetsForTest(referenceFailingAuditAppender{}), spiceDB).UpdateCategory(ctx, connect.NewRequest(&managev1.UpdateCategoryRequest{
+	_, err = NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: referenceFailingAuditAppender{}})).UpdateCategory(ctx, connect.NewRequest(&managev1.UpdateCategoryRequest{
 		Id: failingCategory.Msg.Id, Slug: &rolledBackSlug,
 	}))
 	require.Error(t, err)

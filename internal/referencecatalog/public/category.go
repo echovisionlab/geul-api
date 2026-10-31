@@ -3,32 +3,23 @@ package public
 import (
 	"context"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-// CategoryService implements the public CategoryService
-type CategoryService struct {
-	openv1connect.UnimplementedCategoryServiceHandler
-	db *gorm.DB
+// ListCategoriesQuery pages the categories with their published Post counts.
+type ListCategoriesQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	// Limit is 100 when not positive.
+	Limit  int32
+	Offset int32
 }
 
-// NewCategoryService creates a new public CategoryService
-func NewCategoryService(db *gorm.DB) *CategoryService {
-	return &CategoryService{db: db}
-}
-
-// List returns all categories with post counts
-func (s *CategoryService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListCategoriesRequest],
-) (*connect.Response[openv1.ListCategoriesResponse], error) {
+// ListCategories returns all categories with post counts
+func (s *Service) ListCategories(ctx context.Context, query ListCategoriesQuery) (referencecatalog.Page[*openv1.Category], error) {
 	type CategoryResult struct {
 		ID          string
 		Name        string
@@ -55,33 +46,33 @@ func (s *CategoryService) List(
 		Group("c.id, c.name, c.slug, c.description")
 
 	// 1. Apply filters (currently none, but for consistency)
-	query, err := categoryFilterConfig.ApplyFilters(baseQuery, req.Msg.Filters)
+	scoped, err := categoryFilterConfig.ApplyFilters(baseQuery, query.Filters)
 	if err != nil {
-		return nil, err
+		return referencecatalog.Page[*openv1.Category]{}, err
 	}
 
 	// Count total (must use subquery approach for aggregated query)
-	countQuery := s.db.WithContext(ctx).Table("(?) as subq", query)
+	countQuery := s.db.WithContext(ctx).Table("(?) as subq", scoped)
 	if err := countQuery.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+		return referencecatalog.Page[*openv1.Category]{}, err
 	}
 
 	// 2. Apply sort
-	query, err = categorySortConfig.ApplySort(query, req.Msg.Sorts)
+	scoped, err = categorySortConfig.ApplySort(scoped, query.Sorts)
 	if err != nil {
-		return nil, err
+		return referencecatalog.Page[*openv1.Category]{}, err
 	}
 
 	// 3. Apply pagination
 	pagination := queryutil.GetPaginationParams(
-		req.Msg.Pagination.GetLimit(),
-		req.Msg.Pagination.GetOffset(),
+		query.Limit,
+		query.Offset,
 		100, // default limit for categories
 	)
-	query = queryutil.ApplyPagination(query, pagination)
+	scoped = queryutil.ApplyPagination(scoped, pagination)
 
-	if err := query.Scan(&results).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := scoped.Scan(&results).Error; err != nil {
+		return referencecatalog.Page[*openv1.Category]{}, err
 	}
 
 	categories := make([]*openv1.Category, 0, len(results))
@@ -95,13 +86,13 @@ func (s *CategoryService) List(
 		})
 	}
 
-	return connect.NewResponse(&openv1.ListCategoriesResponse{
-		Categories: categories,
+	return referencecatalog.Page[*openv1.Category]{
+		Items: categories,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
 			Limit:   pagination.Limit,
 			Offset:  pagination.Offset,
 			HasMore: pagination.Offset+int32(len(results)) < int32(total),
 		},
-	}), nil
+	}, nil
 }
