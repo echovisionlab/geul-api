@@ -305,7 +305,7 @@ func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contact
 			case "email_template_translation", "page_translation":
 				rootTable := strings.TrimSuffix(spec.table, "_translation")
 				var root struct{ ContentDocumentID *string }
-				if err := db.Table(rootTable).Select("content_document_id").Where("id = ?", owner).Scan(&root).Error; err != nil {
+				if err := db.WithContext(ctx).Table(rootTable).Select("content_document_id").Where("id = ?", owner).Scan(&root).Error; err != nil {
 					return err
 				}
 				if root.ContentDocumentID != nil && *root.ContentDocumentID != "" {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -31,8 +32,43 @@ func (run *capturedRun) Match(value driver.Value) bool {
 	return run.id == id
 }
 
+type migrationContextKey struct{}
+
+// migrationContextOnEveryStatement returns a context that every GORM statement
+// issued through db must carry, so cancellation and trace context reach each
+// query. The test fails at cleanup if any statement ran without it.
+func migrationContextOnEveryStatement(t *testing.T, db *gorm.DB) context.Context {
+	t.Helper()
+	var mu sync.Mutex
+	var missing []string
+	check := func(tx *gorm.DB) {
+		if tx.Statement.Context.Value(migrationContextKey{}) != nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		missing = append(missing, tx.Statement.SQL.String())
+	}
+	callbacks := db.Callback()
+	for name, processor := range map[string]interface {
+		Register(string, func(*gorm.DB)) error
+	}{
+		"create": callbacks.Create(), "query": callbacks.Query(), "update": callbacks.Update(),
+		"delete": callbacks.Delete(), "row": callbacks.Row(), "raw": callbacks.Raw(),
+	} {
+		require.NoError(t, processor.Register("test:require_context_"+name, check))
+	}
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		require.Empty(t, missing, "GORM statements must run with the caller context")
+	})
+	return context.WithValue(t.Context(), migrationContextKey{}, true)
+}
+
 func TestApplyStoresFreshBeforeImagesInEachRun(t *testing.T) {
 	db, mock := migrationTestDB(t)
+	ctx := migrationContextOnEveryStatement(t, db)
 	var previousRun string
 	for _, summary := range []string{"DSUB", "DSUB updated"} {
 		row := fmt.Sprintf(`{"entity_id":"page-1","locale":"en","summary":%q}`, summary)
@@ -58,7 +94,7 @@ func TestApplyStoresFreshBeforeImagesInEachRun(t *testing.T) {
 		mock.ExpectExec(`UPDATE "page_translation"`).WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectCommit()
 		var report bytes.Buffer
-		require.NoError(t, Run(context.Background(), db, true, &report))
+		require.NoError(t, Run(ctx, db, true, &report))
 		require.NotEmpty(t, run.id)
 		require.NotEqual(t, previousRun, run.id)
 		require.Contains(t, report.String(), "run_id="+run.id)
