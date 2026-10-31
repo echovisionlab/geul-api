@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -160,8 +161,13 @@ func TestEmailEnqueueFailureRedactsTemplateValues(t *testing.T) {
 	cause := errors.New("enqueue failed for Private Person with code 829173 at person@example.test")
 	mock.ExpectQuery(`SELECT pgmq\.send\(`).WillReturnError(cause)
 	job := &managev1.SendEmailEvent{Recipient: "person@example.test", TemplateData: map[string]string{"code": "829173", "name": "Private Person"}}
-	require.ErrorIs(t, EnqueueProtobuf(t.Context(), db, eventpkg.QueueEmailAuth, "message-1", job), cause)
+	enqueueErr := EnqueueProtobuf(t.Context(), db, eventpkg.QueueEmailAuth, "message-1", job)
+	require.ErrorIs(t, enqueueErr, cause)
 	require.NoError(t, mock.ExpectationsWereMet())
+	// The caller's failure record redacts the same values from the returned error.
+	for _, private := range []string{"829173", "Private Person", "person@example.test"} {
+		require.NotContains(t, failurecause.Message(enqueueErr), private)
+	}
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
 	require.Contains(t, entry["failure_cause"], "enqueue failed")
