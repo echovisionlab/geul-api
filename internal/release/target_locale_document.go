@@ -283,6 +283,11 @@ func applyReleaseTargetLocaleMutation(
 			for creditID, note := range input.CreditNotePatch {
 				nextNotes[creditID] = note
 			}
+			// An empty target note removes the target override, so the credit
+			// shows its source note as LoadReleaseCreditNotesForDisplay merges it.
+			maps.DeleteFunc(nextNotes, func(_ string, note string) bool {
+				return strings.TrimSpace(note) == ""
+			})
 			if err := validateReleaseCreditNoteIdentityMap(ctx, tx, input.ReleaseID, nextNotes); err != nil {
 				return contentblock.MetadataEffect{}, err
 			}
