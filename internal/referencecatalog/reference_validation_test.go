@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,19 +21,19 @@ func TestNormalizeReferenceNameAndSlug(t *testing.T) {
 	require.Equal(t, "ambient-drone", slug)
 
 	_, err = normalizeReferenceName("   ", referenceValueMaxLength)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	_, err = normalizeReferenceSlug("   ", referenceValueMaxLength)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 
 	_, err = normalizeReferenceName(strings.Repeat("가", referenceValueMaxLength+1), referenceValueMaxLength)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	_, err = normalizeReferenceSlug(strings.Repeat("가", referenceValueMaxLength+1), referenceValueMaxLength)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 
 	_, err = normalizeReferenceName(strings.Repeat("가", shortReferenceValueMaxLength), shortReferenceValueMaxLength)
 	require.NoError(t, err)
 	_, err = normalizeReferenceName(strings.Repeat("가", shortReferenceValueMaxLength+1), shortReferenceValueMaxLength)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	_, err = normalizeReferenceSlug(strings.Repeat("가", shortReferenceValueMaxLength+1), shortReferenceValueMaxLength)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 }

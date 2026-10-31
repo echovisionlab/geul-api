@@ -26,7 +26,7 @@ func TestListMapPlacesAdminRequiresAuthenticatedPrincipalBeforeDatabase(t *testi
 			if test.principal != nil {
 				ctx = auth.WithUser(ctx, test.principal)
 			}
-			_, err := (&MapPlaceService{}).ListMapPlacesAdmin(ctx, connect.NewRequest(&managev1.ListMapPlacesAdminRequest{}))
+			_, err := NewMapPlaceConnectHandler(&Service{}).ListMapPlacesAdmin(ctx, connect.NewRequest(&managev1.ListMapPlacesAdminRequest{}))
 			require.Error(t, err)
 			require.Equal(t, test.code, connect.CodeOf(err))
 		})

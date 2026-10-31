@@ -6,8 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -32,12 +32,12 @@ var mapPlaceManagementTools = []mcpserver.Tool{
 // MapPlaceManagementApplication keeps authorization, image bindings, references,
 // and mutation audit in the native Map Place service.
 type MapPlaceManagementApplication interface {
-	GetMapPlace(context.Context, *connect.Request[managev1.GetMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error)
-	GetMapPlacesByIds(context.Context, *connect.Request[managev1.GetMapPlacesByIdsRequest]) (*connect.Response[managev1.GetMapPlacesByIdsResponse], error)
-	ListMapPlacesAdmin(context.Context, *connect.Request[managev1.ListMapPlacesAdminRequest]) (*connect.Response[managev1.ListMapPlacesAdminResponse], error)
-	CreateMapPlace(context.Context, *connect.Request[managev1.CreateMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error)
-	UpdateMapPlace(context.Context, *connect.Request[managev1.UpdateMapPlaceRequest]) (*connect.Response[managev1.MapPlace], error)
-	DeleteMapPlace(context.Context, *connect.Request[managev1.DeleteMapPlaceRequest]) (*connect.Response[managev1.DeleteResponse], error)
+	GetMapPlace(context.Context, referencecatalog.GetMapPlaceQuery) (*managev1.MapPlace, error)
+	GetMapPlacesByIDs(context.Context, referencecatalog.GetMapPlacesByIDsQuery) ([]*managev1.MapPlace, error)
+	ListMapPlacesAdmin(context.Context, referencecatalog.ListMapPlacesAdminQuery) (referencecatalog.Page[*managev1.MapPlace], error)
+	CreateMapPlace(context.Context, referencecatalog.CreateMapPlaceCommand) (*managev1.MapPlace, error)
+	UpdateMapPlace(context.Context, referencecatalog.UpdateMapPlaceCommand) (*managev1.MapPlace, error)
+	DeleteMapPlace(context.Context, referencecatalog.DeleteMapPlaceCommand) error
 }
 
 type MapPlaceManagementTools struct{ application MapPlaceManagementApplication }
@@ -68,17 +68,16 @@ func (tools *MapPlaceManagementTools) CallTool(ctx context.Context, _ mcpserver.
 			return executionError(err)
 		}
 		if name == ToolMapPlaceDelete {
-			response, err := tools.application.DeleteMapPlace(ctx, connect.NewRequest(&managev1.DeleteMapPlaceRequest{Id: input.ID}))
-			if err != nil {
+			if err := tools.application.DeleteMapPlace(ctx, referencecatalog.DeleteMapPlaceCommand{ID: input.ID}); err != nil {
 				return expectedToolError(err)
 			}
-			return contentResult(map[string]any{"success": response.Msg.GetSuccess()})
+			return contentResult(map[string]any{"success": true})
 		}
-		response, err := tools.application.GetMapPlace(ctx, connect.NewRequest(&managev1.GetMapPlaceRequest{Id: input.ID}))
+		place, err := tools.application.GetMapPlace(ctx, referencecatalog.GetMapPlaceQuery{ID: input.ID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"place": projectMapPlaceSettings(response.Msg)})
+		return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
 	case ToolMapPlaceGetMany:
 		var input struct {
 			IDs []string `json:"map_place_ids"`
@@ -94,11 +93,11 @@ func (tools *MapPlaceManagementTools) CallTool(ctx context.Context, _ mcpserver.
 				return executionError(err)
 			}
 		}
-		response, err := tools.application.GetMapPlacesByIds(ctx, connect.NewRequest(&managev1.GetMapPlacesByIdsRequest{Ids: input.IDs}))
+		places, err := tools.application.GetMapPlacesByIDs(ctx, referencecatalog.GetMapPlacesByIDsQuery{IDs: input.IDs})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"items": projectMapPlaceSettingsMany(response.Msg.Places)})
+		return contentResult(map[string]any{"items": projectMapPlaceSettingsMany(places)})
 	case ToolMapPlaceList:
 		if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
 			return executionError(err)
@@ -115,16 +114,18 @@ func (tools *MapPlaceManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		if err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.ListMapPlacesAdmin(ctx, connect.NewRequest(&managev1.ListMapPlacesAdminRequest{Pagination: pagination, Filters: discoverySearchFilters(input.Query)}))
+		listed, err := tools.application.ListMapPlacesAdmin(ctx, referencecatalog.ListMapPlacesAdminQuery{
+			Filters: discoverySearchFilters(input.Query), Limit: pagination.GetLimit(), Offset: pagination.GetOffset(),
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
 		// The native Map Place list supplies total, limit, and offset but does not
 		// populate HasMore. Derive continuation from that authoritative total.
-		page := response.Msg.GetPagination()
+		page := listed.Pagination
 		nextOffset := int64(page.GetOffset()) + int64(page.GetLimit())
 		hasMore := nextOffset < int64(page.GetTotal())
-		output := map[string]any{"items": projectMapPlaceSettingsMany(response.Msg.Places), "total": page.GetTotal(), "limit": page.GetLimit(), "offset": page.GetOffset(), "has_more": hasMore}
+		output := map[string]any{"items": projectMapPlaceSettingsMany(listed.Items), "total": page.GetTotal(), "limit": page.GetLimit(), "offset": page.GetOffset(), "has_more": hasMore}
 		if hasMore {
 			output["next_offset"] = nextOffset
 		}
@@ -181,7 +182,7 @@ func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name s
 			return executionError(err)
 		}
 	}
-	var response *connect.Response[managev1.MapPlace]
+	var place *managev1.MapPlace
 	var err error
 	if name == ToolMapPlaceCreate {
 		if _, ok := arguments["map_place_id"]; ok {
@@ -193,17 +194,24 @@ func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name s
 		if input.Name == nil || input.Address == nil || input.Lat == nil || input.Lng == nil {
 			return executionError(errors.New("name, address, lat, and lng are required"))
 		}
-		response, err = tools.application.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{Name: *input.Name, Address: *input.Address, Lat: *input.Lat, Lng: *input.Lng, AddressComponents: input.AddressComponents, ImageFileId: input.ImageFileID, GooglePlaceId: input.GooglePlaceID}))
+		place, err = tools.application.CreateMapPlace(ctx, referencecatalog.CreateMapPlaceCommand{
+			Name: *input.Name, Address: *input.Address, Lat: *input.Lat, Lng: *input.Lng,
+			AddressComponents: referencecatalog.AddressComponentsOf(input.AddressComponents), ImageFileID: input.ImageFileID, GooglePlaceID: input.GooglePlaceID,
+		})
 	} else {
 		if err := validateUUID("map_place_id", input.ID); err != nil {
 			return executionError(err)
 		}
-		response, err = tools.application.UpdateMapPlace(ctx, connect.NewRequest(&managev1.UpdateMapPlaceRequest{Id: input.ID, Name: input.Name, Address: input.Address, Lat: input.Lat, Lng: input.Lng, AddressComponents: input.AddressComponents, ImageFileId: input.ImageFileID, ClearImage: input.ClearImage, GooglePlaceId: input.GooglePlaceID}))
+		place, err = tools.application.UpdateMapPlace(ctx, referencecatalog.UpdateMapPlaceCommand{
+			ID: input.ID, Name: input.Name, Address: input.Address, Lat: input.Lat, Lng: input.Lng,
+			AddressComponents: referencecatalog.AddressComponentsOf(input.AddressComponents), ImageFileID: input.ImageFileID,
+			ClearImage: input.ClearImage, GooglePlaceID: input.GooglePlaceID,
+		})
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"place": projectMapPlaceSettings(response.Msg)})
+	return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
 }
 
 func projectMapPlaceSettings(place *managev1.MapPlace) map[string]any {

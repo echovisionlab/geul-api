@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -42,9 +41,7 @@ func TestClientDomainAuditLifecycleIntegration(t *testing.T) {
 	require.NotNil(t, admin)
 	identityID, memberID := admin.IdentityID.String(), admin.MemberID.String()
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
-	service := referencecatalog.NewAuditedClientService(
-		db, apitelemetry.NewDurableWriter(db), referencecatalogadapter.NewAssets("https://cdn.example.com"), spiceDB,
-	)
+	service := referencecatalog.NewClientConnectHandler(catalogForTest(t, db, "https://cdn.example.com", spiceDB, apitelemetry.NewDurableWriter(db)))
 
 	created, err := service.CreateClient(ctx, connect.NewRequest(&managev1.CreateClientRequest{Name: " Client audit lifecycle "}))
 	require.NoError(t, err)
@@ -145,10 +142,9 @@ func TestClientDomainAuditFailureAndReferenceRejectionIntegration(t *testing.T) 
 	admin := auth.GetUser(adminCtx)
 	require.NotNil(t, admin)
 	ctx := testutil.NewAuditContext(t, admin.IdentityID.String(), admin.MemberID.String())
-	assets := referencecatalogadapter.NewAssets("https://cdn.example.com")
 
 	name := "Client audit rollback"
-	_, err := referencecatalog.NewAuditedClientService(db, failingClientAuditAppender{}, assets, spiceDB).CreateClient(
+	_, err := referencecatalog.NewClientConnectHandler(catalogForTest(t, db, "https://cdn.example.com", spiceDB, failingClientAuditAppender{})).CreateClient(
 		ctx, connect.NewRequest(&managev1.CreateClientRequest{Name: name}),
 	)
 	require.Error(t, err)
@@ -156,11 +152,11 @@ func TestClientDomainAuditFailureAndReferenceRejectionIntegration(t *testing.T) 
 	require.NoError(t, db.Table("client").Where("name = ?", name).Count(&createCount).Error)
 	require.Zero(t, createCount)
 
-	base := referencecatalog.NewClientService(db, assets, spiceDB)
+	base := referencecatalog.NewClientConnectHandler(catalogForTest(t, db, "https://cdn.example.com", spiceDB, nil))
 	created, err := base.CreateClient(ctx, connect.NewRequest(&managev1.CreateClientRequest{Name: "Client retained on audit failure"}))
 	require.NoError(t, err)
 	fileID := seedClientLogoFileFixture(t, db, "client-audit/rollback.webp")
-	failing := referencecatalog.NewAuditedClientService(db, failingClientAuditAppender{}, assets, spiceDB)
+	failing := referencecatalog.NewClientConnectHandler(catalogForTest(t, db, "https://cdn.example.com", spiceDB, failingClientAuditAppender{}))
 	_, err = failing.SetClientLogo(ctx, connect.NewRequest(&managev1.SetClientLogoRequest{
 		ClientId: created.Msg.Id, FileId: fileID, Variant: managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_LIGHT,
 	}))
@@ -191,7 +187,7 @@ func TestClientDomainAuditFailureAndReferenceRejectionIntegration(t *testing.T) 
 		 VALUES (?::uuid, 'WORK_TYPE_PORTFOLIO', 2026, 1, 2026, 1, ?::uuid)`, workID, documentID,
 	).Error)
 	require.NoError(t, db.Exec(`INSERT INTO public.work_client (work_id, client_id) VALUES (?::uuid, ?::uuid)`, workID, created.Msg.Id).Error)
-	audited := referencecatalog.NewAuditedClientService(db, apitelemetry.NewDurableWriter(db), assets, spiceDB)
+	audited := referencecatalog.NewClientConnectHandler(catalogForTest(t, db, "https://cdn.example.com", spiceDB, apitelemetry.NewDurableWriter(db)))
 	_, err = audited.DeleteClient(ctx, connect.NewRequest(&managev1.DeleteClientRequest{Id: created.Msg.Id}))
 	require.Error(t, err)
 	var retainedClientCount int64

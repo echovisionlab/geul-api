@@ -5,11 +5,10 @@ import (
 	"errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -29,213 +28,142 @@ var clientSortConfig = queryutil.SortConfig{
 	DefaultSort: "name ASC, id ASC",
 }
 
-// =============================================================================
-// Public Read Methods
-// =============================================================================
+// GetClientQuery names a Client.
+type GetClientQuery struct {
+	ID string
+}
+
+// ListClientsQuery pages Clients.
+type ListClientsQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	// Limit is 20 when not positive.
+	Limit  int32
+	Offset int32
+}
+
+// ListClientsAdminQuery pages Clients with their Work counts.
+type ListClientsAdminQuery = ListClientsQuery
+
+// SearchClientsQuery finds Clients whose name contains Query.
+type SearchClientsQuery struct {
+	Query string
+	// Limit is 10 when outside 1..50.
+	Limit int32
+}
 
 // GetClient retrieves a client by ID
-func (s *ClientService) GetClient(
-	ctx context.Context,
-	req *connect.Request[managev1.GetClientRequest],
-) (_ *connect.Response[managev1.Client], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
+func (s *Service) GetClient(ctx context.Context, query GetClientQuery) (_ *managev1.Client, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", query.ID))
 
 	var client model.Client
-	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&client, "id = ?", query.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("client", req.Msg.Id)
+			return nil, domainerr.ResourceNotFound("client", query.ID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
-	logoAssets := s.getClientLogoAssets(ctx, client.ID)
-	return connect.NewResponse(s.toProtoClient(&client, logoAssets)), nil
+	return s.toProtoClient(&client, s.getClientLogoAssets(ctx, client.ID)), nil
 }
 
 // ListClients returns a paginated list of clients
-func (s *ClientService) ListClients(
-	ctx context.Context,
-	req *connect.Request[managev1.ListClientsRequest],
-) (*connect.Response[managev1.ListClientsResponse], error) {
-	var clients []model.Client
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Client{})
-	var err error
-	query, err = clientFilterConfig.ApplyFilters(query, req.Msg.Filters)
+func (s *Service) ListClients(ctx context.Context, query ListClientsQuery) (Page[*managev1.Client], error) {
+	clients, pagination, err := s.listClients(ctx, query)
 	if err != nil {
-		return nil, err
+		return Page[*managev1.Client]{}, err
 	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	items := make([]*managev1.Client, len(clients))
+	for i := range clients {
+		items[i] = s.toProtoClient(&clients[i], s.getClientLogoAssets(ctx, clients[i].ID))
 	}
-
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
-
-	// Apply sorting
-	query, err = clientSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&clients).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Convert to proto
-	protoClients := make([]*managev1.Client, len(clients))
-	for i, client := range clients {
-		logoAssets := s.getClientLogoAssets(ctx, client.ID)
-		protoClients[i] = s.toProtoClient(&client, logoAssets)
-	}
-
-	return connect.NewResponse(&managev1.ListClientsResponse{
-		Clients: protoClients,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
+	return Page[*managev1.Client]{Items: items, Pagination: pagination}, nil
 }
 
 // SearchClients searches clients by name for quick lookup
-func (s *ClientService) SearchClients(
-	ctx context.Context,
-	req *connect.Request[managev1.SearchClientsRequest],
-) (*connect.Response[managev1.SearchClientsResponse], error) {
-	limit := int(req.Msg.Limit)
+func (s *Service) SearchClients(ctx context.Context, query SearchClientsQuery) ([]*managev1.Client, error) {
+	limit := int(query.Limit)
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
 
 	var clients []model.Client
-	query := s.db.WithContext(ctx).Model(&model.Client{})
-
-	if req.Msg.Query != "" {
-		pattern := "%" + req.Msg.Query + "%"
-		query = query.Where("name ILIKE ?", pattern)
+	scoped := s.db.WithContext(ctx).Model(&model.Client{})
+	if query.Query != "" {
+		scoped = scoped.Where("name ILIKE ?", "%"+query.Query+"%")
+	}
+	if err := scoped.Order("name ASC").Limit(limit).Find(&clients).Error; err != nil {
+		return nil, err
 	}
 
-	if err := query.Order("name ASC").Limit(limit).Find(&clients).Error; err != nil {
-		return nil, errs.Internal(err)
+	items := make([]*managev1.Client, len(clients))
+	for i := range clients {
+		items[i] = s.toProtoClient(&clients[i], s.getClientLogoAssets(ctx, clients[i].ID))
 	}
-
-	protoClients := make([]*managev1.Client, len(clients))
-	for i, client := range clients {
-		logoAssets := s.getClientLogoAssets(ctx, client.ID)
-		protoClients[i] = s.toProtoClient(&client, logoAssets)
-	}
-
-	return connect.NewResponse(&managev1.SearchClientsResponse{
-		Clients: protoClients,
-	}), nil
+	return items, nil
 }
 
-// =============================================================================
-// Admin Methods
-// =============================================================================
-
 // ListClientsAdmin returns a paginated list of all clients with stats
-func (s *ClientService) ListClientsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListClientsAdminRequest],
-) (*connect.Response[managev1.ListClientsAdminResponse], error) {
+func (s *Service) ListClientsAdmin(ctx context.Context, query ListClientsAdminQuery) (Page[*managev1.ClientWithStats], error) {
 	can, err := policyv1.Client.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return Page[*managev1.ClientWithStats]{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return Page[*managev1.ClientWithStats]{}, err
+	}
+	clients, pagination, err := s.listClients(ctx, query)
+	if err != nil {
+		return Page[*managev1.ClientWithStats]{}, err
+	}
+
+	workCounts := map[string]int32{}
+	if len(clients) > 0 {
+		clientIDs := make([]string, len(clients))
+		for i := range clients {
+			clientIDs[i] = clients[i].ID
+		}
+		if workCounts, err = s.clientWorks.CountByClient(ctx, s.db, clientIDs); err != nil {
+			return Page[*managev1.ClientWithStats]{}, err
+		}
+	}
+
+	items := make([]*managev1.ClientWithStats, len(clients))
+	for i := range clients {
+		items[i] = &managev1.ClientWithStats{
+			Client:    s.toProtoClient(&clients[i], s.getClientLogoAssets(ctx, clients[i].ID)),
+			WorkCount: workCounts[clients[i].ID],
+		}
+	}
+	return Page[*managev1.ClientWithStats]{Items: items, Pagination: pagination}, nil
+}
+
+func (s *Service) listClients(ctx context.Context, query ListClientsQuery) ([]model.Client, *commonv1.PaginationResponse, error) {
+	scoped, err := clientFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.Client{}), query.Filters)
+	if err != nil {
+		return nil, nil, err
+	}
+	var total int64
+	if err := scoped.Count(&total).Error; err != nil {
+		return nil, nil, err
+	}
+
+	limit, offset := int32(20), query.Offset
+	if query.Limit > 0 {
+		limit = query.Limit
+	}
+	scoped, err = clientSortConfig.ApplySort(scoped, query.Sorts)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	var clients []model.Client
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Client{})
-	query, err = clientFilterConfig.ApplyFilters(query, req.Msg.Filters)
-	if err != nil {
-		return nil, err
+	if err := scoped.Limit(int(limit)).Offset(int(offset)).Find(&clients).Error; err != nil {
+		return nil, nil, err
 	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
-
-	// Apply sorting
-	query, err = clientSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&clients).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Get work counts for each client
-	clientIDs := make([]string, len(clients))
-	for i, c := range clients {
-		clientIDs[i] = c.ID
-	}
-
-	workCounts := make(map[string]int32)
-	if len(clientIDs) > 0 {
-		var workStats []struct {
-			ClientID string
-			Count    int32
-		}
-		if err := s.db.WithContext(ctx).
-			Table("work_client").
-			Select("client_id, COUNT(*) as count").
-			Where("client_id IN ?", clientIDs).
-			Group("client_id").
-			Scan(&workStats).Error; err != nil {
-			return nil, errs.Internal(err)
-		}
-		for _, stat := range workStats {
-			workCounts[stat.ClientID] = stat.Count
-		}
-	}
-
-	// Convert to proto with stats
-	protoClients := make([]*managev1.ClientWithStats, len(clients))
-	for i, client := range clients {
-		logoAssets := s.getClientLogoAssets(ctx, client.ID)
-		protoClients[i] = &managev1.ClientWithStats{
-			Client:    s.toProtoClient(&client, logoAssets),
-			WorkCount: workCounts[client.ID],
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListClientsAdminResponse{
-		Clients: protoClients,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
+	return clients, &commonv1.PaginationResponse{
+		Total:   int32(total),
+		Limit:   limit,
+		Offset:  offset,
+		HasMore: offset+limit < int32(total),
+	}, nil
 }

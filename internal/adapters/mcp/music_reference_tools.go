@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -23,15 +23,15 @@ var musicReferenceTools = []mcpserver.Tool{
 }
 
 type GenreReferenceDiscovery interface {
-	ListGenresAdmin(context.Context, *connect.Request[managev1.ListGenresAdminRequest]) (*connect.Response[managev1.ListGenresAdminResponse], error)
+	ListGenresAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.GenreWithStats], error)
 }
 
 type StyleReferenceDiscovery interface {
-	ListStylesAdmin(context.Context, *connect.Request[managev1.ListStylesAdminRequest]) (*connect.Response[managev1.ListStylesAdminResponse], error)
+	ListStylesAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.StyleWithStats], error)
 }
 
 type FormatReferenceDiscovery interface {
-	ListFormatsAdmin(context.Context, *connect.Request[managev1.ListFormatsAdminRequest]) (*connect.Response[managev1.ListFormatsAdminResponse], error)
+	ListFormatsAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.FormatWithStats], error)
 }
 
 type MusicReferenceTools struct {
@@ -80,18 +80,17 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 	if input.Offset < 0 {
 		return executionError(errors.New("offset must be between 0 and 2147483647"))
 	}
-	pagination := &commonv1.PaginationRequest{Limit: limit, Offset: input.Offset}
-	filters := discoverySearchFilters(input.Query)
+	query := referencecatalog.ReferenceListQuery{Filters: discoverySearchFilters(input.Query), Limit: limit, Offset: input.Offset}
 	items := make([]map[string]any, 0)
 	var responsePagination *commonv1.PaginationResponse
 	switch name {
 	case ToolGenreList:
-		response, err := tools.genres.ListGenresAdmin(ctx, connect.NewRequest(&managev1.ListGenresAdminRequest{Pagination: pagination, Filters: filters}))
+		page, err := tools.genres.ListGenresAdmin(ctx, query)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Genres {
+		responsePagination = page.Pagination
+		for _, item := range page.Items {
 			if item != nil && item.Genre != nil {
 				genre := item.Genre
 				projected := map[string]any{"id": genre.Id, "name": genre.Name, "slug": genre.Slug}
@@ -102,12 +101,12 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 			}
 		}
 	case ToolStyleList:
-		response, err := tools.styles.ListStylesAdmin(ctx, connect.NewRequest(&managev1.ListStylesAdminRequest{Pagination: pagination, Filters: filters}))
+		page, err := tools.styles.ListStylesAdmin(ctx, query)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Styles {
+		responsePagination = page.Pagination
+		for _, item := range page.Items {
 			if item != nil && item.Style != nil {
 				style := item.Style
 				projected := map[string]any{"id": style.Id, "name": style.Name, "slug": style.Slug}
@@ -118,12 +117,12 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 			}
 		}
 	case ToolFormatList:
-		response, err := tools.formats.ListFormatsAdmin(ctx, connect.NewRequest(&managev1.ListFormatsAdminRequest{Pagination: pagination, Filters: filters}))
+		page, err := tools.formats.ListFormatsAdmin(ctx, query)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Formats {
+		responsePagination = page.Pagination
+		for _, item := range page.Items {
 			if item != nil && item.Format != nil {
 				format := item.Format
 				items = append(items, map[string]any{"id": format.Id, "name": format.Name, "slug": format.Slug})

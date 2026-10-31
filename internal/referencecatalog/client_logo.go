@@ -5,228 +5,199 @@ import (
 	"errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// =============================================================================
-// Logo Management (Admin)
-// =============================================================================
+// ClientLogoSlot names the theme slot of a Client logo.
+type ClientLogoSlot string
 
-func clientLogoColumnForVariant(variant managev1.ThemeAssetVariant) (string, error) {
-	switch variant {
-	case managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_UNSPECIFIED,
-		managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_LIGHT:
-		return "logo_light_file_id", nil
-	case managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK:
-		return "logo_dark_file_id", nil
+const (
+	ClientLogoLight ClientLogoSlot = "light"
+	ClientLogoDark  ClientLogoSlot = "dark"
+)
+
+// clientLogoSlot is the column, binding key and audit slot of a logo slot.
+type clientLogoSlot struct {
+	column     string
+	bindingKey string
+	audit      sharedtelemetry.AuditAssetSlot
+}
+
+func clientLogoSlotFor(slot ClientLogoSlot) (clientLogoSlot, error) {
+	switch slot {
+	case ClientLogoLight:
+		return clientLogoSlot{column: "logo_light_file_id", bindingKey: "logo_light", audit: sharedtelemetry.AuditAssetSlotLight}, nil
+	case ClientLogoDark:
+		return clientLogoSlot{column: "logo_dark_file_id", bindingKey: "logo_dark", audit: sharedtelemetry.AuditAssetSlotDark}, nil
 	default:
-		return "", errs.InvalidArgument("variant", "unsupported theme asset variant")
+		return clientLogoSlot{}, domainerr.InvalidField("variant", "unsupported theme asset variant")
 	}
 }
 
-// SetClientLogo sets the client logo
-func (s *ClientService) SetClientLogo(
-	ctx context.Context,
-	req *connect.Request[managev1.SetClientLogoRequest],
-) (_ *connect.Response[managev1.SetClientLogoResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetClientId()))
+// SetClientLogoCommand selects FileID as the logo of ClientID in Slot. Slot
+// is neither light nor dark for an unsupported variant.
+type SetClientLogoCommand struct {
+	ClientID string
+	Slot     ClientLogoSlot
+	FileID   string
+}
 
-	can, err := policyv1.Client.Edit(req.Msg.ClientId)
+// DeleteClientLogoCommand clears the logo of ClientID in Slot.
+type DeleteClientLogoCommand struct {
+	ClientID string
+	Slot     ClientLogoSlot
+}
+
+// lockClientLogo takes the Client row for a logo change and returns the file
+// selected in column.
+func lockClientLogo(ctx context.Context, tx *gorm.DB, clientID, column string) (*string, error) {
+	var current struct {
+		SelectedFileID *string `gorm:"column:selected_file_id"`
+	}
+	if err := tx.WithContext(ctx).Table("client").
+		Select(column+" AS selected_file_id").
+		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Where("id = ?", clientID).
+		Take(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerr.ResourceNotFound("client", clientID)
+		}
+		return nil, err
+	}
+	return current.SelectedFileID, nil
+}
+
+// writeClientLogo stores fileID (nil clears it) in the locked Client's column.
+func writeClientLogo(tx *gorm.DB, clientID, column string, fileID any) error {
+	result := tx.Table("client").Where("id = ?", clientID).Updates(structured.Fields{column: fileID})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return domainerr.ResourceNotFound("client", clientID)
+	}
+	return nil
+}
+
+// SetClientLogo selects a ready logo for one slot and returns its asset.
+func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoCommand) (_ *commonv1.AssetRef, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", command.ClientID))
+
+	can, err := policyv1.Client.Edit(command.ClientID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
-
-	logoColumn, err := clientLogoColumnForVariant(req.Msg.Variant)
+	slot, err := clientLogoSlotFor(command.Slot)
 	if err != nil {
 		return nil, err
 	}
 
-	var logoAsset *commonv1.AssetRef
-	changed := false
-
-	// Use transaction with row-level locking to prevent race conditions
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Lock the row with FOR UPDATE to prevent concurrent modifications
-		var current struct {
-			SelectedFileID *string `gorm:"column:selected_file_id"`
-		}
-		if err := tx.Table("client").
-			Select(logoColumn+" AS selected_file_id").
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("id = ?", req.Msg.ClientId).
-			Take(&current).Error; err != nil {
+	var selected *string
+	logoAsset, err := mutation.Run(ctx, s.mutations, mutation.Spec[*commonv1.AssetRef]{
+		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
+			selected, err = lockClientLogo(ctx, tx, command.ClientID, slot.column)
 			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if current.SelectedFileID != nil && *current.SelectedFileID == req.Msg.FileId {
-			return nil
-		}
-		if err := s.assets.LockForAttachment(ctx, tx, []string{req.Msg.FileId}); err != nil {
-			return err
-		}
-
-		// Update client logo atomically
-		result := tx.Table("client").
-			Where("id = ?", req.Msg.ClientId).
-			Updates(structured.Fields{
-				logoColumn: req.Msg.FileId,
-			})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-
-		bindingKey := "logo_light"
-		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo_dark"
-		}
-		logoRef, err := s.assets.BindReady(ctx, tx, AssetBinding{
-			SourceFileID: req.Msg.FileId,
-			Owner:        AssetOwner{Type: "client", ID: req.Msg.ClientId},
-			Key:          bindingKey,
-			Kind:         "logo",
-		})
-		if err != nil {
-			return err
-		}
-		logoAsset = logoRef
-		changed = true
-		slot := sharedtelemetry.AuditAssetSlotLight
-		if logoColumn == "logo_dark_file_id" {
-			slot = sharedtelemetry.AuditAssetSlotDark
-		}
-		return domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditClientUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewClientLogoUpdatedAuditRecord(metadata, req.Msg.ClientId, slot, sharedtelemetry.AuditCollectionOperationAdded, req.Msg.FileId)
-		})
-	})
-
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("client", req.Msg.ClientId)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if !changed {
-		assets := s.getClientLogoAssets(ctx, req.Msg.ClientId)
-		if assets != nil {
-			if logoColumn == "logo_dark_file_id" {
-				logoAsset = assets.Dark
-			} else {
-				logoAsset = assets.Light
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (*commonv1.AssetRef, error) {
+			if selected != nil && *selected == command.FileID {
+				return nil, nil
 			}
-		}
+			if err := s.assets.LockForAttachment(ctx, tx, []string{command.FileID}); err != nil {
+				return nil, err
+			}
+			if err := writeClientLogo(tx, command.ClientID, slot.column, command.FileID); err != nil {
+				return nil, err
+			}
+			return s.assets.BindReady(ctx, tx, AssetBinding{
+				SourceFileID: command.FileID,
+				Owner:        AssetOwner{Type: "client", ID: command.ClientID},
+				Key:          slot.bindingKey,
+				Kind:         "logo",
+			})
+		},
+		Audit: func(bound *commonv1.AssetRef) mutation.Audit {
+			if selected != nil && *selected == command.FileID {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditClientUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewClientLogoUpdatedAuditRecord(metadata, command.ClientID, slot.audit, sharedtelemetry.AuditCollectionOperationAdded, command.FileID)
+			})
+		},
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return connect.NewResponse(&managev1.SetClientLogoResponse{
-		LogoLightAsset: optionalLogoResponseAsset(req.Msg.Variant, managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_LIGHT, logoAsset),
-		LogoDarkAsset:  optionalLogoResponseAsset(req.Msg.Variant, managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK, logoAsset),
-	}), nil
+	if selected != nil && *selected == command.FileID {
+		// The unchanged selection answers its current asset.
+		assets := s.getClientLogoAssets(ctx, command.ClientID)
+		if assets == nil {
+			return nil, nil
+		}
+		if command.Slot == ClientLogoDark {
+			return assets.Dark, nil
+		}
+		return assets.Light, nil
+	}
+	return logoAsset, nil
 }
 
-// DeleteClientLogo deletes the client logo
-func (s *ClientService) DeleteClientLogo(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteClientLogoRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetClientId()))
+// DeleteClientLogo clears the logo of one slot.
+func (s *Service) DeleteClientLogo(ctx context.Context, command DeleteClientLogoCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", command.ClientID))
 
-	can, err := policyv1.Client.Edit(req.Msg.ClientId)
+	can, err := policyv1.Client.Edit(command.ClientID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
+		return err
 	}
-
-	logoColumn, err := clientLogoColumnForVariant(req.Msg.Variant)
+	slot, err := clientLogoSlotFor(command.Slot)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var oldFileID *string
-
-	// Use transaction with row-level locking to prevent race conditions
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Lock the row with FOR UPDATE to prevent concurrent modifications
-		var current struct {
-			SelectedFileID *string `gorm:"column:selected_file_id"`
-		}
-		if err := tx.Table("client").
-			Select(logoColumn+" AS selected_file_id").
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("id = ?", req.Msg.ClientId).
-			Take(&current).Error; err != nil {
+	var selected *string
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
+			selected, err = lockClientLogo(ctx, tx, command.ClientID, slot.column)
 			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		oldFileID = current.SelectedFileID
-		if oldFileID == nil {
-			return nil
-		}
-
-		// Clear the selected logo slot atomically.
-		result := tx.Table("client").
-			Where("id = ?", req.Msg.ClientId).
-			Updates(structured.Fields{
-				logoColumn: nil,
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			if selected == nil {
+				return struct{}{}, nil
+			}
+			if err := writeClientLogo(tx, command.ClientID, slot.column, nil); err != nil {
+				return struct{}{}, err
+			}
+			return struct{}{}, s.assets.Release(ctx, tx, AssetRelease{
+				Owner:         AssetOwner{Type: "client", ID: command.ClientID},
+				BindingPrefix: slot.bindingKey,
 			})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-
-		bindingKey := "logo_light"
-		if logoColumn == "logo_dark_file_id" {
-			bindingKey = "logo_dark"
-		}
-		if err := s.assets.Release(ctx, tx, AssetRelease{
-			Owner:         AssetOwner{Type: "client", ID: req.Msg.ClientId},
-			BindingPrefix: bindingKey,
-		}); err != nil {
-			return err
-		}
-		slot := sharedtelemetry.AuditAssetSlotLight
-		if logoColumn == "logo_dark_file_id" {
-			slot = sharedtelemetry.AuditAssetSlotDark
-		}
-		return domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditClientUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewClientLogoUpdatedAuditRecord(metadata, req.Msg.ClientId, slot, sharedtelemetry.AuditCollectionOperationRemoved, *oldFileID)
-		})
+		},
+		Audit: func(struct{}) mutation.Audit {
+			if selected == nil {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditClientUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewClientLogoUpdatedAuditRecord(metadata, command.ClientID, slot.audit, sharedtelemetry.AuditCollectionOperationRemoved, *selected)
+			})
+		},
 	})
-
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("client", req.Msg.ClientId)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
+	return err
 }

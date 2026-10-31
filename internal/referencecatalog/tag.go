@@ -3,16 +3,10 @@ package referencecatalog
 import (
 	"context"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -48,90 +42,28 @@ var tagKind = referenceKind[model.Tag]{
 	values: func(tag *model.Tag) (string, string, string) { return tag.ID, tag.Name, tag.Slug },
 }
 
-// TagService implements the TagService Connect handler
-type TagService struct {
-	managev1connect.UnimplementedTagServiceHandler
-	referenceService
+func (s *Service) ListTags(ctx context.Context, query ReferenceListQuery) (Page[*managev1.Tag], error) {
+	return listReferences(ctx, s, tagKind, query, toProtoTag)
 }
 
-func NewAuditedTagService(db *gorm.DB, auditWriter domainaudit.Appender, menuTargets MenuTargets, spiceDB *auth.SpiceDBClient) *TagService {
-	requireReferenceAuditWriter("tag", auditWriter)
-	service := NewTagService(db, menuTargets, spiceDB)
-	service.auditWriter = auditWriter
-	return service
-}
-
-// NewTagService creates a new TagService
-func NewTagService(db *gorm.DB, menuTargets MenuTargets, spiceDB *auth.SpiceDBClient) *TagService {
-	return &TagService{referenceService: newMenuTargetReferenceService(db, menuTargets, spiceDB)}
-}
-
-// ListTags returns a paginated list of tags
-func (s *TagService) ListTags(
-	ctx context.Context,
-	req *connect.Request[managev1.ListTagsRequest],
-) (*connect.Response[managev1.ListTagsResponse], error) {
-	tags, total, page, err := tagKind.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ListTagsResponse{
-		Tags:       mapReferences(tags, toProtoTag),
-		Pagination: page.BuildResponse(total),
-	}), nil
-}
-
-// ListTagsAdmin returns a paginated list of tags with stats (admin only)
-func (s *TagService) ListTagsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListTagsAdminRequest],
-) (*connect.Response[managev1.ListTagsAdminResponse], error) {
-	tags, usage, total, page, err := tagKind.listAdmin(ctx, s.referenceService, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
-	if err != nil {
-		return nil, err
-	}
-	tagsWithStats := mapReferences(tags, func(tag *model.Tag) *managev1.TagWithStats {
-		return &managev1.TagWithStats{Tag: toProtoTag(tag), PostCount: usage[tag.ID]}
+func (s *Service) ListTagsAdmin(ctx context.Context, query ReferenceListQuery) (Page[*managev1.TagWithStats], error) {
+	return listReferencesAdmin(ctx, s, tagKind, query, func(tag *model.Tag, usage int32) *managev1.TagWithStats {
+		return &managev1.TagWithStats{Tag: toProtoTag(tag), PostCount: usage}
 	})
-	return connect.NewResponse(&managev1.ListTagsAdminResponse{
-		Tags:       tagsWithStats,
-		Pagination: page.BuildResponse(total),
-	}), nil
 }
 
-// CreateTag creates a new tag (admin only)
-func (s *TagService) CreateTag(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateTagRequest],
-) (*connect.Response[managev1.Tag], error) {
-	tag, err := tagKind.createAudited(ctx, s.referenceService, req.Msg.Name, req.Msg.Slug, nil)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(toProtoTag(tag)), nil
+func (s *Service) CreateTag(ctx context.Context, command CreateReferenceCommand) (*managev1.Tag, error) {
+	tag, err := tagKind.create(ctx, s, command)
+	return projectReference(tag, err, toProtoTag)
 }
 
-// UpdateTag updates an existing tag (admin only)
-func (s *TagService) UpdateTag(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateTagRequest],
-) (*connect.Response[managev1.Tag], error) {
-	tag, err := tagKind.updateAudited(ctx, s.referenceService, req.Msg.Id, req.Msg.Name, req.Msg.Slug, nil)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(toProtoTag(tag)), nil
+func (s *Service) UpdateTag(ctx context.Context, command UpdateReferenceCommand) (*managev1.Tag, error) {
+	tag, err := tagKind.update(ctx, s, command)
+	return projectReference(tag, err, toProtoTag)
 }
 
-// DeleteTag deletes a tag (admin only)
-func (s *TagService) DeleteTag(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteTagRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if err := tagKind.deleteAudited(ctx, s.referenceService, req.Msg.Id); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+func (s *Service) DeleteTag(ctx context.Context, command DeleteReferenceCommand) error {
+	return tagKind.delete(ctx, s, command)
 }
 
 // toProtoTag maps a tag; the tag table has no updated_at column.

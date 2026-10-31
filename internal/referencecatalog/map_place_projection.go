@@ -34,8 +34,8 @@ func resolvedMapPlaceMember(
 	return summary, nil
 }
 
-// toProto converts a model.MapPlace to protobuf MapPlace
-func (s *MapPlaceService) toProto(p *model.MapPlace) *managev1.MapPlace {
+// mapPlaceToProto converts a model.MapPlace to protobuf MapPlace
+func mapPlaceToProto(p *model.MapPlace) *managev1.MapPlace {
 	proto := &managev1.MapPlace{
 		Id:        p.ID,
 		Name:      p.Name,
@@ -72,12 +72,12 @@ func (s *MapPlaceService) toProto(p *model.MapPlace) *managev1.MapPlace {
 	return proto
 }
 
-func (s *MapPlaceService) toProtoWithMembers(
+func (s *Service) toProtoWithMembers(
 	ctx context.Context,
 	p *model.MapPlace,
 	members map[string]*commonv1.MemberSummary,
 ) (*managev1.MapPlace, error) {
-	proto := s.toProto(p)
+	proto := mapPlaceToProto(p)
 	if p.ImageFileID != nil && *p.ImageFileID != "" {
 		asset, err := s.assets.ReadyRef(ctx, s.db, AssetSource{FileID: *p.ImageFileID, Kind: "map_image"})
 		if err != nil {
@@ -102,7 +102,30 @@ func (s *MapPlaceService) toProtoWithMembers(
 	return proto, nil
 }
 
-func (s *MapPlaceService) resolveMembersForPlaces(
+// mapPlaceWithMembers projects place with its image and member summaries.
+func (s *Service) mapPlaceWithMembers(ctx context.Context, place *model.MapPlace) (*managev1.MapPlace, error) {
+	projected, err := s.mapPlacesWithMembers(ctx, []model.MapPlace{*place})
+	if err != nil {
+		return nil, err
+	}
+	return projected[0], nil
+}
+
+func (s *Service) mapPlacesWithMembers(ctx context.Context, places []model.MapPlace) ([]*managev1.MapPlace, error) {
+	members, err := s.resolveMembersForPlaces(ctx, places)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*managev1.MapPlace, len(places))
+	for i := range places {
+		if result[i], err = s.toProtoWithMembers(ctx, &places[i], members); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) resolveMembersForPlaces(
 	ctx context.Context,
 	places []model.MapPlace,
 ) (map[string]*commonv1.MemberSummary, error) {
@@ -139,7 +162,7 @@ func (s *MapPlaceService) resolveMembersForPlaces(
 }
 
 // toBasicProto converts a model.MapPlace to protobuf MapPlaceBasic
-func (s *MapPlaceService) toBasicProto(p *model.MapPlace) *managev1.MapPlaceBasic {
+func toBasicProto(p *model.MapPlace) *managev1.MapPlaceBasic {
 	basic := &managev1.MapPlaceBasic{
 		Id:      p.ID,
 		Name:    p.Name,

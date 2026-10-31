@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -205,20 +209,32 @@ func newReleaseIntegrationService(
 	)
 }
 
-func newReferenceCategoryService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.CategoryService {
-	return referencecatalog.NewCategoryService(
-		db,
-		referencecatalogmenuadapter.NewTargets(nil),
-		spiceDB,
-	)
+// newReferenceCatalog builds the Reference Catalog use cases that seed
+// Release references, with in-memory audit; call them with
+// withAuditedRequestContext.
+func newReferenceCatalog(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
+	t.Helper()
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+		Assets:      referencecatalogadapter.NewAssets(""),
+		Members:     referencecatalogadapter.NewMemberSummaries(""),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	return catalog
 }
 
-func newReferenceGenreService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.GenreService {
-	return referencecatalog.NewGenreService(db, spiceDB)
+func newReferenceCategoryService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.CategoryConnectHandler {
+	return referencecatalog.NewCategoryConnectHandler(newReferenceCatalog(t, db, spiceDB))
 }
 
-func newReferenceStyleService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.StyleService {
-	return referencecatalog.NewStyleService(db, spiceDB)
+func newReferenceGenreService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.GenreConnectHandler {
+	return referencecatalog.NewGenreConnectHandler(newReferenceCatalog(t, db, spiceDB))
+}
+
+func newReferenceStyleService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.StyleConnectHandler {
+	return referencecatalog.NewStyleConnectHandler(newReferenceCatalog(t, db, spiceDB))
 }
 
 func referenceShortSuffix() string {
