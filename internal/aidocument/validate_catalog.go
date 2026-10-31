@@ -222,80 +222,94 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 		if !index.hasBlockKind(node.Kind) {
 			return fmt.Errorf("block %q has unknown kind %q", node.ID, node.Kind)
 		}
-		for _, field := range node.Shared {
-			rule, ok := index.field(node.Kind, field.ID)
-			if !ok || rule.File || (rule.Ownership != FieldOwnershipShared && rule.Ownership != FieldOwnershipSource) || rule.ValueKind != field.Value.Kind {
-				return fmt.Errorf("block %q shared field %q does not match the catalog", node.ID, field.ID)
+		lookup := func(field FieldID) (FieldRule, bool) { return index.field(node.Kind, field) }
+		if err := validateFieldSet(fmt.Sprintf("block %q", node.ID), node.Shared, node.Localized, node.Files, lookup); err != nil {
+			return err
+		}
+		if err := validateRelations(index, node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRelations(index catalogIndex, node Node) error {
+	for _, relation := range node.Relations {
+		allowed, ok := index.relationItemKinds(node.Kind, relation.ID)
+		if !ok {
+			return fmt.Errorf("block %q relation %q does not match the catalog", node.ID, relation.ID)
+		}
+		for _, item := range relation.Items {
+			if _, ok := allowed[item.Kind]; !ok {
+				return fmt.Errorf("relation item %q kind %q does not match the catalog", item.ID, item.Kind)
 			}
-			if rule.Schema != nil {
-				if err := validateValueForSchema(field.Value, *rule.Schema, 0); err != nil {
-					return fmt.Errorf("block %q shared field %q: %w", node.ID, field.ID, err)
-				}
+			lookup := func(field FieldID) (FieldRule, bool) {
+				return index.relationField(node.Kind, relation.ID, item.Kind, field)
+			}
+			if err := validateFieldSet(fmt.Sprintf("relation item %q", item.ID), item.Shared, item.Localized, item.Files, lookup); err != nil {
+				return err
 			}
 		}
-		for _, field := range node.Localized {
-			rule, ok := index.field(node.Kind, field.ID)
-			if !ok || rule.File || rule.Ownership != FieldOwnershipLocale || rule.ValueKind != field.Value.Kind {
-				return fmt.Errorf("block %q localized field %q does not match the catalog", node.ID, field.ID)
-			}
-			if rule.Schema != nil {
-				if err := validateValueForSchema(field.Value, *rule.Schema, 0); err != nil {
-					return fmt.Errorf("block %q localized field %q: %w", node.ID, field.ID, err)
-				}
+	}
+	return nil
+}
+
+// fieldRuleLookup resolves the catalog rule of one block's or relation item's
+// field.
+type fieldRuleLookup func(FieldID) (FieldRule, bool)
+
+// valueScope names the half of a field set a value is stored in, which its
+// rule's ownership must agree with.
+type valueScope string
+
+const (
+	sharedScope    valueScope = "shared"
+	localizedScope valueScope = "localized"
+)
+
+func (s valueScope) owns(ownership FieldOwnership) bool {
+	if s == localizedScope {
+		return ownership == FieldOwnershipLocale
+	}
+	return ownership == FieldOwnershipShared || ownership == FieldOwnershipSource
+}
+
+// validateFieldSet checks the values and file bindings of one block or
+// relation item, named by owner in errors, against its catalog rules.
+func validateFieldSet(owner string, shared, localized []FieldValue, files []FileBinding, lookup fieldRuleLookup) error {
+	if err := validateScopedValues(owner, sharedScope, shared, lookup); err != nil {
+		return err
+	}
+	if err := validateScopedValues(owner, localizedScope, localized, lookup); err != nil {
+		return err
+	}
+	return validateCatalogFiles(owner, files, lookup)
+}
+
+func validateScopedValues(owner string, scope valueScope, values []FieldValue, lookup fieldRuleLookup) error {
+	for _, field := range values {
+		rule, ok := lookup(field.ID)
+		if !ok || rule.File || !scope.owns(rule.Ownership) || rule.ValueKind != field.Value.Kind {
+			return fmt.Errorf("%s %s field %q does not match the catalog", owner, scope, field.ID)
+		}
+		if rule.Schema != nil {
+			if err := validateValueForSchema(field.Value, *rule.Schema, 0); err != nil {
+				return fmt.Errorf("%s %s field %q: %w", owner, scope, field.ID, err)
 			}
 		}
-		for _, file := range node.Files {
-			rule, ok := index.field(node.Kind, file.Field)
-			if !ok {
-				return fmt.Errorf("block %q file field %q does not match the catalog", node.ID, file.Field)
-			}
-			resolved, err := resolveNestedFieldRule(rule, file.Path)
-			if err != nil || !resolved.file {
-				return fmt.Errorf("block %q file target %q does not match the catalog", node.ID, nestedFieldKey(file.Field, file.Path))
-			}
+	}
+	return nil
+}
+
+func validateCatalogFiles(owner string, files []FileBinding, lookup fieldRuleLookup) error {
+	for _, file := range files {
+		rule, ok := lookup(file.Field)
+		if !ok {
+			return fmt.Errorf("%s file field %q does not match the catalog", owner, file.Field)
 		}
-		for _, relation := range node.Relations {
-			allowed, ok := index.relationItemKinds(node.Kind, relation.ID)
-			if !ok {
-				return fmt.Errorf("block %q relation %q does not match the catalog", node.ID, relation.ID)
-			}
-			for _, item := range relation.Items {
-				if _, ok := allowed[item.Kind]; !ok {
-					return fmt.Errorf("relation item %q kind %q does not match the catalog", item.ID, item.Kind)
-				}
-				for _, field := range item.Shared {
-					rule, ok := index.relationField(node.Kind, relation.ID, item.Kind, field.ID)
-					if !ok || rule.File || (rule.Ownership != FieldOwnershipShared && rule.Ownership != FieldOwnershipSource) || rule.ValueKind != field.Value.Kind {
-						return fmt.Errorf("relation item %q shared field %q does not match the catalog", item.ID, field.ID)
-					}
-					if rule.Schema != nil {
-						if err := validateValueForSchema(field.Value, *rule.Schema, 0); err != nil {
-							return fmt.Errorf("relation item %q shared field %q: %w", item.ID, field.ID, err)
-						}
-					}
-				}
-				for _, field := range item.Localized {
-					rule, ok := index.relationField(node.Kind, relation.ID, item.Kind, field.ID)
-					if !ok || rule.File || rule.Ownership != FieldOwnershipLocale || rule.ValueKind != field.Value.Kind {
-						return fmt.Errorf("relation item %q localized field %q does not match the catalog", item.ID, field.ID)
-					}
-					if rule.Schema != nil {
-						if err := validateValueForSchema(field.Value, *rule.Schema, 0); err != nil {
-							return fmt.Errorf("relation item %q localized field %q: %w", item.ID, field.ID, err)
-						}
-					}
-				}
-				for _, file := range item.Files {
-					rule, ok := index.relationField(node.Kind, relation.ID, item.Kind, file.Field)
-					if !ok {
-						return fmt.Errorf("relation item %q file field %q does not match the catalog", item.ID, file.Field)
-					}
-					resolved, err := resolveNestedFieldRule(rule, file.Path)
-					if err != nil || !resolved.file {
-						return fmt.Errorf("relation item %q file target %q does not match the catalog", item.ID, nestedFieldKey(file.Field, file.Path))
-					}
-				}
-			}
+		resolved, err := resolveNestedFieldRule(rule, file.Path)
+		if err != nil || !resolved.file {
+			return fmt.Errorf("%s file target %q does not match the catalog", owner, nestedFieldKey(file.Field, file.Path))
 		}
 	}
 	return nil
