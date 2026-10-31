@@ -22,7 +22,7 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	contentBlocks := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 
-	typeResponse, err := NewProgramEventTypeService(db, spiceDB).CreateProgramEventType(
+	typeResponse, err := typeHandlerForTest(t, db, spiceDB).CreateProgramEventType(
 		ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 			Slug:              "program-event-update-race-type-" + testutil.IntegrationUUID(),
@@ -54,13 +54,7 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 	placeBefore := createPlace("Program Event update race before")
 	placeRequested := createPlace("Program Event update race requested")
 
-	eventService := NewProgramEventService(
-		db,
-		newProgramEventRuntime(""),
-		spiceDB,
-		newProgramEventCreditMemberSummaries(db, ""),
-	)
-	eventService.contentBlocks = contentBlocks
+	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
 	startsAt := time.Now().UTC().Add(3 * time.Hour).Truncate(time.Microsecond)
 	endsAt := startsAt.Add(10 * time.Hour)
 	event, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{

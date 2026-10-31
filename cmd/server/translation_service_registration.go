@@ -31,7 +31,7 @@ type translationServiceRegistration struct {
 	menuService              *menu.MenuService
 	legalDocuments           *legal.AIDocumentService
 	internalFormService      *formdomain.InternalFormService
-	programEventService      *programevent.ProgramEventService
+	programEventService      *programevent.Service
 	seriesService            *series.SeriesService
 	fileService              *filemedia.FileService
 }

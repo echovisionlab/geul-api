@@ -1,7 +1,6 @@
 package programevent
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"time"
@@ -10,62 +9,45 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *ProgramEventTypeService) updateProgramEventType(
-	ctx context.Context,
-	request *managev1.UpdateProgramEventTypeRequest,
-	can policyv1.Can,
+// updateProgramEventType writes command to the locked event type and
+// returns the changed configuration fields.
+func updateProgramEventType(
+	tx *gorm.DB,
+	eventType model.ProgramEventType,
+	command UpdateProgramEventTypeCommand,
 	now time.Time,
-) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		eventType, err := lockProgramEventTypeForUpdate(tx, request.Id)
-		if err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		update, err := prepareProgramEventTypeUpdate(request)
-		if err != nil {
-			return err
-		}
-		changedFields := update.changedFields(eventType)
-		if len(changedFields) > 0 {
-			if err := tx.Model(&eventType).Updates(update.columns(now)).Error; err != nil {
-				if dberrors.IsUniqueViolation(err) {
-					return errs.WithCause(errs.SlugAlreadyExists("program event type", request.GetSlug()), err)
-				}
-				return errs.Internal(err)
+) ([]string, error) {
+	update, err := prepareProgramEventTypeUpdate(command)
+	if err != nil {
+		return nil, err
+	}
+	changedFields := update.changedFields(eventType)
+	if len(changedFields) > 0 {
+		if err := tx.Model(&eventType).Updates(update.columns(now)).Error; err != nil {
+			if dberrors.IsUniqueViolation(err) {
+				return nil, domainerr.Duplicate("program event type", "slug", derefString(command.Slug)).WithCause(err)
 			}
+			return nil, err
 		}
-		_, err = updateProgramEventTypeLocale(tx, request, now)
-		if err != nil {
-			return err
-		}
-		if len(changedFields) == 0 {
-			return nil
-		}
-		return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventTypeUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventTypeConfigUpdatedAuditRecord(metadata, eventType.ID, changedFields)
-		})
-	})
+	}
+	if _, err := updateProgramEventTypeLocale(tx, command, now); err != nil {
+		return nil, err
+	}
+	return changedFields, nil
 }
 
 func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventType, error) {
 	var eventType model.ProgramEventType
 	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&eventType, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return eventType, errs.NotFound("program event type", id)
+			return eventType, domainerr.ResourceNotFound("program event type", id)
 		}
-		return eventType, errs.Internal(err)
+		return eventType, err
 	}
 	return eventType, nil
 }
@@ -80,25 +62,24 @@ type programEventTypeUpdate struct {
 	requiresStreamURL *bool
 }
 
-func prepareProgramEventTypeUpdate(request *managev1.UpdateProgramEventTypeRequest) (programEventTypeUpdate, error) {
+func prepareProgramEventTypeUpdate(command UpdateProgramEventTypeCommand) (programEventTypeUpdate, error) {
 	update := programEventTypeUpdate{
-		sortOrder:         request.SortOrder,
-		requiresPlace:     request.RequiresPlace,
-		requiresStreamURL: request.RequiresStreamUrl,
+		sortOrder:         command.SortOrder,
+		requiresPlace:     command.RequiresPlace,
+		requiresStreamURL: command.RequiresStreamURL,
 	}
-	if request.Slug != nil {
-		slug, err := validateProgramEventSlug(request.GetSlug())
+	if command.Slug != nil {
+		slug, err := validateProgramEventSlug(*command.Slug)
 		if err != nil {
 			return programEventTypeUpdate{}, err
 		}
 		update.slug = &slug
 	}
-	if request.Status != nil {
-		status, err := validateProgramEventTypeStatus(request.GetStatus())
-		if err != nil {
-			return programEventTypeUpdate{}, err
+	if command.Status != nil {
+		if *command.Status != model.ProgramEventTypeStatusActive && *command.Status != model.ProgramEventTypeStatusInactive {
+			return programEventTypeUpdate{}, domainerr.InvalidField("status", "must be active or inactive")
 		}
-		update.status = &status
+		update.status = command.Status
 	}
 	return update, nil
 }
@@ -145,29 +126,21 @@ func (u programEventTypeUpdate) columns(updatedAt time.Time) structured.Fields {
 	return columns
 }
 
-func validateProgramEventTypeStatus(status managev1.ProgramEventTypeStatus) (model.ProgramEventTypeStatus, error) {
-	stored, ok := programEventTypeStatusFromProto(status)
-	if !ok {
-		return "", errs.InvalidArgument("status", "must be active or inactive")
-	}
-	return stored, nil
-}
-
-func updateProgramEventTypeLocale(tx *gorm.DB, request *managev1.UpdateProgramEventTypeRequest, now time.Time) (bool, error) {
+func updateProgramEventTypeLocale(tx *gorm.DB, request UpdateProgramEventTypeCommand, now time.Time) (bool, error) {
 	if request.Name == nil && request.Description == nil {
 		return false, nil
 	}
 	if strings.TrimSpace(request.Locale) == "" {
-		return false, errs.Required("locale")
+		return false, domainerr.Required("locale")
 	}
 	locale, err := normalizeRequiredProgramEventLocale("locale", request.Locale)
 	if err != nil {
 		return false, err
 	}
 	var localeRow model.ProgramEventTypeLocale
-	err = tx.First(&localeRow, "type_id = ? AND locale = ?", request.Id, locale).Error
+	err = tx.First(&localeRow, "type_id = ? AND locale = ?", request.ID, locale).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return true, createProgramEventTypeLocale(tx, request, locale, now)
@@ -178,18 +151,17 @@ func updateProgramEventTypeLocale(tx *gorm.DB, request *managev1.UpdateProgramEv
 
 func createProgramEventTypeLocale(
 	tx *gorm.DB,
-	request *managev1.UpdateProgramEventTypeRequest,
+	request UpdateProgramEventTypeCommand,
 	locale string,
 	now time.Time,
 ) error {
-	name := strings.TrimSpace(request.GetName())
-	if request.Name == nil || name == "" {
-		return errs.Required("name")
+	if request.Name == nil || strings.TrimSpace(*request.Name) == "" {
+		return domainerr.Required("name")
 	}
 	return tx.Create(&model.ProgramEventTypeLocale{
-		TypeID:      request.Id,
+		TypeID:      request.ID,
 		Locale:      locale,
-		Name:        name,
+		Name:        strings.TrimSpace(*request.Name),
 		Description: normalizedStringPtr(request.Description),
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -199,14 +171,14 @@ func createProgramEventTypeLocale(
 func applyProgramEventTypeLocaleUpdate(
 	tx *gorm.DB,
 	localeRow *model.ProgramEventTypeLocale,
-	request *managev1.UpdateProgramEventTypeRequest,
+	request UpdateProgramEventTypeCommand,
 	now time.Time,
 ) (bool, error) {
 	updates := structured.Fields{}
 	if request.Name != nil {
-		name := strings.TrimSpace(request.GetName())
+		name := strings.TrimSpace(*request.Name)
 		if name == "" {
-			return false, errs.Required("name")
+			return false, domainerr.Required("name")
 		}
 		if name != localeRow.Name {
 			updates["name"] = name

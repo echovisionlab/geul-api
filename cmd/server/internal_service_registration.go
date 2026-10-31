@@ -13,7 +13,6 @@ import (
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
-	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
@@ -42,7 +41,7 @@ type internalContentServiceRegistration struct {
 	workRuntime                 *workadapter.Runtime
 	fileService                 *filemedia.FileService
 	postMedia                   postruntime.ContentBlockMedia
-	programEventFiles           *programeventadapter.Files
+	programEvents               *programevent.Service
 	emailAuthoringReferences    *emailauthoringadapter.CampaignDeliveryReferences
 	legalRuntime                *legaladapter.Runtime
 	legalDependencies           legal.Dependencies
@@ -81,7 +80,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	workRuntime := r.workRuntime
 	fileService := r.fileService
 	postMedia := r.postMedia
-	programEventFiles := r.programEventFiles
 	emailAuthoringReferences := r.emailAuthoringReferences
 	legalRuntime := r.legalRuntime
 	legalDependencies := r.legalDependencies
@@ -135,16 +133,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
 	slog.Info("Registered internal service", "path", internalPostPath)
 
-	internalProgramEventService := programevent.NewAuditedInternalProgramEventService(
-		db,
-		servicePublisher,
-		telemetryWriter,
-		programevent.WithInternalProgramEventSpiceDB(spicedbClient),
-		programevent.WithInternalProgramEventCheckpoints(collaborationRuntime.Checkpoints),
-		programevent.WithInternalProgramEventContentBlockStore(contentBlockStore),
-		programevent.WithInternalProgramEventMediaHydrator(programEventFiles),
-	)
-	internalProgramEventPath, internalProgramEventHandler := intrav1connect.NewInternalProgramEventServiceHandler(internalProgramEventService, internalHandlerOpts...)
+	internalProgramEventPath, internalProgramEventHandler := intrav1connect.NewInternalProgramEventServiceHandler(programevent.NewInternalConnectHandler(r.programEvents), internalHandlerOpts...)
 	mux.Handle(internalProgramEventPath, internalRPCTrust.collab(internalProgramEventHandler))
 	slog.Info("Registered internal service", "path", internalProgramEventPath)
 

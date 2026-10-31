@@ -6,30 +6,24 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/google/uuid"
 )
 
 const EntityType = "program_event"
@@ -170,249 +164,159 @@ const (
 	programEventSeriesSourceTitleSQL = "program_event_series.title"
 )
 
-type ProgramEventService struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
-	db             *gorm.DB
-	spiceDB        *auth.SpiceDBClient
-	asyncPublisher AsyncPublisher
-	runtime        Runtime
-	fileDeleter    FileDeleter
-	creditMembers  CreditMemberSummaries
-	auditWriter    domainaudit.Appender
-	contentBlocks  *contentblock.Store
+// Relation is an artist, label or client of a Program Event: the related
+// row's ID, its optional role, and its position.
+type Relation struct {
+	ID        string
+	Role      *string
+	SortOrder int32
 }
 
-type ProgramEventServiceOption func(*ProgramEventService)
-
-func WithProgramEventContentBlockStore(store *contentblock.Store) ProgramEventServiceOption {
-	return func(service *ProgramEventService) {
-		service.contentBlocks = store
-	}
+// Credit is one credit line of a Program Event. Exactly one of ArtistID,
+// MemberID and DisplayName names the credited party; an empty ID creates
+// the credit.
+type Credit struct {
+	ID          string
+	ArtistID    *string
+	MemberID    *string
+	DisplayName *string
+	CreditRole  *string
+	Description *string
+	SortOrder   int32
 }
 
-// WithProgramEventAsyncPublisher supplies the existing coalescible content
-// update signal used by collaboration and other runtime consumers. DCDP
-// writes fail closed before persistence when this dependency is absent.
-func WithProgramEventAsyncPublisher(publisher AsyncPublisher) ProgramEventServiceOption {
-	return func(service *ProgramEventService) {
-		service.asyncPublisher = publisher
-	}
+// CreateProgramEventCommand creates a draft event with an empty content
+// document. An empty SourceLocale is resolved from the Member's preference,
+// then AcceptLanguage, then the site default.
+type CreateProgramEventCommand struct {
+	Title          string
+	Slug           string
+	SourceLocale   string
+	AcceptLanguage string
+	TypeID         string
+	StartsAt       *time.Time
+	EndsAt         *time.Time
+	Timezone       string
+	AllDay         bool
+	LocationMode   model.ProgramEventLocationMode
+	MapPlaceID     *string
+	Summary        *string
+	SeriesID       *string
+	SeriesOrder    *int32
+	PosterFileID   *string
+	TicketURL      *string
+	StreamURL      *string
+	ExternalURL    *string
+	Artists        []Relation
+	Labels         []Relation
+	Clients        []Relation
+	Credits        []Credit
 }
 
-func NewProgramEventService(
-	db *gorm.DB,
-	runtime Runtime,
-	spiceDB *auth.SpiceDBClient,
-	creditMembers CreditMemberSummaries,
-	fileDeleter ...FileDeleter,
-) *ProgramEventService {
-	if db == nil {
-		panic("db is required")
-	}
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	dependencycheck.MustNotNil(runtime, "Program Event runtime")
-	dependencycheck.MustNotNil(creditMembers, "creditMembers")
-	var deleter FileDeleter
-	if len(fileDeleter) > 0 {
-		deleter = fileDeleter[0]
-	}
-	return &ProgramEventService{
-		db: db, spiceDB: spiceDB, runtime: runtime,
-		creditMembers: creditMembers, fileDeleter: deleter,
-	}
-}
-
-func NewAuditedProgramEventService(
-	db *gorm.DB,
-	runtime Runtime,
-	fileDeleter FileDeleter,
-	auditWriter domainaudit.Appender,
-	spiceDB *auth.SpiceDBClient,
-	creditMembers CreditMemberSummaries,
-	options ...ProgramEventServiceOption,
-) *ProgramEventService {
-	if auditWriter == nil {
-		panic("program event audit writer is required")
-	}
-	service := NewProgramEventService(db, runtime, spiceDB, creditMembers, fileDeleter)
-	service.auditWriter = auditWriter
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
-}
-
-type ProgramEventSeriesService struct {
-	managev1connect.UnimplementedProgramEventSeriesServiceHandler
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
-	runtime     Runtime
-	auditWriter domainaudit.Appender
-}
-
-func NewProgramEventSeriesService(db *gorm.DB, runtime Runtime, spiceDB *auth.SpiceDBClient) *ProgramEventSeriesService {
-	if db == nil {
-		panic("db is required")
-	}
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	dependencycheck.MustNotNil(runtime, "Program Event runtime")
-	return &ProgramEventSeriesService{db: db, spiceDB: spiceDB, runtime: runtime}
-}
-
-func NewAuditedProgramEventSeriesService(db *gorm.DB, runtime Runtime, auditWriter domainaudit.Appender, spiceDB *auth.SpiceDBClient) *ProgramEventSeriesService {
-	if auditWriter == nil {
-		panic("program event series audit writer is required")
-	}
-	service := NewProgramEventSeriesService(db, runtime, spiceDB)
-	service.auditWriter = auditWriter
-	return service
-}
-
-type ProgramEventTypeService struct {
-	managev1connect.UnimplementedProgramEventTypeServiceHandler
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
-	auditWriter domainaudit.Appender
-}
-
-func NewProgramEventTypeService(db *gorm.DB, spiceDB *auth.SpiceDBClient) *ProgramEventTypeService {
-	if db == nil {
-		panic("db is required")
-	}
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	return &ProgramEventTypeService{db: db, spiceDB: spiceDB}
-}
-
-func NewAuditedProgramEventTypeService(db *gorm.DB, auditWriter domainaudit.Appender, spiceDB *auth.SpiceDBClient) *ProgramEventTypeService {
-	if auditWriter == nil {
-		panic("program event type audit writer is required")
-	}
-	service := NewProgramEventTypeService(db, spiceDB)
-	service.auditWriter = auditWriter
-	return service
-}
-
-func (s *ProgramEventService) CreateProgramEvent(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateProgramEventRequest],
-) (*connect.Response[managev1.ProgramEvent], error) {
+// CreateProgramEvent creates the event and its authorization policy and
+// returns the administrator view of it.
+func (s *Service) CreateProgramEvent(ctx context.Context, command CreateProgramEventCommand) (*managev1.ProgramEvent, error) {
 	can, err := policyv1.ProgramEvent.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Program Event content Block store is not configured")
-	}
-	event, err := s.newProgramEvent(ctx, req.Msg, req.Header().Get("Accept-Language"))
+	event, err := s.newProgramEvent(ctx, command)
 	if err != nil {
 		return nil, err
 	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := s.createProgramEventWithDB(ctx, tx, event, req.Msg); err != nil {
-			return err
-		}
-		apply, err := policyv1.ProgramEvent.TouchPolicy(event.ID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.ProgramEvent.DeletePolicy(event.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
-	})
-	if err != nil {
+	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+			return event.ID, s.createProgramEventWithDB(ctx, tx, event, command)
+		},
+		Audit: func(eventID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventCreatedAuditRecord(metadata, eventID)
+			})
+		},
+		Relationships: func(eventID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyRelationships(policyv1.ProgramEvent.TouchPolicy, policyv1.ProgramEvent.DeletePolicy, eventID)
+		},
+	}); err != nil {
 		return nil, err
 	}
-	proto, err := s.loadProgramEvent(ctx, event.ID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+	return s.loadProgramEvent(ctx, event.ID)
 }
 
-func (s *ProgramEventService) newProgramEvent(
-	ctx context.Context,
-	request *managev1.CreateProgramEventRequest,
-	acceptLanguage string,
-) (*model.ProgramEvent, error) {
-	title := strings.TrimSpace(request.Title)
-	if title == "" {
-		return nil, errs.Required("title")
+// policyRelationships is the relationship batch apply(id) and its exact
+// inverse compensate(id).
+func policyRelationships(
+	apply, compensate func(string) (policyv1.RelationshipMutation, error),
+	id string,
+) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	applied, err := apply(id)
+	if err != nil {
+		return nil, nil, err
 	}
-	slug, err := validateProgramEventSlug(request.Slug)
+	compensated, err := compensate(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []policyv1.RelationshipMutation{applied}, []policyv1.RelationshipMutation{compensated}, nil
+}
+
+func (s *Service) newProgramEvent(ctx context.Context, command CreateProgramEventCommand) (*model.ProgramEvent, error) {
+	title := strings.TrimSpace(command.Title)
+	if title == "" {
+		return nil, domainerr.Required("title")
+	}
+	slug, err := validateProgramEventSlug(command.Slug)
 	if err != nil {
 		return nil, err
 	}
 	if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "program event", "events", slug); err != nil {
 		return nil, err
 	}
-	if request.StartsAt == nil {
-		return nil, errs.Required("starts_at")
+	if command.StartsAt == nil {
+		return nil, domainerr.Required("starts_at")
 	}
-	startsAt := request.StartsAt.AsTime()
-	endsAt := timestampPtr(request.EndsAt)
-	if err := validateProgramEventTimeRange(startsAt, endsAt); err != nil {
+	startsAt := *command.StartsAt
+	if err := validateProgramEventTimeRange(startsAt, command.EndsAt); err != nil {
 		return nil, err
 	}
-	timezone := strings.TrimSpace(request.Timezone)
+	timezone := strings.TrimSpace(command.Timezone)
 	if timezone == "" {
-		return nil, errs.Required("timezone")
+		return nil, domainerr.Required("timezone")
 	}
-	locationMode := locationModeFromProto(request.LocationMode)
-	mapPlaceID := request.MapPlaceId
-	if !locationMode.UsesMapPlace() {
+	mapPlaceID := command.MapPlaceID
+	if !command.LocationMode.UsesMapPlace() {
 		mapPlaceID = nil
 	}
-	if err := validateProgramEventLocation(locationMode, mapPlaceID); err != nil {
+	if err := validateProgramEventLocation(command.LocationMode, mapPlaceID); err != nil {
 		return nil, err
 	}
-
-	now := time.Now().UTC()
-	var sourceLocale string
-	if strings.TrimSpace(request.SourceLocale) == "" {
-		sourceLocale = resolveInitialSourceLocale(ctx, s.db, acceptLanguage)
-	} else {
-		sourceLocale, err = normalizeRequiredProgramEventLocale("source_locale", request.SourceLocale)
-		if err != nil {
-			return nil, err
-		}
+	sourceLocale, err := s.initialSourceLocale(ctx, command)
+	if err != nil {
+		return nil, err
 	}
+	now := time.Now().UTC()
 	return &model.ProgramEvent{
-		Title:        title,
-		Slug:         slug,
-		Status:       model.ProgramEventStatusDraft,
-		SourceLocale: sourceLocale,
-		TypeID:       request.TypeId,
-		SeriesID:     request.SeriesId,
-		SeriesOrder:  request.SeriesOrder,
-		StartsAt:     startsAt,
-		EndsAt:       endsAt,
-		Timezone:     timezone,
-		AllDay:       request.AllDay,
-		LocationMode: locationMode,
-		MapPlaceID:   mapPlaceID,
-		TicketURL:    request.TicketUrl,
-		StreamURL:    request.StreamUrl,
-		ExternalURL:  request.ExternalUrl,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Title: title, Slug: slug, Status: model.ProgramEventStatusDraft, SourceLocale: sourceLocale,
+		TypeID: command.TypeID, SeriesID: command.SeriesID, SeriesOrder: command.SeriesOrder,
+		StartsAt: startsAt, EndsAt: command.EndsAt, Timezone: timezone, AllDay: command.AllDay,
+		LocationMode: command.LocationMode, MapPlaceID: mapPlaceID,
+		TicketURL: command.TicketURL, StreamURL: command.StreamURL, ExternalURL: command.ExternalURL,
+		CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
-func (s *ProgramEventService) createProgramEventWithDB(
+func (s *Service) initialSourceLocale(ctx context.Context, command CreateProgramEventCommand) (string, error) {
+	if strings.TrimSpace(command.SourceLocale) == "" {
+		return resolveInitialSourceLocale(ctx, s.db, command.AcceptLanguage), nil
+	}
+	return normalizeRequiredProgramEventLocale("source_locale", command.SourceLocale)
+}
+
+func (s *Service) createProgramEventWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	event *model.ProgramEvent,
-	request *managev1.CreateProgramEventRequest,
+	command CreateProgramEventCommand,
 ) error {
 	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", event.Slug); err != nil {
 		return err
@@ -431,235 +335,229 @@ func (s *ProgramEventService) createProgramEventWithDB(
 	event.ContentDocumentID = &contentDocumentID
 	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(event).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			return errs.WithCause(errs.SlugAlreadyExists("program event", event.Slug), err)
+			return domainerr.Duplicate("program event", "slug", event.Slug).WithCause(err)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	if err := initializeProgramEventBlockTranslationSource(
-		ctx,
-		tx,
-		event.ID,
-		event.SourceLocale,
-		request.Summary,
-		event.CreatedAt,
+		ctx, tx, event.ID, event.SourceLocale, command.Summary, event.CreatedAt,
 	); err != nil {
 		return err
 	}
-	if request.PosterFileId != nil && strings.TrimSpace(request.GetPosterFileId()) != "" {
-		if err := addProgramEventMedia(ctx, tx, s.runtime, event.ID, request.GetPosterFileId(), "poster", nil, nil, true); err != nil {
+	if command.PosterFileID != nil && strings.TrimSpace(*command.PosterFileID) != "" {
+		if err := addProgramEventMedia(ctx, tx, s.media, event.ID, *command.PosterFileID, "poster", nil, nil, true); err != nil {
 			return err
 		}
 	}
-	if err := replaceProgramEventArtists(ctx, tx, event.ID, request.Artists); err != nil {
+	if err := replaceProgramEventArtists(ctx, tx, event.ID, command.Artists); err != nil {
 		return err
 	}
-	if err := replaceProgramEventLabels(ctx, tx, event.ID, request.Labels); err != nil {
+	if err := replaceProgramEventLabels(ctx, tx, event.ID, command.Labels); err != nil {
 		return err
 	}
-	if err := replaceProgramEventClients(ctx, tx, event.ID, request.Clients); err != nil {
+	if err := replaceProgramEventClients(ctx, tx, event.ID, command.Clients); err != nil {
 		return err
 	}
-	if _, err := replaceProgramEventCredits(ctx, tx, event.ID, request.Credits); err != nil {
-		return err
-	}
-	return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		return sharedtelemetry.NewProgramEventCreatedAuditRecord(metadata, event.ID)
-	})
+	_, err = replaceProgramEventCredits(ctx, tx, event.ID, command.Credits)
+	return err
 }
 
-func (s *ProgramEventService) GetProgramEvent(
-	ctx context.Context,
-	req *connect.Request[managev1.GetProgramEventRequest],
-) (*connect.Response[managev1.ProgramEvent], error) {
-	proto, err := s.loadAuthorizedProgramEvent(ctx, req.Msg.Id)
-	if err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.WithCause(errs.NotFound("program event", req.Msg.Id), err)
-		}
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+// GetProgramEventQuery names the event to read.
+type GetProgramEventQuery struct {
+	ID string
 }
 
-func (s *ProgramEventService) ListProgramEventsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListProgramEventsAdminRequest],
-) (*connect.Response[managev1.ListProgramEventsAdminResponse], error) {
+// GetProgramEvent returns the administrator view of an event the caller may
+// view; an event the caller may not view answers not found.
+func (s *Service) GetProgramEvent(ctx context.Context, query GetProgramEventQuery) (*managev1.ProgramEvent, error) {
+	event, err := s.loadAuthorizedProgramEvent(ctx, query.ID)
+	if rejected(err, domainerr.PermissionDenied) {
+		return nil, domainerr.ResourceNotFound("program event", query.ID).WithCause(err)
+	}
+	return event, err
+}
+
+// ListProgramEventsQuery is one page of the administrator event list.
+type ListProgramEventsQuery struct {
+	// Limit defaults to 50.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// EventList is one page of event summaries.
+type EventList struct {
+	Events     []*managev1.ProgramEventSummary
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListProgramEventsAdmin returns one page of event summaries to an
+// administrator.
+func (s *Service) ListProgramEventsAdmin(ctx context.Context, query ListProgramEventsQuery) (EventList, error) {
 	can, err := policyv1.ProgramEvent.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return EventList{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return EventList{}, err
 	}
-	query := s.db.WithContext(ctx).Model(&model.ProgramEvent{})
-	query, err = ProgramEventFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	rows := s.db.WithContext(ctx).Model(&model.ProgramEvent{})
+	rows, err = ProgramEventFilterConfig.ApplyFilters(rows, query.Filters)
 	if err != nil {
-		return nil, err
+		return EventList{}, err
 	}
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := rows.Count(&total).Error; err != nil {
+		return EventList{}, err
 	}
-	query, err = programEventSortConfig.ApplySort(query, req.Msg.Sorts)
+	rows, err = programEventSortConfig.ApplySort(rows, query.Sorts)
 	if err != nil {
-		return nil, err
+		return EventList{}, err
 	}
-	query = query.Order("program_event.id ASC")
-	limit, offset := paginationLimitOffset(req.Msg.Pagination, 50)
+	limit, offset := pageLimitOffset(query.Limit, query.Offset)
 	var events []model.ProgramEvent
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&events).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := rows.Order("program_event.id ASC").Limit(int(limit)).Offset(int(offset)).Find(&events).Error; err != nil {
+		return EventList{}, err
 	}
-	eventIDs := collectProgramEventIDs(events)
-	posterFileIDs, err := loadProgramEventDefaultPosterFileIDs(ctx, s.db, eventIDs)
+	posterFileIDs, err := loadProgramEventDefaultPosterFileIDs(ctx, s.db, collectProgramEventIDs(events))
 	if err != nil {
-		return nil, err
+		return EventList{}, err
 	}
 	summaries := make([]*managev1.ProgramEventSummary, 0, len(events))
 	for i := range events {
 		summaries = append(summaries, toProtoProgramEventSummary(&events[i], posterFileIDs[events[i].ID]))
 	}
-	return connect.NewResponse(&managev1.ListProgramEventsAdminResponse{
-		Events: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+int32(len(events)) < int32(total),
+	return EventList{Events: summaries, Pagination: &commonv1.PaginationResponse{
+		Total: int32(total), Limit: limit, Offset: offset,
+		HasMore: offset+int32(len(events)) < int32(total),
+	}}, nil
+}
+
+// DeleteProgramEventCommand names the event to delete.
+type DeleteProgramEventCommand struct {
+	ID string
+}
+
+// DeleteProgramEvent deletes the event, its content document and its
+// authorization policy.
+func (s *Service) DeleteProgramEvent(ctx context.Context, command DeleteProgramEventCommand) error {
+	var documentID uuid.UUID
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			documentID, err = loadProgramEventContentDocumentID(ctx, tx, command.ID, true)
+			return err
 		},
-	}), nil
-}
-
-func (s *ProgramEventService) DeleteProgramEvent(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteProgramEventRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Program Event content Block store is not configured")
-	}
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		documentID, err := loadProgramEventContentDocumentID(ctx, tx, req.Msg.Id, true)
-		if err != nil {
-			return err
-		}
-		if err := requireProgramEventMutationPermissionWithDB(
-			ctx, tx, s.spiceDB, req.Msg.Id, policyv1.ProgramEvent.Delete,
-		); err != nil {
-			return err
-		}
-		if err := s.contentBlocks.DeleteDocument(
-			ctx,
-			tx,
-			documentID,
-			programEventContentDocumentFence(req.Msg.Id, func(context.Context, *gorm.DB) error { return nil }),
-		); err != nil {
-			return normalizeProgramEventContentBlockError(err)
-		}
-		result := tx.Delete(&model.ProgramEvent{}, "id = ?", req.Msg.Id)
-		if result.Error != nil {
-			return errs.Internal(result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return errs.NotFound("program event", req.Msg.Id)
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "program_event", req.Msg.Id, "media"); err != nil {
-			return err
-		}
-		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventDeletedAuditRecord(metadata, req.Msg.Id)
-		}); err != nil {
-			return err
-		}
-		apply, err := policyv1.ProgramEvent.DeletePolicy(req.Msg.Id)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.ProgramEvent.TouchPolicy(req.Msg.Id)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return requireLockedProgramEventAction(ctx, tx, s.spiceDB, command.ID, policyv1.ProgramEvent.Delete)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+			if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, lockedContentFence(command.ID, documentID)); err != nil {
+				return "", normalizeProgramEventContentBlockError(err)
+			}
+			result := tx.Delete(&model.ProgramEvent{}, "id = ?", command.ID)
+			if result.Error != nil {
+				return "", result.Error
+			}
+			if result.RowsAffected == 0 {
+				return "", domainerr.ResourceNotFound("program event", command.ID)
+			}
+			return command.ID, s.media.ReleasePublicAssetBindings(ctx, tx, "program_event", command.ID, "media")
+		},
+		Audit: func(eventID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventDeletedAuditRecord(metadata, eventID)
+			})
+		},
+		Relationships: func(eventID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyRelationships(policyv1.ProgramEvent.DeletePolicy, policyv1.ProgramEvent.TouchPolicy, eventID)
+		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return err
 }
 
-func (s *ProgramEventService) PublishProgramEvent(
-	ctx context.Context,
-	req *connect.Request[managev1.PublishProgramEventRequest],
-) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
-	return s.setProgramEventStatus(ctx, req.Msg.Id, model.ProgramEventStatusPublished, true)
+// LifecycleChange is the event lifecycle after a publish or archive.
+type LifecycleChange struct {
+	ID          string
+	Changed     bool
+	Status      model.ProgramEventStatus
+	PublishedAt *time.Time
+	UpdatedAt   time.Time
 }
 
-func (s *ProgramEventService) ArchiveProgramEvent(
-	ctx context.Context,
-	req *connect.Request[managev1.ArchiveProgramEventRequest],
-) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
-	return s.setProgramEventStatus(ctx, req.Msg.Id, model.ProgramEventStatusArchived, false)
+// PublishProgramEventCommand names the event to publish.
+type PublishProgramEventCommand struct {
+	ID string
 }
 
-func (s *ProgramEventService) setProgramEventStatus(
+// PublishProgramEvent publishes a draft event, or restores an archived event
+// with its original publication date.
+func (s *Service) PublishProgramEvent(ctx context.Context, command PublishProgramEventCommand) (LifecycleChange, error) {
+	return s.setProgramEventStatus(ctx, command.ID, model.ProgramEventStatusPublished, true)
+}
+
+// ArchiveProgramEventCommand names the event to archive.
+type ArchiveProgramEventCommand struct {
+	ID string
+}
+
+// ArchiveProgramEvent moves a published event to archived.
+func (s *Service) ArchiveProgramEvent(ctx context.Context, command ArchiveProgramEventCommand) (LifecycleChange, error) {
+	return s.setProgramEventStatus(ctx, command.ID, model.ProgramEventStatusArchived, false)
+}
+
+func (s *Service) setProgramEventStatus(
 	ctx context.Context,
 	id string,
 	status model.ProgramEventStatus,
 	publish bool,
-) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
+) (LifecycleChange, error) {
 	var current model.ProgramEvent
-	now := dbtime.Now()
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Select("id", "status", "published_at", "updated_at").
-			First(&current, "id = ?", id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("program event", id)
+	var previous model.ProgramEventStatus
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+				Select("id", "status", "published_at", "updated_at").
+				First(&current, "id = ?", id).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domainerr.ResourceNotFound("program event", id)
+				}
+				return err
 			}
-			return errs.Internal(err)
-		}
-		if err := requireActiveProgramEventPrincipal(ctx, tx, "publish", false); err != nil {
-			return err
-		}
-		if err := requireProgramEventPermission(
-			ctx, s.spiceDB, current.ID,
-			programEventMutationAction(current.Status, policyv1.ProgramEvent.Publish),
-		); err != nil {
-			return err
-		}
-		if publish && current.Status == model.ProgramEventStatusPublished {
-			return errs.FailedPrecondition("program event is already published")
-		}
-		if !publish && current.Status != model.ProgramEventStatusPublished {
-			return errs.FailedPrecondition("only published program events can be archived")
-		}
-		updates := structured.Fields{"status": status, "updated_at": now}
-		previousStatus := current.Status
-		if publish && current.Status != model.ProgramEventStatusArchived {
-			updates["published_at"] = now
-		}
-		if err := tx.Model(&current).Clauses(clause.Returning{Columns: []clause.Column{
-			{Name: "status"}, {Name: "published_at"}, {Name: "updated_at"},
-		}}).Updates(updates).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventLifecycleAuditRecord(metadata, current.ID, programEventAuditState(previousStatus), programEventAuditState(status))
-		})
-	}); err != nil {
-		return nil, err
+			previous = current.Status
+			return nil
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return authorizeLockedProgramEvent(ctx, tx, s.spiceDB, current.ID, current.Status, "publish", policyv1.ProgramEvent.Publish)
+		}),
+		Change: func(_ context.Context, tx *gorm.DB) (string, error) {
+			if publish && current.Status == model.ProgramEventStatusPublished {
+				return "", domainerr.Precondition("program event is already published")
+			}
+			if !publish && current.Status != model.ProgramEventStatusPublished {
+				return "", domainerr.Precondition("only published program events can be archived")
+			}
+			now := dbtime.Now()
+			updates := structured.Fields{"status": status, "updated_at": now}
+			if publish && current.Status != model.ProgramEventStatusArchived {
+				updates["published_at"] = now
+			}
+			return current.ID, tx.Model(&current).Clauses(clause.Returning{Columns: []clause.Column{
+				{Name: "status"}, {Name: "published_at"}, {Name: "updated_at"},
+			}}).Updates(updates).Error
+		},
+		Audit: func(eventID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventLifecycleAuditRecord(metadata, eventID, programEventAuditState(previous), programEventAuditState(status))
+			})
+		},
+	})
+	if err != nil {
+		return LifecycleChange{}, err
 	}
-	response := &managev1.ProgramEventLifecycleMutationResponse{
-		Id:        current.ID,
-		Changed:   true,
-		Status:    programEventStatusToProto(current.Status),
-		UpdatedAt: timestamppb.New(current.UpdatedAt),
-	}
-	if current.PublishedAt != nil {
-		response.PublishedAt = timestamppb.New(*current.PublishedAt)
-	}
-	return connect.NewResponse(response), nil
+	return LifecycleChange{
+		ID: current.ID, Changed: true, Status: current.Status,
+		PublishedAt: current.PublishedAt, UpdatedAt: current.UpdatedAt,
+	}, nil
 }

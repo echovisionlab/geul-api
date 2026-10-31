@@ -38,12 +38,11 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	require.NoError(t, err)
 	files := publicProgramEventFileGateway{db: db}
 	runtime := newManageProgramEventRuntime("https://cdn.example.com")
-	service := eventdomain.NewAuditedProgramEventService(
-		db, runtime, files, apitelemetry.NewDurableWriter(db), publicIntegrationSpiceDB(t),
-		programeventadapter.NewCreditMemberSummaries(db, "https://cdn.example.com"),
-		eventdomain.WithProgramEventContentBlockStore(store),
-	)
-	typeResponse, err := eventdomain.NewProgramEventTypeService(db, publicIntegrationSpiceDB(t)).CreateProgramEventType(ctx,
+	manageEvents := manageProgramEvents(t, db, eventdomain.Deps{
+		Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: store, Media: runtime, MediaHydrator: files,
+	})
+	service := eventdomain.NewConnectHandler(manageEvents)
+	typeResponse, err := eventdomain.NewTypeConnectHandler(manageEvents).CreateProgramEventType(ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "poster-type-" + uuid.NewString(), Locale: "en", Name: "Poster type"}))
 	require.NoError(t, err)
 	event, err := service.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
@@ -138,7 +137,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 
 	t.Run("series reuses canonical image", func(t *testing.T) {
 		fileID, assetID := testutil.SeedCanonicalPublicFileFixture(t, db, "series-image.webp", "image/webp", "image")
-		series, err := eventdomain.NewProgramEventSeriesService(db, runtime, publicIntegrationSpiceDB(t)).CreateProgramEventSeries(ctx,
+		series, err := eventdomain.NewSeriesConnectHandler(manageEvents).CreateProgramEventSeries(ctx,
 			connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{Title: "Image series", Slug: "image-series-" + uuid.NewString(), PosterFileId: &fileID}))
 		require.NoError(t, err)
 		var binding model.PublicAssetBinding

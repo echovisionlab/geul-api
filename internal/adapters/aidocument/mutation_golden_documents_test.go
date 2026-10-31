@@ -22,13 +22,11 @@ type goldenProgramEventDocumentAPI struct {
 	err error
 }
 
-func (a *goldenProgramEventDocumentAPI) ExecuteAIDocumentCommand(
+func (a *goldenProgramEventDocumentAPI) ExecuteAIDocument(
 	ctx context.Context,
-	eventID, locale string,
-	mode programeventdomain.AIDocumentExecutionMode,
-	compiler programeventdomain.AIDocumentCommandCompiler,
+	execution programeventdomain.ExecuteAIDocumentCommand,
 ) (programeventdomain.AIDocumentResult, error) {
-	result, err := a.exactProgramEventDocumentAPI.ExecuteAIDocumentCommand(ctx, eventID, locale, mode, compiler)
+	result, err := a.exactProgramEventDocumentAPI.ExecuteAIDocument(ctx, execution)
 	if err == nil && a.err != nil {
 		return programeventdomain.AIDocumentResult{}, a.err
 	}

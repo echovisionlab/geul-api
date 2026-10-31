@@ -24,7 +24,7 @@ func TestProgramEventTypeAdminEditAndDeleteBoundaryIntegration(t *testing.T) {
 	suffix := testutil.IntegrationUUID()
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	service := NewProgramEventTypeService(db, spiceDB)
+	service := typeHandlerForTest(t, db, spiceDB)
 	contentBlocks := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 
 	created, err := service.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
@@ -55,8 +55,7 @@ func TestProgramEventTypeAdminEditAndDeleteBoundaryIntegration(t *testing.T) {
 	}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-	eventService := NewProgramEventService(db, newProgramEventRuntime("https://cdn.example.com"), spiceDB, newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"))
-	eventService.contentBlocks = contentBlocks
+	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com")}))
 	_, err = eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Uses Event Type " + suffix,
 		Slug:         "uses-event-type-" + suffix,

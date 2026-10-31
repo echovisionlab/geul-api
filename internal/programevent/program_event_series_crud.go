@@ -6,37 +6,67 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *ProgramEventSeriesService) CreateProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateProgramEventSeriesRequest],
-) (*connect.Response[managev1.ProgramEventSeries], error) {
+// CreateProgramEventSeriesCommand creates a draft series.
+type CreateProgramEventSeriesCommand struct {
+	Title        string
+	Slug         string
+	Summary      *string
+	Description  *string
+	PosterFileID *string
+}
+
+// CreateProgramEventSeries creates the series and its authorization policy.
+func (s *Service) CreateProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (*managev1.ProgramEventSeries, error) {
 	can, err := policyv1.ProgramEventSeries.Create()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	title := strings.TrimSpace(req.Msg.Title)
+	series, err := s.newProgramEventSeries(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+			return series.ID, s.createProgramEventSeriesWithDB(ctx, tx, series)
+		},
+		Audit: func(seriesID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventSeriesCreatedAuditRecord(metadata, seriesID)
+			})
+		},
+		Relationships: func(seriesID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyRelationships(policyv1.ProgramEventSeries.TouchPolicy, policyv1.ProgramEventSeries.DeletePolicy, seriesID)
+		},
+	}); err != nil {
+		return nil, err
+	}
+	return s.loadProgramEventSeries(ctx, series.ID)
+}
+
+func (s *Service) newProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (*model.ProgramEventSeries, error) {
+	title := strings.TrimSpace(command.Title)
 	if title == "" {
-		return nil, errs.Required("title")
+		return nil, domainerr.Required("title")
 	}
-	slug, err := validateProgramEventSlug(req.Msg.Slug)
+	slug, err := validateProgramEventSlug(command.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -44,229 +74,184 @@ func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 		return nil, err
 	}
 	now := time.Now().UTC()
-	posterFileID := nullableString(req.Msg.PosterFileId)
-	series := &model.ProgramEventSeries{
+	return &model.ProgramEventSeries{
 		Slug:         slug,
 		Status:       model.ProgramEventStatusDraft,
 		Title:        title,
-		Summary:      req.Msg.Summary,
-		Description:  req.Msg.Description,
-		PosterFileID: posterFileID,
+		Summary:      command.Summary,
+		Description:  command.Description,
+		PosterFileID: nullableString(command.PosterFileID),
 		CreatedAt:    now,
 		UpdatedAt:    now,
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event series", "event-series", slug); err != nil {
-			return err
-		}
-		if posterFileID != nil {
-			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{*posterFileID}); err != nil {
-				return err
-			}
-		}
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) {
-				return errs.WithCause(errs.SlugAlreadyExists("program event series", slug), err)
-			}
-			return errs.Internal(err)
-		}
-		if posterFileID != nil {
-			if _, err := s.runtime.BindReadyAssetForSourceFile(ctx, tx, *posterFileID, "program_event_series", series.ID, "poster", "poster"); err != nil {
-				return err
-			}
-		}
-		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventSeriesCreatedAuditRecord(metadata, series.ID)
-		}); err != nil {
-			return err
-		}
-		apply, err := policyv1.ProgramEventSeries.TouchPolicy(series.ID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.ProgramEventSeries.DeletePolicy(series.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
-	})
-	if err != nil {
-		return nil, err
-	}
-	proto, err := s.loadProgramEventSeries(ctx, series.ID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+	}, nil
 }
 
-func (s *ProgramEventSeriesService) GetProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.GetProgramEventSeriesRequest],
-) (*connect.Response[managev1.ProgramEventSeries], error) {
-	series, err := s.loadProgramEventSeriesRow(ctx, req.Msg.Id)
+func (s *Service) createProgramEventSeriesWithDB(ctx context.Context, tx *gorm.DB, series *model.ProgramEventSeries) error {
+	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event series", "event-series", series.Slug); err != nil {
+		return err
+	}
+	if series.PosterFileID != nil {
+		if err := s.media.LockAttachableFilesForUpdate(ctx, tx, []string{*series.PosterFileID}); err != nil {
+			return err
+		}
+	}
+	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
+		if dberrors.IsUniqueViolation(err) {
+			return domainerr.Duplicate("program event series", "slug", series.Slug).WithCause(err)
+		}
+		return err
+	}
+	if series.PosterFileID == nil {
+		return nil
+	}
+	_, err := s.media.BindReadyAssetForSourceFile(ctx, tx, *series.PosterFileID, "program_event_series", series.ID, "poster", "poster")
+	return err
+}
+
+// GetProgramEventSeriesQuery names the series by ID or slug.
+type GetProgramEventSeriesQuery struct {
+	IDOrSlug string
+}
+
+// GetProgramEventSeries returns one series to an administrator.
+func (s *Service) GetProgramEventSeries(ctx context.Context, query GetProgramEventSeriesQuery) (*managev1.ProgramEventSeries, error) {
+	series, err := s.loadProgramEventSeriesRow(ctx, query.IDOrSlug)
 	if err != nil {
 		return nil, err
 	}
 	can, err := policyv1.ProgramEventSeries.View(series.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return nil, err
 	}
-	proto, err := s.toProtoProgramEventSeries(series)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+	return s.toProtoProgramEventSeries(series)
 }
 
-func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListProgramEventSeriesAdminRequest],
-) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error) {
+// ListProgramEventSeriesQuery is one page of the administrator series list.
+type ListProgramEventSeriesQuery struct {
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// SeriesList is one page of series.
+type SeriesList struct {
+	Series     []*managev1.ProgramEventSeries
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListProgramEventSeriesAdmin returns one page of series to an
+// administrator. A status filter names series API statuses.
+func (s *Service) ListProgramEventSeriesAdmin(ctx context.Context, query ListProgramEventSeriesQuery) (SeriesList, error) {
 	can, err := policyv1.ProgramEventSeries.List()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return SeriesList{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-	query := s.db.WithContext(ctx).Model(&model.ProgramEventSeries{})
-	mappedFilters, err := mapProgramEventSeriesFilters(req.Msg.Filters)
+	rows := s.db.WithContext(ctx).Model(&model.ProgramEventSeries{})
+	mappedFilters, err := mapProgramEventSeriesFilters(query.Filters)
 	if err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-	query, err = ProgramEventSeriesFilterConfig.ApplyFilters(query, mappedFilters)
+	rows, err = ProgramEventSeriesFilterConfig.ApplyFilters(rows, mappedFilters)
 	if err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := rows.Count(&total).Error; err != nil {
+		return SeriesList{}, err
 	}
-	query, err = programEventSeriesSortConfig.ApplySort(query, req.Msg.Sorts)
+	rows, err = programEventSeriesSortConfig.ApplySort(rows, query.Sorts)
 	if err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	var rows []model.ProgramEventSeries
-	if err := pagination.Apply(query).Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var series []model.ProgramEventSeries
+	if err := pagination.Apply(rows).Find(&series).Error; err != nil {
+		return SeriesList{}, err
 	}
-	result := make([]*managev1.ProgramEventSeries, 0, len(rows))
-	for i := range rows {
-		item, err := s.toProtoProgramEventSeries(&rows[i])
+	result := make([]*managev1.ProgramEventSeries, 0, len(series))
+	for i := range series {
+		item, err := s.toProtoProgramEventSeries(&series[i])
 		if err != nil {
-			return nil, err
+			return SeriesList{}, err
 		}
 		result = append(result, item)
 	}
-	return connect.NewResponse(&managev1.ListProgramEventSeriesAdminResponse{
-		Series:     result,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
+	return SeriesList{Series: result, Pagination: pagination.BuildResponse(total)}, nil
 }
 
-func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateProgramEventSeriesRequest],
-) (*connect.Response[managev1.ProgramEventSeries], error) {
-	can, err := programEventSeriesUpdateCan(req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	series, err := s.loadProgramEventSeriesForUpdate(ctx, req.Msg.Id)
-	if err != nil {
-		return nil, err
-	}
-	update, err := s.prepareProgramEventSeriesUpdate(ctx, req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.applyProgramEventSeriesUpdate(ctx, &series, req.Msg, update, can); err != nil {
-		return nil, err
-	}
-	proto, err := s.loadProgramEventSeries(ctx, series.ID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(proto), nil
+// DeleteProgramEventSeriesCommand names the series to delete.
+type DeleteProgramEventSeriesCommand struct {
+	ID string
 }
 
-func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteProgramEventSeriesRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	can, err := policyv1.ProgramEventSeries.Delete(req.Msg.Id)
+// DeleteProgramEventSeries deletes the series and its policy; its events
+// leave the series.
+func (s *Service) DeleteProgramEventSeries(ctx context.Context, command DeleteProgramEventSeriesCommand) error {
+	can, err := policyv1.ProgramEventSeries.Delete(command.ID)
 	if err != nil {
-		return nil, errs.InvalidArgument("id", "must be a canonical resource UUID")
+		return domainerr.InvalidField("id", "must be a canonical resource UUID")
 	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if _, err := lockProgramEventSeriesForUpdate(tx, req.Msg.Id); err != nil {
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[[]string]{
+		Lock: func(_ context.Context, tx *gorm.DB) error {
+			_, err := lockProgramEventSeriesForUpdate(tx, command.ID)
 			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		var affectedEvents []model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("series_id = ?", req.Msg.Id).
-			Find(&affectedEvents).Error; err != nil {
-			return errs.Internal(err)
-		}
-		now := time.Now().UTC()
-		for _, event := range affectedEvents {
-			if err := tx.Model(&model.ProgramEvent{}).Where("id = ?", event.ID).
-				Updates(structured.Fields{"series_id": nil, "series_order": nil, "updated_at": now}).Error; err != nil {
-				return errs.Internal(err)
+		},
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) ([]string, error) {
+			return s.deleteProgramEventSeries(ctx, tx, command.ID)
+		},
+		Audit: func(detachedEventIDs []string) mutation.Audit {
+			records := make([]mutation.Audit, 0, len(detachedEventIDs)+1)
+			for _, eventID := range detachedEventIDs {
+				records = append(records, eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+					return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, eventID, []string{"series"})
+				}))
 			}
-			if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, event.ID, []string{"series"})
-			}); err != nil {
-				return err
-			}
-		}
-		result := tx.Delete(&model.ProgramEventSeries{}, "id = ?", req.Msg.Id)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "program_event_series", req.Msg.Id, "poster"); err != nil {
-			return err
-		}
-		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventSeriesDeletedAuditRecord(metadata, req.Msg.Id)
-		}); err != nil {
-			return err
-		}
-		apply, err := policyv1.ProgramEventSeries.DeletePolicy(req.Msg.Id)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.ProgramEventSeries.TouchPolicy(req.Msg.Id)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
+			return mutation.All(append(records, mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewProgramEventSeriesDeletedAuditRecord(metadata, command.ID)
+			}))...)
+		},
+		Relationships: func([]string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyRelationships(policyv1.ProgramEventSeries.DeletePolicy, policyv1.ProgramEventSeries.TouchPolicy, command.ID)
+		},
 	})
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("program event series", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domainerr.ResourceNotFound("program event series", command.ID)
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return err
+}
+
+// deleteProgramEventSeries detaches the series' events, deletes it and
+// releases its poster. It returns the detached events.
+func (s *Service) deleteProgramEventSeries(ctx context.Context, tx *gorm.DB, seriesID string) ([]string, error) {
+	var affectedEvents []model.ProgramEvent
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Where("series_id = ?", seriesID).
+		Find(&affectedEvents).Error; err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	detached := make([]string, 0, len(affectedEvents))
+	for _, event := range affectedEvents {
+		if err := tx.Model(&model.ProgramEvent{}).Where("id = ?", event.ID).
+			Updates(structured.Fields{"series_id": nil, "series_order": nil, "updated_at": now}).Error; err != nil {
+			return nil, err
+		}
+		detached = append(detached, event.ID)
+	}
+	result := tx.Delete(&model.ProgramEventSeries{}, "id = ?", seriesID)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return detached, s.media.ReleasePublicAssetBindings(ctx, tx, "program_event_series", seriesID, "poster")
 }

@@ -10,6 +10,7 @@ import (
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
@@ -127,7 +128,7 @@ func (a *ProgramEventAttachment) RequireLockedView(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programevent.RequireLockedView(ctx, tx, spiceDB, eventID),
+		programEventAccessAnswer(programevent.RequireLockedView(ctx, tx, spiceDB, eventID)),
 		"program event",
 		eventID,
 	)
@@ -143,10 +144,20 @@ func (a *ProgramEventAttachment) RequireLockedEdit(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programevent.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, eventID),
+		programEventAccessAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, eventID)),
 		"program event",
 		eventID,
 	)
+}
+
+// programEventAccessAnswer gives a Program Event access rejection the
+// Connect form maskPrivateDomainAccess classifies by code; other errors pass
+// unchanged.
+func programEventAccessAnswer(err error) error {
+	if _, rejected := errors.AsType[*domainerr.Error](err); rejected {
+		return errs.Wrap(err)
+	}
+	return err
 }
 
 type AudienceAccess struct{}

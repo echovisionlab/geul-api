@@ -5,35 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-// AsyncPublisher is the command and signal surface used by Program Event.
-type AsyncPublisher interface {
-	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	// content.updated is scheduled only in the owning mutation transaction.
-	contentsignal.Publisher
-}
-
-// FileDeleter owns deletion of Files referenced by Program Event lifecycle cleanup.
-type FileDeleter interface {
-	DeleteFileByID(context.Context, string) error
-}
 
 // ContentBlockMediaHydrator adds request-scoped delivery to already-authorized Block references.
 type ContentBlockMediaHydrator interface {
@@ -63,15 +56,78 @@ type MediaAssets interface {
 	ResolveSingleReadyInlineAssetForSourceFile(context.Context, *gorm.DB, string, string) (*commonv1.AssetRef, error)
 }
 
-// Runtime contains the concrete runtime capabilities required by Program Event.
-type Runtime interface {
-	MediaAssets
-}
-
 // CollaborationPermissionChecker is the minimal ReBAC boundary used by Program Event collaboration.
 type CollaborationPermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
 	CheckActorCan(context.Context, policyv1.Actor, policyv1.Can) (bool, error)
+}
+
+// Deps are the collaborators of the Program Event, series, type,
+// collaboration and AI document use cases; all are required.
+type Deps struct {
+	DB            *gorm.DB
+	SpiceDB       *auth.SpiceDBClient
+	Audit         domainaudit.Appender
+	ContentBlocks *contentblock.Store
+	// Signals schedules content.updated in the mutation transaction.
+	Signals       contentsignal.Publisher
+	Media         MediaAssets
+	MediaHydrator ContentBlockMediaHydrator
+	CreditMembers CreditMemberSummaries
+	// Checkpoints re-resolves the contributors a collaboration write is
+	// attributed to.
+	Checkpoints persistencecheckpoint.ContributorFence
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil,
+		"ContentBlocks": d.ContentBlocks == nil, "Signals": d.Signals == nil, "Media": d.Media == nil,
+		"MediaHydrator": d.MediaHydrator == nil, "CreditMembers": d.CreditMembers == nil,
+		"Checkpoints": d.Checkpoints == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("program event dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the Program Event use cases of administrators, of the
+// collaboration service and of the AI document adapter. Connect and MCP
+// adapters translate their requests into its commands and queries.
+type Service struct {
+	db            *gorm.DB
+	spiceDB       *auth.SpiceDBClient
+	audit         domainaudit.Appender
+	mutations     *mutation.Runner
+	contentBlocks *contentblock.Store
+	signals       contentsignal.Publisher
+	media         MediaAssets
+	mediaHydrator ContentBlockMediaHydrator
+	creditMembers CreditMemberSummaries
+	checkpoints   persistencecheckpoint.ContributorFence
+}
+
+// NewService validates deps and returns the Program Event use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		db: deps.DB, spiceDB: deps.SpiceDB, audit: deps.Audit, mutations: mutations,
+		contentBlocks: deps.ContentBlocks, signals: deps.Signals, media: deps.Media,
+		mediaHydrator: deps.MediaHydrator, creditMembers: deps.CreditMembers, checkpoints: deps.Checkpoints,
+	}, nil
 }
 
 // RequireExists verifies the Program Event root at cross-domain attachment boundaries.
@@ -79,9 +135,9 @@ func RequireExists(ctx context.Context, db *gorm.DB, eventID string) error {
 	var event model.ProgramEvent
 	if err := db.WithContext(ctx).Select("id").Take(&event, "id = ?", eventID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("program event", eventID)
+			return domainerr.ResourceNotFound("program event", eventID)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -116,7 +172,7 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 func lockTranslationEntityRootWithDB(ctx context.Context, db *gorm.DB, entityType, entityID string) error {
 	definition, ok := translation.DefinitionForKind(entityType)
 	if !ok {
-		return errs.InvalidArgument("entity_type", "unsupported translation entity type")
+		return domainerr.InvalidField("entity_type", "unsupported translation entity type")
 	}
 	var root struct {
 		ID string `gorm:"column:id"`
@@ -128,24 +184,21 @@ func lockTranslationEntityRootWithDB(ctx context.Context, db *gorm.DB, entityTyp
 		Where("id = ?", entityID).
 		Take(&root)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.NotFound(entityType, entityID)
+		return domainerr.ResourceNotFound(entityType, entityID)
 	}
-	if result.Error != nil {
-		return errs.Internal(result.Error)
-	}
-	return nil
+	return result.Error
 }
 
 func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors []string) error {
 	if len(contributors) == 0 {
-		return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires contributors")
+		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
 	for index, contributor := range contributors {
 		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
-			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
 		}
 		if index > 0 && contributors[index-1] >= contributor {
-			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
 		}
 	}
 	var members []struct {
@@ -157,10 +210,10 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 		Select("id::text").
 		Where("id IN ?", contributors).
 		Find(&members).Error; err != nil {
-		return errs.Internal(fmt.Errorf("lock Program Event contributor Members: %w", err))
+		return fmt.Errorf("lock Program Event contributor Members: %w", err)
 	}
 	if len(members) != len(contributors) {
-		return errs.InvalidArgument("contributor_member_ids", "contains a Member that does not exist")
+		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil
 }

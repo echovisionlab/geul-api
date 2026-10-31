@@ -16,31 +16,12 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestProgramEventAIDocumentExactSeamFailsClosedWithoutDependencies(t *testing.T) {
+// The AI document seam and every other use case fail at construction, not
+// at request time, when a collaborator is missing.
+func TestNewServiceRequiresEveryCollaborator(t *testing.T) {
 	t.Parallel()
-	service := &ProgramEventService{}
-	if _, err := service.LoadAIDocumentState(context.Background(), "00000000-0000-4000-8000-000000000001", "en"); err == nil {
-		t.Fatal("AI document load accepted missing Program Event dependencies")
-	}
-	compile := func(AIDocumentState) (AIDocumentCommand, error) { return AIDocumentCommand{}, nil }
-	if _, err := service.ExecuteAIDocumentCommand(
-		context.Background(),
-		"00000000-0000-4000-8000-000000000001",
-		"en",
-		AIDocumentExecutionValidate,
-		compile,
-	); err == nil {
-		t.Fatal("AI document validation accepted missing Program Event dependencies")
-	}
-	if _, err := service.ExecuteAIDocumentCommand(
-		context.Background(),
-		"00000000-0000-4000-8000-000000000001",
-		"en",
-		AIDocumentExecutionApply,
-		compile,
-	); err == nil {
-		t.Fatal("AI document apply accepted missing Program Event dependencies")
-	}
+	_, err := NewService(Deps{})
+	require.ErrorContains(t, err, "program event dependencies are required: Audit, Checkpoints, ContentBlocks, CreditMembers, DB, Media, MediaHydrator, Signals, SpiceDB")
 }
 
 func TestProgramEventAIDocumentConflictCarriesCurrentRevision(t *testing.T) {
@@ -215,8 +196,8 @@ func TestProgramEventAIDocumentContentSignalRequiresOwningTransaction(t *testing
 		AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003", Changed: true},
 	)
 	require.NotNil(t, changed)
-	require.Error(t, publishContentUpdatedEvent(context.Background(), nil, publisher, changed))
-	require.Error(t, publishContentUpdatedEvent(context.Background(), &gorm.DB{}, publisher, changed))
+	require.Error(t, contentsignal.PublishInTransaction(context.Background(), nil, publisher, changed))
+	require.Error(t, contentsignal.PublishInTransaction(context.Background(), &gorm.DB{}, publisher, changed))
 	require.Zero(t, publisher.calls, "content.updated escaped the owning transaction")
 
 	noop := buildProgramEventAIDocumentContentUpdatedEvent(
@@ -224,7 +205,7 @@ func TestProgramEventAIDocumentContentSignalRequiresOwningTransaction(t *testing
 		AIDocumentResult{DocumentRevision: "00000000-0000-4000-8000-000000000003"},
 	)
 	require.Nil(t, noop)
-	require.NoError(t, publishContentUpdatedEvent(context.Background(), nil, publisher, noop))
+	require.NoError(t, contentsignal.PublishInTransaction(context.Background(), nil, publisher, noop))
 	require.Zero(t, publisher.calls)
 }
 

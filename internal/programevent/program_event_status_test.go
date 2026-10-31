@@ -3,6 +3,8 @@ package programevent
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
@@ -26,7 +28,7 @@ func TestProgramEventSeriesStatusStorageMapping(t *testing.T) {
 
 	_, err = programEventSeriesStatusStorageValue(managev1.ProgramEventSeriesStatus(99))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 }
 
 func TestProgramEventAdminFilterSupportsExactSlugResolution(t *testing.T) {
@@ -59,5 +61,5 @@ func TestMapProgramEventSeriesFiltersUsesSeriesContractAndStorageValues(t *testi
 		Value: managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String(),
 	}})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 }

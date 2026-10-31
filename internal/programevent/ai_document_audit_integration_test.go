@@ -27,17 +27,12 @@ func TestProgramEventAIDocumentSourceEditIsAuditedIntegration(t *testing.T) {
 	ctx := programEventAuditedMemberContext(t, identityID, memberID)
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	writer := apitelemetry.NewDurableWriter(db)
 	suffix := testutil.IntegrationUUID()
-	eventType, err := NewAuditedProgramEventTypeService(db, writer, spiceDB).CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "ai-audit-type-" + suffix, Locale: "en", Name: "AI audit"}))
+	service := newIntegrationService(t, db, spiceDB, Deps{Audit: writer, Signals: &programEventAIDocumentTestPublisher{}})
+	eventType, err := NewTypeConnectHandler(service).CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "ai-audit-type-" + suffix, Locale: "en", Name: "AI audit"}))
 	require.NoError(t, err)
-	service := NewAuditedProgramEventService(
-		db, newProgramEventRuntime("https://cdn.example.test"), newProgramEventIntegrationFileService(db, spiceDB), writer, spiceDB,
-		newProgramEventCreditMemberSummaries(db, "https://cdn.example.test"),
-		WithProgramEventContentBlockStore(store), WithProgramEventAsyncPublisher(&programEventAIDocumentTestPublisher{}),
-	)
-	created, err := service.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
+	created, err := NewConnectHandler(service).CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title: "AI audited event", Slug: "ai-audit-event-" + suffix, SourceLocale: "en", TypeId: eventType.Msg.Id,
 		StartsAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Timezone: "UTC", LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE,
 	}))
@@ -45,7 +40,7 @@ func TestProgramEventAIDocumentSourceEditIsAuditedIntegration(t *testing.T) {
 	eventID := created.Msg.Id
 	before := programEventAuditCount(t, db, eventID)
 
-	applied, err := service.ExecuteAIDocumentCommand(ctx, eventID, "en", AIDocumentExecutionApply, func(state AIDocumentState) (AIDocumentCommand, error) {
+	applied, err := service.ExecuteAIDocument(ctx, ExecuteAIDocumentCommand{EventID: eventID, Locale: "en", Mode: AIDocumentExecutionApply, Compiler: func(state AIDocumentState) (AIDocumentCommand, error) {
 		batch, err := contentblock.BatchFromRichTextProto(state.ContentDocumentID, programEventParagraphMutationBatch(state.LocalizedDocument, state.DocumentRevision, testutil.IntegrationUUID(), "en", "AI source body", []string{memberID}, true))
 		if err != nil {
 			return AIDocumentCommand{}, err
@@ -53,7 +48,7 @@ func TestProgramEventAIDocumentSourceEditIsAuditedIntegration(t *testing.T) {
 		command := programEventMetadataCommandForState(state)
 		command.Batch = &batch
 		return command, nil
-	})
+	}})
 	require.NoError(t, err)
 	require.True(t, applied.Changed)
 

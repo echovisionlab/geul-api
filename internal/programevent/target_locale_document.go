@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -45,7 +45,7 @@ func (state programEventExactLocaleState) locked() targetlocale.State {
 func normalizeProgramEventDocumentLocale(value string) (string, error) {
 	locale := localization.NormalizeExactSupportedLocale(value)
 	if locale == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *locale, nil
 }
@@ -68,7 +68,7 @@ func loadOptionalProgramEventLocaleMetadataRow(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return programEventLocaleMetadataRow{}, false, nil
 		}
-		return programEventLocaleMetadataRow{}, false, errs.Internal(err)
+		return programEventLocaleMetadataRow{}, false, err
 	}
 	return row, true, nil
 }
@@ -79,7 +79,7 @@ func deriveProgramEventTargetRevision(documentRevision string, metadata programE
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -106,7 +106,7 @@ func loadProgramEventExactLocaleState(
 		return programEventExactLocaleState{}, normalizeProgramEventContentBlockError(err)
 	}
 	if snapshot.Document.Profile != programEventContentProfile {
-		return programEventExactLocaleState{}, errs.FailedPrecondition("Program Event content document profile changed")
+		return programEventExactLocaleState{}, domainerr.Precondition("Program Event content document profile changed")
 	}
 	sourceMetadata, exists, err := loadOptionalProgramEventLocaleMetadataRow(
 		ctx, tx, eventID, source.SourceLocale, forUpdate,
@@ -115,7 +115,7 @@ func loadProgramEventExactLocaleState(
 		return programEventExactLocaleState{}, err
 	}
 	if !exists {
-		return programEventExactLocaleState{}, errs.FailedPrecondition("Program Event source locale metadata is not initialized")
+		return programEventExactLocaleState{}, domainerr.Precondition("Program Event source locale metadata is not initialized")
 	}
 	state := programEventExactLocaleState{
 		Snapshot: snapshot, SourceLocale: source.SourceLocale, SourceMetadata: sourceMetadata,
@@ -130,7 +130,7 @@ func loadProgramEventExactLocaleState(
 	}
 	if !exists {
 		if targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return programEventExactLocaleState{}, errs.FailedPrecondition("Program Event target locale Blocks exist without owning metadata")
+			return programEventExactLocaleState{}, domainerr.Precondition("Program Event target locale Blocks exist without owning metadata")
 		}
 		return state, nil
 	}
@@ -208,16 +208,16 @@ func applyProgramEventTargetLocaleMutation(
 		return programEventTargetLocaleMutationResult{}, err
 	}
 	if input.Locale == state.SourceLocale {
-		return programEventTargetLocaleMutationResult{}, errs.InvalidArgument("locale", "Program Event target locale must differ from source locale")
+		return programEventTargetLocaleMutationResult{}, domainerr.InvalidField("locale", "Program Event target locale must differ from source locale")
 	}
 	if domain.SourceLocale != state.SourceLocale {
-		return programEventTargetLocaleMutationResult{}, errs.FailedPrecondition("Program Event source locale changed; reload before saving")
+		return programEventTargetLocaleMutationResult{}, domainerr.Precondition("Program Event source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return programEventTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
 	if input.ExpectedLocaleExists != nil && *input.ExpectedLocaleExists != (state.TargetMetadata != nil) {
-		return programEventTargetLocaleMutationResult{}, errs.FailedPrecondition(
+		return programEventTargetLocaleMutationResult{}, domainerr.Precondition(
 			"Program Event target locale presence changed; reload before saving",
 		)
 	}
@@ -231,44 +231,10 @@ func applyProgramEventTargetLocaleMutation(
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
 		ctx, tx, batch, input.Locale, input.Fence,
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
-			if state.TargetMetadata == nil {
-				summary := state.SourceMetadata.Summary
-				if input.SetSummary {
-					summary = input.Summary
-				}
-				created := tx.WithContext(ctx).Exec(
-					`INSERT INTO program_event_translation (entity_id, locale, summary, created_at, updated_at)
-					 VALUES (?, ?, ?, ?, ?)`,
-					input.EventID, input.Locale, summary, now, now,
-				)
-				if created.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(created.Error)
-				}
-				if created.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Program Event target locale could not be created")
-				}
-				final = programEventLocaleMetadataRow{Locale: input.Locale, Summary: summary, UpdatedAt: now}
-				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
-			}
-			final = *state.TargetMetadata
-			metadataChanged := input.SetSummary && !sameNullableString(final.Summary, input.Summary)
-			if input.SetSummary {
-				final.Summary = input.Summary
-			}
-			if !contentChanged && !metadataChanged {
-				return contentblock.MetadataEffect{}, nil
-			}
-			final.UpdatedAt = translation.NextTargetUpdatedAt(now, final.UpdatedAt)
-			updated := tx.WithContext(ctx).Table("program_event_translation").
-				Where("entity_id = ? AND locale = ?", input.EventID, input.Locale).
-				Updates(map[string]any{"summary": final.Summary, "updated_at": final.UpdatedAt})
-			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
-			}
-			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Program Event target locale disappeared while saving")
-			}
-			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
+			var effect contentblock.MetadataEffect
+			var err error
+			final, effect, err = writeTargetLocaleMetadata(ctx, tx, input, state, now, contentChanged)
+			return effect, err
 		},
 	)
 	if err != nil {
@@ -282,10 +248,62 @@ func applyProgramEventTargetLocaleMutation(
 	if result.Changed {
 		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).
 			Where("id = ?", input.EventID).UpdateColumn("updated_at", now).Error; err != nil {
-			return programEventTargetLocaleMutationResult{}, errs.Internal(err)
+			return programEventTargetLocaleMutationResult{}, err
 		}
 	}
 	return output, nil
+}
+
+// writeTargetLocaleMetadata creates the target locale's metadata row,
+// seeded from the source summary, or updates its summary and revision
+// clock when the content or the summary changed. It returns the row as
+// stored.
+func writeTargetLocaleMetadata(
+	ctx context.Context,
+	tx *gorm.DB,
+	input programEventTargetLocaleMutationInput,
+	state programEventExactLocaleState,
+	now time.Time,
+	contentChanged bool,
+) (programEventLocaleMetadataRow, contentblock.MetadataEffect, error) {
+	changed := contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}
+	if state.TargetMetadata == nil {
+		summary := state.SourceMetadata.Summary
+		if input.SetSummary {
+			summary = input.Summary
+		}
+		created := tx.WithContext(ctx).Exec(
+			`INSERT INTO program_event_translation (entity_id, locale, summary, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			input.EventID, input.Locale, summary, now, now,
+		)
+		if created.Error != nil {
+			return programEventLocaleMetadataRow{}, contentblock.MetadataEffect{}, created.Error
+		}
+		if created.RowsAffected != 1 {
+			return programEventLocaleMetadataRow{}, contentblock.MetadataEffect{}, errors.New("program Event target locale could not be created")
+		}
+		return programEventLocaleMetadataRow{Locale: input.Locale, Summary: summary, UpdatedAt: now}, changed, nil
+	}
+	final := *state.TargetMetadata
+	metadataChanged := input.SetSummary && !sameNullableString(final.Summary, input.Summary)
+	if input.SetSummary {
+		final.Summary = input.Summary
+	}
+	if !contentChanged && !metadataChanged {
+		return final, contentblock.MetadataEffect{}, nil
+	}
+	final.UpdatedAt = translation.NextTargetUpdatedAt(now, final.UpdatedAt)
+	updated := tx.WithContext(ctx).Table("program_event_translation").
+		Where("entity_id = ? AND locale = ?", input.EventID, input.Locale).
+		Updates(map[string]any{"summary": final.Summary, "updated_at": final.UpdatedAt})
+	if updated.Error != nil {
+		return programEventLocaleMetadataRow{}, contentblock.MetadataEffect{}, updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return programEventLocaleMetadataRow{}, contentblock.MetadataEffect{}, errors.New("program Event target locale disappeared while saving")
+	}
+	return final, changed, nil
 }
 
 func deleteProgramEventTargetLocale(
@@ -310,10 +328,10 @@ func deleteProgramEventTargetLocale(
 		return contentblock.Result{}, err
 	}
 	if locale == state.SourceLocale || state.TargetMetadata == nil {
-		return contentblock.Result{}, errs.FailedPrecondition("Program Event target locale must exist before deletion")
+		return contentblock.Result{}, domainerr.Precondition("Program Event target locale must exist before deletion")
 	}
 	if domain.SourceLocale != state.SourceLocale {
-		return contentblock.Result{}, errs.FailedPrecondition("Program Event source locale changed; reload before saving")
+		return contentblock.Result{}, domainerr.Precondition("Program Event source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
@@ -333,10 +351,10 @@ func deleteProgramEventTargetLocale(
 				"DELETE FROM program_event_translation WHERE entity_id = ? AND locale = ?", eventID, locale,
 			)
 			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+				return contentblock.MetadataEffect{}, deleted.Error
 			}
 			if deleted.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Program Event target locale disappeared while deleting")
+				return contentblock.MetadataEffect{}, errors.New("program Event target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
@@ -350,7 +368,7 @@ func deleteProgramEventTargetLocale(
 		}
 		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).
 			Where("id = ?", eventID).UpdateColumn("updated_at", now.UTC()).Error; err != nil {
-			return contentblock.Result{}, errs.Internal(err)
+			return contentblock.Result{}, err
 		}
 	}
 	return result, nil

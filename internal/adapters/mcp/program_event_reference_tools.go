@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -25,11 +26,11 @@ var programEventReferenceTools = []mcpserver.Tool{
 
 // These interfaces consume only the native authorized reference lists.
 type ProgramEventTypeReferenceDiscovery interface {
-	ListProgramEventTypesAdmin(context.Context, *connect.Request[managev1.ListProgramEventTypesAdminRequest]) (*connect.Response[managev1.ListProgramEventTypesAdminResponse], error)
+	ListProgramEventTypesAdmin(context.Context, programevent.ListProgramEventTypesQuery) (programevent.TypeList, error)
 }
 
 type ProgramEventSeriesReferenceDiscovery interface {
-	ListProgramEventSeriesAdmin(context.Context, *connect.Request[managev1.ListProgramEventSeriesAdminRequest]) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error)
+	ListProgramEventSeriesAdmin(context.Context, programevent.ListProgramEventSeriesQuery) (programevent.SeriesList, error)
 }
 
 type LabelReferenceDiscovery interface {
@@ -124,12 +125,12 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 	var responsePagination *commonv1.PaginationResponse
 	switch name {
 	case ToolProgramEventTypeList:
-		response, err := tools.types.ListProgramEventTypesAdmin(ctx, connect.NewRequest(&managev1.ListProgramEventTypesAdminRequest{Pagination: pagination, Filters: filters}))
+		list, err := tools.types.ListProgramEventTypesAdmin(ctx, programevent.ListProgramEventTypesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Types {
+		responsePagination = list.Pagination
+		for _, item := range list.Types {
 			if item == nil {
 				continue
 			}
@@ -146,12 +147,12 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 			items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "status": item.Status.String(), "requires_place": item.RequiresPlace, "requires_stream_url": item.RequiresStreamUrl, "locales": locales})
 		}
 	case ToolProgramEventSeriesList:
-		response, err := tools.series.ListProgramEventSeriesAdmin(ctx, connect.NewRequest(&managev1.ListProgramEventSeriesAdminRequest{Pagination: pagination, Filters: filters}))
+		list, err := tools.series.ListProgramEventSeriesAdmin(ctx, programevent.ListProgramEventSeriesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Series {
+		responsePagination = list.Pagination
+		for _, item := range list.Series {
 			if item != nil {
 				items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "title": item.Title, "status": item.Status.String()})
 			}

@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -23,7 +25,7 @@ func TestApplyProgramEventTimeAndLocationUpdatesRevalidatesLockedTimeRange(t *te
 	keepTimezone := "Asia/Seoul"
 	update := programEventUpdate{timezone: &keepTimezone}
 
-	require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, request))
+	require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, updateProgramEventCommand(request)))
 	require.Equal(t, base.Add(8*time.Hour), *update.startsAt)
 
 	locked := model.ProgramEvent{
@@ -31,8 +33,8 @@ func TestApplyProgramEventTimeAndLocationUpdatesRevalidatesLockedTimeRange(t *te
 		EndsAt:       timestampPtr(timestamppb.New(base.Add(6 * time.Hour))),
 		LocationMode: initial.LocationMode,
 	}
-	err := applyProgramEventTimeAndLocationUpdates(&update, &locked, request)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	err := applyProgramEventTimeAndLocationUpdates(&update, &locked, updateProgramEventCommand(request))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	require.Equal(t, keepTimezone, *update.timezone)
 }
 
@@ -48,18 +50,18 @@ func TestProgramEventRelationWritesRequireObservedBaselines(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateProgramEventRelationBaselines(test.request)
-			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			err := validateProgramEventRelationBaselines(updateProgramEventCommand(test.request))
+			require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 		})
 	}
 }
 
 func TestProgramEventObservedOnlyRelationBaselinesDoNotStartWrites(t *testing.T) {
-	require.NoError(t, validateProgramEventRelationBaselines(&managev1.UpdateProgramEventRequest{
+	require.NoError(t, validateProgramEventRelationBaselines(updateProgramEventCommand(&managev1.UpdateProgramEventRequest{
 		ObservedArtists: &managev1.ProgramEventArtistsSnapshot{},
 		ObservedLabels:  &managev1.ProgramEventLabelsSnapshot{},
 		ObservedClients: &managev1.ProgramEventClientsSnapshot{},
-	}))
+	})))
 }
 
 func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeChange(t *testing.T) {
@@ -80,7 +82,7 @@ func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeC
 			keepTimezone := "Asia/Seoul"
 			update := programEventUpdate{timezone: &keepTimezone}
 
-			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, request))
+			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, updateProgramEventCommand(request)))
 			require.Equal(t, "place-requested", *update.mapPlaceID.value)
 
 			locked := model.ProgramEvent{
@@ -88,7 +90,7 @@ func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeC
 				LocationMode: lockedMode,
 				MapPlaceID:   nil,
 			}
-			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &locked, request))
+			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &locked, updateProgramEventCommand(request)))
 			require.True(t, update.mapPlaceID.set)
 			require.Nil(t, update.mapPlaceID.value)
 			require.Nil(t, update.locationMode)
@@ -104,9 +106,9 @@ func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeC
 			MapPlaceID:   &initialPlace,
 		}
 		var update programEventUpdate
-		require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, &managev1.UpdateProgramEventRequest{
+		require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, updateProgramEventCommand(&managev1.UpdateProgramEventRequest{
 			LocationMode: &requestMode,
-		}))
+		})))
 		require.Equal(t, model.ProgramEventLocationModeTBA, *update.locationMode)
 		require.True(t, update.mapPlaceID.set)
 		require.Nil(t, update.mapPlaceID.value)

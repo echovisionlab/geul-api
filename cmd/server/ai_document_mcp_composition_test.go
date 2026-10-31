@@ -24,6 +24,7 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -77,7 +78,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		references,
@@ -187,7 +188,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
@@ -213,7 +214,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
@@ -263,7 +264,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		&compositionPostApplication{},
 		&compositionWorkApplication{},
 		&compositionPageApplication{},
-		&compositionProgramEventApplication{},
+		&programevent.Service{},
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
@@ -347,7 +348,7 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{},
-		&compositionProgramEventApplication{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
+		&programevent.Service{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
 		compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, files,
 		aiDocumentMCPConfig{
 			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
@@ -459,9 +460,6 @@ type compositionWorkApplication struct {
 type compositionPageApplication struct {
 	managev1connect.UnimplementedPageServiceHandler
 }
-type compositionProgramEventApplication struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
-}
 
 type compositionCategoryReferences struct {
 	managev1connect.UnimplementedCategoryServiceHandler
@@ -480,14 +478,6 @@ type compositionArtistReferences struct {
 }
 type compositionFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
-}
-
-type compositionProgramEventTypeReferences struct {
-	managev1connect.UnimplementedProgramEventTypeServiceHandler
-}
-
-type compositionProgramEventSeriesReferences struct {
-	managev1connect.UnimplementedProgramEventSeriesServiceHandler
 }
 
 type compositionLabelReferences struct {
@@ -529,8 +519,8 @@ func compositionContentApplications() contentMCPApplications {
 		members:      &member.Service{},
 		artists:      &compositionArtistReferences{},
 		files:        &compositionFileReferences{},
-		eventTypes:   &compositionProgramEventTypeReferences{},
-		eventSeries:  &compositionProgramEventSeriesReferences{},
+		eventTypes:   &programevent.Service{},
+		eventSeries:  &programevent.Service{},
 		labels:       &compositionLabelReferences{},
 		genres:       &compositionGenreReferences{},
 		styles:       &compositionStyleReferences{},
@@ -793,7 +783,7 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 	releases, artists := &compositionReleaseApplication{}, &compositionArtistApplication{}
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
-		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &compositionProgramEventApplication{},
+		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &programevent.Service{},
 		releases, artists, compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,

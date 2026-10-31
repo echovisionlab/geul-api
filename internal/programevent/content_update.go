@@ -1,27 +1,14 @@
 package programevent
 
 import (
-	"context"
 	"sort"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
-
-// publishContentUpdatedEvent schedules content.updated in the caller's
-// mutation transaction so the signal commits or rolls back with the data.
-func publishContentUpdatedEvent(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
 
 func buildProgramEventLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
 	eventID, fields, revision, locale := change.EntityID, change.Fields, change.DocumentRevision, change.Locale

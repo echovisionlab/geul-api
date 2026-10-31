@@ -7,16 +7,17 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -115,26 +116,24 @@ type programEventAIDocumentCompilerError struct{ cause error }
 func (e *programEventAIDocumentCompilerError) Error() string { return e.cause.Error() }
 func (e *programEventAIDocumentCompilerError) Unwrap() error { return e.cause }
 
+// AIDocumentStateQuery names the event and the locale an AI document opens.
+type AIDocumentStateQuery struct {
+	EventID string
+	Locale  string
+}
+
 // LoadAIDocumentState applies Program Event account, lifecycle and aggregate
 // locking rules before exposing a compact authoring projection. Program Event
 // AI authoring uses the exact object read capability selected by lifecycle;
 // public reads continue through the public Program Event service.
-func (s *ProgramEventService) LoadAIDocumentState(
-	ctx context.Context,
-	eventID string,
-	requestedLocale string,
-) (AIDocumentState, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
-		return AIDocumentState{}, errs.DependencyUnavailable("Program Event AI document")
-	}
-	locale, err := validateProgramEventAIDocumentIdentity(eventID, requestedLocale)
+func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentStateQuery) (AIDocumentState, error) {
+	locale, err := validateProgramEventAIDocumentIdentity(query.EventID, query.Locale)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
-
 	var state AIDocumentState
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadProgramEventAIDocumentRoot(ctx, tx, eventID, clause.LockingStrengthShare)
+	err = lockedRead(ctx, s.db, func(tx *gorm.DB) error {
+		root, err := loadProgramEventAIDocumentRoot(ctx, tx, query.EventID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}
@@ -148,7 +147,7 @@ func (s *ProgramEventService) LoadAIDocumentState(
 		}
 		principal := auth.GetUser(ctx)
 		if principal == nil || principal.MemberID == "" {
-			return errs.AuthenticationRequired()
+			return authenticationRequired()
 		}
 		state, err = s.loadAIDocumentStateAfterAuthorization(
 			ctx, tx, root, locale, principal.MemberID.String(),
@@ -160,11 +159,11 @@ func (s *ProgramEventService) LoadAIDocumentState(
 
 func validateProgramEventAIDocumentIdentity(eventID, requestedLocale string) (string, error) {
 	if _, err := uuidutil.ParseCanonical(eventID, "event_id"); err != nil {
-		return "", errs.InvalidArgument("event_id", "must be a canonical UUID")
+		return "", domainerr.InvalidField("event_id", "must be a canonical UUID")
 	}
 	locale := localization.NormalizeExactSupportedLocale(requestedLocale)
 	if locale == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *locale, nil
 }
@@ -184,17 +183,17 @@ func loadProgramEventAIDocumentRoot(
 	var root model.ProgramEvent
 	if err := query.Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.ProgramEvent{}, errs.NotFound("program event", eventID)
+			return model.ProgramEvent{}, domainerr.ResourceNotFound("program event", eventID)
 		}
-		return model.ProgramEvent{}, errs.Internal(err)
+		return model.ProgramEvent{}, err
 	}
 	if root.ContentDocumentID == nil || strings.TrimSpace(*root.ContentDocumentID) == "" {
-		return model.ProgramEvent{}, errs.FailedPrecondition("Program Event content document has not been populated")
+		return model.ProgramEvent{}, domainerr.Precondition("Program Event content document has not been populated")
 	}
 	return root, nil
 }
 
-func (s *ProgramEventService) loadAIDocumentStateAfterAuthorization(
+func (s *Service) loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
 	tx *gorm.DB,
 	root model.ProgramEvent,
@@ -203,14 +202,14 @@ func (s *ProgramEventService) loadAIDocumentStateAfterAuthorization(
 ) (AIDocumentState, error) {
 	documentID, err := uuidutil.ParseCanonical(*root.ContentDocumentID, "content_document_id")
 	if err != nil {
-		return AIDocumentState{}, errs.WithCause(errs.FailedPrecondition("Program Event content document identity is invalid"), failurecause.ServerFault(err))
+		return AIDocumentState{}, domainerr.Precondition("Program Event content document identity is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	sourceState, err := loadProgramEventSourceLocale(ctx, tx, root.ID, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
 	if root.SourceLocale != sourceState.SourceLocale {
-		return AIDocumentState{}, errs.FailedPrecondition("Program Event source locale changed; reload before editing")
+		return AIDocumentState{}, domainerr.Precondition("Program Event source locale changed; reload before editing")
 	}
 	localeState, err := loadProgramEventExactLocaleState(
 		ctx, tx, s.contentBlocks, root.ID, documentID, locale, false,
@@ -224,7 +223,7 @@ func (s *ProgramEventService) loadAIDocumentStateAfterAuthorization(
 	}
 	localeExists := localeState.TargetMetadata != nil
 	if locale == sourceState.SourceLocale && !localeExists {
-		return AIDocumentState{}, errs.FailedPrecondition("Program Event source locale metadata is not initialized")
+		return AIDocumentState{}, domainerr.Precondition("Program Event source locale metadata is not initialized")
 	}
 	var summary *string
 	if localeState.TargetMetadata != nil {
@@ -250,129 +249,151 @@ func optionalProgramEventTargetRevision(state programEventExactLocaleState, loca
 
 var errRollbackAIDocumentValidation = errors.New("rollback Program Event AI document validation")
 
-// ExecuteAIDocumentCommand is the Program Event hard-cut DCDP mutation seam.
-// It locks the root, selects Edit or EditArchived from that locked lifecycle,
+// ExecuteAIDocumentCommand runs one compiled AI document mutation of an
+// event's locale. Mode Validate runs the identical path and rolls it back.
+type ExecuteAIDocumentCommand struct {
+	EventID  string
+	Locale   string
+	Mode     AIDocumentExecutionMode
+	Compiler AIDocumentCommandCompiler
+}
+
+// aiDocumentChange is a committed AI document mutation and what its audit
+// record and content signal name.
+type aiDocumentChange struct {
+	result    AIDocumentResult
+	command   AIDocumentCommand
+	operation sharedtelemetry.AuditItemOperation
+}
+
+// ExecuteAIDocument is the Program Event hard-cut DCDP mutation seam. It
+// locks the root, selects Edit or EditArchived from that locked lifecycle,
 // performs one fully-consistent SpiceDB decision, and only then invokes the
 // adapter compiler. The compiler, revision CAS and persistence share the same
 // owning-domain transaction; validation deliberately rolls that transaction
 // back after executing the identical path.
-func (s *ProgramEventService) ExecuteAIDocumentCommand(
-	ctx context.Context,
-	eventID string,
-	requestedLocale string,
-	mode AIDocumentExecutionMode,
-	compiler AIDocumentCommandCompiler,
-) (AIDocumentResult, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
-		return AIDocumentResult{}, errs.DependencyUnavailable("Program Event AI document")
+func (s *Service) ExecuteAIDocument(ctx context.Context, command ExecuteAIDocumentCommand) (AIDocumentResult, error) {
+	if command.Compiler == nil {
+		return AIDocumentResult{}, domainerr.DependencyUnavailable("Program Event AI document compiler")
 	}
-	if compiler == nil {
-		return AIDocumentResult{}, errs.DependencyUnavailable("Program Event AI document compiler")
+	if command.Mode != AIDocumentExecutionValidate && command.Mode != AIDocumentExecutionApply {
+		return AIDocumentResult{}, domainerr.InvalidField("mode", "is not supported")
 	}
-	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
-		return AIDocumentResult{}, errs.InvalidArgument("mode", "is not supported")
-	}
-	if mode == AIDocumentExecutionApply && s.asyncPublisher == nil {
-		return AIDocumentResult{}, errs.DependencyUnavailable("Program Event content update publisher")
-	}
-	locale, err := validateProgramEventAIDocumentIdentity(eventID, requestedLocale)
+	locale, err := validateProgramEventAIDocumentIdentity(command.EventID, command.Locale)
 	if err != nil {
 		return AIDocumentResult{}, err
 	}
-
-	var result AIDocumentResult
-	var command AIDocumentCommand
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadProgramEventAIDocumentRoot(ctx, tx, eventID, clause.LockingStrengthUpdate)
-		if err != nil {
+	var root model.ProgramEvent
+	var validated AIDocumentResult
+	var compiled AIDocumentCommand
+	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[aiDocumentChange]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			root, err = loadProgramEventAIDocumentRoot(ctx, tx, command.EventID, clause.LockingStrengthUpdate)
 			return err
-		}
-		if err := requireActiveProgramEventPrincipal(ctx, tx, "edit", false); err != nil {
-			return programEventAIDocumentMutationAccessError(eventID, err)
-		}
-		if err := requireProgramEventPermission(
-			ctx,
-			s.spiceDB,
-			root.ID,
-			programEventMutationAction(root.Status, policyv1.ProgramEvent.Edit),
-		); err != nil {
-			return programEventAIDocumentMutationAccessError(eventID, err)
-		}
-		principal := auth.GetUser(ctx)
-		if principal == nil || principal.MemberID == "" {
-			return errs.NotFound("program event", eventID)
-		}
-		state, err := s.loadAIDocumentStateAfterAuthorization(
-			ctx,
-			tx,
-			root,
-			locale,
-			principal.MemberID.String(),
-		)
-		if err != nil {
-			return err
-		}
-		command, err = compiler(state)
-		if err != nil {
-			return &programEventAIDocumentCompilerError{cause: err}
-		}
-		if err := validateCompiledProgramEventAIDocumentCommand(state, command); err != nil {
-			return err
-		}
-		result, err = s.applyAIDocumentCommandAfterAuthorizationInTransaction(ctx, tx, root, state, command)
-		if err != nil {
-			return err
-		}
-		if mode == AIDocumentExecutionValidate {
-			return errRollbackAIDocumentValidation
-		}
-		if !result.Changed {
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			if err := authorizeLockedProgramEvent(ctx, tx, s.spiceDB, root.ID, root.Status, "edit", policyv1.ProgramEvent.Edit); err != nil {
+				return programEventAIDocumentMutationAccessError(command.EventID, err)
+			}
+			if principal := auth.GetUser(ctx); principal == nil || principal.MemberID == "" {
+				return domainerr.ResourceNotFound("program event", command.EventID)
+			}
 			return nil
-		}
-		return publishContentUpdatedEvent(
-			ctx, tx, s.asyncPublisher, buildProgramEventAIDocumentContentUpdatedEvent(command, result),
-		)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (aiDocumentChange, error) {
+			change, err := s.compileAndApplyAIDocument(ctx, tx, root, locale, command.Compiler)
+			compiled = change.command
+			if err == nil && command.Mode == AIDocumentExecutionValidate {
+				validated = change.result
+				return aiDocumentChange{}, errRollbackAIDocumentValidation
+			}
+			return change, err
+		},
+		Audit: func(change aiDocumentChange) mutation.Audit {
+			if !change.result.Changed {
+				return mutation.Unchanged()
+			}
+			return localeContentAudit(change.command.ContributorMemberID.String(), change.command.EventID, change.command.RequestedLocale, change.operation)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, change aiDocumentChange) error {
+			if !change.result.Changed {
+				return nil
+			}
+			return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildProgramEventAIDocumentContentUpdatedEvent(change.command, change.result))
+		},
 	})
 	if errors.Is(err, errRollbackAIDocumentValidation) {
-		return result, nil
+		return validated, nil
 	}
 	if err != nil {
-		var compilerErr *programEventAIDocumentCompilerError
-		var stale *contentblock.StaleRevisionError
-		var target *translation.TargetRevisionConflict
-		switch {
-		case errors.As(err, &compilerErr):
-			return AIDocumentResult{}, compilerErr.cause
-		case errors.As(err, &stale):
-			return AIDocumentResult{}, &AIDocumentConflict{
-				Kind:                    AIDocumentDocumentRevisionConflict,
-				CurrentDocumentRevision: stale.CurrentRevision.String(),
-			}
-		case errors.As(err, &target):
-			var current *string
-			if target.CurrentExists {
-				value := target.CurrentRevision
-				current = &value
-			}
-			return AIDocumentResult{}, &AIDocumentConflict{
-				Kind:                    AIDocumentTargetRevisionConflict,
-				CurrentDocumentRevision: command.ExpectedRevision.String(),
-				CurrentTargetRevision:   current,
-			}
-		default:
-			return AIDocumentResult{}, normalizeProgramEventContentBlockError(err)
-		}
+		return AIDocumentResult{}, aiDocumentFailure(err, compiled)
 	}
-	return result, nil
+	return change.result, nil
+}
+
+// compileAndApplyAIDocument hands the compiler the state loaded after the
+// root lock and authorization, then checks and persists its command.
+func (s *Service) compileAndApplyAIDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	root model.ProgramEvent,
+	locale string,
+	compiler AIDocumentCommandCompiler,
+) (aiDocumentChange, error) {
+	principal := auth.GetUser(ctx)
+	state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, principal.MemberID.String())
+	if err != nil {
+		return aiDocumentChange{}, err
+	}
+	command, err := compiler(state)
+	if err != nil {
+		return aiDocumentChange{}, &programEventAIDocumentCompilerError{cause: err}
+	}
+	if err := validateCompiledProgramEventAIDocumentCommand(state, command); err != nil {
+		return aiDocumentChange{command: command}, err
+	}
+	change, err := s.applyAIDocumentCommandAfterAuthorizationInTransaction(ctx, tx, root, state, command)
+	change.command = command
+	return change, err
+}
+
+// aiDocumentFailure answers a failed AI document mutation: the adapter's own
+// compiler error, a revision conflict with the current tokens, or the
+// normalized content document failure.
+func aiDocumentFailure(err error, command AIDocumentCommand) error {
+	var compilerErr *programEventAIDocumentCompilerError
+	var stale *contentblock.StaleRevisionError
+	var target *translation.TargetRevisionConflict
+	switch {
+	case errors.As(err, &compilerErr):
+		return compilerErr.cause
+	case errors.As(err, &stale):
+		return &AIDocumentConflict{
+			Kind:                    AIDocumentDocumentRevisionConflict,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+		}
+	case errors.As(err, &target):
+		var current *string
+		if target.CurrentExists {
+			value := target.CurrentRevision
+			current = &value
+		}
+		return &AIDocumentConflict{
+			Kind:                    AIDocumentTargetRevisionConflict,
+			CurrentDocumentRevision: command.ExpectedRevision.String(),
+			CurrentTargetRevision:   current,
+		}
+	default:
+		return normalizeProgramEventContentBlockError(err)
+	}
 }
 
 func programEventAIDocumentMutationAccessError(eventID string, err error) error {
-	switch connect.CodeOf(err) {
-	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-		return errs.WithCause(errs.NotFound("program event", eventID), err)
-	default:
-		return err
+	if rejected(err, domainerr.Unauthenticated, domainerr.PermissionDenied) {
+		return domainerr.ResourceNotFound("program event", eventID).WithCause(err)
 	}
+	return err
 }
 
 func validateCompiledProgramEventAIDocumentCommand(
@@ -386,7 +407,7 @@ func validateCompiledProgramEventAIDocumentCommand(
 		command.ExpectedRevision.String() != state.DocumentRevision ||
 		!programEventOptionalStringEqual(command.ExpectedTargetRevision, state.TargetRevision) ||
 		command.ContributorMemberID.String() != state.ViewerMemberID {
-		return errs.InvalidArgument(
+		return domainerr.InvalidField(
 			"mutation",
 			"compiled Program Event identity, locale, contributor, source observation and revision must match the locked state",
 		)
@@ -395,10 +416,10 @@ func validateCompiledProgramEventAIDocumentCommand(
 		command.Batch.ExpectedRevision != command.ExpectedRevision ||
 		len(command.Batch.ContributorMemberIDs) != 1 ||
 		command.Batch.ContributorMemberIDs[0] != command.ContributorMemberID) {
-		return errs.InvalidArgument("operations", "compiled Program Event content batch must match the locked state")
+		return domainerr.InvalidField("operations", "compiled Program Event content batch must match the locked state")
 	}
 	if command.Metadata.SetTitle && command.RequestedLocale != state.SourceLocale {
-		return errs.InvalidArgument("title", "Program Event title is source-owned")
+		return domainerr.InvalidField("title", "Program Event title is source-owned")
 	}
 	return nil
 }
@@ -410,182 +431,191 @@ func programEventOptionalStringEqual(left, right *string) bool {
 	return *left == *right
 }
 
-func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransaction(
+func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
 	ctx context.Context,
 	tx *gorm.DB,
 	root model.ProgramEvent,
 	lockedState AIDocumentState,
 	command AIDocumentCommand,
-) (AIDocumentResult, error) {
-	if s.contentBlocks == nil {
-		return AIDocumentResult{}, errs.DependencyUnavailable("Program Event AI document")
+) (aiDocumentChange, error) {
+	sourceState, err := checkAIDocumentCommand(ctx, tx, root, lockedState, command)
+	if err != nil {
+		return aiDocumentChange{}, err
 	}
 	locale := command.RequestedLocale
-	if command.ExpectedRevision == uuid.Nil || command.ContributorMemberID == uuid.Nil {
-		return AIDocumentResult{}, errs.InvalidArgument("revision", "expected revision and contributor Member are required")
+	now := time.Now().UTC()
+	input := aiDocumentWrite{
+		command: command, documentID: lockedState.ContentDocumentID, now: now,
+		fence: programEventAuthorizedAIDocumentFence(root, lockedState, sourceState),
 	}
-	lifecycleOperations := 0
-	if command.CreateTranslation {
-		lifecycleOperations++
+	var output programEventTargetLocaleMutationResult
+	switch {
+	case command.CreateTranslation:
+		output, err = s.createAIDocumentTranslation(ctx, tx, input)
+	case command.DeleteTranslation:
+		output.Result, err = deleteProgramEventTargetLocale(
+			ctx, tx, s.contentBlocks, command.EventID, input.documentID, locale,
+			command.ExpectedRevision, command.ExpectedTargetRevision,
+			[]uuid.UUID{command.ContributorMemberID}, now, input.fence,
+		)
+	default:
+		output, err = s.applyAIDocumentBatch(ctx, tx, input, sourceState.SourceLocale)
 	}
-	if command.DeleteTranslation {
-		lifecycleOperations++
+	if err != nil {
+		return aiDocumentChange{}, err
 	}
-	if lifecycleOperations > 1 || (lifecycleOperations != 0 && (command.Batch != nil || command.Metadata.SetTitle || command.Metadata.SetSummary)) || (lifecycleOperations == 0 && command.Batch == nil) {
-		return AIDocumentResult{}, errs.InvalidArgument("operations", "translation lifecycle must be exclusive and content mutations require one compiled batch")
+	var targetRevision *string
+	if !command.DeleteTranslation && locale != sourceState.SourceLocale {
+		targetRevision = &output.TargetRevision
 	}
+	result := AIDocumentResult{DocumentRevision: output.Result.DocumentRevision.String(), TargetRevision: targetRevision}
+	if !output.Result.Changed {
+		return aiDocumentChange{result: result}, nil
+	}
+	result.Changed = true
+	// A source edit is audited like a collaboration source save.
+	operation := sharedtelemetry.AuditItemOperationUpdated
+	if locale == sourceState.SourceLocale {
+		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).
+			Where("id = ?", command.EventID).
+			Update("updated_at", now).Error; err != nil {
+			return aiDocumentChange{}, err
+		}
+	} else {
+		operation = programEventTargetLocaleContentOperation(
+			command.CreateTranslation, command.DeleteTranslation, lockedState.LocaleExists,
+		)
+	}
+	return aiDocumentChange{result: result, operation: operation}, nil
+}
 
-	documentID := lockedState.ContentDocumentID
+// checkAIDocumentCommand repeats the source observation, revision and locale
+// presence checks of command against the locked state and locks its
+// contributor. It returns the locked source locale.
+func checkAIDocumentCommand(
+	ctx context.Context,
+	tx *gorm.DB,
+	root model.ProgramEvent,
+	lockedState AIDocumentState,
+	command AIDocumentCommand,
+) (programEventSourceState, error) {
+	if command.ExpectedRevision == uuid.Nil || command.ContributorMemberID == uuid.Nil {
+		return programEventSourceState{}, domainerr.InvalidField("revision", "expected revision and contributor Member are required")
+	}
+	lifecycle := command.CreateTranslation || command.DeleteTranslation
+	if (command.CreateTranslation && command.DeleteTranslation) ||
+		(lifecycle && (command.Batch != nil || command.Metadata.SetTitle || command.Metadata.SetSummary)) ||
+		(!lifecycle && command.Batch == nil) {
+		return programEventSourceState{}, domainerr.InvalidField("operations", "translation lifecycle must be exclusive and content mutations require one compiled batch")
+	}
 	sourceState, err := loadProgramEventSourceLocale(ctx, tx, command.EventID, true)
 	if err != nil {
-		return AIDocumentResult{}, err
+		return programEventSourceState{}, err
 	}
 	if root.SourceLocale != sourceState.SourceLocale {
-		return AIDocumentResult{}, errs.FailedPrecondition("Program Event source locale changed; reload before editing")
+		return programEventSourceState{}, domainerr.Precondition("Program Event source locale changed; reload before editing")
 	}
-
 	localeExists := lockedState.LocaleExists
 	if lockedState.DocumentRevision != command.ExpectedRevision.String() ||
 		sourceState.SourceLocale != command.ObservedSourceLocale || localeExists != command.ObservedLocaleExists {
-		return AIDocumentResult{}, &AIDocumentConflict{
+		return programEventSourceState{}, &AIDocumentConflict{
 			Kind:                    AIDocumentDocumentRevisionConflict,
 			CurrentDocumentRevision: lockedState.DocumentRevision,
 			CurrentTargetRevision:   lockedState.TargetRevision,
 		}
 	}
-	if locale == sourceState.SourceLocale && !localeExists {
-		return AIDocumentResult{}, errs.FailedPrecondition("Program Event source locale metadata is not initialized")
-	}
-	if lifecycleOperations != 0 && locale == sourceState.SourceLocale {
-		return AIDocumentResult{}, errs.InvalidArgument("locale", "source Program Event translation cannot be created or deleted")
-	}
-	if command.CreateTranslation && localeExists {
-		return AIDocumentResult{}, errs.InvalidArgument("locale", "Program Event translation already exists")
-	}
-	if command.DeleteTranslation && !localeExists {
-		return AIDocumentResult{}, errs.InvalidArgument("locale", "Program Event translation does not exist")
+	locale := command.RequestedLocale
+	switch {
+	case locale == sourceState.SourceLocale && !localeExists:
+		return programEventSourceState{}, domainerr.Precondition("Program Event source locale metadata is not initialized")
+	case lifecycle && locale == sourceState.SourceLocale:
+		return programEventSourceState{}, domainerr.InvalidField("locale", "source Program Event translation cannot be created or deleted")
+	case command.CreateTranslation && localeExists:
+		return programEventSourceState{}, domainerr.InvalidField("locale", "Program Event translation already exists")
+	case command.DeleteTranslation && !localeExists:
+		return programEventSourceState{}, domainerr.InvalidField("locale", "Program Event translation does not exist")
 	}
 	if err := requireDocumentContributors(ctx, tx, []string{command.ContributorMemberID.String()}); err != nil {
-		return AIDocumentResult{}, err
+		return programEventSourceState{}, err
 	}
+	return sourceState, nil
+}
 
-	fence := programEventAuthorizedAIDocumentFence(root, lockedState, sourceState)
-	now := time.Now().UTC()
-	var blockResult contentblock.Result
-	var targetRevision *string
-	switch {
-	case command.CreateTranslation:
-		output, err := applyProgramEventTargetLocaleMutation(
-			ctx, tx, s.contentBlocks,
-			programEventTargetLocaleMutationInput{
-				EventID: command.EventID, DocumentID: documentID, Locale: locale,
-				Batch: contentblock.Batch{
-					DocumentID: documentID, ExpectedRevision: command.ExpectedRevision,
-					ContributorMemberIDs: []uuid.UUID{command.ContributorMemberID},
-				},
-				ExpectedDocumentRevision: command.ExpectedRevision,
-				ExpectedTargetRevision:   command.ExpectedTargetRevision,
-				Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: now, Fence: fence,
-			},
-		)
-		if err != nil {
-			return AIDocumentResult{}, err
-		}
-		blockResult = output.Result
-		targetRevision = &output.TargetRevision
-	case command.DeleteTranslation:
-		blockResult, err = deleteProgramEventTargetLocale(
-			ctx, tx, s.contentBlocks, command.EventID, documentID, locale,
-			command.ExpectedRevision, command.ExpectedTargetRevision,
-			[]uuid.UUID{command.ContributorMemberID}, now, fence,
-		)
-		if err != nil {
-			return AIDocumentResult{}, err
-		}
-	default:
-		batch := *command.Batch
-		if batch.DocumentID != documentID || batch.ExpectedRevision != command.ExpectedRevision {
-			return AIDocumentResult{}, errs.InvalidArgument("operations", "compiled Program Event content identity or revision mismatch")
-		}
-		if len(batch.ContributorMemberIDs) != 1 || batch.ContributorMemberIDs[0] != command.ContributorMemberID {
-			return AIDocumentResult{}, errs.InvalidArgument("operations", "compiled Program Event contributor mismatch")
-		}
-		if locale != sourceState.SourceLocale && (len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0) {
-			return AIDocumentResult{}, errs.InvalidArgument("operations", "non-source Program Event locale cannot change the Block graph")
-		}
-		for _, group := range batch.LocaleGroups {
-			if group.Locale != locale {
-				return AIDocumentResult{}, errs.InvalidArgument("operations", "Program Event content batch contains another locale")
-			}
-		}
-		if locale == sourceState.SourceLocale {
-			if command.ExpectedTargetRevision != nil {
-				return AIDocumentResult{}, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
-			}
-			if command.Metadata.SetTitle || command.Metadata.SetSummary {
-				blockResult, err = s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, batch, fence,
-					func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-						changed, sourceChanged, _, err := applyProgramEventLocaleMetadataMutation(
-							ctx, tx, command.EventID, locale, command.Metadata.Title, command.Metadata.SetTitle,
-							command.Metadata.Summary, command.Metadata.SetSummary, now,
-						)
-						return contentblock.MetadataEffect{Changed: changed, AffectsTranslationSource: sourceChanged, ChangedLocales: []string{locale}}, err
-					})
-			} else {
-				blockResult, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
-			}
-			if err != nil {
-				return AIDocumentResult{}, err
-			}
-		} else {
-			output, applyErr := applyProgramEventTargetLocaleMutation(
-				ctx, tx, s.contentBlocks,
-				programEventTargetLocaleMutationInput{
-					EventID: command.EventID, DocumentID: documentID, Locale: locale,
-					Batch: batch, ExpectedDocumentRevision: command.ExpectedRevision,
-					ExpectedTargetRevision: command.ExpectedTargetRevision,
-					Policy:                 targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: now, Fence: fence,
-					SetSummary: command.Metadata.SetSummary, Summary: command.Metadata.Summary,
-				},
-			)
-			if applyErr != nil {
-				return AIDocumentResult{}, applyErr
-			}
-			blockResult = output.Result
-			targetRevision = &output.TargetRevision
-		}
-	}
+// aiDocumentWrite is a checked AI document command and the authorized fence
+// its content writes use.
+type aiDocumentWrite struct {
+	command    AIDocumentCommand
+	documentID uuid.UUID
+	now        time.Time
+	fence      contentblock.DomainFence
+}
 
-	if !blockResult.Changed {
-		return AIDocumentResult{
-			DocumentRevision: blockResult.DocumentRevision.String(), TargetRevision: targetRevision,
-		}, nil
+func (s *Service) createAIDocumentTranslation(ctx context.Context, tx *gorm.DB, input aiDocumentWrite) (programEventTargetLocaleMutationResult, error) {
+	command := input.command
+	return applyProgramEventTargetLocaleMutation(ctx, tx, s.contentBlocks, programEventTargetLocaleMutationInput{
+		EventID: command.EventID, DocumentID: input.documentID, Locale: command.RequestedLocale,
+		Batch: contentblock.Batch{
+			DocumentID: input.documentID, ExpectedRevision: command.ExpectedRevision,
+			ContributorMemberIDs: []uuid.UUID{command.ContributorMemberID},
+		},
+		ExpectedDocumentRevision: command.ExpectedRevision,
+		ExpectedTargetRevision:   command.ExpectedTargetRevision,
+		Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: input.now, Fence: input.fence,
+	})
+}
+
+// applyAIDocumentBatch persists the compiled content batch and metadata of
+// a source or target locale.
+func (s *Service) applyAIDocumentBatch(
+	ctx context.Context,
+	tx *gorm.DB,
+	input aiDocumentWrite,
+	sourceLocale string,
+) (programEventTargetLocaleMutationResult, error) {
+	command := input.command
+	locale := command.RequestedLocale
+	batch := *command.Batch
+	if batch.DocumentID != input.documentID || batch.ExpectedRevision != command.ExpectedRevision {
+		return programEventTargetLocaleMutationResult{}, domainerr.InvalidField("operations", "compiled Program Event content identity or revision mismatch")
 	}
-	if locale == sourceState.SourceLocale {
-		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).
-			Where("id = ?", command.EventID).
-			Update("updated_at", now).Error; err != nil {
-			return AIDocumentResult{}, errs.Internal(err)
+	if len(batch.ContributorMemberIDs) != 1 || batch.ContributorMemberIDs[0] != command.ContributorMemberID {
+		return programEventTargetLocaleMutationResult{}, domainerr.InvalidField("operations", "compiled Program Event contributor mismatch")
+	}
+	if locale != sourceLocale && (len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0) {
+		return programEventTargetLocaleMutationResult{}, domainerr.InvalidField("operations", "non-source Program Event locale cannot change the Block graph")
+	}
+	for _, group := range batch.LocaleGroups {
+		if group.Locale != locale {
+			return programEventTargetLocaleMutationResult{}, domainerr.InvalidField("operations", "Program Event content batch contains another locale")
 		}
 	}
-	// A source edit is audited like a collaboration source save.
-	operation := sharedtelemetry.AuditItemOperationUpdated
-	if locale != sourceState.SourceLocale {
-		operation = programEventTargetLocaleContentOperation(
-			command.CreateTranslation,
-			command.DeleteTranslation,
-			localeExists,
-		)
+	if locale != sourceLocale {
+		return applyProgramEventTargetLocaleMutation(ctx, tx, s.contentBlocks, programEventTargetLocaleMutationInput{
+			EventID: command.EventID, DocumentID: input.documentID, Locale: locale,
+			Batch: batch, ExpectedDocumentRevision: command.ExpectedRevision,
+			ExpectedTargetRevision: command.ExpectedTargetRevision,
+			Policy:                 targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: input.now, Fence: input.fence,
+			SetSummary: command.Metadata.SetSummary, Summary: command.Metadata.Summary,
+		})
 	}
-	if err := appendProgramEventMemberLocaleContentAudit(
-		ctx, tx, s.auditWriter, command.ContributorMemberID.String(), command.EventID, locale, operation,
-	); err != nil {
-		return AIDocumentResult{}, err
+	if command.ExpectedTargetRevision != nil {
+		return programEventTargetLocaleMutationResult{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
-	output := AIDocumentResult{
-		DocumentRevision: blockResult.DocumentRevision.String(), TargetRevision: targetRevision, Changed: true,
+	var result contentblock.Result
+	var err error
+	if command.Metadata.SetTitle || command.Metadata.SetSummary {
+		result, err = s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, batch, input.fence,
+			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+				changed, sourceChanged, err := applyProgramEventLocaleMetadataMutation(
+					ctx, tx, command.EventID, locale, command.Metadata.Title, command.Metadata.SetTitle,
+					command.Metadata.Summary, command.Metadata.SetSummary, input.now,
+				)
+				return contentblock.MetadataEffect{Changed: changed, AffectsTranslationSource: sourceChanged, ChangedLocales: []string{locale}}, err
+			})
+	} else {
+		result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, input.fence)
 	}
-	return output, nil
+	return programEventTargetLocaleMutationResult{Result: result}, err
 }
 
 func programEventAuthorizedAIDocumentFence(
@@ -597,7 +627,7 @@ func programEventAuthorizedAIDocumentFence(
 		if root.ID == "" || root.ContentDocumentID == nil ||
 			strings.TrimSpace(*root.ContentDocumentID) != lockedState.ContentDocumentID.String() ||
 			requestedDocumentID != lockedState.ContentDocumentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition(
+			return contentblock.DomainContext{}, domainerr.Precondition(
 				"Program Event content document changed; reload before saving",
 			)
 		}

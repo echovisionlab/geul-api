@@ -6,21 +6,78 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// RelationsEdit merges the artists, labels or clients a caller wants into
+// the ones it read. Observed is the list the caller read; relations added by
+// someone else since are kept. An edit with no Desired entries applies only
+// when Replace is set.
+type RelationsEdit struct {
+	Replace  bool
+	Desired  []Relation
+	Observed *[]Relation
+}
+
+func (e RelationsEdit) requested() bool {
+	return e.Replace || len(e.Desired) > 0
+}
+
+// CreditsEdit replaces the whole credit list. Credits with an ID update that
+// credit; an edit with no Desired entries applies only when Replace is set.
+type CreditsEdit struct {
+	Replace bool
+	Desired []Credit
+}
+
+func (e CreditsEdit) requested() bool {
+	return e.Replace || len(e.Desired) > 0
+}
+
+// UpdateProgramEventCommand changes event settings; nil and unset fields
+// are left alone. An empty MapPlaceID, URL or SeriesID clears it, and an
+// empty PosterFileID removes the poster.
+type UpdateProgramEventCommand struct {
+	ID               string
+	Slug             *string
+	TypeID           *string
+	StartsAt         *time.Time
+	EndsAt           *time.Time
+	ClearEndsAt      bool
+	Timezone         *string
+	AllDay           *bool
+	LocationMode     *model.ProgramEventLocationMode
+	MapPlaceID       *string
+	SeriesID         *string
+	SeriesOrder      *int32
+	ClearSeriesOrder bool
+	PosterFileID     *string
+	TicketURL        *string
+	StreamURL        *string
+	ExternalURL      *string
+	Artists          RelationsEdit
+	Labels           RelationsEdit
+	Clients          RelationsEdit
+	Credits          CreditsEdit
+}
+
+// EventUpdate is the outcome of UpdateProgramEvent.
+type EventUpdate struct {
+	ID        string
+	Changed   bool
+	UpdatedAt time.Time
+}
 
 // programEventUpdate is a validated Program Event metadata update; nil and
 // unset fields are left alone. Time and location fields depend on the row
@@ -102,63 +159,85 @@ func (u programEventUpdate) columns(updatedAt time.Time) structured.Fields {
 	return columns
 }
 
-func (s *ProgramEventService) UpdateProgramEvent(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateProgramEventRequest],
-) (*connect.Response[managev1.UpdateProgramEventResponse], error) {
-	event, err := s.loadProgramEventForUpdate(ctx, req.Msg.Id)
-	if err != nil {
-		return nil, err
-	}
-	update, err := s.prepareProgramEventUpdate(ctx, &event, req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	changed, err := s.applyProgramEventUpdate(ctx, &event, req.Msg, update)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.UpdateProgramEventResponse{
-		Id:        event.ID,
-		Changed:   changed,
-		UpdatedAt: timestamppb.New(event.UpdatedAt),
-	}), nil
+// eventChange is a committed event settings update and the audit records
+// it names, in the order they are appended.
+type eventChange struct {
+	update  EventUpdate
+	records []mutation.Audit
 }
 
-func (s *ProgramEventService) loadProgramEventForUpdate(ctx context.Context, eventID string) (model.ProgramEvent, error) {
+// UpdateProgramEvent applies command to the locked event. The time,
+// location and series checks are repeated against the locked row.
+func (s *Service) UpdateProgramEvent(ctx context.Context, command UpdateProgramEventCommand) (EventUpdate, error) {
+	event, err := s.loadProgramEventForUpdate(ctx, command.ID)
+	if err != nil {
+		return EventUpdate{}, err
+	}
+	update, err := s.prepareProgramEventUpdate(ctx, &event, command)
+	if err != nil {
+		return EventUpdate{}, err
+	}
+	var current model.ProgramEvent
+	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[eventChange]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&current, "id = ?", event.ID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return domainerr.ResourceNotFound("program event", event.ID)
+				}
+				return err
+			}
+			return nil
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return authorizeLockedProgramEvent(ctx, tx, s.spiceDB, current.ID, current.Status, "edit", policyv1.ProgramEvent.Edit)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (eventChange, error) {
+			return s.applyProgramEventUpdate(ctx, tx, current, command, update)
+		},
+		Audit: func(change eventChange) mutation.Audit {
+			if len(change.records) == 0 {
+				return mutation.Unchanged()
+			}
+			return mutation.All(change.records...)
+		},
+	})
+	return change.update, err
+}
+
+func (s *Service) loadProgramEventForUpdate(ctx context.Context, eventID string) (model.ProgramEvent, error) {
 	var event model.ProgramEvent
 	if err := s.db.WithContext(ctx).First(&event, "id = ?", eventID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return event, errs.NotFound("program event", eventID)
+			return event, domainerr.ResourceNotFound("program event", eventID)
 		}
-		return event, errs.Internal(err)
+		return event, err
 	}
 	return event, nil
 }
 
-func (s *ProgramEventService) prepareProgramEventUpdate(
+func (s *Service) prepareProgramEventUpdate(
 	ctx context.Context,
 	event *model.ProgramEvent,
-	r *managev1.UpdateProgramEventRequest,
+	command UpdateProgramEventCommand,
 ) (programEventUpdate, error) {
 	update := programEventUpdate{
-		typeID: r.TypeId,
-		allDay: r.AllDay,
+		typeID: command.TypeID,
+		allDay: command.AllDay,
 		now:    dbtime.Now(),
 	}
-	if err := applyProgramEventTimeAndLocationUpdates(&update, event, r); err != nil {
+	if err := applyProgramEventTimeAndLocationUpdates(&update, event, command); err != nil {
 		return programEventUpdate{}, err
 	}
-	if r.Timezone != nil {
-		timezone := strings.TrimSpace(r.GetTimezone())
+	if command.Timezone != nil {
+		timezone := strings.TrimSpace(*command.Timezone)
 		if timezone == "" {
-			return programEventUpdate{}, errs.Required("timezone")
+			return programEventUpdate{}, domainerr.Required("timezone")
 		}
 		update.timezone = &timezone
 	}
-	applyProgramEventOptionalFields(&update, r)
-	if r.Slug != nil {
-		slug, err := validateProgramEventSlug(r.GetSlug())
+	applyProgramEventOptionalFields(&update, command)
+	if command.Slug != nil {
+		slug, err := validateProgramEventSlug(*command.Slug)
 		if err != nil {
 			return programEventUpdate{}, err
 		}
@@ -173,52 +252,52 @@ func (s *ProgramEventService) prepareProgramEventUpdate(
 func applyProgramEventTimeAndLocationUpdates(
 	update *programEventUpdate,
 	event *model.ProgramEvent,
-	r *managev1.UpdateProgramEventRequest,
+	command UpdateProgramEventCommand,
 ) error {
 	update.startsAt, update.endsAt = nil, nullableColumn[time.Time]{}
 	update.locationMode, update.mapPlaceID = nil, nullableColumn[string]{}
-	if err := applyProgramEventTimeUpdate(update, event, r); err != nil {
+	if err := applyProgramEventTimeUpdate(update, event, command); err != nil {
 		return err
 	}
-	return applyProgramEventLocationUpdate(update, event, r)
+	return applyProgramEventLocationUpdate(update, event, command)
 }
 
-func applyProgramEventTimeUpdate(update *programEventUpdate, event *model.ProgramEvent, r *managev1.UpdateProgramEventRequest) error {
+func applyProgramEventTimeUpdate(update *programEventUpdate, event *model.ProgramEvent, command UpdateProgramEventCommand) error {
 	startsAt := event.StartsAt
-	if r.StartsAt != nil {
-		startsAt = r.StartsAt.AsTime()
+	if command.StartsAt != nil {
+		startsAt = *command.StartsAt
 		update.startsAt = &startsAt
 	}
 	endsAt := event.EndsAt
 	switch {
-	case r.ClearEndsAt:
+	case command.ClearEndsAt:
 		endsAt = nil
 		update.endsAt = setNullableColumn[time.Time](nil)
-	case r.EndsAt != nil:
-		endsAt = timestampPtr(r.EndsAt)
+	case command.EndsAt != nil:
+		endsAt = command.EndsAt
 		update.endsAt = setNullableColumn(endsAt)
 	}
-	if r.StartsAt == nil && !r.ClearEndsAt && r.EndsAt == nil {
+	if command.StartsAt == nil && !command.ClearEndsAt && command.EndsAt == nil {
 		return nil
 	}
 	return validateProgramEventTimeRange(startsAt, endsAt)
 }
 
-func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.ProgramEvent, r *managev1.UpdateProgramEventRequest) error {
-	if r.LocationMode == nil && r.MapPlaceId == nil {
+func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.ProgramEvent, command UpdateProgramEventCommand) error {
+	if command.LocationMode == nil && command.MapPlaceID == nil {
 		return nil
 	}
 	locationMode := event.LocationMode
-	if r.LocationMode != nil {
-		locationMode = locationModeFromProto(r.GetLocationMode())
+	if command.LocationMode != nil {
+		locationMode = *command.LocationMode
 	}
 	mapPlaceID := event.MapPlaceID
 	switch {
-	case r.LocationMode != nil && !locationMode.UsesMapPlace():
+	case command.LocationMode != nil && !locationMode.UsesMapPlace():
 		mapPlaceID = nil
-	case r.MapPlaceId != nil:
+	case command.MapPlaceID != nil:
 		if locationMode.UsesMapPlace() {
-			mapPlaceID = nullableString(r.MapPlaceId)
+			mapPlaceID = nullableString(command.MapPlaceID)
 		} else {
 			mapPlaceID = nil
 		}
@@ -226,117 +305,98 @@ func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.Pr
 	if err := validateProgramEventLocation(locationMode, mapPlaceID); err != nil {
 		return err
 	}
-	if r.LocationMode != nil {
+	if command.LocationMode != nil {
 		update.locationMode = &locationMode
 		if !locationMode.UsesMapPlace() {
 			update.mapPlaceID = setNullableColumn[string](nil)
 		}
 	}
-	if r.MapPlaceId != nil {
+	if command.MapPlaceID != nil {
 		update.mapPlaceID = setNullableColumn[string](nil)
 		if locationMode.UsesMapPlace() {
-			update.mapPlaceID = setNullableColumn(nullableString(r.MapPlaceId))
+			update.mapPlaceID = setNullableColumn(nullableString(command.MapPlaceID))
 		}
 	}
 	return nil
 }
 
-func applyProgramEventOptionalFields(update *programEventUpdate, r *managev1.UpdateProgramEventRequest) {
-	if r.SeriesId != nil {
-		update.seriesID = setNullableColumn(nullableString(r.SeriesId))
+func applyProgramEventOptionalFields(update *programEventUpdate, command UpdateProgramEventCommand) {
+	if command.SeriesID != nil {
+		update.seriesID = setNullableColumn(nullableString(command.SeriesID))
 	}
 	switch {
-	case r.ClearSeriesOrder:
+	case command.ClearSeriesOrder:
 		update.seriesOrder = setNullableColumn[int32](nil)
-	case r.SeriesOrder != nil:
-		seriesOrder := r.GetSeriesOrder()
+	case command.SeriesOrder != nil:
+		seriesOrder := *command.SeriesOrder
 		update.seriesOrder = setNullableColumn(&seriesOrder)
 	}
-	if r.TicketUrl != nil {
-		update.ticketURL = setNullableColumn(nullableString(r.TicketUrl))
+	if command.TicketURL != nil {
+		update.ticketURL = setNullableColumn(nullableString(command.TicketURL))
 	}
-	if r.StreamUrl != nil {
-		update.streamURL = setNullableColumn(nullableString(r.StreamUrl))
+	if command.StreamURL != nil {
+		update.streamURL = setNullableColumn(nullableString(command.StreamURL))
 	}
-	if r.ExternalUrl != nil {
-		update.externalURL = setNullableColumn(nullableString(r.ExternalUrl))
+	if command.ExternalURL != nil {
+		update.externalURL = setNullableColumn(nullableString(command.ExternalURL))
 	}
 }
 
-func (s *ProgramEventService) applyProgramEventUpdate(
-	ctx context.Context,
-	event *model.ProgramEvent,
-	r *managev1.UpdateProgramEventRequest,
-	update programEventUpdate,
-) (bool, error) {
-	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		changedFields, err := s.writeProgramEventMetadata(ctx, tx, event, r, update)
-		if err != nil {
-			return err
-		}
-		metadataChanged := len(changedFields) > 0
-		posterChanged, err := s.applyProgramEventPosterChange(ctx, tx, event.ID, r)
-		if err != nil {
-			return err
-		}
-		relationFields, creditReplacement, err := replaceProgramEventUpdateRelations(ctx, tx, event.ID, r)
-		if err != nil {
-			return err
-		}
-		if err := s.appendProgramEventCreditReplacementAudit(ctx, tx, event.ID, creditReplacement); err != nil {
-			return err
-		}
-		changedFields = append(changedFields, relationFields...)
-		creditsChanged := len(creditReplacement.changes) > 0 || creditReplacement.orderChanged
-		changed = metadataChanged || posterChanged || len(relationFields) > 0 || creditsChanged
-		if !changed {
-			return nil
-		}
-		if !metadataChanged {
-			if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).Where("id = ?", event.ID).Update("updated_at", update.now).Error; err != nil {
-				return errs.Internal(err)
-			}
-		}
-		event.UpdatedAt = update.now
-		if len(changedFields) == 0 {
-			return nil
-		}
-		return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, event.ID, changedFields)
-		})
-	})
-	return changed, err
-}
-
-// writeProgramEventMetadata locks the event into *event, recomputes update
-// against it and writes the metadata columns that change. It returns the
-// changed audit fields.
-func (s *ProgramEventService) writeProgramEventMetadata(
+func (s *Service) applyProgramEventUpdate(
 	ctx context.Context,
 	tx *gorm.DB,
-	event *model.ProgramEvent,
-	r *managev1.UpdateProgramEventRequest,
+	current model.ProgramEvent,
+	command UpdateProgramEventCommand,
+	update programEventUpdate,
+) (eventChange, error) {
+	changedFields, err := writeProgramEventMetadata(ctx, tx, current, command, update)
+	if err != nil {
+		return eventChange{}, err
+	}
+	metadataChanged := len(changedFields) > 0
+	posterAudit, err := s.applyProgramEventPosterChange(ctx, tx, current.ID, command)
+	if err != nil {
+		return eventChange{}, err
+	}
+	relationFields, creditReplacement, err := replaceProgramEventUpdateRelations(ctx, tx, current.ID, command)
+	if err != nil {
+		return eventChange{}, err
+	}
+	change := eventChange{update: EventUpdate{ID: current.ID, UpdatedAt: current.UpdatedAt}}
+	if posterAudit != nil {
+		change.records = append(change.records, *posterAudit)
+	}
+	change.records = append(change.records, creditReplacementAudits(current.ID, creditReplacement)...)
+	changedFields = append(changedFields, relationFields...)
+	creditsChanged := len(creditReplacement.changes) > 0 || creditReplacement.orderChanged
+	if !metadataChanged && posterAudit == nil && len(relationFields) == 0 && !creditsChanged {
+		return change, nil
+	}
+	if !metadataChanged {
+		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).Where("id = ?", current.ID).Update("updated_at", update.now).Error; err != nil {
+			return eventChange{}, err
+		}
+	}
+	change.update.Changed, change.update.UpdatedAt = true, update.now
+	if len(changedFields) > 0 {
+		change.records = append(change.records, eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, current.ID, changedFields)
+		}))
+	}
+	return change, nil
+}
+
+// writeProgramEventMetadata recomputes update against the locked event and
+// writes the metadata columns that change. It returns the changed audit
+// fields.
+func writeProgramEventMetadata(
+	ctx context.Context,
+	tx *gorm.DB,
+	current model.ProgramEvent,
+	command UpdateProgramEventCommand,
 	update programEventUpdate,
 ) ([]string, error) {
-	var current model.ProgramEvent
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&current, "id = ?", event.ID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("program event", event.ID)
-		}
-		return nil, errs.Internal(err)
-	}
-	*event = current
-	if err := requireActiveProgramEventPrincipal(ctx, tx, "edit", false); err != nil {
-		return nil, err
-	}
-	if err := requireProgramEventPermission(
-		ctx, s.spiceDB, current.ID,
-		programEventMutationAction(current.Status, policyv1.ProgramEvent.Edit),
-	); err != nil {
-		return nil, err
-	}
-	if err := applyProgramEventTimeAndLocationUpdates(&update, &current, r); err != nil {
+	if err := applyProgramEventTimeAndLocationUpdates(&update, &current, command); err != nil {
 		return nil, err
 	}
 	if err := validateProgramEventSeriesRelationForUpdate(tx, current, update); err != nil {
@@ -352,58 +412,78 @@ func (s *ProgramEventService) writeProgramEventMetadata(
 		return nil, nil
 	}
 	if err := tx.Model(&current).Updates(update.columns(update.now)).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) && r.Slug != nil {
-			return nil, errs.WithCause(errs.SlugAlreadyExists("program event", r.GetSlug()), err)
+		if dberrors.IsUniqueViolation(err) && command.Slug != nil {
+			return nil, domainerr.Duplicate("program event", "slug", *command.Slug).WithCause(err)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return changedFields, nil
 }
 
-// applyProgramEventPosterChange applies the requested poster and audits the
-// primary poster it added or removed. It reports whether the poster changed.
-func (s *ProgramEventService) applyProgramEventPosterChange(
+// eventAudit is a Program Event update record attributed to the request.
+func eventAudit(build func(sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error)) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditProgramEventUpdated, build)
+}
+
+// posterAudit records the primary poster an edit added or, when after is
+// empty, removed.
+func posterAudit(eventID, before, after string) *mutation.Audit {
+	if before == after {
+		return nil
+	}
+	fileID, operation := after, sharedtelemetry.AuditCollectionOperationAdded
+	if after == "" {
+		fileID, operation = before, sharedtelemetry.AuditCollectionOperationRemoved
+	}
+	audit := eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventPosterAuditRecord(metadata, eventID, fileID, operation)
+	})
+	return &audit
+}
+
+// applyProgramEventPosterChange applies the requested poster and returns the
+// record of the primary poster it added or removed.
+func (s *Service) applyProgramEventPosterChange(
 	ctx context.Context,
 	tx *gorm.DB,
 	eventID string,
-	r *managev1.UpdateProgramEventRequest,
-) (bool, error) {
+	command UpdateProgramEventCommand,
+) (*mutation.Audit, error) {
 	posterBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, eventID, "poster")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	if err := applyProgramEventPosterUpdate(ctx, tx, s.runtime, eventID, r); err != nil {
-		return false, err
+	if err := applyProgramEventPosterUpdate(ctx, tx, s.media, eventID, command.PosterFileID); err != nil {
+		return nil, err
 	}
 	posterAfter, err := loadProgramEventPrimaryMediaFileID(ctx, tx, eventID, "poster")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	switch {
-	case posterBefore == posterAfter:
-		return false, nil
-	case posterAfter != "":
-		return true, s.appendProgramEventPosterAudit(ctx, tx, eventID, posterAfter, sharedtelemetry.AuditCollectionOperationAdded)
-	default:
-		return true, s.appendProgramEventPosterAudit(ctx, tx, eventID, posterBefore, sharedtelemetry.AuditCollectionOperationRemoved)
-	}
+	return posterAudit(eventID, posterBefore, posterAfter), nil
 }
 
-func (s *ProgramEventService) appendProgramEventCreditReplacementAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	eventID string,
-	replacement programEventCreditReplacement,
-) error {
+func creditReplacementAudits(eventID string, replacement programEventCreditReplacement) []mutation.Audit {
+	records := make([]mutation.Audit, 0, len(replacement.changes)+1)
 	for _, change := range replacement.changes {
-		if err := s.appendProgramEventChildAudit(ctx, tx, eventID, "credits", change.id, change.operation); err != nil {
-			return err
-		}
+		records = append(records, childAudit(eventID, "credits", change.id, change.operation))
 	}
-	if !replacement.orderChanged {
-		return nil
+	if replacement.orderChanged {
+		records = append(records, childOrderAudit(eventID, "credits", replacement.orderedIDs))
 	}
-	return s.appendProgramEventChildOrderAudit(ctx, tx, eventID, "credits", replacement.orderedIDs)
+	return records
+}
+
+func childAudit(eventID, kind, itemID string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+	return eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventChildAuditRecord(metadata, eventID, kind, itemID, operation)
+	})
+}
+
+func childOrderAudit(eventID, kind string, itemIDs []string) mutation.Audit {
+	return eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventChildOrderAuditRecord(metadata, eventID, kind, itemIDs)
+	})
 }
 
 func programEventMetadataChangedFields(event model.ProgramEvent, update programEventUpdate) []string {
@@ -481,23 +561,23 @@ func validateProgramEventSeriesRelation(tx *gorm.DB, eventID string, seriesID *s
 		return nil
 	}
 	if seriesID == nil {
-		return errs.InvalidArgument("series_id", "series_id is required when series_order is set")
+		return domainerr.InvalidField("series_id", "series_id is required when series_order is set")
 	}
 	if seriesOrder == nil {
-		return errs.InvalidArgument("series_order", "series_order is required when series_id is set")
+		return domainerr.InvalidField("series_order", "series_order is required when series_id is set")
 	}
 	if strings.TrimSpace(*seriesID) == "" {
-		return errs.Required("series_id")
+		return domainerr.Required("series_id")
 	}
 	if *seriesOrder < 0 {
-		return errs.InvalidArgument("series_order", "must be non-negative")
+		return domainerr.InvalidField("series_order", "must be non-negative")
 	}
 	var series model.ProgramEventSeries
 	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").First(&series, "id = ?", *seriesID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.InvalidArgument("series_id", "program event series does not exist")
+			return domainerr.InvalidField("series_id", "program event series does not exist")
 		}
-		return errs.Internal(err)
+		return err
 	}
 	query := tx.Select("id").Where("series_id = ? AND series_order = ?", *seriesID, *seriesOrder)
 	if strings.TrimSpace(eventID) != "" {
@@ -506,64 +586,57 @@ func validateProgramEventSeriesRelation(tx *gorm.DB, eventID string, seriesID *s
 	var duplicate model.ProgramEvent
 	err := query.Take(&duplicate).Error
 	if err == nil {
-		return errs.InvalidArgument("series_order", "must be unique within the program event series")
+		return domainerr.InvalidField("series_order", "must be unique within the program event series")
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
 
-func applyProgramEventPosterUpdate(ctx context.Context, tx *gorm.DB, mediaAssets MediaAssets, eventID string, r *managev1.UpdateProgramEventRequest) error {
-	if r.PosterFileId == nil {
+func applyProgramEventPosterUpdate(ctx context.Context, tx *gorm.DB, mediaAssets MediaAssets, eventID string, posterFileID *string) error {
+	if posterFileID == nil {
 		return nil
 	}
-	if strings.TrimSpace(r.GetPosterFileId()) == "" {
+	if strings.TrimSpace(*posterFileID) == "" {
 		return deleteDefaultProgramEventPosterMedia(ctx, tx, mediaAssets, eventID)
 	}
-	return addProgramEventMedia(ctx, tx, mediaAssets, eventID, r.GetPosterFileId(), "poster", nil, nil, true)
+	return addProgramEventMedia(ctx, tx, mediaAssets, eventID, *posterFileID, "poster", nil, nil, true)
 }
 
-func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventID string, r *managev1.UpdateProgramEventRequest) ([]string, programEventCreditReplacement, error) {
-	changed := make([]string, 0, 3)
+func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventID string, command UpdateProgramEventCommand) ([]string, programEventCreditReplacement, error) {
 	creditReplacement := programEventCreditReplacement{}
-	if err := validateProgramEventRelationBaselines(r); err != nil {
+	if err := validateProgramEventRelationBaselines(command); err != nil {
 		return nil, creditReplacement, err
 	}
-	if r.ReplaceArtists || len(r.Artists) > 0 {
-		didChange, err := mergeAndApplyProgramEventArtists(ctx, tx, eventID, r.ObservedArtists.Artists, r.Artists)
+	changed := make([]string, 0, 3)
+	for _, relation := range []struct {
+		field string
+		edit  RelationsEdit
+		apply func(context.Context, *gorm.DB, string, []Relation, []Relation) (bool, error)
+	}{
+		{"artists", command.Artists, mergeAndApplyProgramEventArtists},
+		{"labels", command.Labels, mergeAndApplyProgramEventLabels},
+		{"clients", command.Clients, mergeAndApplyProgramEventClients},
+	} {
+		if !relation.edit.requested() {
+			continue
+		}
+		didChange, err := relation.apply(ctx, tx, eventID, *relation.edit.Observed, relation.edit.Desired)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
 		if didChange {
-			changed = append(changed, "artists")
+			changed = append(changed, relation.field)
 		}
 	}
-	if r.ReplaceLabels || len(r.Labels) > 0 {
-		didChange, err := mergeAndApplyProgramEventLabels(ctx, tx, eventID, r.ObservedLabels.Labels, r.Labels)
-		if err != nil {
-			return nil, creditReplacement, err
-		}
-		if didChange {
-			changed = append(changed, "labels")
-		}
-	}
-	if r.ReplaceClients || len(r.Clients) > 0 {
-		didChange, err := mergeAndApplyProgramEventClients(ctx, tx, eventID, r.ObservedClients.Clients, r.Clients)
-		if err != nil {
-			return nil, creditReplacement, err
-		}
-		if didChange {
-			changed = append(changed, "clients")
-		}
-	}
-	if r.ReplaceCredits || len(r.Credits) > 0 {
+	if command.Credits.requested() {
 		current, err := loadProgramEventCreditRows(ctx, tx, eventID)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
-		if !sameProgramEventCredits(current, r.Credits) {
-			creditReplacement, err = replaceProgramEventCredits(ctx, tx, eventID, r.Credits)
+		if !sameProgramEventCredits(current, command.Credits.Desired) {
+			creditReplacement, err = replaceProgramEventCredits(ctx, tx, eventID, command.Credits.Desired)
 			if err != nil {
 				return nil, creditReplacement, err
 			}
@@ -572,15 +645,15 @@ func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventI
 	return changed, creditReplacement, nil
 }
 
-func validateProgramEventRelationBaselines(r *managev1.UpdateProgramEventRequest) error {
-	if (r.ReplaceArtists || len(r.Artists) > 0) && r.ObservedArtists == nil {
-		return errs.InvalidArgument("observed_artists", "is required when updating artists")
+func validateProgramEventRelationBaselines(command UpdateProgramEventCommand) error {
+	if command.Artists.requested() && command.Artists.Observed == nil {
+		return domainerr.InvalidField("observed_artists", "is required when updating artists")
 	}
-	if (r.ReplaceLabels || len(r.Labels) > 0) && r.ObservedLabels == nil {
-		return errs.InvalidArgument("observed_labels", "is required when updating labels")
+	if command.Labels.requested() && command.Labels.Observed == nil {
+		return domainerr.InvalidField("observed_labels", "is required when updating labels")
 	}
-	if (r.ReplaceClients || len(r.Clients) > 0) && r.ObservedClients == nil {
-		return errs.InvalidArgument("observed_clients", "is required when updating clients")
+	if command.Clients.requested() && command.Clients.Observed == nil {
+		return domainerr.InvalidField("observed_clients", "is required when updating clients")
 	}
 	return nil
 }

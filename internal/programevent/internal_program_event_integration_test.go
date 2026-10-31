@@ -42,7 +42,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
-	typeSvc := NewProgramEventTypeService(db, spiceDB)
+	typeSvc := typeHandlerForTest(t, db, spiceDB)
 	typeResp, err := typeSvc.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 		Slug:              "internal-program-event-type-" + suffix,
 		Locale:            "en",
@@ -52,8 +52,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 	}))
 	require.NoError(t, err)
 
-	eventSvc := NewProgramEventService(db, newProgramEventRuntime("https://cdn.example.com"), spiceDB, newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), files)
-	eventSvc.contentBlocks = store
+	eventSvc := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	startsAt := time.Now().UTC().Add(3 * time.Hour)
 	created, err := eventSvc.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Internal Program Event " + suffix,
@@ -70,28 +69,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 
 	sessionID := insertProgramEventIntegrationSession(t, db, adminID)
 	publisher := &capturingAsyncPublisher{}
-	missingHydrator := NewInternalProgramEventService(
-		db,
-		publisher,
-		WithInternalProgramEventSpiceDB(spiceDB),
-		WithInternalProgramEventCheckpoints(programEventIntegrationCheckpoints(db, spiceDB)),
-		WithInternalProgramEventContentBlockStore(store),
-	)
-	_, err = missingHydrator.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
-		EventId:   created.Msg.Id,
-		Locale:    "en",
-		Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID},
-	}))
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
-	internalSvc := NewAuditedInternalProgramEventService(
-		db,
-		publisher,
-		apitelemetry.NewDurableWriter(db),
-		WithInternalProgramEventSpiceDB(spiceDB),
-		WithInternalProgramEventCheckpoints(programEventIntegrationCheckpoints(db, spiceDB)),
-		WithInternalProgramEventContentBlockStore(store),
-		WithInternalProgramEventMediaHydrator(files),
-	)
+	internalSvc := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: publisher, ContentBlocks: store, MediaHydrator: files}))
 	loaded, err := internalSvc.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
 		EventId:   created.Msg.Id,
 		Locale:    "en",
@@ -323,7 +301,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
-	typeService := NewProgramEventTypeService(db, spiceDB)
+	typeService := typeHandlerForTest(t, db, spiceDB)
 	typeResponse, err := typeService.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 		Slug:              "program-event-translation-invariant-type-" + suffix,
 		Locale:            "en",
@@ -333,8 +311,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 	}))
 	require.NoError(t, err)
 
-	eventService := NewProgramEventService(db, newProgramEventRuntime("https://cdn.example.com"), spiceDB, newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), files)
-	eventService.contentBlocks = store
+	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	created, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program Event translation invariant " + suffix,
 		Slug:         "program-event-translation-invariant-" + suffix,
@@ -383,14 +360,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 	targetBefore := loadTarget()
 	jobBefore := loadJob()
 
-	internalService := NewInternalProgramEventService(
-		db,
-		&capturingAsyncPublisher{},
-		WithInternalProgramEventSpiceDB(spiceDB),
-		WithInternalProgramEventCheckpoints(programEventIntegrationCheckpoints(db, spiceDB)),
-		WithInternalProgramEventContentBlockStore(store),
-		WithInternalProgramEventMediaHydrator(files),
-	)
+	internalService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	memberID := testutil.PostIntegrationMemberID(adminID)
 	updatedSummary := "Source summary after edit"
 	metadataUpdated, err := internalService.UpdateProgramEventLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateProgramEventLocaleMetadataRequest{
@@ -424,7 +394,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
-	typeSvc := NewProgramEventTypeService(db, spiceDB)
+	typeSvc := typeHandlerForTest(t, db, spiceDB)
 	typeResp, err := typeSvc.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 		Slug:              "program-event-media-name-" + suffix,
 		Locale:            "en",
@@ -434,8 +404,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	}))
 	require.NoError(t, err)
 
-	eventSvc := NewProgramEventService(db, newProgramEventRuntime("https://cdn.example.com"), spiceDB, newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), files)
-	eventSvc.contentBlocks = store
+	eventSvc := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	created, err := eventSvc.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program event media name " + suffix,
 		Slug:         "program-event-media-name-" + suffix,
@@ -448,15 +417,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	require.NoError(t, err)
 
 	sessionID := insertProgramEventIntegrationSession(t, db, adminID)
-	internalSvc := NewAuditedInternalProgramEventService(
-		db,
-		&capturingAsyncPublisher{},
-		apitelemetry.NewDurableWriter(db),
-		WithInternalProgramEventSpiceDB(spiceDB),
-		WithInternalProgramEventCheckpoints(programEventIntegrationCheckpoints(db, spiceDB)),
-		WithInternalProgramEventContentBlockStore(store),
-		WithInternalProgramEventMediaHydrator(files),
-	)
+	internalSvc := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	loaded, err := internalSvc.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
 		EventId:   created.Msg.Id,
 		Locale:    "en",

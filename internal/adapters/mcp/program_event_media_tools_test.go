@@ -70,7 +70,7 @@ func TestProgramEventMediaEveryAdvertisedRoleForwardsToOwner(t *testing.T) {
 			arguments["role"], _ = json.Marshal(role)
 			_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventMediaAdd, arguments)
 			require.NoError(t, err)
-			require.Equal(t, role, owner.request.(*managev1.AddProgramEventMediaRequest).Role)
+			require.Equal(t, role, owner.request.(programevent.AddProgramEventMediaCommand).Role)
 		})
 	}
 }
@@ -88,7 +88,7 @@ func TestProgramEventMediaListProjectsNativeOrderAndFeedsCompleteReorder(t *test
 	tools, _ := NewProgramEventMediaTools(owner)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventMediaList, eventMediaArguments(t, ToolProgramEventMediaList))
 	require.NoError(t, err)
-	require.Equal(t, &managev1.GetProgramEventRequest{Id: eventMediaDocumentID}, owner.request)
+	require.Equal(t, programevent.GetProgramEventQuery{ID: eventMediaDocumentID}, owner.request)
 	output := result.StructuredContent
 	require.Len(t, output, 5, "body, title and hydrated relations must not enter media projection")
 	require.Equal(t, "ko", output["source_locale"])
@@ -111,7 +111,7 @@ func TestProgramEventMediaListProjectsNativeOrderAndFeedsCompleteReorder(t *test
 	arguments["media_ids"], _ = json.Marshal([]string{second["id"].(string), first["id"].(string)})
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventMediaReorder, arguments)
 	require.NoError(t, err)
-	require.True(t, proto.Equal(&managev1.ReorderProgramEventMediaRequest{EventId: eventMediaDocumentID, Role: "gallery", MediaIds: []string{eventMediaID, eventMediaPeerID}}, owner.request))
+	require.Equal(t, programevent.ReorderProgramEventMediaCommand{EventID: eventMediaDocumentID, Role: "gallery", MediaIDs: []string{eventMediaID, eventMediaPeerID}}, owner.request)
 	require.Equal(t, []string{"get", "reorder"}, owner.calls)
 }
 
@@ -132,7 +132,7 @@ func TestProgramEventMediaAddPreservesNullableTextInputAndNativeResultWithoutRea
 			arguments := toolArguments(t, `{"document_id":"`+eventMediaDocumentID+`","file_id":"`+eventMediaFileID+`"`+test.values+`}`)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventMediaAdd, arguments)
 			require.NoError(t, err)
-			require.True(t, proto.Equal(&managev1.AddProgramEventMediaRequest{EventId: eventMediaDocumentID, FileId: eventMediaFileID, Role: "poster", Alt: test.alt, Caption: test.caption, MakePrimary: test.primary}, owner.request))
+			require.Equal(t, programevent.AddProgramEventMediaCommand{EventID: eventMediaDocumentID, FileID: eventMediaFileID, Role: "poster", Alt: test.alt, Caption: test.caption, MakePrimary: test.primary}, owner.request)
 			require.Equal(t, []string{"add"}, owner.calls)
 			require.Equal(t, true, result.StructuredContent["changed"])
 			require.Equal(t, owner.add.Media.Id, result.StructuredContent["media"].(map[string]any)["id"])
@@ -150,11 +150,11 @@ func TestProgramEventMediaRemoveAndReorderUseNativeResultsWithoutRead(t *testing
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, eventMediaArguments(t, name))
 			require.NoError(t, err)
 			if name == ToolProgramEventMediaRemove {
-				require.True(t, proto.Equal(&managev1.DeleteProgramEventMediaRequest{EventId: eventMediaDocumentID, MediaId: eventMediaID}, owner.request))
+				require.Equal(t, programevent.DeleteProgramEventMediaCommand{EventID: eventMediaDocumentID, MediaID: eventMediaID}, owner.request)
 				require.Equal(t, eventMediaID, result.StructuredContent["media_id"])
 				require.Equal(t, true, result.StructuredContent["changed"])
 			} else {
-				require.True(t, proto.Equal(&managev1.ReorderProgramEventMediaRequest{EventId: eventMediaDocumentID, Role: "poster", MediaIds: []string{eventMediaID, eventMediaPeerID}}, owner.request))
+				require.Equal(t, programevent.ReorderProgramEventMediaCommand{EventID: eventMediaDocumentID, Role: "poster", MediaIDs: []string{eventMediaID, eventMediaPeerID}}, owner.request)
 				require.Equal(t, false, result.StructuredContent["changed"], "native no-op must survive")
 				require.Equal(t, []any{eventMediaID, eventMediaPeerID}, result.StructuredContent["media_ids"])
 			}
@@ -163,13 +163,12 @@ func TestProgramEventMediaRemoveAndReorderUseNativeResultsWithoutRead(t *testing
 		})
 	}
 	owner := newRecordingEventMedia()
-	owner.reorder.MediaIds = nil
 	tools, _ := NewProgramEventMediaTools(owner)
 	arguments := eventMediaArguments(t, ToolProgramEventMediaReorder)
 	arguments["media_ids"] = json.RawMessage(`[]`)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventMediaReorder, arguments)
 	require.NoError(t, err)
-	require.Empty(t, owner.request.(*managev1.ReorderProgramEventMediaRequest).MediaIds)
+	require.Empty(t, owner.request.(programevent.ReorderProgramEventMediaCommand).MediaIDs)
 	require.Equal(t, []any{}, result.StructuredContent["media_ids"])
 }
 
@@ -260,46 +259,49 @@ func assertEventMediaReadRecipe(t *testing.T, result mcpserver.ToolResult) {
 type eventMediaContextKey struct{}
 type recordingEventMedia struct {
 	event       *managev1.ProgramEvent
-	add         *managev1.AddProgramEventMediaResponse
-	remove      *managev1.DeleteProgramEventMediaResponse
-	reorder     *managev1.ReorderProgramEventMediaResponse
-	request     proto.Message
+	add         programevent.MediaChange
+	remove      programevent.MediaChange
+	reorder     programevent.MediaOrder
+	request     any
 	ctx         context.Context
 	calls       []string
 	err, getErr error
 }
 
 func newRecordingEventMedia() *recordingEventMedia {
-	stamp := timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
+	at := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	return &recordingEventMedia{
-		event:   &managev1.ProgramEvent{Id: eventMediaDocumentID, SourceLocale: "ko", UpdatedAt: stamp},
-		add:     &managev1.AddProgramEventMediaResponse{EventId: eventMediaDocumentID, Changed: true, UpdatedAt: stamp, Media: &managev1.ProgramEventMedia{Id: eventMediaID, FileId: eventMediaFileID, Role: "poster", IsPrimary: true}},
-		remove:  &managev1.DeleteProgramEventMediaResponse{EventId: eventMediaDocumentID, Changed: true, MediaId: eventMediaID, UpdatedAt: stamp},
-		reorder: &managev1.ReorderProgramEventMediaResponse{EventId: eventMediaDocumentID, Role: "poster", MediaIds: []string{eventMediaID, eventMediaPeerID}, UpdatedAt: stamp},
+		event:   &managev1.ProgramEvent{Id: eventMediaDocumentID, SourceLocale: "ko", UpdatedAt: timestamppb.New(at)},
+		add:     programevent.MediaChange{EventID: eventMediaDocumentID, Changed: true, UpdatedAt: at, Media: &managev1.ProgramEventMedia{Id: eventMediaID, FileId: eventMediaFileID, Role: "poster", IsPrimary: true}},
+		remove:  programevent.MediaChange{EventID: eventMediaDocumentID, Changed: true, UpdatedAt: at},
+		reorder: programevent.MediaOrder{Role: "poster", UpdatedAt: at},
 	}
 }
-func (owner *recordingEventMedia) record(ctx context.Context, name string, request proto.Message) {
+func (owner *recordingEventMedia) record(ctx context.Context, name string, request any) {
 	owner.ctx, owner.request = ctx, request
 	owner.calls = append(owner.calls, name)
 }
-func (owner *recordingEventMedia) GetProgramEvent(ctx context.Context, request *connect.Request[managev1.GetProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error) {
-	owner.record(ctx, "get", request.Msg)
+func (owner *recordingEventMedia) GetProgramEvent(ctx context.Context, query programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error) {
+	owner.record(ctx, "get", query)
 	if owner.getErr != nil {
 		return nil, owner.getErr
 	}
-	return connect.NewResponse(owner.event), owner.err
+	if owner.err != nil {
+		return nil, owner.err
+	}
+	return owner.event, nil
 }
-func (owner *recordingEventMedia) AddProgramEventMedia(ctx context.Context, request *connect.Request[managev1.AddProgramEventMediaRequest]) (*connect.Response[managev1.AddProgramEventMediaResponse], error) {
-	owner.record(ctx, "add", request.Msg)
-	return connect.NewResponse(owner.add), owner.err
+func (owner *recordingEventMedia) AddProgramEventMedia(ctx context.Context, command programevent.AddProgramEventMediaCommand) (programevent.MediaChange, error) {
+	owner.record(ctx, "add", command)
+	return owner.add, owner.err
 }
-func (owner *recordingEventMedia) DeleteProgramEventMedia(ctx context.Context, request *connect.Request[managev1.DeleteProgramEventMediaRequest]) (*connect.Response[managev1.DeleteProgramEventMediaResponse], error) {
-	owner.record(ctx, "remove", request.Msg)
-	return connect.NewResponse(owner.remove), owner.err
+func (owner *recordingEventMedia) DeleteProgramEventMedia(ctx context.Context, command programevent.DeleteProgramEventMediaCommand) (programevent.MediaChange, error) {
+	owner.record(ctx, "remove", command)
+	return owner.remove, owner.err
 }
-func (owner *recordingEventMedia) ReorderProgramEventMedia(ctx context.Context, request *connect.Request[managev1.ReorderProgramEventMediaRequest]) (*connect.Response[managev1.ReorderProgramEventMediaResponse], error) {
-	owner.record(ctx, "reorder", request.Msg)
-	return connect.NewResponse(owner.reorder), owner.err
+func (owner *recordingEventMedia) ReorderProgramEventMedia(ctx context.Context, command programevent.ReorderProgramEventMediaCommand) (programevent.MediaOrder, error) {
+	owner.record(ctx, "reorder", command)
+	return owner.reorder, owner.err
 }
 
-var _ ProgramEventMediaApplication = (*programevent.ProgramEventService)(nil)
+var _ ProgramEventMediaApplication = (*programevent.Service)(nil)
