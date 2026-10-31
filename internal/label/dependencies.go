@@ -3,6 +3,7 @@ package label
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -34,4 +35,30 @@ type Runtime interface {
 	ResolveReadySourceFileRefs(context.Context, *gorm.DB, []string, ...string) (map[string]*commonv1.AssetRef, error)
 	RequestCurrentWithDB(context.Context, *gorm.DB, string, string) (string, error)
 	CancelAndReleaseOGWithDB(context.Context, *gorm.DB, string) error
+}
+
+// ArtistRelations reads the Artists linked to Labels; the Artist adapter
+// implements it. Lists are ordered by ID text.
+type ArtistRelations interface {
+	ArtistsOfLabel(ctx context.Context, db *gorm.DB, labelID string) ([]entityparticipant.Related, error)
+	CountArtistsByLabel(ctx context.Context, db *gorm.DB, labelIDs []string) (map[string]int32, error)
+}
+
+// ReleaseRelations reads the Releases linked to Labels; the Release adapter
+// implements it. Lists are ordered by ID text.
+type ReleaseRelations interface {
+	ReleasesOfLabel(ctx context.Context, db *gorm.DB, labelID string) ([]entityparticipant.Related, error)
+	CountReleasesByLabel(ctx context.Context, db *gorm.DB, labelIDs []string) (map[string]int32, error)
+}
+
+// ProgramEventRelations reads the Program Events linked to a Label; the
+// Program Event adapter implements it. The list is ordered by ID text.
+type ProgramEventRelations interface {
+	ProgramEventsOfLabel(ctx context.Context, db *gorm.DB, labelID string) ([]entityparticipant.Related, error)
+}
+
+// ShareLinks removes a deleted Label's share links in its transaction; the
+// share link adapter implements it.
+type ShareLinks interface {
+	DeleteLabelShareLinks(ctx context.Context, tx *gorm.DB, labelID string) error
 }

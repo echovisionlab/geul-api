@@ -40,14 +40,6 @@ func LabelSourceTitleSQL(tableAlias string) string {
 	return fmt.Sprintf("COALESCE(NULLIF(%s, ''), '')", labelSourceLocaleColumnSQL(tableAlias, "title"))
 }
 
-func ArtistSourceTitleSQL(alias string) string {
-	return fmt.Sprintf("COALESCE(NULLIF((SELECT at.title FROM artist_translation AS at JOIN artist AS source ON source.id = at.entity_id AND source.source_locale = at.locale WHERE at.entity_id = %s.id LIMIT 1), ''), '')", alias)
-}
-
-func ReleaseSourceTitleSQL(alias string) string {
-	return fmt.Sprintf("COALESCE(NULLIF((SELECT rt.title FROM release_translation AS rt JOIN release AS source ON source.id = rt.entity_id AND source.source_locale = rt.locale WHERE rt.entity_id = %s.id LIMIT 1), ''), '')", alias)
-}
-
 func saveLabelSourceLocaleDocumentState(
 	ctx context.Context,
 	db *gorm.DB,

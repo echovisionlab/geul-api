@@ -524,14 +524,12 @@ func labelAuthorizedAIDocumentFence(
 			return contentblock.DomainContext{}, err
 		}
 		if source.SourceLocale != expectedSource {
-			var current struct {
-				Revision uuid.UUID `gorm:"column:revision"`
-			}
-			if err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Take(&current).Error; err != nil {
+			current, err := contentblock.CurrentRevision(ctx, tx, documentID)
+			if err != nil {
 				return contentblock.DomainContext{}, err
 			}
 			return contentblock.DomainContext{}, &AIDocumentRevisionConflictError{
-				Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: current.Revision.String(),
+				Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: current.String(),
 			}
 		}
 		return source, nil

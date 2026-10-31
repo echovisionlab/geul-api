@@ -36,6 +36,10 @@ type Deps struct {
 	Translation   Translation
 	Members       MemberProjection
 	Runtime       Runtime
+	Artists       ArtistRelations
+	Releases      ReleaseRelations
+	ProgramEvents ProgramEventRelations
+	ShareLinks    ShareLinks
 }
 
 func (d Deps) validate() error {
@@ -44,6 +48,8 @@ func (d Deps) validate() error {
 		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "Publisher": d.Publisher == nil,
 		"ContentBlocks": d.ContentBlocks == nil, "Checkpoints": d.Checkpoints == nil,
 		"Translation": d.Translation == nil, "Members": d.Members == nil, "Runtime": d.Runtime == nil,
+		"Artists": d.Artists == nil, "Releases": d.Releases == nil, "ProgramEvents": d.ProgramEvents == nil,
+		"ShareLinks": d.ShareLinks == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -68,6 +74,10 @@ type Service struct {
 	translation   Translation
 	members       MemberProjection
 	runtime       Runtime
+	artists       ArtistRelations
+	releases      ReleaseRelations
+	programEvents ProgramEventRelations
+	shareLinks    ShareLinks
 	mutations     *mutation.Runner
 	participants  entityparticipant.Mutations
 }
@@ -84,6 +94,7 @@ func NewService(deps Deps) (*Service, error) {
 	return &Service{
 		db: deps.DB, spiceDB: deps.SpiceDB, publisher: deps.Publisher, contentBlocks: deps.ContentBlocks,
 		checkpoints: deps.Checkpoints, translation: deps.Translation, members: deps.Members, runtime: deps.Runtime,
+		artists: deps.Artists, releases: deps.Releases, programEvents: deps.ProgramEvents, shareLinks: deps.ShareLinks,
 		mutations: mutations, participants: labelEntity.Mutations(mutations, deps.SpiceDB),
 	}, nil
 }
@@ -211,11 +222,11 @@ func (s *Service) ListLabelsAdmin(ctx context.Context, query ListLabelsQuery) (A
 	for i, l := range labels {
 		labelIDs[i] = l.ID
 	}
-	artistCounts, err := countLabelRelations(s.db.WithContext(ctx).Table("artist_label"), labelIDs)
+	artistCounts, err := s.artists.CountArtistsByLabel(ctx, s.db, labelIDs)
 	if err != nil {
 		return AdminLabelPage{}, fmt.Errorf("failed to fetch artist counts: %w", err)
 	}
-	releaseCounts, err := countLabelRelations(s.db.WithContext(ctx).Table("release_label"), labelIDs)
+	releaseCounts, err := s.releases.CountReleasesByLabel(ctx, s.db, labelIDs)
 	if err != nil {
 		return AdminLabelPage{}, fmt.Errorf("failed to fetch release counts: %w", err)
 	}
@@ -275,27 +286,4 @@ func (s *Service) projectLabels(ctx context.Context, labels []model.Label, docum
 		projected[i] = toProtoLabel(&label, documents[i], imageAssets, manageOgAssetFromReadyMap(readyOgAssets, label.OgAssetID))
 	}
 	return projected, nil
-}
-
-// countLabelRelations counts the rows of the relation table per Label.
-func countLabelRelations(relation *gorm.DB, labelIDs []string) (map[string]int32, error) {
-	counts := make(map[string]int32)
-	if len(labelIDs) == 0 {
-		return counts, nil
-	}
-	var stats []struct {
-		LabelID string
-		Count   int32
-	}
-	if err := relation.
-		Select("label_id, COUNT(*) as count").
-		Where("label_id IN ?", labelIDs).
-		Group("label_id").
-		Scan(&stats).Error; err != nil {
-		return nil, err
-	}
-	for _, stat := range stats {
-		counts[stat.LabelID] = stat.Count
-	}
-	return counts, nil
 }

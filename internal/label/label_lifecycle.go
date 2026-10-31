@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -197,31 +198,34 @@ type labelDeletionImpactRow struct {
 	DisplayName string `gorm:"column:display_name"`
 }
 
-func loadLabelDeletionImpacts(ctx context.Context, db *gorm.DB, labelID string) ([]labelDeletionImpactRow, error) {
+// loadLabelDeletionImpacts lists what references the Label: its child
+// Labels, then the Artists, Program Events and Releases linked to it, each
+// ordered by ID text.
+func (s *Service) loadLabelDeletionImpacts(ctx context.Context, db *gorm.DB, labelID string) ([]labelDeletionImpactRow, error) {
 	var rows []labelDeletionImpactRow
-	query := fmt.Sprintf(`
+	if err := db.WithContext(ctx).Raw(fmt.Sprintf(`
 		SELECT 1::integer AS kind, child.id::text AS entity_id, %s AS display_name
 		FROM label AS child
 		WHERE child.parent_label_id = ?::uuid
-		UNION ALL
-		SELECT 2::integer, artist.id::text, %s
-		FROM artist_label AS relation
-		JOIN artist ON artist.id = relation.artist_id
-		WHERE relation.label_id = ?::uuid
-		UNION ALL
-		SELECT 3::integer, event.id::text, COALESCE(NULLIF(event.title, ''), event.slug)
-		FROM program_event_label AS relation
-		JOIN program_event AS event ON event.id = relation.event_id
-		WHERE relation.label_id = ?::uuid
-		UNION ALL
-		SELECT 4::integer, release.id::text, %s
-		FROM release_label AS relation
-		JOIN release ON release.id = relation.release_id
-		WHERE relation.label_id = ?::uuid
-		ORDER BY 1, 2
-	`, LabelSourceTitleSQL("child"), ArtistSourceTitleSQL("artist"), ReleaseSourceTitleSQL("release"))
-	if err := db.WithContext(ctx).Raw(query, labelID, labelID, labelID, labelID).Scan(&rows).Error; err != nil {
+		ORDER BY child.id::text
+	`, LabelSourceTitleSQL("child")), labelID).Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	for _, related := range []struct {
+		kind int32
+		load func(context.Context, *gorm.DB, string) ([]entityparticipant.Related, error)
+	}{
+		{kind: 2, load: s.artists.ArtistsOfLabel},
+		{kind: 3, load: s.programEvents.ProgramEventsOfLabel},
+		{kind: 4, load: s.releases.ReleasesOfLabel},
+	} {
+		entities, err := related.load(ctx, db, labelID)
+		if err != nil {
+			return nil, err
+		}
+		for _, entity := range entities {
+			rows = append(rows, labelDeletionImpactRow{Kind: related.kind, EntityID: entity.ID, DisplayName: entity.DisplayName})
+		}
 	}
 	return rows, nil
 }
@@ -275,7 +279,12 @@ func (s *Service) PreviewDeleteLabel(ctx context.Context, query PreviewDeleteLab
 	if err := labelEntity.RequirePermission(ctx, s.spiceDB, query.ID, policyv1.Label.Delete); err != nil {
 		return nil, err
 	}
-	rows, err := loadLabelDeletionImpacts(ctx, s.db, query.ID)
+	var rows []labelDeletionImpactRow
+	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+		var err error
+		rows, err = s.loadLabelDeletionImpacts(ctx, tx, query.ID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +358,7 @@ func (s *Service) DeleteLabel(ctx context.Context, command DeleteLabelCommand) (
 }
 
 func (s *Service) deleteLabelWithDB(ctx context.Context, tx *gorm.DB, command DeleteLabelCommand, snapshotPlan policyv1.RelationshipSnapshotPlan) (labelDeletion, error) {
-	impacts, err := loadLabelDeletionImpacts(ctx, tx, command.ID)
+	impacts, err := s.loadLabelDeletionImpacts(ctx, tx, command.ID)
 	if err != nil {
 		return labelDeletion{}, err
 	}
@@ -367,9 +376,7 @@ func (s *Service) deleteLabelWithDB(ctx context.Context, tx *gorm.DB, command De
 	if err := validateResourceDeletionAuthorizationBatchSize("label", deleted, restored); err != nil {
 		return labelDeletion{}, err
 	}
-	if err := tx.
-		Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL.String(), command.ID).
-		Delete(&model.ShareLink{}).Error; err != nil {
+	if err := s.shareLinks.DeleteLabelShareLinks(ctx, tx, command.ID); err != nil {
 		return labelDeletion{}, err
 	}
 	if err := s.runtime.CancelAndReleaseOGWithDB(ctx, tx, command.ID); err != nil {

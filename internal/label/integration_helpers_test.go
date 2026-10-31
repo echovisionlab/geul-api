@@ -13,7 +13,11 @@ import (
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
+	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
+	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
@@ -89,6 +93,18 @@ func newTestService(t *testing.T, deps Deps) *Service {
 	}
 	if deps.Runtime == nil {
 		deps.Runtime = newLabelRuntimeForTest(deps.DB, "")
+	}
+	if deps.Artists == nil {
+		deps.Artists = artistadapter.NewLabelRelations()
+	}
+	if deps.Releases == nil {
+		deps.Releases = releaseadapter.NewLabelRelations()
+	}
+	if deps.ProgramEvents == nil {
+		deps.ProgramEvents = programeventadapter.NewLabelRelations()
+	}
+	if deps.ShareLinks == nil {
+		deps.ShareLinks = sharelinkadapter.NewCatalogLinks()
 	}
 	service, err := NewService(deps)
 	require.NoError(t, err)

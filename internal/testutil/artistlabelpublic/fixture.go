@@ -18,6 +18,7 @@ import (
 
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
+	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
@@ -123,9 +124,13 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	labelService, err := labeldomain.NewService(labeldomain.Deps{
 		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
 		ContentBlocks: contentBlocks, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
-		Translation: labeladapter.NewTranslation(),
-		Members:     labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
-		Runtime:     labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
+		Translation:   labeladapter.NewTranslation(),
+		Members:       labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
+		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
+		Artists:       artistadapter.NewLabelRelations(),
+		Releases:      releaseadapter.NewLabelRelations(),
+		ProgramEvents: programeventadapter.NewLabelRelations(),
+		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
 	})
 	require.NoError(t, err)
 	manageLabel := labeldomain.NewConnectHandler(labelService)

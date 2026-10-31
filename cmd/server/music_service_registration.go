@@ -11,7 +11,9 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
+	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/artist"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -89,9 +91,13 @@ func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	labelService, err := label.NewService(label.Deps{
 		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.servicePublisher,
 		ContentBlocks: deps.contentBlockStore, Checkpoints: m.checkpoints,
-		Translation: labeladapter.NewTranslation(),
-		Members:     labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
-		Runtime:     labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher),
+		Translation:   labeladapter.NewTranslation(),
+		Members:       labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
+		Runtime:       labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher),
+		Artists:       artistadapter.NewLabelRelations(),
+		Releases:      releaseadapter.NewLabelRelations(),
+		ProgramEvents: programeventadapter.NewLabelRelations(),
+		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize label service: %w", err)

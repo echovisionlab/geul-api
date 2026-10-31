@@ -86,10 +86,7 @@ func loadLabelTargetLocaleState(
 		return labelTargetLocaleState{}, domainerr.InvalidField("locale", "Label target locale must differ from the source locale")
 	}
 	if forUpdate {
-		var document contentblock.Document
-		if err := tx.WithContext(ctx).Table("content_document").
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("id = ?", documentID).Take(&document).Error; err != nil {
+		if err := contentblock.LockDocumentRow(ctx, tx, documentID); err != nil {
 			return labelTargetLocaleState{}, normalizeLabelContentBlockError(err)
 		}
 	}
