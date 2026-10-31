@@ -49,12 +49,12 @@ func TestTranslationEnqueueRejectsMissingJobAndNontransactionalDatabase(t *testi
 	publisher := &Publisher{}
 	require.ErrorContains(t, publisher.EnqueueTranslationGenerateWithDB(t.Context(), nil, nil), "job is required")
 	job := &managev1.TranslationGenerateEvent{JobId: "translation-job"}
-	require.ErrorContains(t, publisher.EnqueueTranslationGenerateWithDB(t.Context(), nil, job), "transaction is required")
+	require.ErrorContains(t, publisher.EnqueueTranslationGenerateWithDB(t.Context(), nil, job), "requires the owning database transaction")
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{DisableAutomaticPing: true})
 	require.NoError(t, err)
-	require.ErrorContains(t, publisher.EnqueueTranslationGenerateWithDB(t.Context(), db, job), "owning transaction")
+	require.ErrorContains(t, publisher.EnqueueTranslationGenerateWithDB(t.Context(), db, job), "inside the owning database transaction")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

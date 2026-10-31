@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -68,12 +69,9 @@ func publishCampaignDurableProtoInTransaction(
 	if publisher == nil {
 		return fmt.Errorf("async publisher is required")
 	}
-	if tx == nil || tx.Statement == nil || tx.Statement.ConnPool == nil {
-		return fmt.Errorf("database transaction is required")
-	}
-	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-	if !ok {
-		return fmt.Errorf("database transaction does not expose a PGMQ executor")
+	executor, err := contentsignal.TransactionExecutor(tx)
+	if err != nil {
+		return err
 	}
 	return publisher.EnqueueProtobufWithExecutor(ctx, executor, queue, messageID, message)
 }

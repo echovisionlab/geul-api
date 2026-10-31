@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -455,9 +456,9 @@ func publishFileDeleteWithDB(
 	if !ok {
 		return fmt.Errorf("file delete publisher must support transactional enqueue")
 	}
-	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-	if !ok {
-		return fmt.Errorf("database transaction does not expose a PGMQ executor")
+	executor, err := contentsignal.TransactionExecutor(tx)
+	if err != nil {
+		return err
 	}
 	return transactionalPublisher.PublishFileDeleteWithExecutor(ctx, executor, event)
 }

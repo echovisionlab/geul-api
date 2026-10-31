@@ -11,11 +11,11 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 func DispatchScheduledUserDeletion(
@@ -81,9 +81,9 @@ func DispatchScheduledUserDeletion(
 			return err
 		}
 		avatarCommand := buildUserDeleteAvatarCommand(command)
-		executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-		if !ok {
-			return fmt.Errorf("database transaction does not expose a PGMQ executor")
+		executor, err := contentsignal.TransactionExecutor(tx)
+		if err != nil {
+			return err
 		}
 		transactionalPublisher, ok := publisher.(transactionalUserDeletionDispatchPublisher)
 		if !ok {

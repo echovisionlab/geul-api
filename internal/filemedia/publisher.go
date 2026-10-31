@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -39,12 +40,9 @@ func publishDurableProtoInTransaction(
 	if publisher == nil {
 		return fmt.Errorf("async publisher is required")
 	}
-	if tx == nil || tx.Statement == nil || tx.Statement.ConnPool == nil {
-		return fmt.Errorf("database transaction is required")
-	}
-	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-	if !ok {
-		return fmt.Errorf("database transaction does not expose a PGMQ executor")
+	executor, err := contentsignal.TransactionExecutor(tx)
+	if err != nil {
+		return err
 	}
 	transactional, ok := publisher.(TransactionalAsyncPublisher)
 	if !ok {

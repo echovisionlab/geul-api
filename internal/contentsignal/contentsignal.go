@@ -65,18 +65,19 @@ func PublishInTransaction(
 }
 
 // TransactionExecutor returns the SQL executor owned by a live GORM
-// transaction. It refuses a non-transactional pool so a signal can never be
-// sent outside the mutation it describes.
+// transaction, for PGMQ commands and PostgreSQL signals that must commit with
+// the domain state they describe. It refuses a non-transactional pool, which
+// would send them even when the mutation rolls back.
 func TransactionExecutor(tx *gorm.DB) (eventpkg.DBTX, error) {
 	if tx == nil || tx.Statement == nil || tx.Statement.ConnPool == nil {
-		return nil, errors.New("content.updated requires the owning database transaction")
+		return nil, errors.New("PGMQ work requires the owning database transaction")
 	}
 	if _, ok := tx.Statement.ConnPool.(gorm.TxCommitter); !ok {
-		return nil, errors.New("content.updated must be scheduled inside the owning database transaction")
+		return nil, errors.New("PGMQ work must be scheduled inside the owning database transaction")
 	}
 	executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
 	if !ok {
-		return nil, errors.New("database transaction cannot schedule PostgreSQL signals")
+		return nil, errors.New("database transaction does not expose a PGMQ executor")
 	}
 	return executor, nil
 }
