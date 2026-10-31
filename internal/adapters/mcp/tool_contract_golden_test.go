@@ -83,27 +83,18 @@ func TestToolContractGolden(t *testing.T) {
 // escape the golden and argument contract checks.
 func TestAllToolProvidersCoversEveryProvider(t *testing.T) {
 	declared := map[string]bool{}
-	files := token.NewFileSet()
-	packages, err := parser.ParseDir(files, ".", func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, pkg := range packages {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				function, ok := decl.(*ast.FuncDecl)
-				if !ok || function.Recv == nil || function.Name.Name != "ToolNames" {
-					continue
-				}
-				receiver := function.Recv.List[0].Type
-				if star, ok := receiver.(*ast.StarExpr); ok {
-					receiver = star.X
-				}
-				if ident, ok := receiver.(*ast.Ident); ok && ident.Name != "ToolSet" {
-					declared[ident.Name] = true
-				}
+	for _, file := range parsePackageSource(t) {
+		for _, decl := range file.Decls {
+			function, ok := decl.(*ast.FuncDecl)
+			if !ok || function.Recv == nil || function.Name.Name != "ToolNames" {
+				continue
+			}
+			receiver := function.Recv.List[0].Type
+			if star, ok := receiver.(*ast.StarExpr); ok {
+				receiver = star.X
+			}
+			if ident, ok := receiver.(*ast.Ident); ok && ident.Name != "ToolSet" {
+				declared[ident.Name] = true
 			}
 		}
 	}
@@ -121,4 +112,26 @@ func TestAllToolProvidersCoversEveryProvider(t *testing.T) {
 			t.Errorf("allToolProviders lists unknown provider %s", name)
 		}
 	}
+}
+
+// parsePackageSource parses this package's non-test Go files.
+func parsePackageSource(t *testing.T) []*ast.File {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := token.NewFileSet()
+	var parsed []*ast.File
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(files, entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed = append(parsed, file)
+	}
+	return parsed
 }
