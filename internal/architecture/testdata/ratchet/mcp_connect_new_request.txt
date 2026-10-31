@@ -13,7 +13,7 @@
 2 internal/adapters/mcp/page_reference_tools.go
 6 internal/adapters/mcp/program_event_management_tools.go
 4 internal/adapters/mcp/program_event_media_tools.go
-3 internal/adapters/mcp/program_event_reference_tools.go
+2 internal/adapters/mcp/program_event_reference_tools.go
 6 internal/adapters/mcp/reference_discovery_tools.go
 9 internal/adapters/mcp/release_management_tools.go
 8 internal/adapters/mcp/release_relation_tools.go

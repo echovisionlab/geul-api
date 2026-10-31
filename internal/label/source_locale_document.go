@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -56,10 +56,10 @@ func saveLabelSourceLocaleDocumentState(
 	input translationLocaleDocumentSaveInput,
 ) error {
 	if len(input.ContentJSON) != 0 || input.ContentHTML != nil || input.ContentText != nil || input.Summary != nil || input.StructureHash != nil || input.MaterializationHash != nil {
-		return errs.FailedPrecondition("label source body is stored as typed Content Blocks")
+		return domainerr.Precondition("label source body is stored as typed Content Blocks")
 	}
 	if input.Title == nil || strings.TrimSpace(*input.Title) == "" {
-		return errs.InvalidArgument("title", "must not be empty")
+		return domainerr.InvalidField("title", "must not be empty")
 	}
 	now := input.Now
 	if now.IsZero() {
@@ -87,10 +87,10 @@ func touchLabelRootUpdatedAt(
 		Where("id = ?", labelID).
 		Updates(structured.Fields{"updated_at": now})
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return errs.NotFound("label", labelID)
+		return domainerr.ResourceNotFound("label", labelID)
 	}
 	return nil
 }

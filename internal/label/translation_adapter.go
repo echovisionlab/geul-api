@@ -9,7 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -107,7 +107,7 @@ func applyTypedTranslationCandidateWithTargetRevision(
 		return errors.New("label translation provider delivery requires its requesting Member")
 	}
 	if metadata.Summary != nil || len(metadata.ContentJSON) != 0 || metadata.ContentHTML != nil || metadata.ContentText != nil {
-		return errs.FailedPrecondition("Label translation body is stored as typed Content Blocks")
+		return domainerr.Precondition("Label translation body is stored as typed Content Blocks")
 	}
 	documentID, err := loadLabelContentDocumentID(ctx, tx, job.EntityID)
 	if err != nil {
@@ -118,44 +118,7 @@ func applyTypedTranslationCandidateWithTargetRevision(
 		return err
 	}
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == domain.SourceLocale {
-		if auditWriter == nil {
-			return errors.New("label translation provider delivery requires its Audit writer")
-		}
-		snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
-		if loadErr != nil {
-			return normalizeLabelContentBlockError(loadErr)
-		}
-		batch, buildErr := translation.BuildProviderTargetRichTextBatch(
-			snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, domain.SourceLocale, candidate,
-		)
-		if buildErr != nil {
-			return normalizeLabelContentBlockError(buildErr)
-		}
-		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
-		if parseErr != nil {
-			return fmt.Errorf("label translation provider delivery requires its requesting Member: %w", parseErr)
-		}
-		if requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-			return errors.New("label translation provider delivery requires its requesting Member")
-		}
-		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
-		result, applyErr := store.ApplyBatch(ctx, tx, batch, contentblock.LockedFence(labelEntityName, documentID, domain))
-		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
-			return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
-		}
-		if applyErr != nil {
-			return normalizeLabelContentBlockError(applyErr)
-		}
-		if !result.Changed {
-			return nil
-		}
-		if !result.TranslationSourceChanged {
-			return errs.InternalMsg("provider source Label translation did not advance source state")
-		}
-		return appendLabelMemberLocaleAudit(
-			ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
-			sharedtelemetry.AuditItemOperationUpdated,
-		)
+		return applyProviderSourceLabelTranslation(ctx, tx, store, job, candidate, auditWriter, documentID, domain)
 	}
 	expectedRevision, err := canonicalLabelUUID(candidate.ContentDocumentRevision)
 	if err != nil {
@@ -196,7 +159,7 @@ func applyTypedTranslationCandidateWithTargetRevision(
 		return normalizeLabelContentBlockError(err)
 	}
 	if result.Content.TranslationSourceChanged {
-		return errs.InternalMsg("target Label translation changed the source-owned Block view")
+		return errors.New("target Label translation changed the source-owned Block view")
 	}
 	if !result.Content.Changed {
 		return nil
@@ -205,7 +168,7 @@ func applyTypedTranslationCandidateWithTargetRevision(
 	if result.Created {
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
-	if err := appendLabelMemberTargetLocaleAudit(
+	if err := appendLabelMemberLocaleAudit(
 		ctx, tx, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
 		job.EntityID, job.TargetLocale, operation,
 	); err != nil {
@@ -214,6 +177,58 @@ func applyTypedTranslationCandidateWithTargetRevision(
 	return nil
 }
 
+// applyProviderSourceLabelTranslation applies a provider's unit patch of
+// the source locale as its requesting Member.
+func applyProviderSourceLabelTranslation(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *contentblock.Store,
+	job *model.TranslationJob,
+	candidate *translation.Candidate,
+	auditWriter domainaudit.Appender,
+	documentID uuid.UUID,
+	domain contentblock.DomainContext,
+) error {
+	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	if err != nil {
+		return normalizeLabelContentBlockError(err)
+	}
+	batch, err := translation.BuildProviderTargetRichTextBatch(
+		snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, domain.SourceLocale, candidate,
+	)
+	if err != nil {
+		return normalizeLabelContentBlockError(err)
+	}
+	requesterID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
+	if err != nil {
+		return fmt.Errorf("label translation provider delivery requires its requesting Member: %w", err)
+	}
+	if requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		return errors.New("label translation provider delivery requires its requesting Member")
+	}
+	batch.ContributorMemberIDs = []uuid.UUID{requesterID}
+	result, err := store.ApplyBatch(ctx, tx, batch, contentblock.LockedFence(labelEntityName, documentID, domain))
+	if errors.Is(err, contentblock.ErrStaleRevision) {
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
+	}
+	if err != nil {
+		return normalizeLabelContentBlockError(err)
+	}
+	if !result.Changed {
+		return nil
+	}
+	if !result.TranslationSourceChanged {
+		return errors.New("provider source Label translation did not advance source state")
+	}
+	return appendLabelMemberLocaleAudit(
+		ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
+		sharedtelemetry.AuditItemOperationUpdated,
+	)
+}
+
+// RequireLockedSourceLocaleEdit locks the Label row, then requires Edit of
+// the locked active principal, for the translation domain's source locale
+// change.
 func RequireLockedSourceLocaleEdit(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, labelID string) error {
 	if err := labelEntity.LockRoot(ctx, tx, labelID); err != nil {
 		return err

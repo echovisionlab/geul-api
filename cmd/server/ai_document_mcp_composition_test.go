@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
@@ -490,10 +491,6 @@ type compositionProgramEventSeriesReferences struct {
 	managev1connect.UnimplementedProgramEventSeriesServiceHandler
 }
 
-type compositionLabelReferences struct {
-	managev1connect.UnimplementedLabelServiceHandler
-}
-
 type compositionGenreReferences struct {
 	managev1connect.UnimplementedGenreServiceHandler
 }
@@ -531,7 +528,7 @@ func compositionContentApplications() contentMCPApplications {
 		files:        &compositionFileReferences{},
 		eventTypes:   &compositionProgramEventTypeReferences{},
 		eventSeries:  &compositionProgramEventSeriesReferences{},
-		labels:       &compositionLabelReferences{},
+		labels:       &label.Service{},
 		genres:       &compositionGenreReferences{},
 		styles:       &compositionStyleReferences{},
 		formats:      &compositionFormatReferences{},

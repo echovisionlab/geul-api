@@ -24,8 +24,7 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label Logo Admin")
 	ctx := artistIntegrationAdminCtx(adminID)
-	fileDeleter := &recordingArtistFileDeleter{}
-	labelService := newLabelIntegrationService(t, db, adminID, fileDeleter)
+	labelService := newLabelIntegrationService(t, db, adminID)
 
 	tests := []struct {
 		name    string
@@ -62,7 +61,6 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, replacementFileID, requireLabelLogoFileID(t, db, labelID, tt.variant))
 			requireFileRowsPresent(t, db, originalFileID, replacementFileID)
-			require.Empty(t, fileDeleter.deletedIDs)
 
 			removed, err := labelService.DeleteLabelImage(ctx, connect.NewRequest(&managev1.DeleteLabelImageRequest{
 				LabelId: labelID,
@@ -72,7 +70,6 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			require.True(t, removed.Msg.Success)
 			require.Empty(t, requireLabelLogoFileID(t, db, labelID, tt.variant))
 			requireFileRowsPresent(t, db, originalFileID, replacementFileID)
-			require.Empty(t, fileDeleter.deletedIDs)
 		})
 	}
 
@@ -237,11 +234,11 @@ func requireLabelLogoFileID(
 ) string {
 	t.Helper()
 
-	column, err := labelLogoColumnForVariant(variant)
+	slot, err := labelLogoSlotFor(logoVariant(variant))
 	require.NoError(t, err)
 	var fileID *string
 	require.NoError(t, db.Table("label").
-		Select(column).
+		Select(slot.column).
 		Where("id = ?", labelID).
 		Row().
 		Scan(&fileID))

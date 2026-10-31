@@ -26,6 +26,7 @@ import (
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -56,7 +57,7 @@ type ArtistLabelPublicFixture struct {
 	Suffix           string
 	ArtistService    *artistpublic.ArtistService
 	ArtistMedia      artistpublic.MediaProjection
-	LabelService     *labelpublic.LabelService
+	LabelService     *labelpublic.ConnectHandler
 	ShareLinkService *sharelinkdomain.Service
 
 	ParentLabel          *managev1.Label
@@ -101,7 +102,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	adminID := uuid.NewString()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
 	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := testutil.PostIntegrationContext(adminID)
+	ctx := testutil.NewAuditContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	identityManager := testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en"))
 	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
@@ -119,16 +120,15 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		},
 		artistdomain.WithArtistContentBlockStore(contentBlocks),
 	)
-	manageLabel := labeldomain.NewLabelService(
-		db, spiceDB, identityManager,
-		fileDeleter, publisher,
-		labeldomain.Dependencies{
-			Translation: labeladapter.NewTranslation(),
-			Members:     labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
-			Runtime:     labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
-		},
-		labeldomain.WithLabelContentBlockStore(contentBlocks),
-	)
+	labelService, err := labeldomain.NewService(labeldomain.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
+		ContentBlocks: contentBlocks, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		Translation: labeladapter.NewTranslation(),
+		Members:     labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
+		Runtime:     labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
+	})
+	require.NoError(t, err)
+	manageLabel := labeldomain.NewConnectHandler(labelService)
 	manageRelease := releasedomain.NewReleaseService(
 		db, spiceDB, identityManager, releaseadapter.NewTrackFiles(fileDeleter),
 		releaseadapter.NewAssets(artistLabelPublicCDN), releaseadapter.NewOG(artistLabelPublicCDN),
@@ -148,10 +148,9 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		artistpublic.WithArtistContentBlockStore(contentBlocks),
 	)
 	labelRuntime := labeladapter.NewPublicRuntime(db, artistLabelPublicCDN, spiceDB, contentBlocks)
-	publicLabel := labelpublic.NewLabelService(
-		db,
-		labelpublic.Dependencies{Content: labelRuntime, Draft: labelRuntime, Media: labelRuntime},
-	)
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{DB: db, Content: labelRuntime, Draft: labelRuntime, Media: labelRuntime})
+	require.NoError(t, err)
+	publicLabel := labelpublic.NewConnectHandler(publicLabelService)
 
 	parentLabel := createPublishedArtistLabelFixtureLabel(
 		t, manageLabel, ctx, "Public Parent Label "+suffix, "public-parent-label-"+suffix, nil,
@@ -467,7 +466,7 @@ func createPublishedArtistLabelFixtureArtist(
 
 func createDraftArtistLabelFixtureLabel(
 	t *testing.T,
-	service *labeldomain.LabelService,
+	service *labeldomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -493,7 +492,7 @@ func createDraftArtistLabelFixtureLabel(
 
 func createPublishedArtistLabelFixtureLabel(
 	t *testing.T,
-	service *labeldomain.LabelService,
+	service *labeldomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,

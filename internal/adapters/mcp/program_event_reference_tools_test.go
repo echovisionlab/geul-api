@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/label"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -245,7 +246,7 @@ func (r *recordingProgramEventReferences) ListProgramEventSeriesAdmin(_ context.
 	return connect.NewResponse(&managev1.ListProgramEventSeriesAdminResponse{Series: r.series, Pagination: r.pagination}), r.err
 }
 
-func (r *recordingProgramEventReferences) ListLabelsAdmin(_ context.Context, request *connect.Request[managev1.ListLabelsAdminRequest]) (*connect.Response[managev1.ListLabelsAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListLabelsAdminResponse{Labels: r.labels, Pagination: r.pagination}), r.err
+func (r *recordingProgramEventReferences) ListLabelsAdmin(_ context.Context, query label.ListLabelsQuery) (label.AdminLabelPage, error) {
+	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
+	return label.AdminLabelPage{Labels: r.labels, Pagination: r.pagination}, r.err
 }

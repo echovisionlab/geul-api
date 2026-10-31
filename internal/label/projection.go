@@ -5,12 +5,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
@@ -21,66 +20,50 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (s *LabelService) CheckLabelSlugAvailable(
-	ctx context.Context,
-	req *connect.Request[managev1.CheckLabelSlugAvailableRequest],
-) (*connect.Response[managev1.CheckLabelSlugAvailableResponse], error) {
-	user := auth.GetUser(ctx)
-	if user == nil {
-		return nil, errs.AuthenticationRequired()
-	}
-
-	if req.Msg.ExcludeLabelId != nil {
-		// Editing existing label - check edit permission (admin or manager)
-		if err := labelEntity.RequirePermission(ctx, s.spiceDB, *req.Msg.ExcludeLabelId, policyv1.Label.Edit); err != nil {
-			return nil, err
-		}
-	} else {
-		// Creating new label - only admins can create labels
-		if err := labelEntity.RequireCreate(ctx, s.spiceDB); err != nil {
-			return nil, err
-		}
-	}
-	if err := pathslug.Validate(req.Msg.Slug); err != nil {
-		return nil, err
-	}
-
-	var count int64
-
-	query := s.db.WithContext(ctx).Model(&model.Label{}).Where("slug = ?", req.Msg.Slug)
-
-	if req.Msg.ExcludeLabelId != nil {
-		query = query.Where("id != ?", *req.Msg.ExcludeLabelId)
-	}
-
-	if err := query.Count(&count).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if count == 0 {
-		available, err := routeregistry.IsResourceRouteAvailable(ctx, s.db, "labels", req.Msg.Slug)
-		if err != nil {
-			return nil, err
-		}
-		if !available {
-			count = 1
-		}
-	}
-
-	return connect.NewResponse(&managev1.CheckLabelSlugAvailableResponse{
-		Available: count == 0,
-	}), nil
+// CheckLabelSlugAvailableQuery asks whether Slug is free for a new Label, or
+// for the Label ExcludeLabelID when it is set.
+type CheckLabelSlugAvailableQuery struct {
+	Slug           string
+	ExcludeLabelID *string
 }
 
-// =============================================================================
-// Helper Methods
-// =============================================================================
+// CheckLabelSlugAvailable reports whether no other Label and no route use
+// the slug. Checking for an existing Label requires Edit on it; for a new
+// one, the platform-wide create action.
+func (s *Service) CheckLabelSlugAvailable(ctx context.Context, query CheckLabelSlugAvailableQuery) (bool, error) {
+	if auth.GetUser(ctx) == nil {
+		return false, errAuthenticationRequired
+	}
+	if query.ExcludeLabelID != nil {
+		if err := labelEntity.RequirePermission(ctx, s.spiceDB, *query.ExcludeLabelID, policyv1.Label.Edit); err != nil {
+			return false, err
+		}
+	} else if err := labelEntity.RequireCreate(ctx, s.spiceDB); err != nil {
+		return false, err
+	}
+	if err := pathslug.Validate(query.Slug); err != nil {
+		return false, err
+	}
+	labels := s.db.WithContext(ctx).Model(&model.Label{}).Where("slug = ?", query.Slug)
+	if query.ExcludeLabelID != nil {
+		labels = labels.Where("id != ?", *query.ExcludeLabelID)
+	}
+	var count int64
+	if err := labels.Count(&count).Error; err != nil {
+		return false, err
+	}
+	if count != 0 {
+		return false, nil
+	}
+	return routeregistry.IsResourceRouteAvailable(ctx, s.db, "labels", query.Slug)
+}
 
 type labelImageAssets struct {
 	Light *commonv1.AssetRef
 	Dark  *commonv1.AssetRef
 }
 
-func (s *LabelService) loadReadyLabelLogoAssets(
+func (s *Service) loadReadyLabelLogoAssets(
 	ctx context.Context,
 	labels []model.Label,
 ) (map[string]*commonv1.AssetRef, error) {
@@ -102,11 +85,7 @@ func (s *LabelService) loadReadyLabelLogoAssets(
 	if len(fileIDs) == 0 {
 		return refs, nil
 	}
-	refs, err := s.runtime.ResolveReadySourceFileRefs(ctx, s.db, fileIDs, "logo")
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return refs, nil
+	return s.runtime.ResolveReadySourceFileRefs(ctx, s.db, fileIDs, "logo")
 }
 
 func labelImageAssetsFromReadyMap(label *model.Label, refs map[string]*commonv1.AssetRef) *labelImageAssets {
@@ -123,7 +102,7 @@ func labelImageAssetsFromReadyMap(label *model.Label, refs map[string]*commonv1.
 	return result
 }
 
-func (s *LabelService) getLabelImageAssets(ctx context.Context, labelID string) *labelImageAssets {
+func (s *Service) getLabelImageAssets(ctx context.Context, labelID string) *labelImageAssets {
 	var label model.Label
 	if err := s.db.WithContext(ctx).Select("id", "logo_light_file_id", "logo_dark_file_id").First(&label, "id = ?", labelID).Error; err != nil {
 		slog.WarnContext(ctx, "Label logo lookup failed; serving the Label without logos", "domain", "label", "operation", "load_label_logo_assets", "label_id", labelID, failurecause.Attr(err))
@@ -137,13 +116,13 @@ func (s *LabelService) getLabelImageAssets(ctx context.Context, labelID string) 
 	return labelImageAssetsFromReadyMap(&label, refs)
 }
 
-func (s *LabelService) overlayLabelSourceLocaleDocument(ctx context.Context, label *model.Label) error {
+func (s *Service) overlayLabelSourceLocaleDocument(ctx context.Context, label *model.Label) error {
 	if label == nil {
 		return nil
 	}
 	labelID := label.ID
 	projection, err := loadCreativeManageContentProjection(
-		ctx, s.db, s.contentBlocks, labelContentEntity, labelID,
+		ctx, s.db, s.contentBlocks, labelID,
 		func(ctx context.Context, tx *gorm.DB) error {
 			var current model.Label
 			if err := tx.WithContext(ctx).
@@ -165,7 +144,7 @@ func (s *LabelService) overlayLabelSourceLocaleDocument(ctx context.Context, lab
 	return nil
 }
 
-func (s *LabelService) overlayLabelSourceLocaleDocuments(ctx context.Context, labels []model.Label) error {
+func (s *Service) overlayLabelSourceLocaleDocuments(ctx context.Context, labels []model.Label) error {
 	for i := range labels {
 		if err := s.overlayLabelSourceLocaleDocument(ctx, &labels[i]); err != nil {
 			return err
@@ -174,7 +153,7 @@ func (s *LabelService) overlayLabelSourceLocaleDocuments(ctx context.Context, la
 	return nil
 }
 
-func (s *LabelService) loadReadyLabelOgAssets(
+func (s *Service) loadReadyLabelOgAssets(
 	ctx context.Context,
 	labels []model.Label,
 ) (map[string]*commonv1.AssetRef, error) {
@@ -192,20 +171,20 @@ func labelOgAssetIDForResponse(label *model.Label) *string {
 	return label.OgAssetID
 }
 
-func (s *LabelService) labelResponseWithReadyOg(
+func (s *Service) labelWithReadyOg(
 	ctx context.Context,
 	label *model.Label,
 	imageAssets *labelImageAssets,
-) (*connect.Response[managev1.Label], error) {
+) (*managev1.Label, error) {
 	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, labelOgAssetIDForResponse(label))
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(s.toProtoLabel(label, imageAssets, ogAsset)), nil
+	return toProtoLabel(label, imageAssets, ogAsset), nil
 }
 
 // toProtoLabel converts a model.Label to protobuf Label
-func (s *LabelService) toProtoLabel(
+func toProtoLabel(
 	l *model.Label,
 	imageAssets *labelImageAssets,
 	ogAsset *commonv1.AssetRef,
@@ -252,7 +231,7 @@ func (s *LabelService) toProtoLabel(
 
 // checkSlugAvailable checks if a slug is available for use
 // excludeID can be empty for new labels, or set to the current label ID when updating
-func (s *LabelService) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
+func (s *Service) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
 	if err := pathslug.Validate(slug); err != nil {
 		return err
 	}
@@ -267,11 +246,11 @@ func (s *LabelService) checkSlugAvailable(ctx context.Context, slug string, excl
 	}
 
 	if err := query.Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 
 	if count > 0 {
-		return errs.SlugAlreadyExists("label", slug)
+		return domainerr.Duplicate("label", "slug", slug)
 	}
 
 	return nil

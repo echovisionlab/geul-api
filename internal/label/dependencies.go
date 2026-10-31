@@ -3,27 +3,13 @@ package label
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
 
-// AsyncPublisher is the asynchronous transport capability used by Label mutations.
-// content.updated is scheduled only through the transactional signal method.
-type AsyncPublisher interface {
-	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	NotifyProtobuf(context.Context, string, proto.Message) error
-	contentsignal.Publisher
-}
-
-// FileDeleter removes Label-owned File bindings during Label deletion.
-type FileDeleter interface {
-	DeleteFileByID(context.Context, string) error
-}
-
-// Translation provides Label's locale normalization and shared translation
-// contributor/audit checks. Label's source locale is owned by label.source_locale.
+// Translation provides Label's initial source locale and the shared
+// translation contributor check. Label's source locale is owned by
+// label.source_locale.
 type Translation interface {
 	ResolveInitialSourceLocale(context.Context, *gorm.DB, string) string
 	RequireDocumentContributors(context.Context, *gorm.DB, []string) error
@@ -48,10 +34,4 @@ type Runtime interface {
 	ResolveReadySourceFileRefs(context.Context, *gorm.DB, []string, ...string) (map[string]*commonv1.AssetRef, error)
 	RequestCurrentWithDB(context.Context, *gorm.DB, string, string) (string, error)
 	CancelAndReleaseOGWithDB(context.Context, *gorm.DB, string) error
-}
-
-type Dependencies struct {
-	Translation Translation
-	Members     MemberProjection
-	Runtime     Runtime
 }

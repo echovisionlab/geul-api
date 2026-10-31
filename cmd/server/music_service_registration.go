@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -83,41 +84,31 @@ func (m musicServiceRegistration) registerArtist() (*artist.ArtistService, *arti
 	return artistService, internalArtistService
 }
 
-func (m musicServiceRegistration) registerLabel() *label.LabelService {
+func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	deps := m.dependencies
-	labelRuntime := labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher)
-	labelDependencies := label.Dependencies{
+	labelService, err := label.NewService(label.Deps{
+		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.servicePublisher,
+		ContentBlocks: deps.contentBlockStore, Checkpoints: m.checkpoints,
 		Translation: labeladapter.NewTranslation(),
 		Members:     labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
-		Runtime:     labelRuntime,
+		Runtime:     labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize label service: %w", err)
 	}
-	labelService := label.NewAuditedLabelService(
-		deps.db, deps.spicedbClient, deps.kratosClient, m.files, deps.servicePublisher, deps.telemetryWriter,
-		labelDependencies,
-		label.WithLabelContentBlockStore(deps.contentBlockStore),
-	)
-	m.registerManage(managev1connect.NewLabelServiceHandler(labelService, m.manageOptions...))
-
-	internalLabelService := label.NewAuditedInternalLabelService(
-		deps.db, deps.servicePublisher, deps.spicedbClient, deps.telemetryWriter,
-		labelDependencies,
-		label.WithInternalLabelContentBlockStore(deps.contentBlockStore),
-		label.WithInternalLabelCheckpoints(m.checkpoints),
-	)
-	m.registerInternal(intrav1connect.NewInternalLabelServiceHandler(internalLabelService, m.internalOptions...))
+	m.registerManage(managev1connect.NewLabelServiceHandler(label.NewConnectHandler(labelService), m.manageOptions...))
+	m.registerInternal(intrav1connect.NewInternalLabelServiceHandler(label.NewInternalConnectHandler(labelService), m.internalOptions...))
 
 	labelPublicRuntime := labeladapter.NewPublicRuntime(deps.db, deps.cfg.CDNURL, deps.spicedbClient, deps.contentBlockStore)
-	publicLabelService := labelpublic.NewLabelService(
-		deps.db,
-		labelpublic.Dependencies{
-			Content: labelPublicRuntime,
-			Draft:   labelPublicRuntime,
-			Media:   labelPublicRuntime,
-		},
-	)
-	m.registerPublic(openv1connect.NewLabelServiceHandler(publicLabelService, m.publicOptions...))
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{
+		DB: deps.db, Content: labelPublicRuntime, Draft: labelPublicRuntime, Media: labelPublicRuntime,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize public label service: %w", err)
+	}
+	m.registerPublic(openv1connect.NewLabelServiceHandler(labelpublic.NewConnectHandler(publicLabelService), m.publicOptions...))
 
-	return labelService
+	return labelService, nil
 }
 
 func (m musicServiceRegistration) registerRelease() (*releasepkg.ReleaseService, *releasepkg.InternalReleaseService, *releasepkg.TrackService) {

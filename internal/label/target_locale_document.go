@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
@@ -67,11 +67,11 @@ func loadLabelTargetLocaleState(
 	forUpdate bool,
 ) (labelTargetLocaleState, error) {
 	if tx == nil || store == nil || documentID == uuid.Nil {
-		return labelTargetLocaleState{}, errs.InternalMsg("Label target locale dependencies are required")
+		return labelTargetLocaleState{}, errors.New("Label target locale dependencies are required")
 	}
 	locale = strings.TrimSpace(locale)
 	if locale == "" {
-		return labelTargetLocaleState{}, errs.Required("locale")
+		return labelTargetLocaleState{}, domainerr.Required("locale")
 	}
 	canonicalLocale, err := normalizeLabelDocumentLocale(locale)
 	if err != nil {
@@ -83,7 +83,7 @@ func loadLabelTargetLocaleState(
 		return labelTargetLocaleState{}, err
 	}
 	if locale == source.SourceLocale {
-		return labelTargetLocaleState{}, errs.InvalidArgument("locale", "Label target locale must differ from the source locale")
+		return labelTargetLocaleState{}, domainerr.InvalidField("locale", "Label target locale must differ from the source locale")
 	}
 	if forUpdate {
 		var document contentblock.Document
@@ -98,21 +98,21 @@ func loadLabelTargetLocaleState(
 		return labelTargetLocaleState{}, normalizeLabelContentBlockError(err)
 	}
 	if snapshot.Document.Profile != creativeContentProfile {
-		return labelTargetLocaleState{}, errs.FailedPrecondition("Label target locale requires the compact content profile")
+		return labelTargetLocaleState{}, domainerr.Precondition("Label target locale requires the compact content profile")
 	}
 	sourceMetadata, exists, err := loadOptionalLabelLocaleMetadata(ctx, tx, labelID, source.SourceLocale, forUpdate)
 	if err != nil {
 		return labelTargetLocaleState{}, err
 	}
 	if !exists {
-		return labelTargetLocaleState{}, errs.InternalMsg("Label source locale metadata is missing")
+		return labelTargetLocaleState{}, errors.New("Label source locale metadata is missing")
 	}
 	target, exists, err := loadOptionalLabelLocaleMetadata(ctx, tx, labelID, locale, forUpdate)
 	if err != nil {
 		return labelTargetLocaleState{}, err
 	}
 	if !exists && targetlocale.SnapshotHasLocale(snapshot, locale) {
-		return labelTargetLocaleState{}, errs.FailedPrecondition("Label target locale Blocks exist without owning metadata")
+		return labelTargetLocaleState{}, domainerr.Precondition("Label target locale Blocks exist without owning metadata")
 	}
 	state := labelTargetLocaleState{Snapshot: snapshot, SourceLocale: source.SourceLocale, SourceMetadata: sourceMetadata}
 	if exists {
@@ -150,7 +150,7 @@ func loadOptionalLabelLocaleMetadata(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return labelLocaleMetadataRow{}, false, nil
 		}
-		return labelLocaleMetadataRow{}, false, errs.Internal(err)
+		return labelLocaleMetadataRow{}, false, err
 	}
 	return row, true, nil
 }
@@ -160,7 +160,7 @@ func deriveLabelTargetRevision(documentRevision string, updatedAt time.Time) (st
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -173,7 +173,7 @@ func applyLabelTargetLocaleMutation(
 ) (labelTargetLocaleMutationResult, error) {
 	if input.ExpectedDocumentRevision == uuid.Nil || strings.TrimSpace(input.LabelID) == "" ||
 		strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
-		return labelTargetLocaleMutationResult{}, errs.InvalidArgument("target", "Label target identity, revision, and fence are required")
+		return labelTargetLocaleMutationResult{}, domainerr.InvalidField("target", "Label target identity, revision, and fence are required")
 	}
 	documentID, err := loadLabelContentDocumentID(ctx, tx, input.LabelID)
 	if err != nil {
@@ -188,7 +188,7 @@ func applyLabelTargetLocaleMutation(
 		return labelTargetLocaleMutationResult{}, err
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return labelTargetLocaleMutationResult{}, errs.FailedPrecondition("Label source locale changed; reload before saving")
+		return labelTargetLocaleMutationResult{}, domainerr.Precondition("Label source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return labelTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
@@ -206,10 +206,10 @@ func applyLabelTargetLocaleMutation(
 					INSERT INTO label_translation (entity_id, locale, title, created_at, updated_at)
 					VALUES (?::uuid, ?, NULL, ?, ?)`, input.LabelID, input.Locale, now, now)
 				if created.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(created.Error)
+					return contentblock.MetadataEffect{}, created.Error
 				}
 				if created.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Label target locale could not be created")
+					return contentblock.MetadataEffect{}, errors.New("Label target locale could not be created")
 				}
 				finalUpdatedAt = now
 				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
@@ -223,10 +223,10 @@ func applyLabelTargetLocaleMutation(
 				Where("entity_id = ?::uuid AND locale = ?", input.LabelID, input.Locale).
 				Update("updated_at", finalUpdatedAt)
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Label target locale disappeared while saving")
+				return contentblock.MetadataEffect{}, errors.New("Label target locale disappeared while saving")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
 		})
@@ -285,10 +285,10 @@ func deleteLabelTargetLocale(
 		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
 			deleted := tx.WithContext(ctx).Exec("DELETE FROM label_translation WHERE entity_id = ?::uuid AND locale = ?", labelID, locale)
 			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+				return contentblock.MetadataEffect{}, deleted.Error
 			}
 			if deleted.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Label target locale disappeared while deleting")
+				return contentblock.MetadataEffect{}, errors.New("Label target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		})

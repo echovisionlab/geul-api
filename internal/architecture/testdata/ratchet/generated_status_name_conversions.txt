@@ -15,7 +15,7 @@
 3 internal/audience
 23 internal/campaign
 16 internal/filemedia/public
-15 internal/label
+14 internal/label
 12 internal/label/public
 42 internal/legal
 16 internal/legal/public

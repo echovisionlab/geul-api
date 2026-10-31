@@ -438,7 +438,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		internalTrust: internalRPCTrust, downloadTTL: downloadTTL,
 	}
 	artistService, internalArtistService := music.registerArtist()
-	labelService := music.registerLabel()
+	labelService, err := music.registerLabel()
+	if err != nil {
+		return registeredServices{}, err
+	}
 	releaseService, internalReleaseService, trackService := music.registerRelease()
 	genreService, styleService, formatService := music.registerTaxonomy()
 

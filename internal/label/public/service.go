@@ -2,26 +2,25 @@ package public
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -47,77 +46,100 @@ type MediaHydrator interface {
 	ResolveOg(context.Context, *gorm.DB, *string) (*commonv1.AssetRef, error)
 }
 
-type Dependencies struct {
+// Deps are the collaborators of the public Label reads; all are required.
+type Deps struct {
+	DB      *gorm.DB
 	Content ContentProjection
 	Draft   DraftAccess
 	Media   MediaHydrator
 }
 
-// LabelService implements the public LabelService
-type LabelService struct {
-	openv1connect.UnimplementedLabelServiceHandler
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "Content": d.Content == nil, "Draft": d.Draft == nil, "Media": d.Media == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("public label dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the public Label reads.
+type Service struct {
 	db      *gorm.DB
 	content ContentProjection
 	draft   DraftAccess
 	media   MediaHydrator
 }
 
-// NewLabelService creates a new public LabelService
-func NewLabelService(db *gorm.DB, dependencies Dependencies) *LabelService {
-	if db == nil {
-		panic("public label service dependencies are required")
+// NewService validates deps and returns the public Label reads.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	if dependencies.Content == nil || dependencies.Draft == nil || dependencies.Media == nil {
-		panic("public label service content, draft, and media dependencies are required")
-	}
-	return &LabelService{db: db, content: dependencies.Content, draft: dependencies.Draft, media: dependencies.Media}
+	return &Service{db: deps.DB, content: deps.Content, draft: deps.Draft, media: deps.Media}, nil
+}
+
+var errLabelNotFound = domainerr.New(domainerr.NotFound, "", "label not found")
+
+// ListLabelsQuery pages through published Labels.
+type ListLabelsQuery struct {
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// LabelPage is one page of published Label summaries.
+type LabelPage struct {
+	Labels     []*openv1.LabelSummary
+	Pagination *commonv1.PaginationResponse
 }
 
 // List returns published labels with filtering and sorting
-func (s *LabelService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListLabelsRequest],
-) (*connect.Response[openv1.ListLabelsResponse], error) {
-	// Base query - only published labels
-	query := s.db.WithContext(ctx).Model(&model.Label{}).Where("status = ?", managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String())
-
-	// 1. Apply filters using LabelFilterConfig
-	query, err := LabelFilterConfig.ApplyFilters(query, req.Msg.Filters)
+func (s *Service) List(ctx context.Context, query ListLabelsQuery) (LabelPage, error) {
+	labels := s.db.WithContext(ctx).Model(&model.Label{}).Where("status = ?", managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String())
+	labels, err := LabelFilterConfig.ApplyFilters(labels, query.Filters)
 	if err != nil {
-		return nil, err
+		return LabelPage{}, err
 	}
-
-	// Get total count before pagination
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := labels.Count(&total).Error; err != nil {
+		return LabelPage{}, err
 	}
-
-	// 2. Sort
-	query, err = LabelSortConfig.ApplySort(query, req.Msg.Sorts)
+	labels, err = LabelSortConfig.ApplySort(labels, query.Sorts)
 	if err != nil {
-		return nil, err
+		return LabelPage{}, err
 	}
-
-	// 3. Pagination
-	pagination := queryutil.GetPaginationParams(
-		req.Msg.Pagination.GetLimit(),
-		req.Msg.Pagination.GetOffset(),
-		20,
-	)
-	query = queryutil.ApplyPagination(query, pagination)
-
-	// Fetch labels
-	var labels []model.Label
-	if err := query.Find(&labels).Error; err != nil {
-		return nil, errs.Internal(err)
+	pagination := queryutil.GetPaginationParams(query.Limit, query.Offset, 20)
+	var rows []model.Label
+	if err := queryutil.ApplyPagination(labels, pagination).Find(&rows).Error; err != nil {
+		return LabelPage{}, err
 	}
+	summaries, err := s.labelSummaries(ctx, rows)
+	if err != nil {
+		return LabelPage{}, err
+	}
+	return LabelPage{Labels: summaries, Pagination: &commonv1.PaginationResponse{
+		Total:   int32(total),
+		Limit:   pagination.Limit,
+		Offset:  pagination.Offset,
+		HasMore: pagination.Offset+int32(len(rows)) < int32(total),
+	}}, nil
+}
+
+// labelSummaries renders labels with their source titles, ready logos and
+// OG images.
+func (s *Service) labelSummaries(ctx context.Context, labels []model.Label) ([]*openv1.LabelSummary, error) {
 	sourceTitles, err := s.content.LoadSourceTitles(ctx, s.db, collectLabelIDs(labels))
 	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	for i := range labels {
-		labels[i].Name = sourceTitles[labels[i].ID]
+		return nil, err
 	}
 	logoFileIDs := make([]string, 0, len(labels)*2)
 	ogAssetIDs := make([]string, 0, len(labels))
@@ -133,111 +155,84 @@ func (s *LabelService) List(
 	}
 	logoRows, err := s.media.ReadyForSourceFiles(ctx, s.db, logoFileIDs, "logo")
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	ogRows, err := s.media.ReadyForAssetIDs(ctx, s.db, ogAssetIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	// Convert to proto summaries
 	summaries := make([]*openv1.LabelSummary, 0, len(labels))
 	for _, label := range labels {
-		summary := &openv1.LabelSummary{
-			Id:   label.ID,
-			Name: label.Name,
-		}
-		if label.Slug != nil {
-			summary.Slug = label.Slug
-		}
-		if label.CountryCode != nil {
-			summary.CountryCode = label.CountryCode
-		}
-		if label.Website != nil {
-			summary.Website = label.Website
-		}
-		if label.PublishedAt != nil {
-			summary.PublishedAt = timestamppb.New(*label.PublishedAt)
-		}
-		if labelHasEffectiveLogo(label.LogoLightFileID, label.LogoDarkFileID) && label.OgAssetID != nil {
-			summary.OgAsset = ogRows[*label.OgAssetID]
-		}
-		if label.LogoLightFileID != nil {
-			summary.ImageLightAsset = logoRows[*label.LogoLightFileID]
-		}
-		if label.LogoDarkFileID != nil {
-			summary.ImageDarkAsset = logoRows[*label.LogoDarkFileID]
-		}
-		summaries = append(summaries, summary)
+		summaries = append(summaries, labelSummary(label, sourceTitles[label.ID], logoRows, ogRows))
 	}
+	return summaries, nil
+}
 
-	return connect.NewResponse(&openv1.ListLabelsResponse{
-		Labels: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   pagination.Limit,
-			Offset:  pagination.Offset,
-			HasMore: pagination.Offset+int32(len(labels)) < int32(total),
-		},
-	}), nil
+func labelSummary(label model.Label, name string, logoRows, ogRows map[string]*commonv1.AssetRef) *openv1.LabelSummary {
+	summary := &openv1.LabelSummary{
+		Id: label.ID, Name: name, Slug: label.Slug, CountryCode: label.CountryCode, Website: label.Website,
+	}
+	if label.PublishedAt != nil {
+		summary.PublishedAt = timestamppb.New(*label.PublishedAt)
+	}
+	if labelHasEffectiveLogo(label.LogoLightFileID, label.LogoDarkFileID) && label.OgAssetID != nil {
+		summary.OgAsset = ogRows[*label.OgAssetID]
+	}
+	if label.LogoLightFileID != nil {
+		summary.ImageLightAsset = logoRows[*label.LogoLightFileID]
+	}
+	if label.LogoDarkFileID != nil {
+		summary.ImageDarkAsset = logoRows[*label.LogoDarkFileID]
+	}
+	return summary
+}
+
+// GetLabelQuery reads one Label by ID or slug. A draft Label needs a share
+// token (and its password) or the caller's exact view permission.
+// AcceptLanguage picks the displayed locale.
+type GetLabelQuery struct {
+	SlugOrID       string
+	ShareToken     string
+	SharePassword  string
+	AcceptLanguage string
 }
 
 // Get retrieves a label by slug or ID
 // - UUID-first: if input is valid UUID, query by ID; otherwise query by slug
 // - share_token allows access to draft labels
 // - authenticated accounts with the exact SpiceDB view permission can access drafts
-func (s *LabelService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetLabelRequest],
-) (*connect.Response[openv1.GetLabelResponse], error) {
-	slugOrID := req.Msg.Slug
-	shareToken := req.Msg.GetShareToken()
-	sharePassword := req.Msg.GetSharePassword()
-
+func (s *Service) Get(ctx context.Context, query GetLabelQuery) (*openv1.Label, error) {
 	var label model.Label
 	var err error
-
-	// UUID-first approach
-	if isValidUUID(slugOrID) {
-		err = s.db.WithContext(ctx).First(&label, "id = ?", slugOrID).Error
+	if isValidUUID(query.SlugOrID) {
+		err = s.db.WithContext(ctx).First(&label, "id = ?", query.SlugOrID).Error
 	} else {
-		err = s.db.WithContext(ctx).First(&label, "slug = ?", slugOrID).Error
+		err = s.db.WithContext(ctx).First(&label, "slug = ?", query.SlugOrID).Error
 	}
-
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("label not found")
+			return nil, errLabelNotFound
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
-	// Check access for draft labels
 	if label.Status != managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String() {
-		if err := s.requireDraftLabelAccess(ctx, label.ID, shareToken, sharePassword); err != nil {
+		if err := s.draft.Require(ctx, label.ID, query.ShareToken, query.SharePassword); err != nil {
 			return nil, err
 		}
 	}
-
-	return s.buildLabelResponse(ctx, req.Header().Get("Accept-Language"), &label)
+	return s.buildLabelResponse(ctx, query.AcceptLanguage, &label)
 }
 
-func (s *LabelService) requireDraftLabelAccess(
-	ctx context.Context,
-	labelID string,
-	shareToken string,
-	sharePassword string,
-) error {
-	return s.draft.Require(ctx, labelID, shareToken, sharePassword)
-}
-
-// buildLabelResponse builds a GetLabelResponse with the label
-func (s *LabelService) buildLabelResponse(
+// buildLabelResponse projects the Label in one snapshot that waits out a
+// concurrent writer of its row.
+func (s *Service) buildLabelResponse(
 	ctx context.Context,
 	acceptLanguage string,
 	label *model.Label,
-) (*connect.Response[openv1.GetLabelResponse], error) {
+) (*openv1.Label, error) {
 	wasPublic := label.Status == managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()
-	var response *connect.Response[openv1.GetLabelResponse]
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var response *openv1.Label
+	err := mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
 		projection := *s
 		projection.db = tx
 		var err error
@@ -245,16 +240,16 @@ func (s *LabelService) buildLabelResponse(
 			ctx, acceptLanguage, label, wasPublic,
 		)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return response, err
 }
 
-func (s *LabelService) buildLabelResponseInTransaction(
+func (s *Service) buildLabelResponseInTransaction(
 	ctx context.Context,
 	acceptLanguage string,
 	label *model.Label,
 	wasPublic bool,
-) (*connect.Response[openv1.GetLabelResponse], error) {
+) (*openv1.Label, error) {
 	labelID := label.ID
 	var current model.Label
 	if err := s.db.WithContext(ctx).
@@ -262,12 +257,12 @@ func (s *LabelService) buildLabelResponseInTransaction(
 		Where("id = ?", labelID).
 		Take(&current).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("label not found")
+			return nil, errLabelNotFound
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if wasPublic && current.Status != managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String() {
-		return nil, errs.NotFoundMsg("label not found")
+		return nil, errLabelNotFound
 	}
 	*label = current
 	localization, err := publiccontent.Resolve(ctx, s.db, labelLocalizationSpec, labelID, acceptLanguage)
@@ -278,27 +273,18 @@ func (s *LabelService) buildLabelResponseInTransaction(
 	if err != nil {
 		return nil, err
 	}
-	label.Name = localizedLabelName(content.SourceTitle, localization.Title)
-
 	protoLabel := &openv1.Label{
 		Id:          label.ID,
-		Name:        label.Name,
+		Name:        localizedLabelName(content.SourceTitle, localization.Title),
 		Document:    content.Document,
 		SocialLinks: label.SocialLinks,
 		Status:      openv1.LabelStatus(openv1.LabelStatus_value[label.Status]),
 		CreatedAt:   timestamppb.New(label.CreatedAt),
 		UpdatedAt:   timestamppb.New(label.UpdatedAt),
 		Revision:    content.Revision,
-	}
-
-	if label.Slug != nil {
-		protoLabel.Slug = label.Slug
-	}
-	if label.CountryCode != nil {
-		protoLabel.CountryCode = label.CountryCode
-	}
-	if label.Website != nil {
-		protoLabel.Website = label.Website
+		Slug:        label.Slug,
+		CountryCode: label.CountryCode,
+		Website:     label.Website,
 	}
 	if label.PublishedAt != nil {
 		protoLabel.PublishedAt = timestamppb.New(*label.PublishedAt)
@@ -308,40 +294,39 @@ func (s *LabelService) buildLabelResponseInTransaction(
 		// description selection must never participate in image resolution.
 		protoLabel.OgAsset, err = s.media.ResolveOg(ctx, s.db, label.OgAssetID)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 	}
 	s.applyLabelImageAssets(ctx, protoLabel, label.LogoLightFileID, label.LogoDarkFileID)
-
-	protoLabel.ReleaseCount, protoLabel.ArtistCount, err = s.getLabelRelationCounts(ctx, label.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
+	if err := s.applyLabelRelations(ctx, protoLabel, label.ParentLabelID); err != nil {
+		return nil, err
 	}
+	protoLabel.LocalizationInfo = publiccontent.ToProtoLocalizationInfo(localization)
+	return protoLabel, nil
+}
 
-	// Get parent label if exists
-	if label.ParentLabelID != nil {
-		if parentLabel := s.getParentLabel(ctx, *label.ParentLabelID); parentLabel != nil {
+// applyLabelRelations adds the relation counts, the published parent, and
+// the first 12 published Artists and Releases.
+func (s *Service) applyLabelRelations(ctx context.Context, protoLabel *openv1.Label, parentLabelID *string) error {
+	var err error
+	protoLabel.ReleaseCount, protoLabel.ArtistCount, err = s.getLabelRelationCounts(ctx, protoLabel.Id)
+	if err != nil {
+		return err
+	}
+	if parentLabelID != nil {
+		if parentLabel := s.getParentLabel(ctx, *parentLabelID); parentLabel != nil {
 			protoLabel.ParentLabel = parentLabel
 		}
 	}
-
-	// Get first 12 artists and releases for preview
-	protoLabel.Artists, err = s.getLabelArtistsPreview(ctx, label.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
+	if protoLabel.Artists, err = s.getLabelArtistsPreview(ctx, protoLabel.Id); err != nil {
+		return err
 	}
-	protoLabel.Releases, err = s.getLabelReleasesPreview(ctx, label.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoLabel.LocalizationInfo = publiccontent.ToProtoLocalizationInfo(localization)
-	return connect.NewResponse(&openv1.GetLabelResponse{
-		Label: protoLabel,
-	}), nil
+	protoLabel.Releases, err = s.getLabelReleasesPreview(ctx, protoLabel.Id)
+	return err
 }
 
 // getLabelArtistsPreview gets first 12 published artists for a label
-func (s *LabelService) getLabelArtistsPreview(ctx context.Context, labelID string) ([]*openv1.LabelArtist, error) {
+func (s *Service) getLabelArtistsPreview(ctx context.Context, labelID string) ([]*openv1.LabelArtist, error) {
 	var artists []struct {
 		ID          string  `gorm:"column:id"`
 		Name        string  `gorm:"column:name"`
@@ -398,7 +383,7 @@ func (s *LabelService) getLabelArtistsPreview(ctx context.Context, labelID strin
 }
 
 // getLabelReleasesPreview gets first 12 published releases for a label
-func (s *LabelService) getLabelReleasesPreview(ctx context.Context, labelID string) ([]*openv1.LabelRelease, error) {
+func (s *Service) getLabelReleasesPreview(ctx context.Context, labelID string) ([]*openv1.LabelRelease, error) {
 	var releases []struct {
 		ID            string     `gorm:"column:id"`
 		Title         string     `gorm:"column:title"`
@@ -489,7 +474,7 @@ func (s *LabelService) getLabelReleasesPreview(ctx context.Context, labelID stri
 	return protoReleases, nil
 }
 
-func (s *LabelService) applyLabelImageAssets(ctx context.Context, label *openv1.Label, lightFileID, darkFileID *string) {
+func (s *Service) applyLabelImageAssets(ctx context.Context, label *openv1.Label, lightFileID, darkFileID *string) {
 	if label == nil {
 		return
 	}
@@ -497,7 +482,7 @@ func (s *LabelService) applyLabelImageAssets(ctx context.Context, label *openv1.
 	label.ImageDarkAsset = s.getOptionalLabelImageAsset(ctx, darkFileID)
 }
 
-func (s *LabelService) applyLabelSummaryImageAssets(ctx context.Context, label *openv1.LabelSummary, lightFileID, darkFileID *string) {
+func (s *Service) applyLabelSummaryImageAssets(ctx context.Context, label *openv1.LabelSummary, lightFileID, darkFileID *string) {
 	if label == nil {
 		return
 	}
@@ -510,7 +495,7 @@ func labelHasEffectiveLogo(lightFileID, darkFileID *string) bool {
 		(darkFileID != nil && strings.TrimSpace(*darkFileID) != "")
 }
 
-func (s *LabelService) getOptionalLabelImageAsset(ctx context.Context, fileID *string) *commonv1.AssetRef {
+func (s *Service) getOptionalLabelImageAsset(ctx context.Context, fileID *string) *commonv1.AssetRef {
 	if fileID == nil {
 		return nil
 	}
@@ -522,7 +507,7 @@ func (s *LabelService) getOptionalLabelImageAsset(ctx context.Context, fileID *s
 	return assets[*fileID]
 }
 
-func (s *LabelService) getLabelRelationCounts(ctx context.Context, labelID string) (int32, int32, error) {
+func (s *Service) getLabelRelationCounts(ctx context.Context, labelID string) (int32, int32, error) {
 	var counts struct {
 		ReleaseCount int32 `gorm:"column:release_count"`
 		ArtistCount  int32 `gorm:"column:artist_count"`
@@ -540,7 +525,7 @@ func (s *LabelService) getLabelRelationCounts(ctx context.Context, labelID strin
 }
 
 // getParentLabel gets parent label summary
-func (s *LabelService) getParentLabel(ctx context.Context, parentLabelID string) *openv1.LabelSummary {
+func (s *Service) getParentLabel(ctx context.Context, parentLabelID string) *openv1.LabelSummary {
 	var parent struct {
 		ID              string  `gorm:"column:id"`
 		Name            string  `gorm:"column:name"`

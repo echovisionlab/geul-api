@@ -12,7 +12,6 @@
 6 internal/emaildelivery
 12 internal/form
 2 internal/form/public
-4 internal/label
 7 internal/legal
 2 internal/member/public
 3 internal/menu

@@ -20,7 +20,7 @@ func TestLabelListReturnsPublishedLabelsOnlyIntegration(t *testing.T) {
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label visibility admin")
 	ctx := artistIntegrationAdminCtx(adminID)
-	service := newLabelIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
+	service := newLabelIntegrationService(t, db, adminID)
 	suffix := testutil.IntegrationUUID()
 
 	publishedID := createIntegrationLabel(t, service, ctx, "Published label "+suffix, "published-label-"+suffix)

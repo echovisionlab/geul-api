@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -36,3 +37,7 @@ func labelAllowedActions(ctx context.Context, checker entityparticipant.Permissi
 		{Can: policyv1.Label.RemoveOwner, Action: managev1.LabelAction_LABEL_ACTION_REMOVE_OWNER},
 	})
 }
+
+// errAuthenticationRequired answers a caller without an authenticated
+// principal.
+var errAuthenticationRequired = domainerr.New(domainerr.Unauthenticated, "", "authentication required")

@@ -5,7 +5,6 @@ package label
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -17,15 +16,17 @@ import (
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -53,8 +54,49 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// requestBackground carries the request context a request-attributed audit
+// record needs; the caller's user becomes its actor.
+func requestBackground() context.Context {
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.97")
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), requestContext)
+}
+
+// newTestService fills the collaborators deps leaves unset with the
+// integration defaults: an audit recorder, a no-op signal publisher, the
+// creative content store and the real Label adapters.
+func newTestService(t *testing.T, deps Deps) *Service {
+	t.Helper()
+	if deps.Audit == nil {
+		deps.Audit = &audittest.Recorder{}
+	}
+	if deps.Publisher == nil {
+		deps.Publisher = noopArtistAsyncPublisher{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = newPageIntegrationContentBlockStore(t, deps.SpiceDB)
+	}
+	if deps.Checkpoints == nil {
+		deps.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)
+	}
+	if deps.Translation == nil {
+		deps.Translation = labeladapter.NewTranslation()
+	}
+	if deps.Members == nil {
+		deps.Members = labeladapter.NewMemberProjection(deps.DB, "")
+	}
+	if deps.Runtime == nil {
+		deps.Runtime = newLabelRuntimeForTest(deps.DB, "")
+	}
+	service, err := NewService(deps)
+	require.NoError(t, err)
+	return service
+}
+
 func artistIntegrationAdminCtx(identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
@@ -68,13 +110,6 @@ func syncArtistIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, 
 	require.NoError(t, err)
 }
 
-type recordingArtistFileDeleter struct{ deletedIDs []string }
-
-func (d *recordingArtistFileDeleter) DeleteFileByID(_ context.Context, fileID string) error {
-	d.deletedIDs = append(d.deletedIDs, fileID)
-	return nil
-}
-
 type noopArtistAsyncPublisher struct{}
 
 func (noopArtistAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
@@ -85,47 +120,6 @@ func (noopArtistAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Me
 }
 
 type capturingAsyncPublisher struct{ noopArtistAsyncPublisher }
-
-type fakeIdentityManager struct{ identity *auth.Identity }
-
-func (f *fakeIdentityManager) GetIdentity(_ context.Context, identityID string) (*auth.Identity, error) {
-	if f.identity == nil || f.identity.ID != identityID {
-		return nil, errors.New("Label integration identity not found")
-	}
-	return f.identity, nil
-}
-func (f *fakeIdentityManager) GetIdentityWithIncludeCredential(ctx context.Context, identityID, _ string) (*auth.Identity, error) {
-	return f.GetIdentity(ctx, identityID)
-}
-func (*fakeIdentityManager) ListIdentities(context.Context, int, int) ([]*auth.Identity, int64, error) {
-	return nil, 0, nil
-}
-func (*fakeIdentityManager) UpdateIdentityTraits(context.Context, string, structured.Fields) error {
-	return nil
-}
-func (*fakeIdentityManager) UpdateIdentityMetadataAdmin(context.Context, string, structured.Fields) error {
-	return nil
-}
-func (*fakeIdentityManager) UpdateIdentityVerifiableAddresses(context.Context, string, []auth.VerifiableAddress) error {
-	return nil
-}
-func (*fakeIdentityManager) SetIdentityState(context.Context, string, string) error { return nil }
-func (*fakeIdentityManager) DeleteIdentitySessions(context.Context, string) error   { return nil }
-func (*fakeIdentityManager) DeleteIdentity(context.Context, string) error           { return nil }
-func (f *fakeIdentityManager) GetIdentityEmail(context.Context, string) (string, error) {
-	if f.identity == nil {
-		return "", nil
-	}
-	return f.identity.CurrentEmail(), nil
-}
-
-func postIntegrationIdentity(id, preferredLocale string) *auth.Identity {
-	traits := structured.Fields{"name": "Label integration admin"}
-	if preferredLocale != "" {
-		traits["preferred_locale"] = preferredLocale
-	}
-	return &auth.Identity{ID: id, ExternalID: testutil.PostIntegrationMemberID(id), State: auth.KratosStateActive, Traits: traits}
-}
 
 type labelTestRenderConfig struct{}
 
@@ -197,7 +191,7 @@ func attachCreativeContentIntegrationDocument(t *testing.T, db *gorm.DB, store *
 	return revision
 }
 
-func createIntegrationLabel(t *testing.T, service *LabelService, ctx context.Context, name, slug string) string {
+func createIntegrationLabel(t *testing.T, service *ConnectHandler, ctx context.Context, name, slug string) string {
 	t.Helper()
 	response, err := service.CreateLabel(ctx, connect.NewRequest(&managev1.CreateLabelRequest{Name: name, Slug: &slug, Document: creativeContentIntegrationDocument("en", name)}))
 	require.NoError(t, err)
