@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -138,9 +139,9 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, labelID, locale strin
 }
 
 type labelAIDocumentRoot struct {
-	ID         string     `gorm:"column:id"`
-	Status     string     `gorm:"column:status"`
-	DocumentID *uuid.UUID `gorm:"column:content_document_id"`
+	ID         string            `gorm:"column:id"`
+	Status     model.LabelStatus `gorm:"column:status"`
+	DocumentID *uuid.UUID        `gorm:"column:content_document_id"`
 }
 
 func loadLabelAIDocumentRoot(
@@ -169,9 +170,9 @@ func loadLabelAIDocumentRoot(
 	return root, nil
 }
 
-func labelAIDocumentLifecycleValid(status string) bool {
+func labelAIDocumentLifecycleValid(status model.LabelStatus) bool {
 	switch status {
-	case managev1.LabelStatus_LABEL_STATUS_DRAFT.String(), managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String():
+	case model.LabelStatusDraft, model.LabelStatusPublished:
 		return true
 	default:
 		return false
@@ -211,7 +212,7 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 		return AIDocumentState{}, errors.New("Label locale overlay exists without translation metadata")
 	}
 	state := AIDocumentState{
-		LabelID: root.ID, Status: root.Status, ContentDocumentID: *root.DocumentID,
+		LabelID: root.ID, Status: string(root.Status), ContentDocumentID: *root.DocumentID,
 		Revision: snapshot.Document.Revision.String(), SourceLocale: source.SourceLocale,
 		Locale: locale, LocaleExists: localeExists, Document: localized,
 		ViewerMemberID: viewerMemberID,

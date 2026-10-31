@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -116,10 +117,16 @@ func (s *Service) getLabelImageAssets(ctx context.Context, labelID string) *labe
 	return labelImageAssetsFromReadyMap(&label, refs)
 }
 
-func (s *Service) overlayLabelSourceLocaleDocument(ctx context.Context, label *model.Label) error {
-	if label == nil {
-		return nil
-	}
+// labelDocument is a Label's source-locale name and content document.
+type labelDocument struct {
+	Name     string
+	Document *contentv1.RichTextDocument
+	Revision string
+}
+
+// overlayLabelSourceLocaleDocument rereads the Label row into label and
+// returns its source-locale document from the same snapshot.
+func (s *Service) overlayLabelSourceLocaleDocument(ctx context.Context, label *model.Label) (labelDocument, error) {
 	labelID := label.ID
 	projection, err := loadCreativeManageContentProjection(
 		ctx, s.db, s.contentBlocks, labelID,
@@ -136,21 +143,20 @@ func (s *Service) overlayLabelSourceLocaleDocument(ctx context.Context, label *m
 		},
 	)
 	if err != nil {
-		return err
+		return labelDocument{}, err
 	}
-	label.Name = projection.SourceTitle
-	label.ContentDocument = projection.Document
-	label.ContentRevision = projection.Revision
-	return nil
+	return labelDocument{Name: projection.SourceTitle, Document: projection.Document, Revision: projection.Revision}, nil
 }
 
-func (s *Service) overlayLabelSourceLocaleDocuments(ctx context.Context, labels []model.Label) error {
+func (s *Service) overlayLabelSourceLocaleDocuments(ctx context.Context, labels []model.Label) ([]labelDocument, error) {
+	documents := make([]labelDocument, len(labels))
 	for i := range labels {
-		if err := s.overlayLabelSourceLocaleDocument(ctx, &labels[i]); err != nil {
-			return err
+		var err error
+		if documents[i], err = s.overlayLabelSourceLocaleDocument(ctx, &labels[i]); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return documents, nil
 }
 
 func (s *Service) loadReadyLabelOgAssets(
@@ -174,18 +180,20 @@ func labelOgAssetIDForResponse(label *model.Label) *string {
 func (s *Service) labelWithReadyOg(
 	ctx context.Context,
 	label *model.Label,
+	document labelDocument,
 	imageAssets *labelImageAssets,
 ) (*managev1.Label, error) {
 	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, labelOgAssetIDForResponse(label))
 	if err != nil {
 		return nil, err
 	}
-	return toProtoLabel(label, imageAssets, ogAsset), nil
+	return toProtoLabel(label, document, imageAssets, ogAsset), nil
 }
 
 // toProtoLabel converts a model.Label to protobuf Label
 func toProtoLabel(
 	l *model.Label,
+	document labelDocument,
 	imageAssets *labelImageAssets,
 	ogAsset *commonv1.AssetRef,
 ) *managev1.Label {
@@ -194,13 +202,13 @@ func toProtoLabel(
 	}
 	label := &managev1.Label{
 		Id:           l.ID,
-		Name:         l.Name,
-		Document:     l.ContentDocument,
-		Status:       l.Status,
+		Name:         document.Name,
+		Document:     document.Document,
+		Status:       string(l.Status),
 		CreatedAt:    timestamppb.New(l.CreatedAt),
 		UpdatedAt:    timestamppb.New(l.UpdatedAt),
 		OgAsset:      ogAsset,
-		Revision:     l.ContentRevision,
+		Revision:     document.Revision,
 		SourceLocale: l.SourceLocale,
 	}
 

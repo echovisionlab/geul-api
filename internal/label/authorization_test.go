@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -101,7 +102,7 @@ func TestLabelAllowedActionsChecksEachGeneratedPermissionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	actions, err := labelAllowedActions(ctx, checker, labelID, managev1.LabelStatus_LABEL_STATUS_DRAFT.String())
+	actions, err := labelAllowedActions(ctx, checker, labelID, model.LabelStatusDraft)
 	require.NoError(t, err)
 	require.Equal(t, []managev1.LabelAction{
 		managev1.LabelAction_LABEL_ACTION_EDIT,

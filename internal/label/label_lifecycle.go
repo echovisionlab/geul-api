@@ -86,10 +86,11 @@ func (s *Service) CreateLabel(ctx context.Context, command CreateLabelCommand) (
 	if err != nil {
 		return nil, err
 	}
-	if err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
+	document, err := s.overlayLabelSourceLocaleDocument(ctx, &label)
+	if err != nil {
 		return nil, err
 	}
-	return s.labelWithReadyOg(ctx, &label, nil)
+	return s.labelWithReadyOg(ctx, &label, document, nil)
 }
 
 func (s *Service) validateNewLabelSlug(ctx context.Context, slug *string) error {
@@ -104,7 +105,7 @@ func (s *Service) validateNewLabelSlug(ctx context.Context, slug *string) error 
 
 func newLabel(command CreateLabelCommand) model.Label {
 	label := model.Label{
-		Status: managev1.LabelStatus_LABEL_STATUS_DRAFT.String(),
+		Status: model.LabelStatusDraft,
 		Slug:   command.Slug, SocialLinks: command.SocialLinks,
 	}
 	if countryCode, present := normalizeOptionalNullableString(command.CountryCode); present {
@@ -408,12 +409,12 @@ type UnpublishLabelCommand struct {
 func (s *Service) PublishLabel(ctx context.Context, command PublishLabelCommand) (_ *managev1.LabelLifecycleMutationResponse, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.ID))
 	return s.transitionLabel(ctx, command.ID, labelTransition{
-		target: managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String(), previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
+		target: model.LabelStatusPublished, previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
 		fields: func(now time.Time) structured.Fields {
-			return structured.Fields{"status": managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String(), "published_at": now, "updated_at": now}
+			return structured.Fields{"status": model.LabelStatusPublished, "published_at": now, "updated_at": now}
 		},
 		apply: func(label *model.Label, now time.Time) {
-			label.Status = managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()
+			label.Status = model.LabelStatusPublished
 			label.PublishedAt = &now
 			label.UpdatedAt = now
 		},
@@ -424,12 +425,12 @@ func (s *Service) PublishLabel(ctx context.Context, command PublishLabelCommand)
 func (s *Service) UnpublishLabel(ctx context.Context, command UnpublishLabelCommand) (_ *managev1.LabelLifecycleMutationResponse, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.ID))
 	return s.transitionLabel(ctx, command.ID, labelTransition{
-		target: managev1.LabelStatus_LABEL_STATUS_DRAFT.String(), previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
+		target: model.LabelStatusDraft, previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
 		fields: func(now time.Time) structured.Fields {
-			return structured.Fields{"status": managev1.LabelStatus_LABEL_STATUS_DRAFT.String(), "updated_at": now}
+			return structured.Fields{"status": model.LabelStatusDraft, "updated_at": now}
 		},
 		apply: func(label *model.Label, now time.Time) {
-			label.Status = managev1.LabelStatus_LABEL_STATUS_DRAFT.String()
+			label.Status = model.LabelStatusDraft
 			label.UpdatedAt = now
 		},
 	})
@@ -438,7 +439,7 @@ func (s *Service) UnpublishLabel(ctx context.Context, command UnpublishLabelComm
 // labelTransition moves a Label to target; fields are the stored columns
 // and apply mirrors them on the locked row for the response.
 type labelTransition struct {
-	target         string
+	target         model.LabelStatus
 	previous, next sharedtelemetry.AuditState
 	fields         func(time.Time) structured.Fields
 	apply          func(*model.Label, time.Time)
@@ -486,7 +487,7 @@ func (s *Service) transitionLabel(ctx context.Context, id string, transition lab
 	}
 	return &managev1.LabelLifecycleMutationResponse{
 		Id: label.ID, Changed: changed,
-		Status:      managev1.LabelStatus(managev1.LabelStatus_value[label.Status]),
+		Status:      labelStatusToProto(label.Status),
 		PublishedAt: timestampProtoPtr(label.PublishedAt), UpdatedAt: timestamppb.New(label.UpdatedAt),
 	}, nil
 }

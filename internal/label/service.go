@@ -135,12 +135,13 @@ func (s *Service) GetLabelEditorData(ctx context.Context, query GetLabelEditorDa
 	if err != nil {
 		return EditorData{}, err
 	}
-	if err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
+	document, err := s.overlayLabelSourceLocaleDocument(ctx, &label)
+	if err != nil {
 		return EditorData{}, err
 	}
 
 	imageAssets := s.getLabelImageAssets(ctx, label.ID)
-	response, err := s.labelWithReadyOg(ctx, &label, imageAssets)
+	response, err := s.labelWithReadyOg(ctx, &label, document, imageAssets)
 	if err != nil {
 		return EditorData{}, err
 	}
@@ -173,13 +174,13 @@ type LabelPage struct {
 // published-only: draft access belongs to exact resource reads with an
 // authorization check or to the administrator list.
 func (s *Service) ListLabels(ctx context.Context, query ListLabelsQuery) (LabelPage, error) {
-	labels, pagination, err := s.listLabelRows(ctx, s.db.WithContext(ctx).
+	labels, documents, pagination, err := s.listLabelRows(ctx, s.db.WithContext(ctx).
 		Model(&model.Label{}).
-		Where("status = ?", managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()), query)
+		Where("status = ?", model.LabelStatusPublished), query)
 	if err != nil {
 		return LabelPage{}, err
 	}
-	projected, err := s.projectLabels(ctx, labels)
+	projected, err := s.projectLabels(ctx, labels, documents)
 	if err != nil {
 		return LabelPage{}, err
 	}
@@ -198,11 +199,11 @@ func (s *Service) ListLabelsAdmin(ctx context.Context, query ListLabelsQuery) (A
 	if err := labelEntity.RequireList(ctx, s.spiceDB); err != nil {
 		return AdminLabelPage{}, err
 	}
-	labels, pagination, err := s.listLabelRows(ctx, s.db.WithContext(ctx).Model(&model.Label{}), query)
+	labels, documents, pagination, err := s.listLabelRows(ctx, s.db.WithContext(ctx).Model(&model.Label{}), query)
 	if err != nil {
 		return AdminLabelPage{}, err
 	}
-	projected, err := s.projectLabels(ctx, labels)
+	projected, err := s.projectLabels(ctx, labels, documents)
 	if err != nil {
 		return AdminLabelPage{}, err
 	}
@@ -231,34 +232,35 @@ func (s *Service) ListLabelsAdmin(ctx context.Context, query ListLabelsQuery) (A
 
 // listLabelRows filters, counts, sorts and pages base, and overlays each
 // Label's source-locale document.
-func (s *Service) listLabelRows(ctx context.Context, base *gorm.DB, query ListLabelsQuery) ([]model.Label, *commonv1.PaginationResponse, error) {
+func (s *Service) listLabelRows(ctx context.Context, base *gorm.DB, query ListLabelsQuery) ([]model.Label, []labelDocument, *commonv1.PaginationResponse, error) {
 	filtered, err := LabelFilterConfig.ApplyFilters(base, query.Filters)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var total int64
 	if err := filtered.Count(&total).Error; err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	page := query.pagination()
 	sorted, err := labelSortConfig.ApplySort(filtered, query.Sorts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var labels []model.Label
 	if err := sorted.Limit(int(page.Limit)).Offset(int(page.Offset)).Find(&labels).Error; err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	if err := s.overlayLabelSourceLocaleDocuments(ctx, labels); err != nil {
-		return nil, nil, err
+	documents, err := s.overlayLabelSourceLocaleDocuments(ctx, labels)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	return labels, &commonv1.PaginationResponse{
+	return labels, documents, &commonv1.PaginationResponse{
 		Total: int32(total), Limit: page.Limit, Offset: page.Offset, HasMore: page.HasMore(total),
 	}, nil
 }
 
 // projectLabels renders labels with their ready logos and OG images.
-func (s *Service) projectLabels(ctx context.Context, labels []model.Label) ([]*managev1.Label, error) {
+func (s *Service) projectLabels(ctx context.Context, labels []model.Label, documents []labelDocument) ([]*managev1.Label, error) {
 	readyOgAssets, err := s.loadReadyLabelOgAssets(ctx, labels)
 	if err != nil {
 		return nil, err
@@ -270,7 +272,7 @@ func (s *Service) projectLabels(ctx context.Context, labels []model.Label) ([]*m
 	projected := make([]*managev1.Label, len(labels))
 	for i, label := range labels {
 		imageAssets := labelImageAssetsFromReadyMap(&label, logoAssets)
-		projected[i] = toProtoLabel(&label, imageAssets, manageOgAssetFromReadyMap(readyOgAssets, label.OgAssetID))
+		projected[i] = toProtoLabel(&label, documents[i], imageAssets, manageOgAssetFromReadyMap(readyOgAssets, label.OgAssetID))
 	}
 	return projected, nil
 }

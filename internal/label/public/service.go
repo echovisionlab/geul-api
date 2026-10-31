@@ -104,7 +104,7 @@ type LabelPage struct {
 
 // List returns published labels with filtering and sorting
 func (s *Service) List(ctx context.Context, query ListLabelsQuery) (LabelPage, error) {
-	labels := s.db.WithContext(ctx).Model(&model.Label{}).Where("status = ?", managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String())
+	labels := s.db.WithContext(ctx).Model(&model.Label{}).Where("status = ?", model.LabelStatusPublished)
 	labels, err := LabelFilterConfig.ApplyFilters(labels, query.Filters)
 	if err != nil {
 		return LabelPage{}, err
@@ -215,7 +215,7 @@ func (s *Service) Get(ctx context.Context, query GetLabelQuery) (*openv1.Label, 
 		}
 		return nil, err
 	}
-	if label.Status != managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String() {
+	if label.Status != model.LabelStatusPublished {
 		if err := s.draft.Require(ctx, label.ID, query.ShareToken, query.SharePassword); err != nil {
 			return nil, err
 		}
@@ -230,7 +230,7 @@ func (s *Service) buildLabelResponse(
 	acceptLanguage string,
 	label *model.Label,
 ) (*openv1.Label, error) {
-	wasPublic := label.Status == managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()
+	wasPublic := label.Status == model.LabelStatusPublished
 	var response *openv1.Label
 	err := mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
 		projection := *s
@@ -261,7 +261,7 @@ func (s *Service) buildLabelResponseInTransaction(
 		}
 		return nil, err
 	}
-	if wasPublic && current.Status != managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String() {
+	if wasPublic && current.Status != model.LabelStatusPublished {
 		return nil, errLabelNotFound
 	}
 	*label = current
@@ -278,7 +278,7 @@ func (s *Service) buildLabelResponseInTransaction(
 		Name:        localizedLabelName(content.SourceTitle, localization.Title),
 		Document:    content.Document,
 		SocialLinks: label.SocialLinks,
-		Status:      openv1.LabelStatus(openv1.LabelStatus_value[label.Status]),
+		Status:      publicLabelStatus(label.Status),
 		CreatedAt:   timestamppb.New(label.CreatedAt),
 		UpdatedAt:   timestamppb.New(label.UpdatedAt),
 		Revision:    content.Revision,
@@ -538,7 +538,7 @@ func (s *Service) getParentLabel(ctx context.Context, parentLabelID string) *ope
 	err := s.db.WithContext(ctx).
 		Table("label").
 		Select("id, "+labelSourceTitleSQL("label")+" AS name, slug, logo_light_file_id, logo_dark_file_id, og_asset_id").
-		Where("id = ? AND status = ?", parentLabelID, managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()).
+		Where("id = ? AND status = ?", parentLabelID, model.LabelStatusPublished).
 		Scan(&parent).Error
 
 	if err != nil || parent.ID == "" {

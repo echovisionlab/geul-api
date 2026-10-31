@@ -169,7 +169,7 @@ func (s *Service) SetLabelImage(ctx context.Context, command SetLabelImageComman
 		return LogoUpdate{}, err
 	}
 	imageAssets := s.getLabelImageAssets(ctx, label.ID)
-	if err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
+	if _, err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
 		return LogoUpdate{}, err
 	}
 	return LogoUpdate{Light: imageAssets.Light, Dark: imageAssets.Dark, OgGenerationRunID: change.ogRunID}, nil
