@@ -26,8 +26,9 @@ import (
 )
 
 func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(campaignRequestContext(t), admin.AuthUserInfo())
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
@@ -286,8 +287,9 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 }
 
 func TestCampaignSharedPresentationEditProjectsSourceLocaleIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)

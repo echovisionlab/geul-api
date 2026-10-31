@@ -15,6 +15,7 @@ import (
 )
 
 func TestProjectionBindsCanonicalLocalizedLegalRoutesIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		kind   string
 		status string

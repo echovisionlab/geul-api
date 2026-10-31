@@ -252,14 +252,6 @@ type sourceAssetPromotionS3Fixture struct {
 	deleted         []string
 }
 
-func (f *sourceAssetPromotionS3Fixture) blockTransfers() (<-chan struct{}, chan struct{}) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.transferStarted = make(chan struct{})
-	f.releaseTransfer = make(chan struct{})
-	return f.transferStarted, f.releaseTransfer
-}
-
 func newSourceAssetPromotionS3Fixture(t *testing.T, file model.File, body []byte) *sourceAssetPromotionS3Fixture {
 	t.Helper()
 	fixture := &sourceAssetPromotionS3Fixture{objects: map[string][]byte{}, mimeTypes: map[string]string{}}

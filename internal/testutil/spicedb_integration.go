@@ -5,10 +5,7 @@ package testutil
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"sort"
-	"strings"
 	"time"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
@@ -32,19 +29,9 @@ func (token integrationSpiceDBBearerToken) GetRequestMetadata(context.Context, .
 func (integrationSpiceDBBearerToken) RequireTransportSecurity() bool { return false }
 
 const (
-	spiceDBIntegrationImage                    = "ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"
-	spiceDBIntegrationToken                    = "backend-integration-spicedb-token"
-	integrationSpiceDBResetDeleteBatchSize     = 1000
-	integrationSpiceDBResetMaxDeleteBatchCount = 128
+	spiceDBIntegrationImage = "ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"
+	spiceDBIntegrationToken = "backend-integration-spicedb-token"
 )
-
-type integrationSpiceDBRelationshipDeleter interface {
-	DeleteRelationships(
-		context.Context,
-		*v1.DeleteRelationshipsRequest,
-		...grpc.CallOption,
-	) (*v1.DeleteRelationshipsResponse, error)
-}
 
 // runBackendIntegrationSpiceDB starts the same authorization service used by
 // the runtime and writes the generated event-contracts schema before exposing
@@ -160,140 +147,6 @@ func seedIntegrationSpiceDBRoleGraph(ctx context.Context, client *auth.SpiceDBCl
 		return fmt.Errorf("seed SpiceDB role graph: %w", err)
 	}
 	return nil
-}
-
-// ResetSpiceDBIntegrationState removes every relationship written by a test,
-// reapplies the generated schema, and restores only the fixed role hierarchy.
-// The caller must serialize access to the shared SpiceDB instance.
-func ResetSpiceDBIntegrationState(
-	ctx context.Context,
-	endpoint string,
-	token string,
-	client *auth.SpiceDBClient,
-) error {
-	raw, err := newIntegrationSpiceDBRawClient(endpoint, token)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = raw.Close() }()
-	definitionNames, err := integrationSpiceDBDefinitionNames()
-	if err != nil {
-		return err
-	}
-	for _, definitionName := range definitionNames {
-		if err := deleteIntegrationSpiceDBDefinitionRelationships(ctx, raw, definitionName); err != nil {
-			return err
-		}
-	}
-	if err := writeIntegrationSpiceDBSchema(ctx, raw); err != nil {
-		return err
-	}
-	if err := seedIntegrationSpiceDBRoleGraph(ctx, client); err != nil {
-		return err
-	}
-	return verifyIntegrationSpiceDBBaseline(ctx, raw, definitionNames)
-}
-
-func deleteIntegrationSpiceDBDefinitionRelationships(
-	ctx context.Context,
-	deleter integrationSpiceDBRelationshipDeleter,
-	definitionName string,
-) error {
-	request := &v1.DeleteRelationshipsRequest{
-		RelationshipFilter:            &v1.RelationshipFilter{ResourceType: definitionName},
-		OptionalLimit:                 integrationSpiceDBResetDeleteBatchSize,
-		OptionalAllowPartialDeletions: true,
-	}
-	for batch := 1; batch <= integrationSpiceDBResetMaxDeleteBatchCount; batch++ {
-		response, err := deleter.DeleteRelationships(ctx, request)
-		if err != nil {
-			return fmt.Errorf("delete SpiceDB test relationships for %s: %w", definitionName, err)
-		}
-		if response == nil {
-			return fmt.Errorf("delete SpiceDB test relationships for %s returned an empty response", definitionName)
-		}
-		switch response.GetDeletionProgress() {
-		case v1.DeleteRelationshipsResponse_DELETION_PROGRESS_COMPLETE:
-			return nil
-		case v1.DeleteRelationshipsResponse_DELETION_PROGRESS_PARTIAL:
-			if response.GetRelationshipsDeletedCount() == 0 {
-				return fmt.Errorf("delete SpiceDB test relationships for %s made no progress", definitionName)
-			}
-		default:
-			return fmt.Errorf(
-				"delete SpiceDB test relationships for %s returned progress %s",
-				definitionName,
-				response.GetDeletionProgress(),
-			)
-		}
-	}
-	return fmt.Errorf(
-		"delete SpiceDB test relationships for %s did not complete after %d batches",
-		definitionName,
-		integrationSpiceDBResetMaxDeleteBatchCount,
-	)
-}
-
-func integrationSpiceDBDefinitionNames() ([]string, error) {
-	schemaPath := AppIntegrationSpiceDBSchemaPath(appIntegrationRepoPath("../.."))
-	schema, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return nil, fmt.Errorf("read generated SpiceDB schema %s: %w", schemaPath, err)
-	}
-	var definitions []string
-	for _, line := range strings.Split(string(schema), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "definition" {
-			definitions = append(definitions, strings.TrimSuffix(fields[1], "{"))
-		}
-	}
-	if len(definitions) == 0 {
-		return nil, fmt.Errorf("generated SpiceDB schema has no definitions")
-	}
-	return definitions, nil
-}
-
-func verifyIntegrationSpiceDBBaseline(ctx context.Context, raw *authzed.Client, definitions []string) error {
-	persistedRelationships := make([]string, 0, 5)
-	for _, definitionName := range definitions {
-		stream, err := raw.ReadRelationships(ctx, &v1.ReadRelationshipsRequest{
-			RelationshipFilter: &v1.RelationshipFilter{ResourceType: definitionName},
-			Consistency:        &v1.Consistency{Requirement: &v1.Consistency_FullyConsistent{FullyConsistent: true}},
-		})
-		if err != nil {
-			return fmt.Errorf("read SpiceDB relationships for %s: %w", definitionName, err)
-		}
-		for {
-			response, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return fmt.Errorf("receive SpiceDB relationship for %s: %w", definitionName, err)
-			}
-			persistedRelationships = append(persistedRelationships, integrationSpiceDBRelationshipKey(response.Relationship))
-		}
-	}
-	sort.Strings(persistedRelationships)
-	expected := []string{
-		"platform:global#admin@role:admin#member",
-		"platform:global#author@role:author#member",
-		"platform:global#user@role:user#member",
-		"role:author#member@role:admin#member",
-		"role:user#member@role:author#member",
-	}
-	if strings.Join(persistedRelationships, "\n") != strings.Join(expected, "\n") {
-		return fmt.Errorf("unexpected SpiceDB baseline relationships: got %q want %q", persistedRelationships, expected)
-	}
-	return nil
-}
-
-func integrationSpiceDBRelationshipKey(relationship *v1.Relationship) string {
-	subject := relationship.Subject.Object.ObjectType + ":" + relationship.Subject.Object.ObjectId
-	if relationship.Subject.OptionalRelation != "" {
-		subject += "#" + relationship.Subject.OptionalRelation
-	}
-	return relationship.Resource.ObjectType + ":" + relationship.Resource.ObjectId + "#" + relationship.Relation + "@" + subject
 }
 
 func runBackendIntegrationOathkeeper(

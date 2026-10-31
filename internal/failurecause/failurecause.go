@@ -31,11 +31,54 @@ var (
 
 // Message returns err's text with sensitive values removed. private lists
 // command-specific values (recipient, codes, template data) to redact verbatim.
+// Server-side context that an error in the chain keeps out of its Error text
+// (see OperationContext) is rendered in place.
 func Message(err error, private ...string) string {
 	if err == nil {
 		return ""
 	}
-	return redact(err.Error(), private)
+	return redact(render(err), private)
+}
+
+// OperationContext is implemented by an error whose Error text omits
+// server-side context, such as a classified RPC error cause whose Error text is
+// the client message. rendered is the text the error contributes to the
+// enclosing chain's Error text; Message substitutes operation for it.
+type OperationContext interface {
+	error
+	OperationContext() (rendered, operation string)
+}
+
+func render(err error) string {
+	text := err.Error()
+	for _, classified := range operationContexts(err) {
+		if rendered, operation := classified.OperationContext(); rendered != "" {
+			text = strings.Replace(text, rendered, operation, 1)
+		}
+	}
+	return text
+}
+
+// operationContexts finds the outermost OperationContext errors in the chain.
+// It does not descend into one: its operation already renders what it wraps.
+func operationContexts(err error) []OperationContext {
+	var found []OperationContext
+	var walk func(error)
+	walk = func(err error) {
+		switch typed := err.(type) {
+		case nil:
+		case OperationContext:
+			found = append(found, typed)
+		case interface{ Unwrap() []error }:
+			for _, wrapped := range typed.Unwrap() {
+				walk(wrapped)
+			}
+		case interface{ Unwrap() error }:
+			walk(typed.Unwrap())
+		}
+	}
+	walk(err)
+	return found
 }
 
 // Attr is the conventional slog attribute for a failure cause. The telemetry

@@ -31,6 +31,7 @@ func seedPublicPageDownload(t *testing.T, db *gorm.DB) (string, string, string, 
 }
 
 func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	pageID, documentID, _, request := seedPublicPageDownload(t, db)
 	svc := NewFileService(db, publicIntegrationSpiceDBClient(t), "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
@@ -57,6 +58,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 }
 
 func TestPageAudienceChangeBetweenSigningPhasesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	pageID, _, _, request := seedPublicPageDownload(t, db)
 	loaded, release := make(chan struct{}), make(chan struct{})

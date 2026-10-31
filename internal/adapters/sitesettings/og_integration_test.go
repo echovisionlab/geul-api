@@ -13,6 +13,7 @@ import (
 )
 
 func TestResolveSiteOgUsesCanonicalSettingsRowPostgresIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{})
 	db := pg.DB
 	fileID := uuid.NewString()
@@ -40,6 +41,7 @@ func TestResolveSiteOgUsesCanonicalSettingsRowPostgresIntegration(t *testing.T) 
 }
 
 func TestResolveSiteOgRejectsNonCanonicalIdentityPostgresIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{})
 	entityID := "arbitrary"
 	_, err := sitesettingsadapter.NewRequests().Resolve(t.Context(), pg.DB, "site", entityID, &managev1.OgTargetSelection{

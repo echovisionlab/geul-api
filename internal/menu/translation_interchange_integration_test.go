@@ -18,6 +18,7 @@ import (
 )
 
 func TestMenuTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu XLIFF admin "+identityID[:8])

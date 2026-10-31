@@ -15,6 +15,7 @@ import (
 )
 
 func TestMCPGatewayAuthorAdmissionUsesAuthorHierarchyIntegration(t *testing.T) {
+	t.Parallel()
 	stack, err := testutil.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })

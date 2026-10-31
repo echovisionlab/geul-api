@@ -21,6 +21,7 @@ import (
 )
 
 func TestDeleteFormRollsBackWhenDurableOgCancellationFailsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	formID := seedFormSourceLocaleBaseRowAt(t, db, time.Now().UTC())
 	var form model.Form

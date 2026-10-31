@@ -56,7 +56,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"--band", "db", "--jobs", "0"},
-		{"--band", "db", "--jobs", "5"},
+		{"--band", "db", "--jobs", "17"},
 		{"--band", "unknown"},
 		{"--band", "db", "--package", "./internal/translation"},
 		{"--run", "^TestFileDownloadAudiencePolicyIntegration$"},
@@ -67,6 +67,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--cdn-image", ""},
 		{"--minio-image", ""},
 		{"--go-work", "../go.work"},
+		{"--list", "--list-images"},
 	} {
 		if _, err := parseOptions(args); err == nil {
 			t.Fatalf("parseOptions(%q) succeeded, want error", args)
@@ -144,7 +145,7 @@ func TestSelectedPackageTestConcurrencyMatchesOwnedResources(t *testing.T) {
 		{packagePath: "./internal/mq", wantParallel: "2"},
 		{packagePath: "./internal/telemetry", wantParallel: "2"},
 		{packagePath: "./internal/transcode/application", wantParallel: "2"},
-		{packagePath: "./internal/member", wantParallel: "1"},
+		{packagePath: "./internal/member", wantParallel: "2"},
 		{packagePath: "./internal/filemedia", wantParallel: "1"},
 		{packagePath: "./internal/testutil", wantParallel: "1"},
 	} {

@@ -17,6 +17,7 @@ import (
 )
 
 func TestArtistServiceListSlugAndManagerWorkflowsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	managerID := testutil.IntegrationUUID()

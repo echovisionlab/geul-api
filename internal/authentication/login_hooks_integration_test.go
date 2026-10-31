@@ -17,6 +17,7 @@ import (
 )
 
 func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	registered := stack.CreateUser(t, policyv1.Role.User().ID())
 	roles := accountadapter.AccountDirectRoleTransition{}

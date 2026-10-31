@@ -24,7 +24,11 @@ import (
 	"gorm.io/gorm"
 )
 
-var publicIntegrationSpiceDB *auth.SpiceDBClient
+// publicIntegrationSpiceDB returns the SpiceDB client of the test's own Ory stack.
+func publicIntegrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
+	t.Helper()
+	return testutil.SetupOryStack(t).SpiceDBClient
+}
 
 func newPublicProgramEventAssets(db *gorm.DB, cdnDomain string) Assets {
 	return programeventadapter.NewPublicAssets(db, cdnDomain)
@@ -55,7 +59,6 @@ func newPublicIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	require.NotNil(t, stack)
-	publicIntegrationSpiceDB = stack.SpiceDBClient
 	return stack.DB
 }
 
@@ -81,7 +84,7 @@ func seedPublicAdminMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, ni
 	).Error)
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
-	_, err = publicIntegrationSpiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
+	_, err = publicIntegrationSpiceDB(t).SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
 	require.NoError(t, err)
 	return memberID
 }

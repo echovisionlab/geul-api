@@ -50,6 +50,7 @@ func (recorder *pagePublishStatementRecorder) snapshot() []string {
 }
 
 func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	contentBlocks := newPageIntegrationContentBlockStore(t, spiceDB)
@@ -267,6 +268,7 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 }
 
 func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	admin, spiceDB := pageIntegrationAdmin(t, db)
 	pageSvc := NewPageService(
@@ -312,6 +314,7 @@ func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 }
 
 func TestPageSlugSupportsSafeNestedRoutesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	pageSvc := NewPageService(

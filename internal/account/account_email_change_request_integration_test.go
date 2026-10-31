@@ -227,6 +227,7 @@ func (p *accountEmailChangePublisherFixture) PublishSendEmail(
 }
 
 func TestAccountEmailChangeRequestMatchesCurrentMigrationSchemaIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 
 	var columns []string
@@ -248,6 +249,7 @@ func TestAccountEmailChangeRequestMatchesCurrentMigrationSchemaIntegration(t *te
 }
 
 func TestAccountEmailChangeRequestConvergesAndRetriesConfirmedNotificationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -285,6 +287,7 @@ func TestAccountEmailChangeRequestConvergesAndRetriesConfirmedNotificationIntegr
 }
 
 func TestAccountEmailChangeRequestReplacesOnlyUnverifiedActiveRequestIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -314,6 +317,7 @@ func TestAccountEmailChangeRequestReplacesOnlyUnverifiedActiveRequestIntegration
 }
 
 func TestAccountEmailChangeRequestDoesNotStartWhenKratosIsUnavailableIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -333,6 +337,7 @@ func TestAccountEmailChangeRequestDoesNotStartWhenKratosIsUnavailableIntegration
 }
 
 func TestAccountEmailChangeConflictClearsOnlyRequestedAddressIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -368,6 +373,7 @@ func TestAccountEmailChangeConflictClearsOnlyRequestedAddressIntegration(t *test
 }
 
 func TestAccountEmailChangeExactPendingRequestSurvivesCodeExpiryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -391,6 +397,7 @@ func TestAccountEmailChangeExactPendingRequestSurvivesCodeExpiryIntegration(t *t
 }
 
 func TestAccountEmailChangeExactPendingRequestExpiresAndReleasesAddressIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -422,6 +429,7 @@ func TestAccountEmailChangeExactPendingRequestExpiresAndReleasesAddressIntegrati
 }
 
 func TestAccountEmailChangeOrphanRequestIsRemovedAfterGraceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -443,6 +451,7 @@ func TestAccountEmailChangeOrphanRequestIsRemovedAfterGraceIntegration(t *testin
 }
 
 func TestAccountEmailChangePrePersistFailureCanBeRetriedAndOrphanedReplacementExpiresIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -481,6 +490,7 @@ func TestAccountEmailChangePrePersistFailureCanBeRetriedAndOrphanedReplacementEx
 }
 
 func TestAccountEmailChangeSettingsVerificationRequiresExactUnverifiedAddressIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
@@ -524,6 +534,7 @@ func TestAccountEmailChangeSettingsVerificationRequiresExactUnverifiedAddressInt
 }
 
 func TestAccountEmailChangeConfirmUncertaintyMayDuplicateStableCommandIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityID := integrationTestUUID()
@@ -550,6 +561,7 @@ func TestAccountEmailChangeConfirmUncertaintyMayDuplicateStableCommandIntegratio
 }
 
 func TestAccountEmailChangeReconcileScansPastFailingFirstBatchIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
 	identityIDs := make([]string, 0, accountEmailChangeBatchSize+1)

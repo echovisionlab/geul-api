@@ -27,6 +27,7 @@ import (
 const publicMediaSecret = "media-secret"
 
 func TestWorkServiceOwnsDraftMediaAndSharePasswordAuthorizationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Work Draft Media Admin"})
@@ -49,9 +50,9 @@ func TestWorkServiceOwnsDraftMediaAndSharePasswordAuthorizationIntegration(t *te
 	require.NoError(t, err)
 	workID := work.Msg.Id
 
-	fileSvc := filepublic.NewFileService(db, publicIntegrationSpiceDB, "https://cdn.example.com", "https://media.example.com", publicMediaSecret, 30*time.Minute)
+	fileSvc := filepublic.NewFileService(db, publicIntegrationSpiceDBFor(t, db), "https://cdn.example.com", "https://media.example.com", publicMediaSecret, 30*time.Minute)
 	publicWork := workpublic.NewWorkService(
-		db, publicIntegrationSpiceDB, fileSvc,
+		db, publicIntegrationSpiceDBFor(t, db), fileSvc,
 		newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
 		workadapter.NewMemberSummaries(db, "https://cdn.example.com"),
 		referencecatalogadapter.PublicMapPlaces{},

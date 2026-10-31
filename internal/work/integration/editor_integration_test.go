@@ -24,6 +24,7 @@ import (
 )
 
 func TestWorkServiceAdminOnlyAccessIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	authorID := integrationTestUUID()

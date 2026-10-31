@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -139,26 +140,49 @@ func TestWrapPreservesConnectErrorAndWrapsPlainErrors(t *testing.T) {
 	}
 }
 
-func TestWrapLogsCauseBeforeDiscardingOperationContext(t *testing.T) {
-	for _, inner := range []error{
-		connect.NewError(connect.CodeInternal, stderrors.New("provider unavailable")),
-		context.Canceled,
-		context.DeadlineExceeded,
-		&pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type uuid"},
+func TestWrapKeepsOperationContextOutOfClientMessage(t *testing.T) {
+	for _, tc := range []struct {
+		inner   error
+		message string
+	}{
+		{connect.NewError(connect.CodeNotFound, stderrors.New("page not found")), "page not found"},
+		{context.Canceled, context.Canceled.Error()},
+		{context.DeadlineExceeded, context.DeadlineExceeded.Error()},
+		{&pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type uuid", Where: "unnamed portal parameter $1"}, "request contains an invalid UUID"},
 	} {
-		t.Run(inner.Error(), func(t *testing.T) {
+		t.Run(tc.inner.Error(), func(t *testing.T) {
 			var output bytes.Buffer
 			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
 			t.Cleanup(func() { slog.SetDefault(previous) })
-			Wrap(fmt.Errorf("resolve operation for person@example.test: %w", inner))
-			if !strings.Contains(output.String(), "resolve operation") || !strings.Contains(output.String(), `"failure_cause":`) {
-				t.Fatalf("missing failure cause: %s", output.String())
+
+			got := Wrap(fmt.Errorf("resolve operation: %w", tc.inner))
+
+			if got.Message() != tc.message {
+				t.Fatalf("client message = %q, want %q", got.Message(), tc.message)
 			}
-			if strings.Contains(output.String(), "person@example.test") {
-				t.Fatal("failure log exposed recipient")
+			if cause := operationCause(got); !strings.HasPrefix(cause, "resolve operation: ") {
+				t.Fatalf("operation context lost: %q", cause)
+			}
+			if !stderrors.Is(got, tc.inner) {
+				t.Fatalf("classified error lost its cause chain: %v", got)
+			}
+			// Wrap has no request context; the RPC boundary logs instead.
+			if output.Len() != 0 {
+				t.Fatalf("Wrap logged without request context: %s", output.String())
 			}
 		})
+	}
+}
+
+func TestOperationCauseRendersNestedClassifications(t *testing.T) {
+	inner := Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found")))
+	outer := Wrap(fmt.Errorf("render share link: %w", inner))
+	if got := operationCause(outer); got != "render share link: load page: not_found: page not found" {
+		t.Fatalf("operation cause = %q", got)
+	}
+	if outer.Message() != "page not found" {
+		t.Fatalf("client message = %q", outer.Message())
 	}
 }
 
@@ -207,7 +231,8 @@ func TestErrorWrappersPreserveClassifiedErrorsThroughNestedOperations(t *testing
 				}
 				original.AddDetail(detail)
 				got := wrap.fn(fmt.Errorf("transaction context: %w", fmt.Errorf("domain context: %w", original)))
-				if got != original || got.Code() != code || len(got.Details()) != 1 || got.Meta().Get("Retry-After") != "1" {
+				if !stderrors.Is(got, original) || got.Code() != code || got.Message() != original.Message() ||
+					len(got.Details()) != 1 || got.Meta().Get("Retry-After") != "1" {
 					t.Fatalf("classification/details lost: %v", got)
 				}
 			})
@@ -225,24 +250,77 @@ func TestErrorWrappersPreserveClassifiedErrorsThroughNestedOperations(t *testing
 }
 
 func TestErrorWrappersClassifyOnlyMalformedUUIDDatabaseErrors(t *testing.T) {
+	const parameter = "unnamed portal parameter $1"
 	for _, tc := range []struct {
-		code, message string
-		want          connect.Code
+		code, message, where string
+		want                 connect.Code
 	}{
-		{"22P02", `invalid input syntax for type uuid: "private-input"`, connect.CodeInvalidArgument},
-		{"22P02", `invalid input syntax for type integer: "private-input"`, connect.CodeInternal},
-		{"08006", "database unavailable", connect.CodeInternal},
-		{"XX000", "invalid input syntax for type uuid", connect.CodeInternal},
+		{"22P02", `invalid input syntax for type uuid: "private-input"`, parameter, connect.CodeInvalidArgument},
+		{"22P02", `invalid input syntax for type uuid: "private-input"`, `portal "p1" parameter $2 = '...'`, connect.CodeInvalidArgument},
+		// The same rejection while evaluating the query is a stored value the
+		// server cannot decode, not client input.
+		{"22P02", `invalid input syntax for type uuid: "stored-value"`, "", connect.CodeInternal},
+		{"22P02", `invalid input syntax for type uuid: "stored-value"`, "SQL function \"f\" statement 1", connect.CodeInternal},
+		{"22P02", `invalid input syntax for type integer: "private-input"`, parameter, connect.CodeInternal},
+		{"08006", "database unavailable", "", connect.CodeInternal},
+		{"XX000", "invalid input syntax for type uuid", parameter, connect.CodeInternal},
 	} {
-		driverErr := &pgconn.PgError{Code: tc.code, Message: tc.message}
+		driverErr := &pgconn.PgError{Code: tc.code, Message: tc.message, Where: tc.where}
 		for _, wrap := range []func(error) *connect.Error{Wrap, Internal} {
 			got := wrap(fmt.Errorf("query context: %w", driverErr))
 			if got.Code() != tc.want {
-				t.Fatalf("%s misclassified: %v", tc.code, got)
+				t.Fatalf("%s (%q) misclassified: %v", tc.code, tc.where, got)
 			}
 			if tc.want == connect.CodeInvalidArgument && got.Message() != "request contains an invalid UUID" {
 				t.Fatalf("UUID input leaked: %v", got)
 			}
 		}
+	}
+}
+
+// Callers outside the RPC boundary (MCP tools, workers) log classified errors
+// with failurecause.Message; the operation context must survive there while
+// the client message stays the classified one.
+func TestFailureCauseRendersClassifiedOperationContextOutsideConnect(t *testing.T) {
+	for _, tc := range []struct {
+		name, client, logged string
+		err                  *connect.Error
+	}{
+		{
+			name:   "deadline",
+			err:    Internal(fmt.Errorf("load campaign: %w", context.DeadlineExceeded)),
+			client: context.DeadlineExceeded.Error(),
+			logged: "load campaign: context deadline exceeded",
+		},
+		{
+			name:   "classified",
+			err:    Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found"))),
+			client: "page not found",
+			logged: "load page: not_found: page not found",
+		},
+		{
+			name:   "nested",
+			err:    Internal(fmt.Errorf("render share link: %w", Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found"))))),
+			client: "page not found",
+			logged: "render share link: load page: not_found: page not found",
+		},
+		{
+			name:   "uuid input",
+			err:    Wrap(fmt.Errorf("find member: %w", &pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type uuid", Where: "unnamed portal parameter $1"})),
+			client: "request contains an invalid UUID",
+			logged: "find member: : invalid input syntax for type uuid (SQLSTATE 22P02)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.err.Message() != tc.client {
+				t.Fatalf("client message = %q, want %q", tc.err.Message(), tc.client)
+			}
+			if got := failurecause.Message(tc.err); got != tc.logged {
+				t.Fatalf("logged cause = %q, want %q", got, tc.logged)
+			}
+			if got := failurecause.Message(fmt.Errorf("worker: %w", tc.err)); got != "worker: "+tc.logged {
+				t.Fatalf("wrapped logged cause = %q", got)
+			}
+		})
 	}
 }

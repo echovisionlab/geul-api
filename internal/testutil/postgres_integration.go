@@ -173,42 +173,6 @@ func CurrentAppIntegrationBackendLease() (*AppIntegrationBackendLease, error) {
 	return &backend, nil
 }
 
-func connectSharedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescriptor) (*AppPostgres, func() error, error) {
-	if lease.Backend == nil {
-		return nil, nil, fmt.Errorf("suite backend lease is required")
-	}
-	// Application-facing integration handles use the same pgx database/sql
-	// driver as the production GORM connection so PostgreSQL errors retain the
-	// same concrete type at domain boundaries.
-	sqlDB, err := sql.Open("pgx", lease.Backend.PostgresDSN)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open suite backend database: %w", err)
-	}
-	cleanup := sqlDB.Close
-	if err := sqlDB.PingContext(ctx); err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("ping suite backend database: %w", err),
-			cleanup(),
-		)
-	}
-	database, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("open suite backend database with gorm: %w", err),
-			cleanup(),
-		)
-	}
-	return &AppPostgres{
-		ContainerID:  lease.PostgresContainerID,
-		DatabaseName: lease.Backend.PostgresDatabaseName,
-		DSN:          lease.Backend.PostgresDSN,
-		SQLDB:        sqlDB,
-		DB:           database,
-	}, cleanup, nil
-}
-
 // PrepareAppIntegrationTemplate applies the reviewed initialization assets and
 // application schema once to the orchestrator-owned template database.
 func PrepareAppIntegrationTemplate(ctx context.Context, dsn, schemaRoot, postgresAssetRoot string) error {
@@ -216,15 +180,15 @@ func PrepareAppIntegrationTemplate(ctx context.Context, dsn, schemaRoot, postgre
 	if err != nil {
 		return fmt.Errorf("open integration template database: %w", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	if err := waitForAppPostgres(ctx, database); err != nil {
 		return err
 	}
-	if err := applyAppIntegrationPostgresInitAssets(database, postgresAssetRoot); err != nil {
+	if err := applyAppIntegrationPostgresInitAssets(ctx, database, postgresAssetRoot); err != nil {
 		return err
 	}
-	if err := applyAppIntegrationSchemaSQLFromRoot(database, schemaRoot); err != nil {
+	if err := applyAppIntegrationSchemaSQLFromRoot(ctx, database, schemaRoot); err != nil {
 		return err
 	}
 	return requireAppIntegrationSchemaContract(ctx, database)
@@ -292,7 +256,7 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 		pq.QuoteIdentifier(databaseName),
 		pq.QuoteIdentifier(templateName),
 	)
-	if _, err := admin.ExecContext(ctx, createSQL); err != nil {
+	if err := execRetryingObjectInUse(ctx, admin, createSQL); err != nil {
 		return failBeforeDatabase(errors.Join(
 			fmt.Errorf("create integration database lease: %w", err),
 			admin.Close(),
@@ -302,8 +266,7 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 	dropLease := func() error {
 		dropSQL := fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", pq.QuoteIdentifier(databaseName))
 		dropErr := runAppIntegrationCleanup(func(cleanupCtx context.Context) error {
-			_, err := admin.ExecContext(cleanupCtx, dropSQL)
-			return err
+			return execRetryingObjectInUse(cleanupCtx, admin, dropSQL)
 		})
 		closeErr := admin.Close()
 		return errors.Join(dropErr, closeErr)
@@ -335,7 +298,7 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 		return nil, nil, errors.Join(err, cleanup())
 	}
 	if opts.BootstrapKratosStub {
-		if err := bootstrapAppIntegrationSchemas(sqlDB); err != nil {
+		if err := bootstrapAppIntegrationSchemas(ctx, sqlDB); err != nil {
 			return nil, nil, errors.Join(err, cleanup())
 		}
 	}
@@ -361,6 +324,24 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 		SQLDB:        sqlDB,
 		DB:           database,
 	}, cleanup, nil
+}
+
+// execRetryingObjectInUse retries database-level DDL that briefly races
+// another session: a template clone while a connection is closing, or a forced
+// drop while the test's last connection opens.
+func execRetryingObjectInUse(ctx context.Context, admin *sql.DB, statement string) error {
+	for attempt := 1; ; attempt++ {
+		_, err := admin.ExecContext(ctx, statement)
+		var pqErr *pq.Error
+		if err == nil || attempt == 5 || !errors.As(err, &pqErr) || pqErr.Code != "55006" {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 func (postgres *AppPostgres) InternalDSN(host string) (string, error) {
@@ -421,6 +402,7 @@ func rebuildLeasedPGroongaIndexes(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("list leased PGroonga indexes: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	type indexName struct {
 		schema string
 		name   string
@@ -429,13 +411,11 @@ func rebuildLeasedPGroongaIndexes(ctx context.Context, database *sql.DB) error {
 	for rows.Next() {
 		var index indexName
 		if err := rows.Scan(&index.schema, &index.name); err != nil {
-			_ = rows.Close()
 			return fmt.Errorf("scan leased PGroonga index: %w", err)
 		}
 		indexes = append(indexes, index)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return fmt.Errorf("iterate leased PGroonga indexes: %w", err)
 	}
 	if err := rows.Close(); err != nil {
@@ -490,7 +470,7 @@ func loadAppIntegrationLease(path string) (AppIntegrationLeaseDescriptor, error)
 	if err != nil {
 		return AppIntegrationLeaseDescriptor{}, fmt.Errorf("open integration lease descriptor: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
 	var lease AppIntegrationLeaseDescriptor
@@ -561,7 +541,7 @@ func waitForAppPostgres(ctx context.Context, sqlDB *sql.DB) error {
 	}
 }
 
-func applyAppIntegrationPostgresInitAssets(sqlDB *sql.DB, assetRoot string) error {
+func applyAppIntegrationPostgresInitAssets(ctx context.Context, sqlDB *sql.DB, assetRoot string) error {
 	scriptPath, ok, err := appIntegrationPostgresInitScriptFile(assetRoot)
 	if err != nil {
 		return err
@@ -574,12 +554,12 @@ func applyAppIntegrationPostgresInitAssets(sqlDB *sql.DB, assetRoot string) erro
 	if err != nil {
 		return err
 	}
-	_, err = sqlDB.Exec(extensionsSQL)
+	_, err = sqlDB.ExecContext(ctx, extensionsSQL)
 	return err
 }
 
-func bootstrapAppIntegrationSchemas(sqlDB *sql.DB) error {
-	_, err := sqlDB.Exec(`
+func bootstrapAppIntegrationSchemas(ctx context.Context, sqlDB *sql.DB) error {
+	_, err := sqlDB.ExecContext(ctx, `
 		CREATE SCHEMA IF NOT EXISTS kratos;
 			CREATE TABLE IF NOT EXISTS kratos.identities (
 				id UUID PRIMARY KEY,
@@ -621,7 +601,7 @@ func applyAppIntegrationSchemaSQL(sqlDB *sql.DB) error {
 	return requireAppIntegrationSchemaContract(context.Background(), sqlDB)
 }
 
-func applyAppIntegrationSchemaSQLFromRoot(sqlDB *sql.DB, schemaRoot string) error {
+func applyAppIntegrationSchemaSQLFromRoot(ctx context.Context, sqlDB *sql.DB, schemaRoot string) error {
 	schemaFiles, err := appIntegrationSchemaSQLFiles(schemaRoot)
 	if err != nil {
 		return err
@@ -632,7 +612,7 @@ func applyAppIntegrationSchemaSQLFromRoot(sqlDB *sql.DB, schemaRoot string) erro
 		if err != nil {
 			return fmt.Errorf("read current schema SQL %s: %w", schemaFile, err)
 		}
-		if _, err := sqlDB.Exec(string(schemaSQL)); err != nil {
+		if _, err := sqlDB.ExecContext(ctx, string(schemaSQL)); err != nil {
 			return fmt.Errorf("apply current schema SQL %s: %w", schemaFile, err)
 		}
 	}

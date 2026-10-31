@@ -11,6 +11,7 @@ import (
 )
 
 func TestMailEventStorageMigrationBoundaryIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 
 	var emailEventTable sql.NullString

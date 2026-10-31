@@ -18,6 +18,7 @@ import (
 )
 
 func TestLegalAuthorizationCreateDeleteIntegration(t *testing.T) {
+	t.Parallel()
 	db := newLegalIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site legal admin")

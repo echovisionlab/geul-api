@@ -21,6 +21,7 @@ import (
 )
 
 func TestCategoryTargetRewriteWaitsForMenuWriterIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu lock admin "+identityID[:8])

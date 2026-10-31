@@ -22,6 +22,7 @@ import (
 )
 
 func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	linkedSourceID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/linked.glb", "model/gltf-binary")
@@ -105,6 +106,7 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
 }
 
 func TestMeshOptimizationProfilesUseIndependentPipelinesAndCaches(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/source.glb", "model/gltf-binary")
@@ -173,6 +175,7 @@ func TestMeshOptimizationProfilesUseIndependentPipelinesAndCaches(t *testing.T) 
 }
 
 func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/source.glb", "model/gltf-binary")
@@ -217,6 +220,7 @@ func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testi
 }
 
 func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAttachment(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/source.glb", "model/gltf-binary")
@@ -254,6 +258,7 @@ func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAtt
 }
 
 func TestMeshOptimizationHandleCompleteRequiresOptimizedSize(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/source.glb", "model/gltf-binary")
@@ -282,6 +287,7 @@ func TestMeshOptimizationHandleCompleteRequiresOptimizedSize(t *testing.T) {
 }
 
 func TestMeshOptimizationUnprotectsCandidateBeforeDeletingOutput(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	outputFileID := uuid.NewString()
 	candidate := seedUnitMeshOptimizationCandidate(t, db, unitMeshOptimizationCandidateFixture{
@@ -300,6 +306,7 @@ func TestMeshOptimizationUnprotectsCandidateBeforeDeletingOutput(t *testing.T) {
 }
 
 func TestMeshOptimizationKeepsCancelledCandidateWhenOutputDeletionFails(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	outputFileID := uuid.NewString()
 	candidate := seedUnitMeshOptimizationCandidate(t, db, unitMeshOptimizationCandidateFixture{
@@ -340,6 +347,7 @@ func (d *candidateOrderCheckingFileDeleter) DeleteFileByID(ctx context.Context, 
 }
 
 func TestMeshOptimizationHandleCompleteValidatesAllocatedResultAndIsIdempotent(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "ignored/source.glb", "model/gltf-binary")
@@ -406,6 +414,7 @@ func TestMeshOptimizationHandleCompleteValidatesAllocatedResultAndIsIdempotent(t
 }
 
 func TestMeshOptimizationHandleCompleteRejectsUnspecifiedProfileForParticleMesh(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "ignored/source.glb", "model/gltf-binary")
@@ -455,6 +464,7 @@ func TestMeshOptimizationHandleCompleteRejectsUnspecifiedProfileForParticleMesh(
 }
 
 func TestMeshOptimizationEventsRequireExactIdentity(t *testing.T) {
+	t.Parallel()
 	db := newMeshOptimizationUnitDB(t)
 	pageID := uuid.NewString()
 	sourceID := seedUnitMeshOptimizationFile(t, db, "ignored/source.glb", "model/gltf-binary")

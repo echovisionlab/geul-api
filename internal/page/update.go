@@ -112,7 +112,8 @@ func (s *PageService) applyPageUpdate(
 		if len(changedFields) == 0 {
 			return nil
 		}
-		mutationNow := time.Now()
+		// PostgreSQL keeps microseconds; respond with the value later reads return.
+		mutationNow := time.Now().UTC().Truncate(time.Microsecond)
 		update.fields["updated_at"] = mutationNow
 		if err := tx.Model(page).Updates(update.fields).Error; err != nil {
 			return err

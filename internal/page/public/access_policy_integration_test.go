@@ -24,6 +24,7 @@ import (
 )
 
 func TestPublicPageAudienceGatesAllProjectionAndReopensIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Audience admin"})
@@ -32,7 +33,7 @@ func TestPublicPageAudienceGatesAllProjectionAndReopensIntegration(t *testing.T)
 	viewerCtx := seedAudienceReader(t, db)
 	blocks, err := contentblock.NewGeneratedStore(publicPageFileReuseAuthorizer{})
 	require.NoError(t, err)
-	managed := newPublicPageManageService(db, blocks, newPublicReferenceManageFileService(db))
+	managed := newPublicPageManageService(db, publicIntegrationSpiceDB(t), blocks, newPublicReferenceManageFileService(db))
 	slug, summary := "audience-"+uuid.NewString(), "private summary marker"
 	created, err := managed.CreatePage(adminCtx, connect.NewRequest(&managev1.CreatePageRequest{Title: "private title marker", Summary: &summary, Slug: &slug, SourceLocale: "en"}))
 	require.NoError(t, err)
@@ -44,8 +45,8 @@ func TestPublicPageAudienceGatesAllProjectionAndReopensIntegration(t *testing.T)
 	featuredID, ogID := seedCanonicalPublicFileFixture(t, db, "private-featured.webp", "image/webp", "image")
 	require.NoError(t, db.Exec("UPDATE page SET status='PAGE_STATUS_PUBLISHED', published_at=now(), featured_image_file_id=?::uuid, og_asset_id=?::uuid WHERE id=?::uuid", featuredID, ogID, pageID).Error)
 	files := newPublicReferenceManageFileService(db)
-	access := publicPageAccessFixture{}
-	svc := NewPageService(db, access, access, publicPageMediaFixture{files: files}, WithPageContentBlockStore(blocks), WithPageAccessPermissionChecker(publicIntegrationSpiceDB))
+	access := publicPageAccessFixture{spiceDB: publicIntegrationSpiceDB(t)}
+	svc := NewPageService(db, access, access, publicPageMediaFixture{files: files}, WithPageContentBlockStore(blocks), WithPageAccessPermissionChecker(publicIntegrationSpiceDB(t)))
 	savePolicy := func(policy *commonv1.PageAccessPolicy) {
 		raw, encodeErr := pageaccess.Encode(policy)
 		require.NoError(t, encodeErr)

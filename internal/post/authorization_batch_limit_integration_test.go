@@ -15,6 +15,7 @@ import (
 )
 
 func TestDeletePostRejectsOversizedAuthorizationSnapshotBeforeMutationIntegration(t *testing.T) {
+	t.Parallel()
 	const relationshipMutationLimit = 1000
 	db := testutil.NewPostIntegrationDB(t)
 	adminID := testutil.PostIntegrationUUID()

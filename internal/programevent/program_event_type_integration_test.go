@@ -15,6 +15,7 @@ import (
 )
 
 func TestProgramEventTypeAdminEditAndDeleteBoundaryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event Type Admin")

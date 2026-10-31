@@ -16,6 +16,7 @@ import (
 )
 
 func TestWithAdvisoryLeaderAllowsOnlyOneConcurrentRunnerIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentPostgres(t)
 	const lockKey = int64(0x4745554c54455354) // GEULTEST
 	firstStarted := make(chan struct{})
@@ -51,6 +52,7 @@ func TestWithAdvisoryLeaderAllowsOnlyOneConcurrentRunnerIntegration(t *testing.T
 }
 
 func TestWithAdvisoryLeaderReleasesAfterCancellationAndWorkErrorIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentPostgres(t)
 	const lockKey = int64(0x4745554c43414e43) // GEULCANC
 	ctx, cancel := context.WithCancel(t.Context())

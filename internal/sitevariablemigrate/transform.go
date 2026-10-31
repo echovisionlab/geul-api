@@ -45,7 +45,7 @@ func occurrences(source string) []occurrence {
 		email := strings.Contains(literal, "@")
 		blocked := false
 		for _, r := range ranges {
-			if loc[0] < r[1] && loc[1] > r[0] && !(email && loc[0] == r[0] && loc[1] == r[1]) {
+			if loc[0] < r[1] && loc[1] > r[0] && (!email || loc[0] != r[0] || loc[1] != r[1]) {
 				blocked = true
 			}
 		}

@@ -16,6 +16,7 @@ import (
 const referenceCatalogValueMaxLength = 100
 
 func TestGenreAndStyleValidationAndUniqueConstraintClassificationIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.PrepareOryIntegrationConcurrentTest(t).DB
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	suffix := testutil.IntegrationUUID()[:8]

@@ -36,6 +36,7 @@ func (l publicSeriesQueryCounter) Trace(ctx context.Context, begin time.Time, fc
 }
 
 func TestPublicSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	suffix := uuid.NewString()
 	for index := 0; index < 12; index++ {
@@ -74,6 +75,7 @@ func TestPublicSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 }
 
 func TestPublicSeriesPostCountIncludesPublishedAndArchivedIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Series count author")
@@ -123,6 +125,7 @@ func TestPublicSeriesPostCountIncludesPublishedAndArchivedIntegration(t *testing
 }
 
 func TestPublicSeriesGetUsesDeterministicIDOrSlugAndConcealsDraftIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	targetID := uuid.NewString()
 	otherID := uuid.NewString()
@@ -160,6 +163,7 @@ func TestPublicSeriesGetUsesDeterministicIDOrSlugAndConcealsDraftIntegration(t *
 }
 
 func TestPublicSeriesPaginationIsStableAcrossDuplicateTitlesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	seeded := make(map[string]struct{}, 105)
 	for index := 0; index < 105; index++ {

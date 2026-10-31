@@ -22,6 +22,7 @@ import (
 )
 
 func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Public Work Admin"})
@@ -33,7 +34,7 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 		db,
 		referencecatalogadapter.NewAssets("https://cdn.example.com"),
 		referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDBFor(t, db),
 	)
 	workPlaceGooglePlaceID := "google-place-work-" + suffix
 	place, err := placeSvc.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
@@ -48,7 +49,7 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	clientSvc := referencecatalog.NewClientService(
 		db,
 		referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDBFor(t, db),
 	)
 	firstClient, err := clientSvc.CreateClient(ctx, connect.NewRequest(&managev1.CreateClientRequest{
 		Name:    "Public Work Client A " + suffix,
@@ -78,7 +79,7 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	workSvc := workdomain.NewWorkService(
 		db,
 		newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDBFor(t, db),
 		&publicReferenceIdentityManager{identity: &auth.Identity{ID: adminID}},
 		publicReferenceAsyncPublisher{},
 		workdomain.WithWorkContentBlockStore(newPublicWorkContentBlockStore(t)),

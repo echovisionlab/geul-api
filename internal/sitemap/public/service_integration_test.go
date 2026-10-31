@@ -3,11 +3,7 @@
 package public
 
 import (
-	"context"
-	"fmt"
-	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -23,25 +19,8 @@ import (
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
-var (
-	sitemapIntegrationStack *testutil.BackendIntegrationStack
-	sitemapIntegrationOnce  sync.Once
-	sitemapIntegrationErr   error
-	sitemapIntegrationMu    sync.Mutex
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if sitemapIntegrationStack != nil {
-		if err := sitemapIntegrationStack.Close(); err != nil && code == 0 {
-			fmt.Fprintf(os.Stderr, "close Sitemap integration stack: %v\n", err)
-			code = 1
-		}
-	}
-	os.Exit(code)
-}
-
 func TestSitemapServiceDocumentsUsePublishedReadModelEntitiesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newSitemapIntegrationDB(t)
 	origin := "https://www.example.test"
 	suffix := uuid.NewString()
@@ -157,6 +136,7 @@ func TestSitemapServiceDocumentsUsePublishedReadModelEntitiesIntegration(t *test
 }
 
 func TestPostgresSitemapSnapshotStoreRoundTripIntegration(t *testing.T) {
+	t.Parallel()
 	db := newSitemapIntegrationDB(t)
 	store := sitemapadapter.NewPostgresStore(db)
 	key := "integration:" + uuid.NewString()
@@ -210,18 +190,12 @@ func TestPostgresSitemapSnapshotStoreRoundTripIntegration(t *testing.T) {
 
 func newSitemapIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	sitemapIntegrationMu.Lock()
-	t.Cleanup(sitemapIntegrationMu.Unlock)
-
-	sitemapIntegrationOnce.Do(func() {
-		sitemapIntegrationStack, sitemapIntegrationErr = testutil.StartBackendIntegrationStack(context.Background())
-	})
-	require.NoError(t, sitemapIntegrationErr)
-	require.NoError(t, testutil.ResetBackendIntegrationState(t.Context(), sitemapIntegrationStack))
+	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, testutil.ResetBackendIntegrationState(context.Background(), sitemapIntegrationStack))
+		require.NoError(t, stack.Close())
 	})
-	return sitemapIntegrationStack.Postgres.DB
+	return stack.Postgres.DB
 }
 
 func insertSitemapContentDocument(t *testing.T, db *gorm.DB, profile string) string {

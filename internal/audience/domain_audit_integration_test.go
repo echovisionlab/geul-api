@@ -165,6 +165,7 @@ func seedAudienceAuditDeliveryRun(
 }
 
 func TestAudienceDomainAuditsArchiveCascadeAndRestoreIntegration(t *testing.T) {
+	t.Parallel()
 	db := newAudienceIntegrationDB(t)
 	identityID := uuid.NewString()
 	ory := testutil.SetupOryStack(t)
@@ -419,6 +420,7 @@ func TestAudienceDomainAuditsArchiveCascadeAndRestoreIntegration(t *testing.T) {
 }
 
 func TestAudienceAuditAppendFailureRollsBackCreateAndArchiveIntegration(t *testing.T) {
+	t.Parallel()
 	db := newAudienceIntegrationDB(t)
 	ory := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
@@ -496,6 +498,7 @@ func TestAudienceAuditAppendFailureRollsBackCreateAndArchiveIntegration(t *testi
 }
 
 func TestAudienceArchiveLocksSegmentBeforeExactPolicyRelationIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
 	ory := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()

@@ -16,6 +16,7 @@ import (
 )
 
 func TestMapThemeCreateCopyDeleteAuditCommitsWithMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	admin := mapThemeAdminUser(t)
@@ -57,6 +58,7 @@ func TestMapThemeCreateCopyDeleteAuditCommitsWithMutationIntegration(t *testing.
 }
 
 func TestMapThemeContentSaveAuditCommitsWithMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	admin := mapThemeAdminUser(t)
@@ -108,6 +110,7 @@ func TestMapThemeContentSaveAuditCommitsWithMutationIntegration(t *testing.T) {
 }
 
 func TestMapThemeContentAuditAppendFailureRollsBackSaveIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	admin := mapThemeAdminUser(t)
@@ -139,6 +142,7 @@ func TestMapThemeContentAuditAppendFailureRollsBackSaveIntegration(t *testing.T)
 }
 
 func TestMapThemeAuditAppendFailureRollsBackCreateIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	service := auditedMapThemeServiceForTest(t, db, spiceDB, failingDomainAuditAppender{})

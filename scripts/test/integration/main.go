@@ -60,15 +60,29 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	discovered, err := discoverIntegrationPackages(repoRoot, options.GoWork)
+
+	takeSuiteSignalCleanupOwnership()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	discovered, err := discoverIntegrationPackages(ctx, repoRoot, options.GoWork)
 	if err != nil {
 		return err
 	}
 	if err := verifyIntegrationCatalog(discovered); err != nil {
 		return err
 	}
+	bands, err := selectedIntegrationBands(options.Band, options.Package)
+	if err != nil {
+		return err
+	}
+	if options.ChangedFrom != "" {
+		bands, err = affectedIntegrationBands(ctx, repoRoot, options.GoWork, options.ChangedFrom)
+		if err != nil {
+			return err
+		}
+	}
 	if options.List {
-		for _, band := range integrationCatalog {
+		for _, band := range bands {
 			fmt.Printf("%s (%d)\n", band.Name, len(band.Packages))
 			for _, packagePath := range band.Packages {
 				fmt.Printf("  %s\n", packagePath)
@@ -76,26 +90,27 @@ func run() (runErr error) {
 		}
 		return nil
 	}
+	if options.ListImages {
+		if len(bands) > 0 {
+			for _, image := range suiteImages(options, bands) {
+				fmt.Println(image)
+			}
+		}
+		return nil
+	}
+	if len(bands) == 0 {
+		fmt.Println("no cataloged integration package depends on the changed files")
+		return nil
+	}
 	options.SchemaRoot, err = filepath.Abs(options.SchemaRoot)
 	if err != nil {
 		return fmt.Errorf("resolve schema root: %w", err)
 	}
 
-	takeSuiteSignalCleanupOwnership()
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
-	bands, err := selectedIntegrationBands(options.Band, options.Package)
-	if err != nil {
-		return err
-	}
 	if err := requireSuiteAssets(repoRoot, options.SchemaRoot, bands); err != nil {
 		return err
 	}
-	images := []string{options.PostgresImage}
-	if integrationBandsNeedBackend(bands) {
-		images = append(images, requiredSuiteBackendImages()...)
-	}
-	if err := requireLocalDockerImages(ctx, images); err != nil {
+	if err := requireLocalDockerImages(ctx, suiteImages(options, bands)); err != nil {
 		return err
 	}
 	postgres, err := startSuitePostgres(ctx, options)
@@ -159,6 +174,14 @@ func run() (runErr error) {
 		}
 	}
 	return nil
+}
+
+func suiteImages(options suiteOptions, bands []integrationBand) []string {
+	images := []string{options.PostgresImage}
+	if integrationBandsNeedBackend(bands) {
+		images = append(images, requiredSuiteBackendImages()...)
+	}
+	return images
 }
 
 func integrationBandsNeedBackend(bands []integrationBand) bool {

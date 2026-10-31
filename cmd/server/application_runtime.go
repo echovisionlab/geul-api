@@ -65,7 +65,7 @@ func initializeApplicationRuntime(
 	if resultErr != nil {
 		return nil, resultErr
 	}
-	runtime.mediaListener, resultErr = net.Listen("tcp", runtime.mediaServer.Addr)
+	runtime.mediaListener, resultErr = (&net.ListenConfig{}).Listen(ctx, "tcp", runtime.mediaServer.Addr)
 	if resultErr != nil {
 		return nil, resultErr
 	}
@@ -162,10 +162,10 @@ func (r *applicationRuntime) Start(
 	runtimeFailures chan<- error,
 ) {
 	r.wg.Go(func() { authInterceptor.Start(ctx) })
-	if !r.startHTTPServer("HTTP server", server, runtimeFailures) {
+	if !r.startHTTPServer(ctx, "HTTP server", server, runtimeFailures) {
 		return
 	}
-	if !r.startHTTPServer("MCP private HTTP server", mcpPrivateServer, runtimeFailures) {
+	if !r.startHTTPServer(ctx, "MCP private HTTP server", mcpPrivateServer, runtimeFailures) {
 		return
 	}
 	if err := r.ogProcess.Start(func(err error) { reportRuntimeFailure(runtimeFailures, err) }); err != nil {
@@ -183,8 +183,8 @@ func (r *applicationRuntime) Start(
 	}
 }
 
-func (r *applicationRuntime) startHTTPServer(name string, server *http.Server, runtimeFailures chan<- error) bool {
-	listener, err := net.Listen("tcp", server.Addr)
+func (r *applicationRuntime) startHTTPServer(ctx context.Context, name string, server *http.Server, runtimeFailures chan<- error) bool {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", server.Addr)
 	if err != nil {
 		reportRuntimeFailure(runtimeFailures, fmt.Errorf("%s: %w", name, err))
 		return false
@@ -212,9 +212,9 @@ func newApplicationHTTPServer(mux *http.ServeMux, cfg *config.Config) *http.Serv
 	protocols.SetUnencryptedHTTP2(true)
 	return &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.Port),
-		Handler: corsHandler.Handler(telemetry.NewHTTPHandler(mux, func(request *http.Request) bool {
+		Handler: corsHandler.Handler(recoverHTTPPanics(telemetry.NewHTTPHandler(mux, func(request *http.Request) bool {
 			return auth.IsInternalServiceRequest(cfg.TokenSigningSecret, cfg.InternalServiceHeaderName, request)
-		})),
+		}))),
 		Protocols:    protocols,
 		ReadTimeout:  time.Duration(cfg.HTTPReadTimeoutSec) * time.Second,
 		WriteTimeout: time.Duration(cfg.HTTPWriteTimeoutSec) * time.Second,

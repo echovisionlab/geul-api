@@ -16,6 +16,7 @@ import (
 )
 
 func TestAdminProfileAvatarAndTagsKeepMemberUnonboardedIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationPostgres(t).DB
 	identityID := integrationTestUUID()
 	memberID := seedAdminEditableMember(t, db, identityID, "pending-"+uuid.NewString())

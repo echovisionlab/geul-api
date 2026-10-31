@@ -23,6 +23,7 @@ import (
 )
 
 func TestMetadataAIJobManagerLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	provider := &stubAIProvider{text: `{"metadata":{"summary":"Generated summary"}}`}
@@ -81,6 +82,7 @@ func TestMetadataAIJobManagerLifecycleIntegration(t *testing.T) {
 }
 
 func TestMetadataAIJobDispatchFailureRollsBackJobIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	provider := &stubAIProvider{text: `{"metadata":{"summary":"unused"}}`}
@@ -109,6 +111,7 @@ func TestMetadataAIJobDispatchFailureRollsBackJobIntegration(t *testing.T) {
 }
 
 func TestMetadataAIJobConcurrentDeliveriesCallProviderOnceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	provider := &stubAIProvider{text: `{"metadata":{"summary":"Generated once"}}`}
@@ -174,6 +177,7 @@ func TestMetadataAIJobConcurrentDeliveriesCallProviderOnceIntegration(t *testing
 }
 
 func TestMetadataAIJobRecoveryReenqueuesOnlyMissingPGMQMessagesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)

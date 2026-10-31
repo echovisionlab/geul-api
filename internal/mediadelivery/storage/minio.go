@@ -41,7 +41,7 @@ func (m *MinioClient) Get(ctx context.Context, key string) ([]byte, string, erro
 	if err != nil {
 		return nil, "", err
 	}
-	defer obj.Close()
+	defer func() { _ = obj.Close() }()
 
 	info, err := obj.Stat()
 	if err != nil {

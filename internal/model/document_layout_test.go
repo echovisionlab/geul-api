@@ -101,13 +101,13 @@ func TestDocumentLayoutProtoMappingRejectsUnspecifiedValues(t *testing.T) {
 	assert.Equal(t, DocumentContentHeightViewport, mapped.ContentHeight)
 	assert.Equal(t, DocumentRegionPlacementPinned, mapped.PageChrome)
 	assert.Equal(t, DocumentRegionPlacementFlow, mapped.Footer)
-	assert.Equal(t, valid, mapped.Proto())
+	assert.Equal(t, valid, requireDocumentLayoutProto(t, mapped))
 	persisted, err := mapped.Value()
 	require.NoError(t, err)
 	var loaded DocumentLayout
 	require.NoError(t, loaded.Scan(persisted))
 	assert.True(t, loaded.HideTableOfContents)
-	assert.Equal(t, valid, loaded.Proto())
+	assert.Equal(t, valid, requireDocumentLayoutProto(t, loaded))
 
 	alternate := &commonv1.DocumentLayout{
 		ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT,
@@ -116,7 +116,7 @@ func TestDocumentLayoutProtoMappingRejectsUnspecifiedValues(t *testing.T) {
 	}
 	alternateMapped, err := DocumentLayoutFromProto(alternate)
 	require.NoError(t, err)
-	assert.Equal(t, alternate, alternateMapped.Proto())
+	assert.Equal(t, alternate, requireDocumentLayoutProto(t, alternateMapped))
 
 	for name, layout := range map[string]*commonv1.DocumentLayout{
 		"nil": nil,
@@ -140,7 +140,33 @@ func TestDocumentLayoutProtoMappingRejectsUnspecifiedValues(t *testing.T) {
 		})
 	}
 
-	assert.Panics(t, func() {
-		_ = (DocumentLayout{}).Proto()
-	})
+	_, err = (DocumentLayout{}).Proto()
+	assert.Error(t, err)
+}
+
+func TestDocumentLayoutProtoReturnsErrorForInvalidPersistedLayout(t *testing.T) {
+	t.Parallel()
+
+	for name, layout := range map[string]DocumentLayout{
+		"zero":           {},
+		"content height": {ContentHeight: "bogus", PageChrome: DocumentRegionPlacementFlow, Footer: DocumentRegionPlacementFlow},
+		"page chrome":    {ContentHeight: DocumentContentHeightContent, PageChrome: "bogus", Footer: DocumentRegionPlacementFlow},
+		"footer":         {ContentHeight: DocumentContentHeightContent, PageChrome: DocumentRegionPlacementFlow, Footer: "bogus"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var mapped *commonv1.DocumentLayout
+			var err error
+			require.NotPanics(t, func() { mapped, err = layout.Proto() })
+			require.ErrorContains(t, err, "invalid persisted document layout")
+			require.Nil(t, mapped)
+		})
+	}
+}
+
+func requireDocumentLayoutProto(t *testing.T, layout DocumentLayout) *commonv1.DocumentLayout {
+	t.Helper()
+	mapped, err := layout.Proto()
+	require.NoError(t, err)
+	return mapped
 }

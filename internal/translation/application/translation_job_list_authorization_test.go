@@ -18,6 +18,7 @@ import (
 )
 
 func TestListTranslationJobsAllowsExactManagedEntityScope(t *testing.T) {
+	t.Parallel()
 	db := newTranslationRetryTestDB(t)
 	entityID := uuid.NewString()
 	stack := testutil.SetupOryStack(t)
@@ -58,6 +59,7 @@ func TestListTranslationJobsAllowsExactManagedEntityScope(t *testing.T) {
 }
 
 func TestListTranslationJobsRejectsUnscopedOrUnmanagedNonAdmin(t *testing.T) {
+	t.Parallel()
 	db := newTranslationRetryTestDB(t)
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -77,6 +79,7 @@ func TestListTranslationJobsRejectsUnscopedOrUnmanagedNonAdmin(t *testing.T) {
 }
 
 func TestListTranslationJobsRejectsManagedWorkScopeForNonAdmin(t *testing.T) {
+	t.Parallel()
 	db := newTranslationRetryTestDB(t)
 	entityID := uuid.NewString()
 	stack := testutil.SetupOryStack(t)
@@ -94,6 +97,7 @@ func TestListTranslationJobsRejectsManagedWorkScopeForNonAdmin(t *testing.T) {
 }
 
 func TestListTranslationJobsRejectsInvalidNonAdminScopeShapes(t *testing.T) {
+	t.Parallel()
 	db := newTranslationRetryTestDB(t)
 	entityID := uuid.NewString()
 	stack := testutil.SetupOryStack(t)

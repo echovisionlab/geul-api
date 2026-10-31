@@ -126,6 +126,7 @@ func requireReleaseTrackMutationWaiting(t *testing.T, result <-chan error) {
 }
 
 func TestReleaseMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("metadata", func(t *testing.T) {
 		fixture := newReleaseTrackAuthorityRaceFixture(t)
 		lockTx := lockReleaseAuthorityRaceRoot(t, fixture.db, fixture.release)
@@ -228,6 +229,7 @@ func TestReleaseMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.
 }
 
 func TestReleaseCreateRechecksCurrentAdminBeforeInitialStateIntegration(t *testing.T) {
+	t.Parallel()
 	fixture := newReleaseTrackAuthorityRaceFixture(t)
 	var before int64
 	require.NoError(t, fixture.db.Model(&model.Release{}).Count(&before).Error)
@@ -254,6 +256,7 @@ func TestReleaseCreateRechecksCurrentAdminBeforeInitialStateIntegration(t *testi
 }
 
 func TestTrackMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("create", func(t *testing.T) {
 		fixture := newReleaseTrackAuthorityRaceFixture(t)
 		lockTx := lockReleaseAuthorityRaceRoot(t, fixture.db, fixture.release)
@@ -357,6 +360,7 @@ func TestTrackMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.T)
 }
 
 func TestTrackCreditsObservedSnapshotPreservesConcurrentChangesIntegration(t *testing.T) {
+	t.Parallel()
 	fixture := newReleaseTrackAuthorityRaceFixture(t)
 	trackID := fixture.createTrack(t, "Observed credit merge")
 	peerID := integrationTestUUID()
@@ -436,6 +440,7 @@ func TestTrackCreditsObservedSnapshotPreservesConcurrentChangesIntegration(t *te
 }
 
 func TestTrackCreditsRequireObservedSnapshotIntegration(t *testing.T) {
+	t.Parallel()
 	fixture := newReleaseTrackAuthorityRaceFixture(t)
 	trackID := fixture.createTrack(t, "Missing observed snapshot")
 	_, err := fixture.tracks.SetTrackCredits(fixture.ctx, connect.NewRequest(&managev1.SetTrackCreditsRequest{

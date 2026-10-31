@@ -292,10 +292,9 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 		if err != nil {
 			return normalizeProgramEventContentBlockError(err)
 		}
-		if result.TranslationSourceChanged {
-			// The owning Program Event root and content document revision are the
-			// complete source authority. No separate translation epoch is stored.
-		}
+		// A translation source change needs no extra write: the owning Program Event
+		// root and content document revision are the complete source authority. No
+		// separate translation epoch is stored.
 		if !result.Changed {
 			return nil
 		}

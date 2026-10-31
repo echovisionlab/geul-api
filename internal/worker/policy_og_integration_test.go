@@ -25,6 +25,7 @@ import (
 )
 
 func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name            string
 		table           string
@@ -224,6 +225,7 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 }
 
 func TestScheduledLegalActivationRollsBackStatusWhenOgPlanningFailsIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name             string
 		table            string
@@ -289,6 +291,7 @@ func TestScheduledLegalActivationRollsBackStatusWhenOgPlanningFailsIntegration(t
 }
 
 func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name            string
 		table           string
@@ -407,6 +410,7 @@ func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t 
 }
 
 func TestScheduledLegalActivationIsNoopWithoutDueDocumentIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	handlers := &Handlers{
 		db:          db,
@@ -422,6 +426,7 @@ func TestScheduledLegalActivationIsNoopWithoutDueDocumentIntegration(t *testing.
 }
 
 func TestScheduledLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegration(t *testing.T) {
+	t.Parallel()
 	db := newCommittedWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	privacyID := uuid.NewString()

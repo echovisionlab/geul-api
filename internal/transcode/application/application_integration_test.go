@@ -27,6 +27,7 @@ import (
 )
 
 func TestHandleTranscodeCompleteRejectsPendingDeletionEditorAudioOutput(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	handlers := newWorkerTranscodeIntegrationHandlers(db)
 	publisher := &recordingWorkerPublisher{}
@@ -113,6 +114,7 @@ func TestHandleTranscodeCompleteRejectsPendingDeletionEditorAudioOutput(t *testi
 }
 
 func TestHandleTranscodeCompleteRetriesCanonicalOutputsBeforeFinishingTracker(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	fileID := uuid.NewString()
 	postID := uuid.NewString()
@@ -198,6 +200,7 @@ func TestHandleTranscodeCompleteRetriesCanonicalOutputsBeforeFinishingTracker(t 
 }
 
 func TestHandleTranscodeCompleteCleansSupersededAllocationWithoutSwitchingDerivative(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	ctx := context.Background()
 	fileID := uuid.NewString()
@@ -262,8 +265,8 @@ func TestHandleTranscodeCompleteCleansSupersededAllocationWithoutSwitchingDeriva
 }
 
 func TestHandleTranscodeCompleteRechecksJobAfterWaitingForFileLock(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	db := pg.DB
 	ctx := t.Context()
 	fileID := uuid.NewString()
@@ -362,8 +365,8 @@ func TestHandleTranscodeCompleteRechecksJobAfterWaitingForFileLock(t *testing.T)
 }
 
 func TestHandleTrackTranscodeCompleteDoesNotMutateOwnerAfterJobCancellation(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	db := pg.DB
 	ctx := t.Context()
 	fileID := uuid.NewString()
@@ -472,8 +475,8 @@ func TestHandleTrackTranscodeCompleteDoesNotMutateOwnerAfterJobCancellation(t *t
 }
 
 func TestHandleTrackTranscodeFailureDoesNotOverrideConcurrentCancellation(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	db := pg.DB
 	fileID := uuid.NewString()
 	releaseID := uuid.NewString()
@@ -561,6 +564,7 @@ func TestHandleTrackTranscodeFailureDoesNotOverrideConcurrentCancellation(t *tes
 }
 
 func TestHandleWaveformCompleteDuplicateKeepsReferencedAssetReady(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	fileID := uuid.NewString()
 	postID := uuid.NewString()
@@ -609,6 +613,7 @@ func TestHandleWaveformCompleteDuplicateKeepsReferencedAssetReady(t *testing.T) 
 }
 
 func TestHandleWaveformCompleteRetiresOutputWhenSourceDeletionIsPending(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	fileID := uuid.NewString()
 	postID := uuid.NewString()
@@ -656,6 +661,7 @@ func TestHandleWaveformCompleteRetiresOutputWhenSourceDeletionIsPending(t *testi
 }
 
 func TestCompleteAssetDerivativeRetiresReplacedUnboundAsset(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	ctx := context.Background()
 	fileID := uuid.NewString()
@@ -700,6 +706,7 @@ func TestCompleteAssetDerivativeRetiresReplacedUnboundAsset(t *testing.T) {
 }
 
 func TestCompleteGenerationDerivativeAtomicallySwitchesAndRetainsPreviousHLS(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	ctx := context.Background()
 	fileID := uuid.NewString()

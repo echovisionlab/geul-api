@@ -40,6 +40,7 @@ func seedPublicCreditAvatarArtist(t *testing.T, db *gorm.DB, published bool) str
 }
 
 func TestPublicProgramEventCreditAvatarsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	eventID := seedPublicProgramEventListQueryFixtures(t, db, 1)[0].eventID
 	role, description, fallback := "performer", "Credit description", "Fallback name"
@@ -106,6 +107,7 @@ func TestPublicProgramEventCreditAvatarsIntegration(t *testing.T) {
 }
 
 func TestPublicProgramEventCreditAvatarQueryBudgetIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	eventID := seedPublicProgramEventListQueryFixtures(t, db, 1)[0].eventID
 	artistID := seedPublicCreditAvatarArtist(t, db, true)

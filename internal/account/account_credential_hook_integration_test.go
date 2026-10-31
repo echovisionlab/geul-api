@@ -32,6 +32,7 @@ func (publisher *recordingCredentialHookEmailPublisher) PublishSendEmail(
 }
 
 func TestAccountCredentialHookCompletesCommittedOIDCRemovalIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "credential-hook-" + identityID + "@example.test"
@@ -107,6 +108,7 @@ func TestAccountCredentialHookCompletesCommittedOIDCRemovalIntegration(t *testin
 }
 
 func TestAccountCredentialHookCompletesCommittedPasskeyAdditionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "passkey-hook-" + identityID + "@example.test"
@@ -173,6 +175,7 @@ func TestAccountCredentialHookCompletesCommittedPasskeyAdditionIntegration(t *te
 }
 
 func TestAccountCredentialPreHookRejectsUnrecoverableAndUnbackedPrimaryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	providerEmail := "provider-hook-" + identityID + "@example.test"

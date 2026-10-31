@@ -23,8 +23,9 @@ import (
 )
 
 func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackValidateIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)

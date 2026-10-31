@@ -31,6 +31,7 @@ type mapPlaceDomainAuditRecord struct {
 }
 
 func TestMapPlaceCurrentAuthorityRejectsStaleRequestPrivilegesIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	// The request is deliberately stamped Admin. Each call must instead use the
@@ -81,6 +82,7 @@ func TestMapPlaceCurrentAuthorityRejectsStaleRequestPrivilegesIntegration(t *tes
 }
 
 func TestMapPlaceDomainAuditLifecycleAndImageVariantsIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	ctx, identityID, memberID, spiceDB := mapPlaceAuditActor(t, stack, policyv1.Role.Author())
@@ -156,6 +158,7 @@ func TestMapPlaceDomainAuditLifecycleAndImageVariantsIntegration(t *testing.T) {
 }
 
 func TestMapPlaceAuditRollbackAndReferenceIntegrityIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	ctx, _, _, spiceDB := mapPlaceAuditActor(t, stack, policyv1.Role.Admin())

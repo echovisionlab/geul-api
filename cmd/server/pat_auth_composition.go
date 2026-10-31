@@ -14,6 +14,6 @@ func registerPATVerification(mux *http.ServeMux, secret string, tokens patauth.A
 	if err != nil {
 		return err
 	}
-	mux.Handle(patauth.Path, handler)
+	mux.Handle(patauth.Path, handler) //nolint:staticcheck // legacy Worker verification route kept until the Worker is retired
 	return nil
 }

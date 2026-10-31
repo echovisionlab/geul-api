@@ -353,8 +353,8 @@ func cancelScheduledLegalUpdateNoticeAfterActivation(
 	referenceID string,
 	now time.Time,
 ) {
-	referenceColumn := ""
-	eventKey := ""
+	var referenceColumn string
+	var eventKey string
 	switch referenceType {
 	case EmailDeliveryReferenceTypeTerms:
 		referenceColumn = "terms_id"
@@ -399,7 +399,7 @@ func cancelActiveLegalNoticeDeliveryRuns(
 	referenceType string,
 	referenceID string,
 ) error {
-	referenceColumn := ""
+	var referenceColumn string
 	switch referenceType {
 	case EmailDeliveryReferenceTypeTerms:
 		referenceColumn = "terms_id"

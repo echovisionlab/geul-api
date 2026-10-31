@@ -23,6 +23,7 @@ import (
 )
 
 func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	identityID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, identityID, "AI document exact mutation")

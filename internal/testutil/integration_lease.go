@@ -7,7 +7,9 @@ import (
 
 const AppIntegrationPostgresImage = "registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138"
 
-const AppIntegrationMinIOImage = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+// The upstream minio/minio images are no longer pullable from Docker Hub;
+// Chainguard publishes the same server, pinned here by its multi-arch index.
+const AppIntegrationMinIOImage = "cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82"
 
 const AppIntegrationMinIOImageEnv = "GEUL_INTEGRATION_MINIO_IMAGE"
 
@@ -33,19 +35,26 @@ type AppIntegrationLeaseDescriptor struct {
 type AppIntegrationBackendLease struct {
 	PostgresDSN          string `json:"postgres_dsn"`
 	PostgresDatabaseName string `json:"postgres_database_name"`
-	KratosAdminURL       string `json:"kratos_admin_url"`
-	KratosPublicURL      string `json:"kratos_public_url"`
-	OathkeeperAdminURL   string `json:"oathkeeper_admin_url"`
-	OathkeeperProxyURL   string `json:"oathkeeper_proxy_url"`
-	SpiceDBEndpoint      string `json:"spicedb_endpoint"`
-	SpiceDBToken         string `json:"spicedb_token"`
-	S3Region             string `json:"s3_region"`
-	S3Endpoint           string `json:"s3_endpoint"`
-	S3AccessKeyID        string `json:"s3_access_key_id"`
-	S3SecretAccessKey    string `json:"s3_secret_access_key"`
-	S3MediaBucket        string `json:"s3_media_bucket"`
-	S3CacheBucket        string `json:"s3_cache_bucket"`
-	S3ForcePathStyle     bool   `json:"s3_force_path_style"`
-	HookControlURL       string `json:"hook_control_url"`
-	HookControlToken     string `json:"hook_control_token"`
+	// PostgresIsolationTemplate is cloned once per test; its kratos schema is a
+	// postgres_fdw view of PostgresDatabaseName.
+	PostgresIsolationTemplate string `json:"postgres_isolation_template"`
+	// PostgresLocalKratosTemplate carries its own copy of the kratos schema
+	// (structure and network row) for tests that need READ COMMITTED locking
+	// on kratos rows.
+	PostgresLocalKratosTemplate string `json:"postgres_local_kratos_template"`
+	KratosAdminURL              string `json:"kratos_admin_url"`
+	KratosPublicURL             string `json:"kratos_public_url"`
+	OathkeeperAdminURL          string `json:"oathkeeper_admin_url"`
+	OathkeeperProxyURL          string `json:"oathkeeper_proxy_url"`
+	SpiceDBEndpoint             string `json:"spicedb_endpoint"`
+	SpiceDBToken                string `json:"spicedb_token"`
+	S3Region                    string `json:"s3_region"`
+	S3Endpoint                  string `json:"s3_endpoint"`
+	S3AccessKeyID               string `json:"s3_access_key_id"`
+	S3SecretAccessKey           string `json:"s3_secret_access_key"`
+	S3MediaBucket               string `json:"s3_media_bucket"`
+	S3CacheBucket               string `json:"s3_cache_bucket"`
+	S3ForcePathStyle            bool   `json:"s3_force_path_style"`
+	HookControlURL              string `json:"hook_control_url"`
+	HookControlToken            string `json:"hook_control_token"`
 }

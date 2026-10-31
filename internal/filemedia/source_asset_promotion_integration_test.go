@@ -24,7 +24,8 @@ import (
 )
 
 func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	client := runtimeS3Client(t, stack)
 	body := bytes.Repeat([]byte{0x5a}, 16*1024*1024+1)
 	digest := sha256.Sum256(body)
@@ -95,6 +96,7 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 }
 
 func TestSourceAssetPromotionStorageRunsOutsideDatabaseTransactionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	file, store, service := seedSourceAssetPromotionIntegrationFixture(t, db)
 	started, release := store.blockTransfers()
@@ -122,6 +124,7 @@ func TestSourceAssetPromotionStorageRunsOutsideDatabaseTransactionIntegration(t 
 }
 
 func TestSourceAssetPromotionConcurrentReplicasConvergeOnOneReadyAssetIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	file, store, service := seedSourceAssetPromotionIntegrationFixture(t, db)
 	_ = store
@@ -161,6 +164,7 @@ func TestSourceAssetPromotionConcurrentReplicasConvergeOnOneReadyAssetIntegratio
 }
 
 func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	fileID := uuid.NewString()
 	seedFileDeleteLifecycleFile(t, db, fileID, "source.webp", "image/webp", "webp")
@@ -231,4 +235,12 @@ func seedSourceAssetPromotionIntegrationFixture(
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	service := &FileService{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
 	return file, store, service
+}
+
+func (f *sourceAssetPromotionS3Fixture) blockTransfers() (<-chan struct{}, chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transferStarted = make(chan struct{})
+	f.releaseTransfer = make(chan struct{})
+	return f.transferStarted, f.releaseTransfer
 }

@@ -20,18 +20,10 @@ func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, er
 	if err := requireLocalDockerImages(ctx, backendImages); err != nil {
 		return nil, err
 	}
-	kratosBefore, err := dockerContainerIDsForImage(ctx, backendImages[0])
-	if err != nil {
-		return nil, err
-	}
-	spiceBefore, err := dockerContainerIDsForImage(ctx, backendImages[1])
-	if err != nil {
-		return nil, err
-	}
 	if err := flag.Set("geul-integration-lease-file", leasePath); err != nil {
 		return nil, fmt.Errorf("select suite integration lease: %w", err)
 	}
-	hookProxy, err := StartHookProxy("http://" + testcontainers.HostInternal)
+	hookProxy, err := StartHookProxy(ctx, "http://"+testcontainers.HostInternal)
 	if err != nil {
 		return nil, err
 	}
@@ -49,15 +41,16 @@ func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, er
 		defer cancel()
 		return nil, fmt.Errorf("%w; cleanup: %v", err, errors.Join(stack.Close(), hookProxy.Close(closeCtx)))
 	}
-	kratosAfter, err := dockerContainerIDsForImage(ctx, backendImages[0])
+	// Count only this stack's network: other suite runs may share the daemon.
+	kratos, err := dockerContainerIDsForImage(ctx, backendImages[0], stack.Network.Name)
 	if err != nil {
 		return fail(err)
 	}
-	spiceAfter, err := dockerContainerIDsForImage(ctx, backendImages[1])
+	spiceDB, err := dockerContainerIDsForImage(ctx, backendImages[1], stack.Network.Name)
 	if err != nil {
 		return fail(err)
 	}
-	if countNewContainerIDs(kratosBefore, kratosAfter) != 1 || countNewContainerIDs(spiceBefore, spiceAfter) != 1 {
+	if len(kratos) != 1 || len(spiceDB) != 1 {
 		return fail(fmt.Errorf("orchestrator backend must start exactly one Kratos and one SpiceDB container"))
 	}
 	lease := stack.Lease()
@@ -65,11 +58,10 @@ func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, er
 	lease.HookControlToken = hookProxy.ControlToken()
 	return &suiteBackend{
 		Lease: lease,
-		resetFn: func(ctx context.Context) error {
-			return errors.Join(
-				hookProxy.Unregister(),
-				testutil.ResetBackendIntegrationPackageState(ctx, stack),
-			)
+		// Tests own their databases, SpiceDB datastores and buckets, so only the
+		// single hook upstream registration needs releasing between packages.
+		resetFn: func(context.Context) error {
+			return hookProxy.Unregister()
 		},
 		closeFn: func() error {
 			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -79,8 +71,8 @@ func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, er
 	}, nil
 }
 
-func dockerContainerIDsForImage(ctx context.Context, image string) (map[string]struct{}, error) {
-	command := exec.CommandContext(ctx, "docker", "ps", "--filter", "ancestor="+image, "--format", "{{.ID}}")
+func dockerContainerIDsForImage(ctx context.Context, image, network string) (map[string]struct{}, error) {
+	command := exec.CommandContext(ctx, "docker", "ps", "--filter", "ancestor="+image, "--filter", "network="+network, "--format", "{{.ID}}")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("list integration containers for %s: %w: %s", image, err, strings.TrimSpace(string(output)))
@@ -90,14 +82,4 @@ func dockerContainerIDsForImage(ctx context.Context, image string) (map[string]s
 		ids[id] = struct{}{}
 	}
 	return ids, nil
-}
-
-func countNewContainerIDs(before, after map[string]struct{}) int {
-	count := 0
-	for id := range after {
-		if _, ok := before[id]; !ok {
-			count++
-		}
-	}
-	return count
 }

@@ -39,7 +39,8 @@ func (emailAuthoringFailingAppender) AppendDomainAuditInTransaction(context.Cont
 }
 
 func TestEmailAuthoringDomainAuditIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
+	t.Parallel()
+	db := newEmailAuthoringLocalKratosIntegrationDB(t)
 	baseContext, spiceDB := testutil.IntegrationAdminContext(t, db)
 	admin := auth.GetUser(baseContext)
 	require.NotNil(t, admin)

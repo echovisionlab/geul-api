@@ -16,8 +16,10 @@ type suiteOptions struct {
 	Band          string
 	Package       string
 	Run           string
+	ChangedFrom   string
 	Jobs          int
 	List          bool
+	ListImages    bool
 	GoWork        string
 	SchemaRoot    string
 	PostgresImage string
@@ -27,7 +29,7 @@ type suiteOptions struct {
 const integrationGoWorkOff = "off"
 
 func parseOptions(args []string) (suiteOptions, error) {
-	jobs := 2
+	jobs := 4
 
 	flags := flag.NewFlagSet("integration-suite", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -35,8 +37,10 @@ func parseOptions(args []string) (suiteOptions, error) {
 	flags.StringVar(&options.Band, "band", "", "resource band to run")
 	flags.StringVar(&options.Package, "package", "", "cataloged integration package to run")
 	flags.StringVar(&options.Run, "run", "", "test name regexp (requires --package)")
+	flags.StringVar(&options.ChangedFrom, "changed-from", "", "run only packages affected by changes since this Git revision")
 	flags.IntVar(&options.Jobs, "jobs", jobs, "maximum concurrent packages and opted-in tests per package")
 	flags.BoolVar(&options.List, "list", false, "list the verified catalog")
+	flags.BoolVar(&options.ListImages, "list-images", false, "list the Docker images the selected packages require")
 	flags.StringVar(&options.GoWork, "go-work", integrationGoWorkOff, "Go workspace: off or an absolute go.work path")
 	flags.StringVar(&options.SchemaRoot, "schema-root", "../geul-schema", "reviewed schema asset root")
 	flags.StringVar(&options.PostgresImage, "postgres-image", testutil.AppIntegrationPostgresImage, "local PostgreSQL image")
@@ -48,8 +52,8 @@ func parseOptions(args []string) (suiteOptions, error) {
 	if flags.NArg() != 0 {
 		return suiteOptions{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
-	if options.Jobs < 1 || options.Jobs > 4 {
-		return suiteOptions{}, fmt.Errorf("integration jobs must be between 1 and 4")
+	if options.Jobs < 1 || options.Jobs > 16 {
+		return suiteOptions{}, fmt.Errorf("integration jobs must be between 1 and 16")
 	}
 	if options.GoWork != integrationGoWorkOff && !filepath.IsAbs(options.GoWork) {
 		return suiteOptions{}, fmt.Errorf("integration go.work must be off or an absolute path")
@@ -59,6 +63,10 @@ func parseOptions(args []string) (suiteOptions, error) {
 	}
 	if options.Band != "" && options.Package != "" {
 		return suiteOptions{}, fmt.Errorf("integration band and package are mutually exclusive")
+	}
+	options.ChangedFrom = strings.TrimSpace(options.ChangedFrom)
+	if options.ChangedFrom != "" && (options.Band != "" || options.Package != "") {
+		return suiteOptions{}, fmt.Errorf("integration changed-from selection excludes band and package")
 	}
 	if options.Package != "" {
 		if _, ok := bandByPackage(options.Package); !ok {
@@ -81,6 +89,9 @@ func parseOptions(args []string) (suiteOptions, error) {
 		if _, err := regexp.Compile(options.Run); err != nil {
 			return suiteOptions{}, fmt.Errorf("invalid integration test name regexp: %w", err)
 		}
+	}
+	if options.List && options.ListImages {
+		return suiteOptions{}, fmt.Errorf("integration list and list-images are mutually exclusive")
 	}
 	if options.List {
 		return options, nil
@@ -128,9 +139,9 @@ func bandGoTestArguments(band integrationBand, jobs int) []string {
 }
 
 func packageGoTestArguments(packagePath, run string, resources integrationResourceMode, jobs int) []string {
-	parallelTests := 1
-	if resources == integrationPostgresOnly {
-		parallelTests = jobs
+	parallelTests := jobs
+	if resources == integrationRuntimeExclusive {
+		parallelTests = 1
 	}
 	arguments := []string{
 		"test",

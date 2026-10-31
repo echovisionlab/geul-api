@@ -15,6 +15,7 @@ import (
 )
 
 func TestProgramEventSeriesAdminListCapsRequestedPageSizeIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	suffix := uuid.NewString()
@@ -40,6 +41,7 @@ func TestProgramEventSeriesAdminListCapsRequestedPageSizeIntegration(t *testing.
 }
 
 func TestProgramEventSeriesAdminGetAcceptsCanonicalSlugIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	id := uuid.NewString()
@@ -63,6 +65,7 @@ func TestProgramEventSeriesAdminGetAcceptsCanonicalSlugIntegration(t *testing.T)
 }
 
 func TestDeleteProgramEventSeriesDetachesEventsWithoutDeletingThemIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	seriesID := uuid.NewString()

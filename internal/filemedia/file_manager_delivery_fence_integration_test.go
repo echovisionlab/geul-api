@@ -22,6 +22,7 @@ import (
 )
 
 func TestFileManagerGetDoesNotIssueAfterDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -53,6 +54,7 @@ func TestFileManagerGetDoesNotIssueAfterDeletionCommitIntegration(t *testing.T) 
 }
 
 func TestFileManagerListRetriesWithoutFileDeletedBeforeSigningIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, fileID := newFileManagerDeliveryFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -86,6 +88,7 @@ func TestFileManagerListRetriesWithoutFileDeletedBeforeSigningIntegration(t *tes
 }
 
 func TestFileManagerGetSigningCompletesBeforeDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSignedFence := make(chan struct{})
@@ -125,6 +128,7 @@ func TestFileManagerGetSigningCompletesBeforeDeletionCommitIntegration(t *testin
 }
 
 func TestFileManagerListSigningCompletesBeforeDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, fileID := newFileManagerDeliveryFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSignedFence := make(chan struct{})
@@ -166,6 +170,7 @@ func TestFileManagerListSigningCompletesBeforeDeletionCommitIntegration(t *testi
 }
 
 func TestFileManagerGetDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -192,6 +197,7 @@ func TestFileManagerGetDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *
 }
 
 func TestFileManagerSigningCompletesBeforePrincipalRevocationCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSigned := make(chan struct{})
@@ -227,6 +233,7 @@ func TestFileManagerSigningCompletesBeforePrincipalRevocationCommitIntegration(t
 }
 
 func TestFileManagerSigningCompletesBeforeRenameAndDeletePrincipalFenceIntegration(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"rename", "delete"} {
 		t.Run(mutation, func(t *testing.T) {
 			db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
@@ -282,6 +289,7 @@ func TestFileManagerSigningCompletesBeforeRenameAndDeletePrincipalFenceIntegrati
 }
 
 func TestFileManagerDeleteHoldingPrincipalCompletesWithoutSignerDeadlockIntegration(t *testing.T) {
+	t.Parallel()
 	_, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	principalHeld := make(chan struct{})
 	releaseMutation := make(chan struct{})
@@ -313,6 +321,7 @@ func TestFileManagerDeleteHoldingPrincipalCompletesWithoutSignerDeadlockIntegrat
 }
 
 func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
@@ -346,6 +355,7 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 }
 
 func TestFileManagerGetDropsOptimizedOutputDeliveryDeletedBeforeSigningIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, sourceFileID := newFileManagerDeliveryFenceFixture(t)
 	outputFileID := seedFileManagerFile(
 		t,
@@ -399,6 +409,7 @@ func TestFileManagerGetDropsOptimizedOutputDeliveryDeletedBeforeSigningIntegrati
 }
 
 func TestFileManagerGetDropsOptimizedOutputWhenCandidateChangesBeforeSigningIntegration(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"deleted", "status", "output"} {
 		t.Run(mutation, func(t *testing.T) {
 			db, ctx, service, folderID, sourceFileID := newFileManagerDeliveryFenceFixture(t)
@@ -446,6 +457,7 @@ func TestFileManagerGetDropsOptimizedOutputWhenCandidateChangesBeforeSigningInte
 }
 
 func TestFileManagerOptimizedOutputSigningCompletesBeforeCandidateMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, sourceFileID := newFileManagerDeliveryFenceFixture(t)
 	outputFileID := seedFileManagerFile(t, db, folderID, auth.GetUser(ctx).MemberID.String(), "optimized-locked", "glb", "model/gltf-binary")
 	candidateID := uuid.NewString()
@@ -484,6 +496,7 @@ func TestFileManagerOptimizedOutputSigningCompletesBeforeCandidateMutationIntegr
 }
 
 func TestFileManagerOptimizedOutputSigningCompletesBeforeMeshCompletionIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, sourceFileID := newFileManagerDeliveryFenceFixture(t)
 	outputFileID := seedFileManagerFile(t, db, folderID, auth.GetUser(ctx).MemberID.String(), "optimized-completion", "glb", "model/gltf-binary")
 	candidate := model.MeshOptimizationCandidate{
@@ -530,6 +543,7 @@ func TestFileManagerOptimizedOutputSigningCompletesBeforeMeshCompletionIntegrati
 }
 
 func TestManageGetMediaDeliveryDoesNotIssueAfterDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -558,6 +572,7 @@ func TestManageGetMediaDeliveryDoesNotIssueAfterDeletionCommitIntegration(t *tes
 }
 
 func TestManageBulkMediaDeliveriesExcludesFileDeletedBeforeSigningIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, fileID := newFileManagerDeliveryFenceFixture(t)
 	secondFileID := seedManagedFileManagerFenceFile(t, db, folderID, auth.GetUser(ctx).MemberID.String(), "bulk-current")
 	expectedIDs := []string{fileID, secondFileID}
@@ -595,6 +610,7 @@ func TestManageBulkMediaDeliveriesExcludesFileDeletedBeforeSigningIntegration(t 
 }
 
 func TestManageGetMediaDeliverySigningCompletesBeforeDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSignedFence := make(chan struct{})
@@ -629,6 +645,7 @@ func TestManageGetMediaDeliverySigningCompletesBeforeDeletionCommitIntegration(t
 }
 
 func TestManageGetMediaDeliveryRetriesOnceAfterFileMetadataChangeIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	var changedOnce sync.Once
 	service.testBeforeManageDeliveryFence = func(fileIDs []string) {
@@ -645,6 +662,7 @@ func TestManageGetMediaDeliveryRetriesOnceAfterFileMetadataChangeIntegration(t *
 }
 
 func TestManageGetMediaDeliveryMetadataRetryIsBoundedIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	changeCount := 0
 	service.testBeforeManageDeliveryFence = func([]string) {
@@ -657,6 +675,7 @@ func TestManageGetMediaDeliveryMetadataRetryIsBoundedIntegration(t *testing.T) {
 }
 
 func TestManageBulkMediaDeliverySigningCompletesBeforeDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, fileID := newFileManagerDeliveryFenceFixture(t)
 	secondFileID := seedManagedFileManagerFenceFile(t, db, folderID, auth.GetUser(ctx).MemberID.String(), "bulk-locked")
 	expectedIDs := []string{fileID, secondFileID}
@@ -700,6 +719,7 @@ func TestManageBulkMediaDeliverySigningCompletesBeforeDeletionCommitIntegration(
 }
 
 func TestManagePostCollaboratorGetsInlineWithoutOriginalDownloadIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, _ := newManagePostCollaboratorFenceFixture(t)
 
 	response, err := service.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
@@ -712,6 +732,7 @@ func TestManagePostCollaboratorGetsInlineWithoutOriginalDownloadIntegration(t *t
 }
 
 func TestManagePostCollaboratorDoesNotIssueAfterDetachCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, blockID := newManagePostCollaboratorFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -732,6 +753,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterDetachCommitIntegration(t *testi
 }
 
 func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, _ := newManagePostCollaboratorFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -761,6 +783,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegra
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforePrincipalRevocationCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, _ := newManagePostCollaboratorFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSigned := make(chan struct{})
@@ -797,6 +820,7 @@ func TestManagePostCollaboratorSigningCompletesBeforePrincipalRevocationCommitIn
 }
 
 func TestManageStrongDeliveryDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -826,6 +850,7 @@ func TestManageStrongDeliveryDoesNotIssueAfterPrincipalRevocationCommitIntegrati
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforeDetachCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, blockID := newManagePostCollaboratorFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSigned := make(chan struct{})
@@ -856,6 +881,7 @@ func TestManagePostCollaboratorSigningCompletesBeforeDetachCommitIntegration(t *
 }
 
 func TestManagePostCollaboratorDoesNotIssueAfterFileDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, _ := newManagePostCollaboratorFenceFixture(t)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -875,6 +901,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterFileDeletionCommitIntegration(t 
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforeFileDeletionCommitIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, _ := newManagePostCollaboratorFenceFixture(t)
 	signed := make(chan struct{})
 	releaseSigned := make(chan struct{})
@@ -904,6 +931,7 @@ func TestManagePostCollaboratorSigningCompletesBeforeFileDeletionCommitIntegrati
 }
 
 func TestManageBulkUsesPerFileDeliveryCapabilitiesIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, usageFileID, _ := newManagePostCollaboratorFenceFixture(t)
 	user := auth.GetUser(ctx)
 	uploaderFileID := uuid.NewString()
@@ -926,6 +954,7 @@ func TestManageBulkUsesPerFileDeliveryCapabilitiesIntegration(t *testing.T) {
 }
 
 func TestManageBulkExcludesDetachedUsageButKeepsCurrentUsageIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, firstFileID, firstBlockID := newManagePostCollaboratorFenceFixture(t)
 	_, secondFileID, secondBlockID := seedManagePostCollaboratorUsage(t, db, service.spiceDB, auth.GetUser(ctx))
 	expected := []string{firstFileID, secondFileID}
@@ -958,6 +987,7 @@ func TestManageBulkExcludesDetachedUsageButKeepsCurrentUsageIntegration(t *testi
 }
 
 func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, firstBlockID := newManagePostCollaboratorFenceFixture(t)
 	user := auth.GetUser(ctx)
 	postID, _, secondBlockID := seedManagePostCollaboratorUsageForFile(t, db, service.spiceDB, user, fileID)
@@ -988,6 +1018,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 }
 
 func TestManageGlobalAuthorDownloadIsIndependentOfUsageDetachIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID, blockID := newManagePostCollaboratorFenceFixture(t)
 	grantIntegrationGlobalRole(t, service.spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
 	beforeFence := make(chan struct{})
@@ -1014,6 +1045,7 @@ func TestManageGlobalAuthorDownloadIsIndependentOfUsageDetachIntegration(t *test
 }
 
 func TestManagePageAndWorkContentWitnessRejectsCommittedDocumentChangeIntegration(t *testing.T) {
+	t.Parallel()
 	for _, resourceType := range []string{"page", "work"} {
 		t.Run(resourceType, func(t *testing.T) {
 			db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
@@ -1042,6 +1074,7 @@ func TestManagePageAndWorkContentWitnessRejectsCommittedDocumentChangeIntegratio
 }
 
 func TestManagePageUsageSigningCompletesBeforeDocumentChangeIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, _, fileID := newFileManagerDeliveryFenceFixture(t)
 	pageID, _, _ := seedManageContentOwnerUsage(t, db, "page", fileID)
 	usages, err := service.currentManageFileDeliveryUsages(ctx, []string{fileID})
@@ -1094,6 +1127,7 @@ func TestManagePageUsageSigningCompletesBeforeDocumentChangeIntegration(t *testi
 }
 
 func TestManageStrongSigningDoesNotDeadlockAvatarPromotionIntegration(t *testing.T) {
+	t.Parallel()
 	db, ctx, service, folderID, _ := newFileManagerDeliveryFenceFixture(t)
 	fileID := seedFileManagerFile(t, db, folderID, auth.GetUser(ctx).MemberID.String(), "avatar", "webp", "image/webp")
 	require.NoError(t, db.Exec(
@@ -1143,8 +1177,8 @@ func newFileManagerDeliveryFenceFixture(
 	t *testing.T,
 ) (*gorm.DB, context.Context, *FileService, string, string) {
 	t.Helper()
-	db := newConcurrentServiceIntegrationDB(t)
-	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
+	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
+	ctx := integrationAdminCtxWithIdentity(t, db, spiceDB)
 	service := &FileService{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
@@ -1162,10 +1196,9 @@ func newManagePostCollaboratorFenceFixture(
 	t *testing.T,
 ) (*gorm.DB, context.Context, *FileService, string, string, string) {
 	t.Helper()
-	db := newConcurrentServiceIntegrationDB(t)
+	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Manage delivery collaborator")
-	spiceDB := integrationSpiceDB(t)
 	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),

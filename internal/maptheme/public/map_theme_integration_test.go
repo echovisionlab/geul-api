@@ -13,6 +13,7 @@ import (
 )
 
 func TestPublicMapThemeResolveByIDsPreservesOrderDuplicatesAndFallsBack(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	var settings model.SiteSettings
 	require.NoError(t, db.Select("default_map_theme_id").Where("id = ?", 1).Take(&settings).Error)
@@ -34,6 +35,7 @@ func TestPublicMapThemeResolveByIDsPreservesOrderDuplicatesAndFallsBack(t *testi
 }
 
 func TestPublicMapThemeUnknownResolveFallsBackForBothSchemes(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	var settings model.SiteSettings
 	require.NoError(t, db.Select("default_map_theme_id").Where("id = ?", 1).Take(&settings).Error)

@@ -20,6 +20,7 @@ import (
 )
 
 func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	asset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	ownerID := uuid.NewString()
@@ -62,6 +63,7 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 }
 
 func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	oldAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	newAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
@@ -111,6 +113,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 }
 
 func TestMediaAssetLifecycleConcurrentFirstBindConvergesIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	firstAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	secondAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)

@@ -13,7 +13,8 @@ import (
 
 // MAIL-02: the integration ingress uses the same authenticated boundary as production.
 func TestBackendIntegrationCourierRouteRequiresInternalServiceSecret(t *testing.T) {
-	server, _, err := startHookServer()
+	t.Parallel()
+	server, _, err := startHookServer(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
 

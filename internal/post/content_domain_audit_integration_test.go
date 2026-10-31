@@ -32,6 +32,7 @@ import (
 )
 
 func TestPostDomainAuditClosesLifecycleVersionAndDeleteBoundariesIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminIdentityID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Post audit admin")

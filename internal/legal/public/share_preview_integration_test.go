@@ -24,6 +24,7 @@ import (
 )
 
 func TestPublicLegalSharePreviewRequiresExactIDTokenPairIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	store := newPublicLegalContentBlockStore(t)
 	media := legaladapter.NewOGRuntime("", nil)
@@ -141,6 +142,7 @@ func TestPublicLegalSharePreviewRequiresExactIDTokenPairIntegration(t *testing.T
 }
 
 func TestPublicLegalManualShareLinkOpensExactTypedHistoryAfterPasswordIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	store := newPublicLegalContentBlockStore(t)
 	media := legaladapter.NewOGRuntime("", nil)

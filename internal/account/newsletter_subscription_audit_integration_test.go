@@ -16,6 +16,7 @@ import (
 )
 
 func TestAccountNewsletterSubscriptionAuditRecordsOnlyCommittedTransitionsIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -66,6 +67,7 @@ func TestAccountNewsletterSubscriptionAuditRecordsOnlyCommittedTransitionsIntegr
 }
 
 func TestAccountNewsletterSubscriptionAuditFailureRollsBackIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	service := NewAuditedAccountService(

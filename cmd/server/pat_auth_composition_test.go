@@ -30,7 +30,7 @@ func TestPATVerificationRouteOptIn(t *testing.T) {
 			t.Fatalf("registration error %v", err)
 		}
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, patauth.Path, nil))
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, patauth.Path, nil)) //nolint:staticcheck // exercises the legacy Worker verification route
 		if w.Code != tc.wantStatus {
 			t.Errorf("status %d want %d", w.Code, tc.wantStatus)
 		}

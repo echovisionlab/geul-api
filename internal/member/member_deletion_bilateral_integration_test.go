@@ -15,6 +15,7 @@ import (
 )
 
 func TestFinalizeTombstoneRollsBackMemberStateWhenAccountAuditFails(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	now := time.Now().UTC()
 	memberID, identityID := seedBilateralDeletionPair(t, db, true, now.Add(-24*time.Hour))
@@ -46,6 +47,7 @@ func TestFinalizeTombstoneRollsBackMemberStateWhenAccountAuditFails(t *testing.T
 }
 
 func TestFinalizeTombstoneDeletesMemberPersonalAccessTokensAndReplayIsNoOp(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	now := time.Now().UTC()
 	memberID, identityID := seedBilateralDeletionPair(t, db, true, now.Add(-24*time.Hour))
@@ -95,6 +97,7 @@ func TestFinalizeTombstoneDeletesMemberPersonalAccessTokensAndReplayIsNoOp(t *te
 }
 
 func TestDeletionLifecycleRejectsNonBilateralIdentityWitness(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	now := time.Now().UTC()
 	lifecycle := DeletionLifecycle{}

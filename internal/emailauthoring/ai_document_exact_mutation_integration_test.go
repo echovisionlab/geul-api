@@ -28,7 +28,8 @@ import (
 )
 
 func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackValidateIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
+	t.Parallel()
+	db := newEmailAuthoringLocalKratosIntegrationDB(t)
 	ctx, realSpiceDB := testutil.IntegrationAdminContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, realSpiceDB)
 	writer := githubtelemetry.NewDurableWriter(db)

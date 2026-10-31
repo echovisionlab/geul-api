@@ -66,15 +66,17 @@ func (personalDataEmailPublisher) PublishSendEmailWithExecutor(
 }
 
 func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	admin := seedMemberAdminListPair(
-		t, db, spiceDB, "Access admin", "access-admin@example.test",
+		t, db, spiceDB, "Access admin", memberAdminListEmail("access-admin"),
 		policyv1.Role.Admin(), false, false, now,
 	)
+	targetEmail := memberAdminListEmail("access-target")
 	target := seedMemberAdminListPair(
-		t, db, spiceDB, "Access target", "access-target@example.test",
+		t, db, spiceDB, "Access target", targetEmail,
 		policyv1.Role.User(), false, false, now,
 	)
 	writer := apitelemetry.NewDurableWriter(db)
@@ -85,7 +87,7 @@ func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *test
 		&fakeIdentityManager{identity: &auth.Identity{
 			ID:         target.identityID,
 			ExternalID: target.memberID,
-			Traits:     map[string]interface{}{"email": "access-target@example.test"},
+			Traits:     map[string]interface{}{"email": targetEmail},
 		}},
 		personalDataFileDeleter{},
 		"",
@@ -153,10 +155,11 @@ func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *test
 }
 
 func TestMemberPersonalDataAccessFailsClosedWhenAppendFailsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	admin := seedMemberAdminListPair(
-		t, db, spiceDB, "Fail closed admin", "fail-closed@example.test",
+		t, db, spiceDB, "Fail closed admin", memberAdminListEmail("fail-closed"),
 		policyv1.Role.Admin(), false, false, time.Now().UTC(),
 	)
 	writer := &personalDataAccessWriterStub{err: errors.New("audit storage unavailable")}

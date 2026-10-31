@@ -17,6 +17,7 @@ import (
 )
 
 func TestAccountRoleMutationKeepsUnonboardedMemberOutOfLastAdminCountIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	roleTarget := stack.CreateUser(t, policyv1.Role.User().ID())

@@ -21,6 +21,7 @@ import (
 )
 
 func TestEvaluateFileDownloadAccessAudienceMatrixUnit(t *testing.T) {
+	t.Parallel()
 	db := newFileDownloadPolicyDB(t)
 	now := time.Now().UTC()
 	fileID := uuid.NewString()
@@ -132,6 +133,7 @@ func TestEvaluateFileDownloadAccessAudienceMatrixUnit(t *testing.T) {
 func TestEvaluateRestrictedDownloadFailsClosedForInvalidAndStaleAudienceConfigUnit(
 	t *testing.T,
 ) {
+	t.Parallel()
 	db := newFileDownloadPolicyDB(t)
 	now := time.Now().UTC()
 	userID := uuid.NewString()
@@ -178,6 +180,7 @@ func TestEvaluateRestrictedDownloadFailsClosedForInvalidAndStaleAudienceConfigUn
 }
 
 func TestEvaluateRestrictedDownloadAppliesFilterAndExclusionUnit(t *testing.T) {
+	t.Parallel()
 	db := newFileDownloadPolicyDB(t)
 	now := time.Now().UTC()
 	stack := testutil.SetupOryStack(t)
@@ -243,6 +246,7 @@ func TestEvaluateRestrictedDownloadAppliesFilterAndExclusionUnit(t *testing.T) {
 func TestEvaluateRestrictedDownloadBatchQueryCountDoesNotScaleWithSegmentsUnit(
 	t *testing.T,
 ) {
+	t.Parallel()
 	oneSegmentQueries := evaluateRestrictedDownloadBatchQueryCount(t, 1)
 	manySegmentQueries := evaluateRestrictedDownloadBatchQueryCount(t, 12)
 

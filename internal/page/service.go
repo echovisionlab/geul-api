@@ -321,13 +321,14 @@ func (s *PageService) CreatePage(
 		}
 	}
 
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
 	page := &model.Page{
 		DocumentLayout: model.DefaultDocumentLayout(),
 		AccessPolicy:   encodedPolicy,
 		Status:         model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()),
 		ShowTitle:      true, // Default
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      createdAt,
+		UpdatedAt:      createdAt,
 	}
 
 	if slugPresent {
@@ -650,7 +651,7 @@ func (s *PageService) PublishPage(
 		if err := RequireIndexedContentBlockAttachmentsReadyForPublication(ctx, tx, attachments); err != nil {
 			return err
 		}
-		now := time.Now()
+		now := time.Now().UTC().Truncate(time.Microsecond)
 		updates := structured.Fields{
 			"status":     managev1.PageStatus_PAGE_STATUS_PUBLISHED.String(),
 			"updated_at": now,
@@ -731,7 +732,7 @@ func (s *PageService) UnpublishPage(
 		if page.Status == model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()) {
 			return nil
 		}
-		now := time.Now()
+		now := time.Now().UTC().Truncate(time.Microsecond)
 		updates := structured.Fields{"status": managev1.PageStatus_PAGE_STATUS_DRAFT.String(), "updated_at": now}
 		if err := tx.Model(&page).Updates(updates).Error; err != nil {
 			return err

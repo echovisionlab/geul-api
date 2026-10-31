@@ -15,6 +15,7 @@ import (
 )
 
 func TestRegenerateReturnsOneExactActiveJobUnderPostgresConcurrencyIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	now := time.Now().UTC()
 	requestedBy := uuid.NewString()

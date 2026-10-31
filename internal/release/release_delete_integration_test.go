@@ -45,6 +45,7 @@ func (d *recordingReleaseDeleteFileDeleter) RequireNoTrackUploadSessionsWithDB(c
 }
 
 func TestDeleteReleaseRejectsOversizedAtomicAuthorizationBatchBeforeMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release delete batch boundary admin")
@@ -123,6 +124,7 @@ func (noopReleaseDeleteAsyncPublisher) EnqueueProtobufWithExecutor(
 }
 
 func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release Delete Admin")
@@ -222,6 +224,7 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 }
 
 func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release Artwork Admin")

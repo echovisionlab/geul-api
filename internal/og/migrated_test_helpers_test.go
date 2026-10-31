@@ -151,5 +151,3 @@ func requestOgGenerationForTest(ctx context.Context, planner *og.Planner, trigge
 func cancelOgGenerationEntityForTest(ctx context.Context, lifecycle *og.Lifecycle, entityType managev1.OgEntityType, entityID string) error {
 	return lifecycle.CancelEntity(ctx, entityType, entityID)
 }
-
-func stringPtr(value string) *string { return &value }

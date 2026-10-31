@@ -50,12 +50,12 @@ type HookProxy struct {
 // an HTTP origin without a port, for example http://host.testcontainers.internal
 // or http://host.docker.internal. Docker access to that host mapping remains the
 // caller's responsibility.
-func StartHookProxy(dockerHostBase string) (*HookProxy, error) {
+func StartHookProxy(ctx context.Context, dockerHostBase string) (*HookProxy, error) {
 	dockerBase, err := parseHookProxyDockerBase(dockerHostBase)
 	if err != nil {
 		return nil, err
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen for integration hook proxy: %w", err)
 	}

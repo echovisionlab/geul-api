@@ -321,8 +321,10 @@ shared deliberately through `internal/testutil`.
 ## Tests
 
 CI runs unit and package tests with `go test ./...`, media-tool tests, `go vet`,
-and the server build. Go checks restore the module/build cache and run alongside
-media-tool checks; the required `Validate` check waits for both to pass.
+golangci-lint (`.golangci.yml`, on both the default and `integration` builds),
+the server build, and integration tests. The required `Validate` check waits for
+all of them. Run the linter locally with `golangci-lint run ./...` and
+`golangci-lint run --build-tags=integration ./...`.
 Input validation, authorization decisions, state
 transitions, and adapter mappings belong in unit tests. Reuse the owning
 service's tests when an adapter only delegates to it.
@@ -336,21 +338,61 @@ reviewed schema checkout and the pinned PostgreSQL image:
 make test-integration-db
 ```
 
-For a CI-only check of the changed PostgreSQL fixtures, dispatch `CI` with
-`integration_smoke=true`. It uses the pinned schema and test image, verifies
-clone/cleanup isolation, and runs MQ, durable telemetry, and transcode application
-contracts with two test workers. Pull requests keep the ordinary fast gates.
+Pull requests run the cataloged integration packages whose test binaries import
+a package the pull request changed (`--changed-from <base>`). Changes the import
+graph cannot attribute, such as `go.mod`, the runner itself, assets outside a
+package, or `.github/workflows/ci.yml` (which pins the schema, images and sibling
+revisions), run the whole catalog; documentation and other workflow changes run
+none. Packages whose tests start `cmd/server` also run when its dependencies
+change. The
+nightly schedule and a manual `CI` dispatch run the whole catalog. CI pins the
+schema, PostgreSQL image, and the sibling Identity, editor-collab, Common,
+Contracts and Telemetry revisions in `.github/workflows/ci.yml`. To preview a
+selection locally:
+
+```sh
+GOWORK=off go run -tags=integration ./scripts/test/integration --changed-from origin/main --list
+```
 
 Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
 local inputs. The runner starts its own PostgreSQL container and creates
 disposable databases.
 
-The database band bounds both package concurrency and opted-in parallel tests
-with `--jobs` (default 2). MQ and durable-telemetry tests own separate disposable
-databases, including queues and committed records. Legacy package-scoped database
-fixtures remain sequential. The Ory and runtime bands still run serially because
-their PostgreSQL, Kratos, SpiceDB, object storage, and process resets share a
-backend lease.
+Every integration test owns its state, so tests and packages run concurrently
+and nothing is reset between them. The runner starts one set of containers
+(PostgreSQL, Kratos, SpiceDB, Oathkeeper, MinIO, imgproxy) for the whole run and
+discards them at the end. Each test then gets:
+
+- its own PostgreSQL database, cloned from the schema template in about 0.1 s
+  (`SetupOryStack`, `PrepareOryIntegrationTest`, `StartBackendIntegrationStack`,
+  `SetupAppPostgres`);
+- its own SpiceDB datastore (SpiceDB `serve-testing` isolates datastores by
+  bearer token) with the generated schema and role graph;
+- its own S3 buckets when it uses a backend or runtime stack.
+
+Kratos is the one shared service. In an Ory or backend stack database, the
+`kratos` schema is a postgres_fdw view of the shared Kratos database, so tests
+must use unique identity IDs and emails, assert only on identities they created,
+and never update or delete `kratos.*` rows they do not own. postgres_fdw does
+not support `ON CONFLICT ... DO UPDATE` on those tables. The foreign server uses
+remote estimates so joins such as identity fences lock only the joined rows.
+
+postgres_fdw runs remote transactions at REPEATABLE READ, so a test that locks
+or re-reads `kratos.*` rows inside a transaction while another connection
+changes them (identity and session fences, revocation ordering) would see a
+serialization failure where production waits. Such tests use
+`SetupOryStackWithLocalKratos`: its database holds a private copy of the kratos
+schema with real tables. The Kratos API does not see that copy, and
+`CreateUser` seeds identities with SQL there.
+
+Every top-level test in an integration-tagged file starts with `t.Parallel()`;
+`scripts/test/integration` enforces this. A test that must replace
+process-global state may opt out with a `// integration:serial <reason>` doc
+comment. `--jobs` (default 4) bounds both package and test concurrency. The
+runtime band (`cmd/backend-integration-stack`, `internal/filemedia`,
+`internal/referencecatalog`, `internal/testutil`) still runs one test at a time
+because its fixtures start shared application processes and register the single
+Kratos hook upstream.
 
 For in-process SQLite fixtures, use `internal/testutil/sqlitetest.Open` with the
 test's SQLite driver. It allocates a fresh shared-memory database per invocation
@@ -383,16 +425,9 @@ configs, `geul-editor-collab`, `geul-common`, `geul-event-contracts`, and
 `geul-telemetry` checkouts and all selected local images before starting containers.
 The `db` band needs only `schema.sql` and its PostgreSQL image.
 
-The default pinned `minio/minio` digest is no longer pullable from Docker Hub.
-For local integration tests, pre-pull an alternative and select it explicitly:
-
-```sh
-docker pull cgr.dev/chainguard/minio:latest
-GOWORK=off go run -tags=integration ./scripts/test/integration \
-  --band ory --schema-root ../geul-schema \
-  --postgres-image registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138 \
-  --minio-image cgr.dev/chainguard/minio:latest
-```
+The default MinIO image is Chainguard's build, pinned by digest, because the
+upstream `minio/minio` images are no longer pullable from Docker Hub. Override
+it with `--minio-image` or `GEUL_INTEGRATION_MINIO_IMAGE` when needed.
 
 `--minio-image` overrides `GEUL_INTEGRATION_MINIO_IMAGE` for both the shared
 backend and child test processes. MinIO readiness does not require a shell in

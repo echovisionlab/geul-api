@@ -31,6 +31,7 @@ import (
 )
 
 func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T) {
+	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	adminID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Public Page Admin"})
@@ -42,17 +43,17 @@ func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T)
 	)
 	require.NoError(t, err)
 	manageFileService := newPublicReferenceManageFileService(db)
-	manageSvc := newPublicPageManageService(db, blockStore, manageFileService)
+	manageSvc := newPublicPageManageService(db, publicIntegrationSpiceDB(t), blockStore, manageFileService)
 	internalSvc := pagedomain.NewInternalPageService(
 		db,
 		publicReferenceAsyncPublisher{},
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDB(t),
 		newPublicPageRuntimeForTest(db, "https://cdn.example.com"),
 		pagedomain.WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
 		pagedomain.WithInternalPageContentBlockStore(blockStore),
 		pagedomain.WithInternalPageContentBlockMediaHydrator(manageFileService),
 	)
-	publicSvc := newPublicPageService(db, blockStore)
+	publicSvc := newPublicPageService(db, publicIntegrationSpiceDB(t), blockStore)
 
 	pageSlug := "public-page-" + suffix
 	pageSummary := "Published public page summary " + suffix
@@ -266,6 +267,7 @@ func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T)
 
 func newPublicPageManageService(
 	db *gorm.DB,
+	spiceDB *auth.SpiceDBClient,
 	blocks *contentblock.Store,
 	fileService *publicPageFileGateway,
 ) *pagedomain.PageService {
@@ -275,15 +277,15 @@ func newPublicPageManageService(
 		fileService,
 		publicReferenceAsyncPublisher{},
 		&publicReferenceIdentityManager{identity: &auth.Identity{}},
-		publicIntegrationSpiceDB,
+		spiceDB,
 		pagedomain.WithPageContentBlockStore(blocks),
 		pagedomain.WithPageContentBlockMediaHydrator(fileService),
 	)
 }
 
-func newPublicPageService(db *gorm.DB, blocks *contentblock.Store) *PageService {
+func newPublicPageService(db *gorm.DB, spiceDB *auth.SpiceDBClient, blocks *contentblock.Store) *PageService {
 	files := &publicPageFileGateway{db: db, cdnDomain: "https://cdn.example.com"}
-	access := publicPageAccessFixture{}
+	access := publicPageAccessFixture{spiceDB: spiceDB}
 	return NewPageService(
 		db,
 		access,
@@ -293,9 +295,9 @@ func newPublicPageService(db *gorm.DB, blocks *contentblock.Store) *PageService 
 	)
 }
 
-type publicPageAccessFixture struct{}
+type publicPageAccessFixture struct{ spiceDB *auth.SpiceDBClient }
 
-func (publicPageAccessFixture) CanViewPageDraft(ctx context.Context, pageID string) (bool, error) {
+func (f publicPageAccessFixture) CanViewPageDraft(ctx context.Context, pageID string) (bool, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.Banned || strings.TrimSpace(user.IdentityID.String()) == "" {
 		return false, nil
@@ -308,7 +310,7 @@ func (publicPageAccessFixture) CanViewPageDraft(ctx context.Context, pageID stri
 	if err != nil {
 		return false, err
 	}
-	return publicIntegrationSpiceDB.Can(ctx, decision)
+	return f.spiceDB.Can(ctx, decision)
 }
 
 func (publicPageAccessFixture) RequirePageShareLinkAccess(
@@ -484,4 +486,33 @@ func setPublicHomepagePage(t *testing.T, db *gorm.DB, ctx context.Context, pageI
 	`, pageID)
 	require.NoError(t, result.Error)
 	require.EqualValues(t, 1, result.RowsAffected)
+}
+
+func TestPublicPageServiceRejectsMissingMediaResolverBeforeReadIntegration(t *testing.T) {
+	t.Parallel()
+	db := newPublicIntegrationDB(t)
+	spiceDB := publicIntegrationSpiceDB(t)
+	adminID := uuid.NewString()
+	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: adminID, Name: "Public media admin"})
+	adminMemberID := seedPublicAdminMemberIdentityLink(t, db, adminID, "Public media admin")
+	blocks, err := contentblock.NewGeneratedStore(publicPageFileReuseAuthorizer{})
+	require.NoError(t, err)
+	manageSvc := newPublicPageManageService(db, spiceDB, blocks, newPublicReferenceManageFileService(db))
+	slug := "public-media-" + uuid.NewString()
+	created, err := manageSvc.CreatePage(publicLegalAdminCtx(adminMemberID, adminID), connect.NewRequest(&managev1.CreatePageRequest{
+		Title: "Public media page", Slug: &slug, SourceLocale: "en",
+	}))
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(
+		"UPDATE page SET status = 'PAGE_STATUS_PUBLISHED', published_at = now() WHERE id = ?::uuid", created.Msg.Id,
+	).Error)
+
+	publicSvc := newPublicPageService(db, spiceDB, blocks)
+	publicSvc.media = nil
+	var response *connect.Response[openv1.GetPageResponse]
+	require.NotPanics(t, func() {
+		response, err = publicSvc.Get(context.Background(), connect.NewRequest(&openv1.GetPageRequest{Slug: slug}))
+	})
+	require.ErrorContains(t, err, "Page media resolver is not configured")
+	require.Nil(t, response)
 }

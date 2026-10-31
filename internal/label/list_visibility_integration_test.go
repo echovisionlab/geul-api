@@ -14,6 +14,7 @@ import (
 )
 
 func TestLabelListReturnsPublishedLabelsOnlyIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Label visibility admin")

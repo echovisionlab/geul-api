@@ -20,6 +20,7 @@ import (
 // then revokes its global role. A successful initial request check is not
 // authority for the later write: the locked transaction must deny it.
 func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	suffix := integrationTestUUID()

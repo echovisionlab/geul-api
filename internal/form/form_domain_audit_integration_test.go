@@ -21,6 +21,7 @@ import (
 )
 
 func TestFormDomainAuditRootSettingsLifecycleAssetAndDeleteIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	user := auth.GetUser(adminCtx)

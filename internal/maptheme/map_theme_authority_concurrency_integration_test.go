@@ -16,6 +16,7 @@ import (
 )
 
 func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		lock      func(*gorm.DB, string, string) error

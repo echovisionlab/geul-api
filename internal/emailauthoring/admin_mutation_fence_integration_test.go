@@ -17,6 +17,7 @@ import (
 )
 
 func TestEmailAuthoringMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("email template root", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
 		ctx, spiceDB := testutil.IntegrationAdminContext(t, db)

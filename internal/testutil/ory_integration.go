@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +72,8 @@ type OryStack struct {
 	KratosClient    *auth.KratosClient
 	SpiceDBClient   *auth.SpiceDBClient
 	postgres        *AppPostgres
+	// localKratos stacks keep a private kratos schema the Kratos API never sees.
+	localKratos bool
 }
 
 type OryUser struct {
@@ -117,36 +118,19 @@ type OryStackOptions struct {
 	IgnoreExternal bool
 }
 
-// OryIntegrationSuite borrows the orchestrator-owned PostgreSQL, Kratos, and
-// SpiceDB stack for a Go test binary. PrepareOryIntegrationTest serializes users of that shared
-// state because service transactions commit independently across PostgreSQL
-// and SpiceDB, while Kratos also writes through its own connection.
+// OryIntegrationSuite marks a test binary that runs against the
+// orchestrator-owned Ory services. Each test gets its own OryStack from
+// PrepareOryIntegrationTest; no state is shared or reset between tests.
 type OryIntegrationSuite struct {
-	stack    *OryStack
-	cleanups []func() error
-	baseline *IntegrationDatabaseBaseline
-
-	testMu    sync.Mutex
+	lease     AppIntegrationLeaseDescriptor
 	tests     sync.Map // map[*testing.T]*oryIntegrationTestLease
 	closeOnce sync.Once
 	closeErr  error
 }
 
 type oryIntegrationTestLease struct {
-	name              string
-	stack             *OryStack
-	kratosIdentityIDs map[string]struct{}
-}
-
-// IntegrationDatabaseBaseline is an exact post-schema data snapshot for an
-// orchestrator-leased PostgreSQL database. Restore removes committed test state
-// without reapplying schema SQL or discarding bootstrap rows.
-type IntegrationDatabaseBaseline struct {
-	postgres  *AppPostgres
-	db        *gorm.DB
-	hostPath  string
-	closeOnce sync.Once
-	closeErr  error
+	name  string
+	stack *OryStack
 }
 
 var (
@@ -154,59 +138,32 @@ var (
 	activeOryIntegrationSuite   *OryIntegrationSuite
 )
 
-// StartOryIntegrationSuite borrows the orchestrator-owned Ory stack for one
-// test binary. Call Close exactly once from TestMain.
-func StartOryIntegrationSuite(ctx context.Context) (*OryIntegrationSuite, error) {
-	ctx, cancel := context.WithTimeout(ctx, oryStackSetupTimeout)
-	defer cancel()
-
+// StartOryIntegrationSuite validates the orchestrator lease for one test
+// binary. Call Close exactly once from TestMain.
+func StartOryIntegrationSuite(context.Context) (*OryIntegrationSuite, error) {
 	lease, err := loadAppIntegrationLease(currentAppIntegrationLeasePath())
 	if err != nil {
 		return nil, err
 	}
-	if lease.Backend == nil {
+	if lease.Backend == nil || lease.Backend.PostgresIsolationTemplate == "" {
 		return nil, fmt.Errorf("orchestrator-owned Ory integration stack is required")
 	}
-	suite := &OryIntegrationSuite{}
-	stack, cleanups, err := connectSharedOryStack(ctx, lease)
-	if err != nil {
-		return nil, err
-	}
-	suite.stack = stack
-	suite.cleanups = append(suite.cleanups, cleanups...)
-	if err := ResetOryIntegrationState(ctx, suite.stack); err != nil {
-		return nil, errors.Join(err, suite.Close())
-	}
-	baseline, err := CaptureIntegrationDatabaseBaseline(ctx, suite.stack.postgres, suite.stack.DB)
-	if err != nil {
-		return nil, errors.Join(err, suite.Close())
-	}
-	suite.baseline = baseline
-	suite.cleanups = append(suite.cleanups, baseline.Close)
-	suite.cleanups = append(suite.cleanups, func() error {
-		return errors.Join(
-			runAppIntegrationCleanup(baseline.Restore),
-			runAppIntegrationCleanup(func(cleanupCtx context.Context) error {
-				return ResetOryIntegrationState(cleanupCtx, suite.stack)
-			}),
-		)
-	})
+	suite := &OryIntegrationSuite{lease: lease}
 	RegisterIntegrationProcessCleanup("Ory integration suite", suite.Close)
 	return suite, nil
 }
 
-func connectSharedOryStack(ctx context.Context, lease AppIntegrationLeaseDescriptor) (*OryStack, []func() error, error) {
-	postgres, postgresCleanup, err := connectSharedAppPostgres(ctx, lease)
+// connectIsolatedOryStack opens a database and SpiceDB datastore owned by one
+// caller on the shared Ory services.
+func connectIsolatedOryStack(ctx context.Context, lease AppIntegrationLeaseDescriptor) (*OryStack, []func() error, error) {
+	postgres, postgresCleanup, err := openIsolatedAppPostgres(ctx, lease)
 	if err != nil {
 		return nil, nil, err
 	}
 	backend := lease.Backend
-	spiceDBClient, err := auth.NewSpiceDBClient(backend.SpiceDBEndpoint, backend.SpiceDBToken, true)
+	spiceDBToken, spiceDBClient, err := openIsolatedSpiceDB(ctx, backend.SpiceDBEndpoint)
 	if err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("connect suite SpiceDB: %w", err),
-			postgresCleanup(),
-		)
+		return nil, nil, errors.Join(err, postgresCleanup())
 	}
 	stack := &OryStack{
 		DB:              postgres.DB,
@@ -214,7 +171,7 @@ func connectSharedOryStack(ctx context.Context, lease AppIntegrationLeaseDescrip
 		KratosAdminURL:  backend.KratosAdminURL,
 		KratosPublicURL: backend.KratosPublicURL,
 		SpiceDBEndpoint: backend.SpiceDBEndpoint,
-		SpiceDBToken:    backend.SpiceDBToken,
+		SpiceDBToken:    spiceDBToken,
 		KratosClient:    auth.NewKratosClient(backend.KratosAdminURL),
 		SpiceDBClient:   spiceDBClient,
 		postgres:        postgres,
@@ -238,11 +195,9 @@ func DeactivateOryIntegrationSuite(suite *OryIntegrationSuite) {
 	}
 }
 
-// PrepareOryIntegrationTest holds one suite lease for the whole test. The
-// returned DB is the suite's base handle: service-owned transactions commit
-// normally, and cleanup restores the captured PostgreSQL, Kratos, PGMQ, and
-// SpiceDB baseline before another test can acquire the lease. Tests which call
-// t.Parallel must do so before this function (the current callers do).
+// PrepareOryIntegrationTest returns the test's own OryStack: a cloned
+// database, a private SpiceDB datastore and the shared Kratos. Subtests share
+// their parent's stack. Repeated calls for one test return the same stack.
 func PrepareOryIntegrationTest(t *testing.T) *OryStack {
 	t.Helper()
 	activeOryIntegrationSuiteMu.RLock()
@@ -251,72 +206,37 @@ func PrepareOryIntegrationTest(t *testing.T) *OryStack {
 	if suite == nil {
 		return nil
 	}
+	return suite.prepareTest(t)
+}
 
+func (suite *OryIntegrationSuite) prepareTest(t *testing.T) *OryStack {
+	t.Helper()
 	if lease, ok := suite.tests.Load(t); ok {
 		return lease.(*oryIntegrationTestLease).stack
 	}
 	if stack := suite.parentTestStack(t.Name()); stack != nil {
 		return stack
 	}
-	suite.testMu.Lock()
-	if lease, loaded := suite.tests.Load(t); loaded {
-		suite.testMu.Unlock()
-		return lease.(*oryIntegrationTestLease).stack
-	}
-	if stack := suite.parentTestStack(t.Name()); stack != nil {
-		suite.testMu.Unlock()
-		return stack
-	}
-	identities, err := integrationKratosIdentityIDs(t.Context(), suite.stack)
+	stack, cleanups, err := connectIsolatedOryStack(t.Context(), suite.lease)
 	if err != nil {
-		suite.testMu.Unlock()
-		t.Fatalf("snapshot Kratos identities before test: %v", err)
+		t.Fatalf("prepare isolated Ory integration stack: %v", err)
 	}
-	lease := &oryIntegrationTestLease{name: t.Name(), stack: suite.stack, kratosIdentityIDs: identities}
-	suite.tests.Store(t, lease)
+	suite.tests.Store(t, &oryIntegrationTestLease{name: t.Name(), stack: stack})
 	t.Cleanup(func() {
 		suite.tests.Delete(t)
-		defer suite.testMu.Unlock()
-		cleanupErr := cleanupOryIntegrationTestLease(
-			func() error { return runAppIntegrationCleanup(suite.baseline.Restore) },
-			func() error {
-				return runAppIntegrationCleanup(func(cleanupCtx context.Context) error {
-					return resetKratosIdentityDelta(cleanupCtx, suite.stack, lease.kratosIdentityIDs)
-				})
-			},
-			func() error {
-				return runAppIntegrationCleanup(func(cleanupCtx context.Context) error {
-					return ResetOryIntegrationState(cleanupCtx, suite.stack)
-				})
-			},
-		)
+		var cleanupErr error
+		for index := len(cleanups) - 1; index >= 0; index-- {
+			cleanupErr = errors.Join(cleanupErr, cleanups[index]())
+		}
 		if cleanupErr != nil {
 			t.Error(cleanupErr)
 		}
 	})
-	return lease.stack
+	return stack
 }
 
-func cleanupOryIntegrationTestLease(
-	restoreDatabaseBaseline func() error,
-	resetKratosIdentityDelta func() error,
-	resetExternalState func() error,
-) error {
-	var cleanupErr error
-	if err := restoreDatabaseBaseline(); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("restore PostgreSQL integration baseline after test: %w", err))
-	}
-	if err := resetKratosIdentityDelta(); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("reset Kratos identity delta after test: %w", err))
-	}
-	if err := resetExternalState(); err != nil {
-		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("reset shared Ory integration state after test: %w", err))
-	}
-	return cleanupErr
-}
-
-// PrepareOryIntegrationConcurrentTest is the same committed lease with a name
-// that documents tests which intentionally open additional DB connections.
+// PrepareOryIntegrationConcurrentTest documents tests which intentionally open
+// additional DB connections. Every stack is isolated, so it is the same call.
 func PrepareOryIntegrationConcurrentTest(t *testing.T) *OryStack {
 	return PrepareOryIntegrationTest(t)
 }
@@ -336,229 +256,57 @@ func (suite *OryIntegrationSuite) parentTestStack(name string) *OryStack {
 	return parent.stack
 }
 
-func (suite *OryIntegrationSuite) Stack() *OryStack { return suite.stack }
-
 func (suite *OryIntegrationSuite) Close() error {
 	suite.closeOnce.Do(func() {
-		suite.closeErr = errors.Join(suite.closeErr, RunIntegrationSuiteCleanups())
-		for index := len(suite.cleanups) - 1; index >= 0; index-- {
-			if err := suite.cleanups[index](); err != nil {
-				suite.closeErr = errors.Join(suite.closeErr, err)
-			}
-		}
+		suite.closeErr = RunIntegrationSuiteCleanups()
 	})
 	return suite.closeErr
 }
 
-// ResetOryIntegrationState restores shared queue and authorization state after
-// PostgreSQL has returned to its captured post-schema baseline.
-func ResetOryIntegrationState(ctx context.Context, stack *OryStack) error {
-	if stack == nil || stack.DB == nil || stack.SpiceDBClient == nil {
-		return fmt.Errorf("ory integration stack is not initialized")
+// SetupOryStackWithLocalKratos returns an isolated stack whose kratos schema
+// is a private copy (structure and network row) instead of the shared Kratos
+// database. Use it for tests that lock or re-read kratos rows inside a
+// transaction, such as identity fences: postgres_fdw runs remote transactions
+// at REPEATABLE READ, so a concurrent update surfaces as a serialization
+// failure instead of the READ COMMITTED wait production sees. The Kratos API
+// does not see this copy; CreateUser seeds identities with SQL instead.
+func SetupOryStackWithLocalKratos(t *testing.T) *OryStack {
+	t.Helper()
+	lease, err := loadAppIntegrationLease(currentAppIntegrationLeasePath())
+	require.NoError(t, err)
+	require.NotNil(t, lease.Backend, "orchestrator-owned Ory integration stack is required")
+	postgres, postgresCleanup, err := openLocalKratosAppPostgres(t.Context(), lease)
+	if postgresCleanup != nil {
+		registerIntegrationCleanup(t, "local Kratos test database", postgresCleanup)
 	}
-	return resetOryIntegrationExternalState(
-		func() error { return purgeIntegrationPGMQ(ctx, stack) },
-		func() error {
-			return ResetSpiceDBIntegrationState(
-				ctx,
-				stack.SpiceDBEndpoint,
-				stack.SpiceDBToken,
-				stack.SpiceDBClient,
-			)
-		},
-	)
-}
-
-func resetOryIntegrationExternalState(purgePGMQ func() error, resetSpiceDB func() error) error {
-	var resetErr error
-	if err := purgePGMQ(); err != nil {
-		resetErr = errors.Join(resetErr, fmt.Errorf("purge PGMQ: %w", err))
+	require.NoError(t, err)
+	spiceDBToken, spiceDBClient, err := openIsolatedSpiceDB(t.Context(), lease.Backend.SpiceDBEndpoint)
+	require.NoError(t, err)
+	registerIntegrationCleanup(t, "local Kratos test SpiceDB client", spiceDBClient.Close)
+	stack := &OryStack{
+		DB:              postgres.DB,
+		PostgresDSN:     postgres.DSN,
+		KratosAdminURL:  lease.Backend.KratosAdminURL,
+		KratosPublicURL: lease.Backend.KratosPublicURL,
+		SpiceDBEndpoint: lease.Backend.SpiceDBEndpoint,
+		SpiceDBToken:    spiceDBToken,
+		KratosClient:    auth.NewKratosClient(lease.Backend.KratosAdminURL),
+		SpiceDBClient:   spiceDBClient,
+		postgres:        postgres,
+		localKratos:     true,
 	}
-	if err := resetSpiceDB(); err != nil {
-		resetErr = errors.Join(resetErr, fmt.Errorf("reset SpiceDB: %w", err))
-	}
-	return resetErr
-}
-
-// CaptureIntegrationDatabaseBaseline captures a leased database after schema
-// and bootstrap setup have completed. The orchestrator container remains the
-// only PostgreSQL process owner; this package only executes dump and restore.
-func CaptureIntegrationDatabaseBaseline(ctx context.Context, postgres *AppPostgres, db *gorm.DB) (*IntegrationDatabaseBaseline, error) {
-	if postgres == nil || !appIntegrationContainerIDPattern.MatchString(postgres.ContainerID) ||
-		!appIntegrationDatabaseNamePattern.MatchString(postgres.DatabaseName) || db == nil {
-		return nil, fmt.Errorf("captured database baseline requires an orchestrator PostgreSQL lease")
-	}
-	path, err := os.CreateTemp("", "geul-postgres-integration-baseline-*.sql")
-	if err != nil {
-		return nil, fmt.Errorf("create PostgreSQL baseline file: %w", err)
-	}
-	remove := func(err error) (*IntegrationDatabaseBaseline, error) {
-		_ = path.Close()
-		_ = os.Remove(path.Name())
-		return nil, err
-	}
-	baseline := &IntegrationDatabaseBaseline{
-		postgres: postgres,
-		db:       db,
-		hostPath: path.Name(),
-	}
-	command := exec.CommandContext(
-		ctx,
-		"docker", "exec", "-e", "PGPASSWORD=test", postgres.ContainerID,
-		"pg_dump", "-U", "test", "-d", postgres.DatabaseName,
-		"--data-only", "--schema=public", "--schema=kratos", "--schema=pgmq",
-		"--no-owner", "--no-privileges",
-	)
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	dump, err := command.Output()
-	if err != nil {
-		return remove(fmt.Errorf("dump PostgreSQL integration baseline: %w: %s", err, strings.TrimSpace(stderr.String())))
-	}
-	const emptySearchPath = "SELECT pg_catalog.set_config('search_path', '', false);"
-	if !bytes.Contains(dump, []byte(emptySearchPath)) {
-		return remove(fmt.Errorf("PostgreSQL integration baseline has no pg_dump empty search_path setting"))
-	}
-	dump = bytes.ReplaceAll(dump, []byte(emptySearchPath), []byte("SET search_path = public, pg_catalog;"))
-	if _, err := path.Write(dump); err != nil {
-		return remove(fmt.Errorf("write PostgreSQL integration baseline: %w", err))
-	}
-	if err := path.Close(); err != nil {
-		return remove(fmt.Errorf("close PostgreSQL integration baseline: %w", err))
-	}
-	return baseline, nil
-}
-
-// Restore replaces every mutable public, Kratos, and PGMQ table with the exact
-// captured data, including schema bootstrap rows and sequence positions.
-func (baseline *IntegrationDatabaseBaseline) Restore(ctx context.Context) error {
-	if baseline == nil || baseline.postgres == nil ||
-		!appIntegrationContainerIDPattern.MatchString(baseline.postgres.ContainerID) ||
-		!appIntegrationDatabaseNamePattern.MatchString(baseline.postgres.DatabaseName) || baseline.db == nil {
-		return fmt.Errorf("PostgreSQL integration baseline is unavailable")
-	}
-	tables, err := integrationDatabaseTables(ctx, baseline.db)
-	if err != nil {
-		return err
-	}
-	if len(tables) > 0 {
-		if err := baseline.db.WithContext(ctx).Exec("TRUNCATE TABLE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE").Error; err != nil {
-			return fmt.Errorf("truncate PostgreSQL integration state: %w", err)
+	// Later PrepareOryIntegrationTest calls in this test (for example from
+	// IntegrationAdminContext) return this stack instead of opening another.
+	activeOryIntegrationSuiteMu.RLock()
+	suite := activeOryIntegrationSuite
+	activeOryIntegrationSuiteMu.RUnlock()
+	if suite != nil {
+		if _, loaded := suite.tests.LoadOrStore(t, &oryIntegrationTestLease{name: t.Name(), stack: stack}); loaded {
+			t.Fatal("SetupOryStackWithLocalKratos must run before PrepareOryIntegrationTest in the same test, or helpers would mix two databases")
 		}
+		t.Cleanup(func() { suite.tests.Delete(t) })
 	}
-	file, err := os.Open(baseline.hostPath)
-	if err != nil {
-		return fmt.Errorf("open PostgreSQL integration baseline: %w", err)
-	}
-	defer file.Close()
-	command := exec.CommandContext(
-		ctx,
-		"docker", "exec", "-i", "-e", "PGPASSWORD=test", baseline.postgres.ContainerID,
-		"psql", "-v", "ON_ERROR_STOP=1", "-U", "test", "-d", baseline.postgres.DatabaseName,
-	)
-	command.Stdin = file
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	err = command.Run()
-	if err != nil {
-		return fmt.Errorf("restore PostgreSQL integration baseline: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
-}
-
-// Close removes the protected host copy.
-func (baseline *IntegrationDatabaseBaseline) Close() error {
-	if baseline == nil {
-		return nil
-	}
-	baseline.closeOnce.Do(func() {
-		baseline.closeErr = os.Remove(baseline.hostPath)
-		if errors.Is(baseline.closeErr, os.ErrNotExist) {
-			baseline.closeErr = nil
-		}
-	})
-	return baseline.closeErr
-}
-
-func integrationDatabaseTables(ctx context.Context, db *gorm.DB) ([]string, error) {
-	rows, err := db.WithContext(ctx).Raw(`
-		SELECT quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-		FROM pg_class AS c
-		JOIN pg_namespace AS n ON n.oid = c.relnamespace
-		WHERE n.nspname IN ('public', 'kratos', 'pgmq')
-		  AND c.relkind = 'r'
-		  -- PostGIS owns and preloads this extension reference table; pg_dump
-		  -- intentionally excludes it, and integration tests must not reset it.
-		  AND NOT (n.nspname = 'public' AND c.relname = 'spatial_ref_sys')
-		ORDER BY n.nspname, c.relname
-	`).Rows()
-	if err != nil {
-		return nil, fmt.Errorf("list PostgreSQL integration tables: %w", err)
-	}
-	defer rows.Close()
-	var tables []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			return nil, fmt.Errorf("scan PostgreSQL integration table: %w", err)
-		}
-		tables = append(tables, table)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate PostgreSQL integration tables: %w", err)
-	}
-	return tables, nil
-}
-
-func integrationKratosIdentityIDs(ctx context.Context, stack *OryStack) (map[string]struct{}, error) {
-	rows, err := stack.DB.WithContext(ctx).Raw(`SELECT id::text FROM kratos.identities`).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids[id] = struct{}{}
-	}
-	return ids, rows.Err()
-}
-
-func resetKratosIdentityDelta(ctx context.Context, stack *OryStack, baseline map[string]struct{}) error {
-	current, err := integrationKratosIdentityIDs(ctx, stack)
-	if err != nil {
-		return err
-	}
-	for id := range current {
-		if _, exists := baseline[id]; exists {
-			continue
-		}
-		if err := stack.DB.WithContext(ctx).Exec(`DELETE FROM kratos.identities WHERE id = ?::uuid`, id).Error; err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func purgeIntegrationPGMQ(ctx context.Context, stack *OryStack) error {
-	rows, err := stack.DB.WithContext(ctx).Raw(`SELECT queue_name FROM pgmq.meta ORDER BY queue_name`).Rows()
-	if err != nil {
-		return fmt.Errorf("list PGMQ queues: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var queueName string
-		if err := rows.Scan(&queueName); err != nil {
-			return err
-		}
-		if err := stack.DB.WithContext(ctx).Exec(`SELECT pgmq.purge_queue(?)`, queueName).Error; err != nil {
-			return fmt.Errorf("purge PGMQ queue %s: %w", queueName, err)
-		}
-	}
-	return rows.Err()
+	return stack
 }
 
 func SetupOryStackWithOptions(t *testing.T, opts OryStackOptions) *OryStack {
@@ -571,19 +319,9 @@ func SetupOryStackWithOptions(t *testing.T, opts OryStackOptions) *OryStack {
 	lease, err := loadAppIntegrationLease(currentAppIntegrationLeasePath())
 	require.NoError(t, err)
 	require.NotNil(t, lease.Backend, "orchestrator-owned Ory integration stack is required")
-	stack, cleanups, err := connectSharedOryStack(t.Context(), lease)
-	var baseline *IntegrationDatabaseBaseline
-	registerIntegrationCleanup(t, "orchestrator Ory test lease", func() error {
+	stack, cleanups, err := connectIsolatedOryStack(t.Context(), lease)
+	registerIntegrationCleanup(t, "isolated Ory test stack", func() error {
 		var cleanupErr error
-		if baseline != nil {
-			cleanupErr = errors.Join(
-				runAppIntegrationCleanup(baseline.Restore),
-				runAppIntegrationCleanup(func(cleanupCtx context.Context) error {
-					return ResetOryIntegrationState(cleanupCtx, stack)
-				}),
-				baseline.Close(),
-			)
-		}
 		for index := len(cleanups) - 1; index >= 0; index-- {
 			cleanupErr = errors.Join(cleanupErr, cleanups[index]())
 		}
@@ -595,13 +333,10 @@ func SetupOryStackWithOptions(t *testing.T, opts OryStackOptions) *OryStack {
 		if err != nil {
 			t.Fatalf("register suite hook upstream: %v", err)
 		}
-		cleanups = append(cleanups, func() error {
+		registerIntegrationCleanup(t, "suite hook upstream", func() error {
 			return runAppIntegrationCleanup(unregister)
 		})
 	}
-	require.NoError(t, ResetOryIntegrationState(t.Context(), stack))
-	baseline, err = CaptureIntegrationDatabaseBaseline(t.Context(), stack.postgres, stack.DB)
-	require.NoError(t, err)
 	return stack
 }
 
@@ -612,7 +347,7 @@ func (s *OryStack) CreateUser(t *testing.T, role string) *OryUser {
 	user := &OryUser{
 		MemberID:  uuid.NewString(),
 		SessionID: uuid.NewString(),
-		Email:     fmt.Sprintf("%d-%s@example.test", time.Now().UnixNano(), role),
+		Email:     fmt.Sprintf("%s-%s@example.test", role, uuid.NewString()),
 		Role:      role,
 	}
 	user.Name = fmt.Sprintf("Test %s %s", role, user.MemberID)
@@ -622,41 +357,55 @@ func (s *OryStack) CreateUser(t *testing.T, role string) *OryUser {
 		VALUES (?::uuid, ?, TRUE, ?, ARRAY[?]::text[])
 	`, user.MemberID, user.Name, strings.ToLower(user.Email), strings.ToLower(user.Email)).Error)
 
-	payload := structured.Fields{
-		"schema_id":   "user",
-		"external_id": user.MemberID,
-		"traits": structured.Fields{
-			"email": user.Email,
-		},
-		"verifiable_addresses": []structured.Fields{
-			{
-				"value":    user.Email,
-				"via":      "email",
-				"verified": true,
-				"status":   "completed",
+	if s.localKratos {
+		user.IdentityID = uuid.NewString()
+		require.NoError(t, s.DB.Exec(`
+			INSERT INTO kratos.identities (
+				id, nid, schema_id, traits, external_id, state,
+				metadata_public, metadata_admin, created_at, updated_at
+			)
+			SELECT ?::uuid, networks.id, 'user', jsonb_build_object('email', ?::text), ?, 'active',
+				'{}'::jsonb, '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			FROM kratos.networks AS networks
+			LIMIT 1
+		`, user.IdentityID, user.Email, user.MemberID).Error)
+	} else {
+		payload := structured.Fields{
+			"schema_id":   "user",
+			"external_id": user.MemberID,
+			"traits": structured.Fields{
+				"email": user.Email,
 			},
-		},
+			"verifiable_addresses": []structured.Fields{
+				{
+					"value":    user.Email,
+					"via":      "email",
+					"verified": true,
+					"status":   "completed",
+				},
+			},
+		}
+
+		body, err := json.Marshal(payload)
+		require.NoError(t, err)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.KratosAdminURL+"/admin/identities", bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			respBody, _ := io.ReadAll(resp.Body)
+			t.Fatalf("create kratos identity: status=%d body=%s", resp.StatusCode, string(respBody))
+		}
+
+		var identity auth.Identity
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&identity))
+		user.IdentityID = identity.ID
 	}
-
-	body, err := json.Marshal(payload)
-	require.NoError(t, err)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.KratosAdminURL+"/admin/identities", bytes.NewReader(body))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("create kratos identity: status=%d body=%s", resp.StatusCode, string(respBody))
-	}
-
-	var identity auth.Identity
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&identity))
-	user.IdentityID = identity.ID
 	require.NotEqual(t, user.MemberID, user.IdentityID)
 	require.NoError(t, s.DB.Exec(`
 		INSERT INTO account_identity (id, created_at)

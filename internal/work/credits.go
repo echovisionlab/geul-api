@@ -668,10 +668,6 @@ func validateWorkCreditGroupName(name string) (string, error) {
 	return trimmed, nil
 }
 
-func (s *WorkService) validateCreditGroupOwnership(ctx context.Context, workID, groupID string) error {
-	return validateCreditGroupOwnershipWithDB(ctx, s.db, workID, groupID)
-}
-
 func validateCreditGroupOwnershipWithDB(ctx context.Context, db *gorm.DB, workID, groupID string) error {
 	var count int64
 	if err := db.WithContext(ctx).

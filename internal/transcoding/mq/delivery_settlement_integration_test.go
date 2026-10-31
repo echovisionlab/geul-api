@@ -19,6 +19,7 @@ import (
 )
 
 func TestTranscodeResultAndInputCommitTogetherIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
 	conn, err := NewConnection(pg.DSN)
 	require.NoError(t, err)

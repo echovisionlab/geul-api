@@ -11,6 +11,7 @@ import (
 )
 
 func TestPostgresLeaderTransfersLockAcrossTwoConnectionsIntegration(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{})
 	postgres.SQLDB.SetMaxOpenConns(4)
 

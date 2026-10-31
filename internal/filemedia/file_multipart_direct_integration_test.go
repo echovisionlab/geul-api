@@ -110,7 +110,8 @@ func prepareDirectEditorImageMultipart(
 }
 
 func TestUploadSessionEditorFileTargetShapeDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	now := time.Now().UTC()
 
 	valid := model.UploadSession{
@@ -144,7 +145,8 @@ func TestUploadSessionEditorFileTargetShapeDirectIntegration(t *testing.T) {
 }
 
 func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fixture := prepareDirectEditorImageMultipart(
 		t,
@@ -190,7 +192,8 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 }
 
 func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
 	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Guarded Track Delete")
@@ -262,6 +265,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 }
 
 func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name              string
 		pauseBeforeInsert bool
@@ -270,7 +274,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 		{name: "session is visible before delete", pauseBeforeInsert: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+			stack := testutil.SetupDirectMediaRuntimeStack(t)
 			manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 			releaseID := testutil.CreateReleaseFixture(t, stack.DB)
 			trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Concurrent Track Delete")
@@ -412,7 +416,8 @@ func requireTrackPolicyFixture(t *testing.T, spiceDB *auth.SpiceDBClient, trackI
 }
 
 func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	observer := &multipartCompletionObservingTransport{returnNoSuchAfterCompletion: true}
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fixture := prepareDirectEditorImageMultipart(
@@ -491,7 +496,8 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 }
 
 func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	asyncPublisher := &hardCutAsyncPublisher{}
 	service := NewFileService(
@@ -552,7 +558,8 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 }
 
 func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	imageBody, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
@@ -683,7 +690,8 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 }
 
 func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	starter := stack.CreateUser(t, policyv1.Role.Author().ID())
 	completer := stack.CreateUser(t, policyv1.Role.Author().ID())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
@@ -772,6 +780,7 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 }
 
 func TestFileServiceMultipartEditorMeshStoresGLBAndServesCDNDirectIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedDirectMediaRuntimeStackWithCDN(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 

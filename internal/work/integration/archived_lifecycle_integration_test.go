@@ -22,6 +22,7 @@ import (
 )
 
 func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Archived Work Admin")

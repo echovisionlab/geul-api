@@ -18,6 +18,7 @@ import (
 )
 
 func TestTransactionalEmailUsesNoFenceAndStopsAfterProviderAcceptanceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	commandID := "transactional-provider-" + uuid.NewString()
 	referenceID := "identity-" + uuid.NewString()
@@ -57,6 +58,7 @@ func TestTransactionalEmailUsesNoFenceAndStopsAfterProviderAcceptanceIntegration
 }
 
 func TestTransactionalTransientProviderFailureRemainsQueueRetryableIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	commandID := "transactional-retry-" + uuid.NewString()
 	referenceID := "identity-" + uuid.NewString()
@@ -90,6 +92,7 @@ func TestTransactionalTransientProviderFailureRemainsQueueRetryableIntegration(t
 }
 
 func TestTransactionalPermanentProviderFailureReturnsTerminalQueueDecisionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	commandID := "transactional-terminal-" + uuid.NewString()
 	referenceID := "identity-" + uuid.NewString()

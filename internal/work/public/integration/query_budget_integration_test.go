@@ -25,9 +25,9 @@ import (
 )
 
 func TestWorkPublicListFeaturedImageQueryBudgetIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
-	stack, err := sharedPublicIntegrationStack()
-	require.NoError(t, err)
+	t.Parallel()
+	stack := newPublicIntegrationStack(t)
+	db := stack.Postgres.DB
 	identityID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Name: "Work List Query Budget Admin"})
 	memberID := seedPublicAdminMemberIdentityLink(t, db, identityID, "Work List Query Budget Admin")
@@ -52,7 +52,7 @@ func TestWorkPublicListFeaturedImageQueryBudgetIntegration(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	service := workpublic.NewWorkService(
 		publicDB,
-		publicIntegrationSpiceDB,
+		stack.SpiceDBClient,
 		extractedWorkPublicMediaHydrator{},
 		newPublicWorkRuntimeForTest(publicDB, "https://cdn.example.com"),
 		workadapter.NewMemberSummaries(publicDB, "https://cdn.example.com"),

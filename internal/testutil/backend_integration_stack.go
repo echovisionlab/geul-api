@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -20,7 +19,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -36,16 +34,7 @@ const (
 	// Keep this separate from the smaller Ory-only helper timeout.
 	backendIntegrationStackSetupTimeout = 10 * time.Minute
 	backendIntegrationCleanupTimeout    = 30 * time.Second
-	backendIntegrationS3ResetTimeout    = 30 * time.Second
 )
-
-type backendIntegrationS3ResetClient interface {
-	ListMultipartUploads(context.Context, *s3.ListMultipartUploadsInput, ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error)
-	AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
-	ListObjectVersions(context.Context, *s3.ListObjectVersionsInput, ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error)
-	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
-	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
-}
 
 type BackendIntegrationStack struct {
 	Postgres *AppPostgres
@@ -71,8 +60,11 @@ type BackendIntegrationStack struct {
 	KratosClient  *auth.KratosClient
 	SpiceDBClient *auth.SpiceDBClient
 
-	postgresBaseline *IntegrationDatabaseBaseline
-	cleanups         []*integrationCleanup
+	// The isolation templates are set on the orchestrator-owned stack only.
+	PostgresIsolationTemplate   string
+	PostgresLocalKratosTemplate string
+
+	cleanups []*integrationCleanup
 }
 
 type BackendIntegrationStackOptions struct {
@@ -195,6 +187,19 @@ func StartBackendIntegrationStackWithOptions(ctx context.Context, opts BackendIn
 	stack.KratosClient = auth.NewKratosClient(stack.KratosAdminURL)
 	stack.addCleanup("backend integration kratos", kratosCleanup)
 
+	if err := backendIntegrationStartupStep(ctx, opts.Logf, "prepare isolation template", func(ctx context.Context) error {
+		var err error
+		stack.PostgresIsolationTemplate, err = prepareBackendIsolationTemplate(ctx, lease, pg.DatabaseName)
+		if err != nil {
+			return err
+		}
+		stack.PostgresLocalKratosTemplate, err = prepareLocalKratosTemplate(ctx, lease, pg.DatabaseName)
+		return err
+	}); err != nil {
+		_ = stack.Close()
+		return nil, err
+	}
+
 	var spiceDBCleanup func() error
 	if err := backendIntegrationStartupStep(ctx, opts.Logf, "start SpiceDB", func(ctx context.Context) error {
 		var err error
@@ -236,36 +241,17 @@ func StartBackendIntegrationStackWithOptions(ctx context.Context, opts BackendIn
 	stack.S3ForcePathStyle = true
 	stack.addCleanup("backend integration minio", minioCleanup)
 
-	// Kratos creates its runtime network row during startup. Capture only after
-	// every service is ready so restoring the baseline preserves that required
-	// runtime seed as well as schema bootstrap data.
-	if err := backendIntegrationStartupStep(ctx, opts.Logf, "capture postgres baseline", func(ctx context.Context) error {
-		baseline, err := CaptureIntegrationDatabaseBaseline(ctx, pg, pg.DB)
-		if err != nil {
-			return err
-		}
-		stack.postgresBaseline = baseline
-		stack.addCleanup("backend integration postgres baseline", baseline.Close)
-		return nil
-	}); err != nil {
-		_ = stack.Close()
-		return nil, err
-	}
-
 	return stack, nil
 }
 
+// connectSharedBackendIntegrationStack gives the caller its own database,
+// SpiceDB datastore and buckets on the orchestrator-owned services.
 func connectSharedBackendIntegrationStack(ctx context.Context, lease AppIntegrationLeaseDescriptor, opts BackendIntegrationStackOptions) (*BackendIntegrationStack, error) {
-	postgres, postgresCleanup, err := connectSharedAppPostgres(ctx, lease)
+	postgres, postgresCleanup, err := openIsolatedAppPostgres(ctx, lease)
 	if err != nil {
 		return nil, err
 	}
 	backend := lease.Backend
-	spiceDBClient, err := auth.NewSpiceDBClient(backend.SpiceDBEndpoint, backend.SpiceDBToken, true)
-	if err != nil {
-		_ = postgresCleanup()
-		return nil, fmt.Errorf("connect suite backend SpiceDB: %w", err)
-	}
 	stack := &BackendIntegrationStack{
 		Postgres:           postgres,
 		KratosAdminURL:     backend.KratosAdminURL,
@@ -273,21 +259,27 @@ func connectSharedBackendIntegrationStack(ctx context.Context, lease AppIntegrat
 		OathkeeperAdminURL: backend.OathkeeperAdminURL,
 		OathkeeperProxyURL: backend.OathkeeperProxyURL,
 		SpiceDBEndpoint:    backend.SpiceDBEndpoint,
-		SpiceDBToken:       backend.SpiceDBToken,
 		TokenSigningSecret: IntegrationTokenSigningSecret,
 		MediaSigningSecret: IntegrationMediaSigningSecret,
 		S3Region:           backend.S3Region,
 		S3Endpoint:         backend.S3Endpoint,
 		S3AccessKeyID:      backend.S3AccessKeyID,
 		S3SecretAccessKey:  backend.S3SecretAccessKey,
-		S3MediaBucket:      backend.S3MediaBucket,
-		S3CacheBucket:      backend.S3CacheBucket,
 		S3ForcePathStyle:   backend.S3ForcePathStyle,
 		KratosClient:       auth.NewKratosClient(backend.KratosAdminURL),
-		SpiceDBClient:      spiceDBClient,
 	}
-	stack.addCleanup("suite backend database", postgresCleanup)
-	stack.addCleanup("suite backend SpiceDB client", spiceDBClient.Close)
+	stack.addCleanup("isolated backend database", postgresCleanup)
+	stack.SpiceDBToken, stack.SpiceDBClient, err = openIsolatedSpiceDB(ctx, backend.SpiceDBEndpoint)
+	if err != nil {
+		_ = stack.Close()
+		return nil, err
+	}
+	stack.addCleanup("isolated backend SpiceDB client", stack.SpiceDBClient.Close)
+	stack.S3MediaBucket, stack.S3CacheBucket, err = openIsolatedS3Buckets(ctx, backend)
+	if err != nil {
+		_ = stack.Close()
+		return nil, err
+	}
 	if strings.TrimSpace(opts.HookBaseURL) != "" {
 		unregister, err := registerSuiteHookUpstream(ctx, backend, opts.HookBaseURL)
 		if err != nil {
@@ -300,25 +292,6 @@ func connectSharedBackendIntegrationStack(ctx context.Context, lease AppIntegrat
 			return unregister(cleanupCtx)
 		})
 	}
-	if err := ResetBackendIntegrationExternalState(ctx, stack); err != nil {
-		_ = stack.Close()
-		return nil, err
-	}
-	baseline, err := CaptureIntegrationDatabaseBaseline(ctx, postgres, postgres.DB)
-	if err != nil {
-		_ = stack.Close()
-		return nil, err
-	}
-	stack.postgresBaseline = baseline
-	stack.addCleanup("suite backend postgres baseline", baseline.Close)
-	stack.addCleanup("suite backend state", func() error {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), backendIntegrationCleanupTimeout)
-		defer cancel()
-		return errors.Join(
-			baseline.Restore(cleanupCtx),
-			ResetBackendIntegrationExternalState(cleanupCtx, stack),
-		)
-	})
 	return stack, nil
 }
 
@@ -401,246 +374,24 @@ func runBackendIntegrationBoundedCleanup(cleanup func(context.Context) error) er
 
 func (s *BackendIntegrationStack) Lease() *AppIntegrationBackendLease {
 	return &AppIntegrationBackendLease{
-		PostgresDSN:          s.Postgres.DSN,
-		PostgresDatabaseName: s.Postgres.DatabaseName,
-		KratosAdminURL:       s.KratosAdminURL,
-		KratosPublicURL:      s.KratosPublicURL,
-		OathkeeperAdminURL:   s.OathkeeperAdminURL,
-		OathkeeperProxyURL:   s.OathkeeperProxyURL,
-		SpiceDBEndpoint:      s.SpiceDBEndpoint,
-		SpiceDBToken:         s.SpiceDBToken,
-		S3Region:             s.S3Region,
-		S3Endpoint:           s.S3Endpoint,
-		S3AccessKeyID:        s.S3AccessKeyID,
-		S3SecretAccessKey:    s.S3SecretAccessKey,
-		S3MediaBucket:        s.S3MediaBucket,
-		S3CacheBucket:        s.S3CacheBucket,
-		S3ForcePathStyle:     s.S3ForcePathStyle,
+		PostgresDSN:                 s.Postgres.DSN,
+		PostgresDatabaseName:        s.Postgres.DatabaseName,
+		PostgresIsolationTemplate:   s.PostgresIsolationTemplate,
+		PostgresLocalKratosTemplate: s.PostgresLocalKratosTemplate,
+		KratosAdminURL:              s.KratosAdminURL,
+		KratosPublicURL:             s.KratosPublicURL,
+		OathkeeperAdminURL:          s.OathkeeperAdminURL,
+		OathkeeperProxyURL:          s.OathkeeperProxyURL,
+		SpiceDBEndpoint:             s.SpiceDBEndpoint,
+		SpiceDBToken:                s.SpiceDBToken,
+		S3Region:                    s.S3Region,
+		S3Endpoint:                  s.S3Endpoint,
+		S3AccessKeyID:               s.S3AccessKeyID,
+		S3SecretAccessKey:           s.S3SecretAccessKey,
+		S3MediaBucket:               s.S3MediaBucket,
+		S3CacheBucket:               s.S3CacheBucket,
+		S3ForcePathStyle:            s.S3ForcePathStyle,
 	}
-}
-
-// ResetBackendIntegrationExternalState clears PGMQ and SpiceDB state owned by
-// a shared BackendIntegrationStack.
-func ResetBackendIntegrationExternalState(ctx context.Context, stack *BackendIntegrationStack) error {
-	if stack == nil || stack.Postgres == nil {
-		return fmt.Errorf("backend integration stack is not initialized")
-	}
-	return ResetOryIntegrationState(ctx, &OryStack{
-		DB:              stack.Postgres.DB,
-		PostgresDSN:     stack.Postgres.DSN,
-		KratosAdminURL:  stack.KratosAdminURL,
-		KratosPublicURL: stack.KratosPublicURL,
-		SpiceDBEndpoint: stack.SpiceDBEndpoint,
-		SpiceDBToken:    stack.SpiceDBToken,
-		KratosClient:    stack.KratosClient,
-		SpiceDBClient:   stack.SpiceDBClient,
-	})
-}
-
-func resetBackendIntegrationS3State(ctx context.Context, stack *BackendIntegrationStack) error {
-	resetCtx, cancel := context.WithTimeout(ctx, backendIntegrationS3ResetTimeout)
-	defer cancel()
-
-	awsCfg, err := awsconfig.LoadDefaultConfig(resetCtx,
-		awsconfig.WithRegion(stack.S3Region),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			stack.S3AccessKeyID,
-			stack.S3SecretAccessKey,
-			"",
-		)),
-	)
-	if err != nil {
-		return fmt.Errorf("load backend integration S3 reset config: %w", err)
-	}
-	client := s3.NewFromConfig(awsCfg, func(options *s3.Options) {
-		options.BaseEndpoint = aws.String(stack.S3Endpoint)
-		options.UsePathStyle = stack.S3ForcePathStyle
-	})
-	return resetBackendIntegrationS3Buckets(resetCtx, client, stack.S3MediaBucket, stack.S3CacheBucket)
-}
-
-func resetBackendIntegrationS3Buckets(
-	ctx context.Context,
-	client backendIntegrationS3ResetClient,
-	buckets ...string,
-) error {
-	resetCtx, cancel := context.WithTimeout(ctx, backendIntegrationS3ResetTimeout)
-	defer cancel()
-
-	var resetErr error
-	for _, bucket := range buckets {
-		if strings.TrimSpace(bucket) == "" {
-			resetErr = errors.Join(resetErr, fmt.Errorf("reset backend integration S3: bucket name is required"))
-			continue
-		}
-		if err := resetBackendIntegrationS3Bucket(resetCtx, client, bucket); err != nil {
-			resetErr = errors.Join(resetErr, fmt.Errorf("reset backend integration S3 bucket %s: %w", bucket, err))
-		}
-	}
-	return resetErr
-}
-
-func resetBackendIntegrationS3Bucket(
-	ctx context.Context,
-	client backendIntegrationS3ResetClient,
-	bucket string,
-) error {
-	return errors.Join(
-		abortBackendIntegrationMultipartUploads(ctx, client, bucket),
-		deleteBackendIntegrationObjectVersions(ctx, client, bucket),
-		deleteBackendIntegrationCurrentObjects(ctx, client, bucket),
-	)
-}
-
-func abortBackendIntegrationMultipartUploads(
-	ctx context.Context,
-	client backendIntegrationS3ResetClient,
-	bucket string,
-) error {
-	for {
-		output, err := client.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
-			Bucket:     aws.String(bucket),
-			MaxUploads: aws.Int32(1000),
-		})
-		if err != nil {
-			return fmt.Errorf("list incomplete multipart uploads: %w", err)
-		}
-		if len(output.Uploads) == 0 {
-			return nil
-		}
-		for _, upload := range output.Uploads {
-			if upload.Key == nil || upload.UploadId == nil {
-				return fmt.Errorf("list incomplete multipart uploads returned an incomplete identity")
-			}
-			if _, err := client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
-				Bucket:   aws.String(bucket),
-				Key:      upload.Key,
-				UploadId: upload.UploadId,
-			}); err != nil {
-				return fmt.Errorf("abort incomplete multipart upload %s: %w", *upload.Key, err)
-			}
-		}
-	}
-}
-
-func deleteBackendIntegrationObjectVersions(
-	ctx context.Context,
-	client backendIntegrationS3ResetClient,
-	bucket string,
-) error {
-	for {
-		output, err := client.ListObjectVersions(ctx, &s3.ListObjectVersionsInput{
-			Bucket:  aws.String(bucket),
-			MaxKeys: aws.Int32(1000),
-		})
-		if err != nil {
-			return fmt.Errorf("list object versions: %w", err)
-		}
-		objects := make([]s3types.ObjectIdentifier, 0, len(output.Versions)+len(output.DeleteMarkers))
-		for _, version := range output.Versions {
-			if version.Key == nil {
-				return fmt.Errorf("list object versions returned a missing key")
-			}
-			objects = append(objects, s3types.ObjectIdentifier{Key: version.Key, VersionId: version.VersionId})
-		}
-		for _, marker := range output.DeleteMarkers {
-			if marker.Key == nil {
-				return fmt.Errorf("list object versions returned a delete marker without a key")
-			}
-			objects = append(objects, s3types.ObjectIdentifier{Key: marker.Key, VersionId: marker.VersionId})
-		}
-		if len(objects) == 0 {
-			return nil
-		}
-		if err := deleteBackendIntegrationObjects(ctx, client, bucket, objects); err != nil {
-			return err
-		}
-	}
-}
-
-func deleteBackendIntegrationCurrentObjects(
-	ctx context.Context,
-	client backendIntegrationS3ResetClient,
-	bucket string,
-) error {
-	for {
-		output, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:  aws.String(bucket),
-			MaxKeys: aws.Int32(1000),
-		})
-		if err != nil {
-			return fmt.Errorf("list current objects: %w", err)
-		}
-		objects := make([]s3types.ObjectIdentifier, 0, len(output.Contents))
-		for _, object := range output.Contents {
-			if object.Key == nil {
-				return fmt.Errorf("list current objects returned a missing key")
-			}
-			objects = append(objects, s3types.ObjectIdentifier{Key: object.Key})
-		}
-		if len(objects) == 0 {
-			return nil
-		}
-		if err := deleteBackendIntegrationObjects(ctx, client, bucket, objects); err != nil {
-			return err
-		}
-	}
-}
-
-func deleteBackendIntegrationObjects(
-	ctx context.Context,
-	client backendIntegrationS3ResetClient,
-	bucket string,
-	objects []s3types.ObjectIdentifier,
-) error {
-	output, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-		Bucket: aws.String(bucket),
-		Delete: &s3types.Delete{Objects: objects, Quiet: aws.Bool(true)},
-	})
-	if err != nil {
-		return fmt.Errorf("delete objects: %w", err)
-	}
-	if len(output.Errors) != 0 {
-		failed := output.Errors[0]
-		return fmt.Errorf(
-			"delete object %s failed with %s: %s",
-			aws.ToString(failed.Key),
-			aws.ToString(failed.Code),
-			aws.ToString(failed.Message),
-		)
-	}
-	return nil
-}
-
-// ResetBackendIntegrationState restores the exact post-schema PostgreSQL
-// baseline and clears the stack's non-PostgreSQL authorization state. It is
-// intended for serialized tests whose service-owned transactions must commit.
-func ResetBackendIntegrationState(ctx context.Context, stack *BackendIntegrationStack) error {
-	if stack == nil || stack.Postgres == nil || stack.postgresBaseline == nil {
-		return fmt.Errorf("backend integration stack baseline is not initialized")
-	}
-	var resetErr error
-	if err := stack.postgresBaseline.Restore(ctx); err != nil {
-		resetErr = errors.Join(resetErr, fmt.Errorf("restore backend integration PostgreSQL baseline: %w", err))
-	}
-	if err := ResetBackendIntegrationExternalState(ctx, stack); err != nil {
-		resetErr = errors.Join(resetErr, fmt.Errorf("reset backend integration external state: %w", err))
-	}
-	return resetErr
-}
-
-// ResetBackendIntegrationPackageState restores the orchestrator-owned backend
-// lease between package processes, including shared object-store state. Per-test
-// reset paths must use ResetBackendIntegrationState so package-scoped runtime
-// fixtures keep their objects until the package boundary.
-func ResetBackendIntegrationPackageState(ctx context.Context, stack *BackendIntegrationStack) error {
-	if stack == nil || stack.Postgres == nil {
-		return fmt.Errorf("backend integration stack is not initialized")
-	}
-	return errors.Join(
-		ResetBackendIntegrationState(ctx, stack),
-		resetBackendIntegrationS3State(ctx, stack),
-	)
 }
 
 func (s *BackendIntegrationStack) Close() error {

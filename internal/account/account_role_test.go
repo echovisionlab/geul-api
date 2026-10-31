@@ -15,6 +15,7 @@ import (
 )
 
 func TestSetAccountRoleRejectsSelfBeforeMutation(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	memberID := actor.MemberID

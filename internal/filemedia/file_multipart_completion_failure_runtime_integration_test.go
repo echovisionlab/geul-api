@@ -10,14 +10,17 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
 )
 
 type runtimeMultipartCompletionFailureInput struct {
@@ -40,6 +43,7 @@ type runtimeMultipartCompletionFailureResult struct {
 // This coverage exercises the real backend and S3 multipart protocol without a
 // Web fault header or production test backdoor.
 func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedRuntimeCompleteMultipartFailureStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	releaseID := testutil.CreateReleaseViaAPI(t, stack.BackendURL, admin)
@@ -94,6 +98,7 @@ func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
 // Editor completion failures remain File-scoped and never create document
 // relations, regardless of the media kind.
 func TestRuntimeEditorMediaCompleteMultipartFailureIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedRuntimeCompleteMultipartFailureStack(t)
 
 	editorCases := []struct {
@@ -209,7 +214,11 @@ func runRuntimeMultipartCompletionFailure(
 	_, err = fileClient.CompleteMultipartUpload(context.Background(), completeReq)
 	require.Error(t, err)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
-	require.Contains(t, err.Error(), "NoSuchUpload")
+	// The storage cause stays in the server log; clients get the generic message.
+	require.NotContains(t, err.Error(), "NoSuchUpload")
+	var connectErr *connect.Error
+	require.ErrorAs(t, err, &connectErr)
+	require.Equal(t, errs.MsgInternal, connectErr.Message())
 
 	failedEvent := waitForFileIngestProtoEvent(
 		t,

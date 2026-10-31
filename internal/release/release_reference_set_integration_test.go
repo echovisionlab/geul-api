@@ -14,6 +14,7 @@ import (
 )
 
 func TestReleaseRelationSettersRequireObservedSnapshotIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Observed snapshot admin")
@@ -67,6 +68,7 @@ func TestReleaseRelationSettersRequireObservedSnapshotIntegration(t *testing.T) 
 }
 
 func TestReleaseReferenceSettersReplaceAndClearMappingsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release reference admin")
@@ -133,6 +135,7 @@ func TestReleaseReferenceSettersReplaceAndClearMappingsIntegration(t *testing.T)
 }
 
 func TestReleaseCategoryObservedSnapshotPreservesConcurrentAdditionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release observed category admin")
@@ -185,6 +188,7 @@ func TestReleaseCategoryObservedSnapshotPreservesConcurrentAdditionIntegration(t
 }
 
 func TestGetReleaseRelationsReturnsAuthorizedEditorSnapshotIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release relations reader")

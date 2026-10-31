@@ -18,6 +18,7 @@ import (
 )
 
 func TestAuthBootstrapServiceSynchronizesMissingRolesWithoutDowngradingExistingRolesIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
 	service := NewAuthBootstrapService(
@@ -72,6 +73,7 @@ func (failingAuthBootstrapAuditAppender) AppendDomainAuditInTransaction(context.
 }
 
 func TestAuthBootstrapServiceRestoresDirectRoleAfterConfirmedCallbackRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())

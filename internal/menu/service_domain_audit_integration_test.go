@@ -34,6 +34,7 @@ type menuDomainAuditRow struct {
 }
 
 func TestMenuDomainAuditDirectCreateUpdateNoopAndRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu audit admin "+identityID[:8])
@@ -126,6 +127,7 @@ func TestMenuDomainAuditDirectCreateUpdateNoopAndRollbackIntegration(t *testing.
 }
 
 func TestMenuDeleteUnbindsActualSlotsAndAuditsOnlyWhenNeededIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu delete admin "+identityID[:8])
@@ -196,6 +198,7 @@ func TestMenuDeleteUnbindsActualSlotsAndAuditsOnlyWhenNeededIntegration(t *testi
 }
 
 func TestMenuRejectsDanglingCategoryTagAndSeriesTargetsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu target admin "+identityID[:8])
@@ -225,6 +228,7 @@ func TestMenuRejectsDanglingCategoryTagAndSeriesTargetsIntegration(t *testing.T)
 }
 
 func TestMenuAuthorizationCreateDeleteIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Menu authorization admin")

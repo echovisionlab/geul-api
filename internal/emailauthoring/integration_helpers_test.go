@@ -19,6 +19,16 @@ import (
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
+// newEmailAuthoringLocalKratosIntegrationDB is for tests that write template or
+// layout blocks. The collaboration contributor fence locks member JOIN
+// kratos.identities FOR SHARE; through postgres_fdw that becomes a REPEATABLE
+// READ lock on every active identity in the shared Kratos, so identity updates
+// by concurrent tests fail it with serialization errors.
+func newEmailAuthoringLocalKratosIntegrationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	return testutil.SetupOryStackWithLocalKratos(t).DB
+}
+
 type integrationCampaignDeliveryReferences struct{}
 
 func (integrationCampaignDeliveryReferences) TemplateDeliveryRunCounts(ctx context.Context, db *gorm.DB, ids []string) (map[string]int32, error) {

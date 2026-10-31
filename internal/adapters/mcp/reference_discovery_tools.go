@@ -132,7 +132,7 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		return executionError(fmt.Errorf("limit must be between 1 and %d for %s references", maximum, input.ReferenceType))
 	}
 	items := make([]map[string]any, 0)
-	var hasMore any = false
+	var hasMore any
 	searchFilter := discoverySearchFilters(input.Query)
 	pagination := &commonv1.PaginationRequest{Limit: input.Limit}
 	switch input.ReferenceType {

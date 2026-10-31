@@ -21,6 +21,7 @@ import (
 )
 
 func TestMapPlaceImageAssetLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	user := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -72,6 +73,7 @@ func TestMapPlaceImageAssetLifecycleIntegration(t *testing.T) {
 }
 
 func TestReferenceCatalogMembersExcludeUnresolvedAndInactiveIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	memberID := testutil.IntegrationUUID()
 	members := referencecatalogadapter.NewMemberSummaries("https://cdn.example.com")

@@ -19,6 +19,7 @@ import (
 )
 
 func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.T) {
+	t.Parallel()
 	db := newManageFileDownloadPolicyUnitDB(t)
 	stack := testutil.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -160,6 +161,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 }
 
 func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *testing.T) {
+	t.Parallel()
 	db := newManageFileDownloadPolicyUnitDB(t)
 	stack := testutil.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -206,6 +208,7 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 }
 
 func TestAudienceServiceListSegmentsForAuthenticatedAccessUnit(t *testing.T) {
+	t.Parallel()
 	db := newManageFileDownloadPolicyUnitDB(t)
 	stack := testutil.SetupOryStack(t)
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -445,4 +448,11 @@ func seedManageAudienceSegment(
 		time.Now().UTC(),
 	).Error)
 	seedAudienceSegmentRelationsForTest(t, db, id, config)
+}
+
+func observedFileDownloadPolicy(audience managev1.FileDownloadAudience, segmentIDs ...string) *managev1.FileDownloadPolicyObservedState {
+	return &managev1.FileDownloadPolicyObservedState{
+		Audience:           audience,
+		AudienceSegmentIds: segmentIDs,
+	}
 }

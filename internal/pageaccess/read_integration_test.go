@@ -97,6 +97,7 @@ func savePageAccess(t *testing.T, db *gorm.DB, pageID string, policy *commonv1.P
 }
 
 func TestPageAccessCurrentConditionsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.SetupOryStack(t).DB
 	ctx := seedPageAccessPrincipal(t, db)
 	principal := auth.GetUser(ctx)
@@ -154,6 +155,7 @@ func TestPageAccessCurrentConditionsIntegration(t *testing.T) {
 }
 
 func TestPageAccessFreshIdentityAndMalformedPolicyIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.SetupOryStack(t).DB
 	ctx := seedPageAccessPrincipal(t, db)
 	principal := auth.GetUser(ctx)

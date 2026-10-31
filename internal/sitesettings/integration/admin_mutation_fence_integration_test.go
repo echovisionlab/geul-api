@@ -20,6 +20,7 @@ import (
 )
 
 func TestSiteSettingsMutationRechecksAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	mutationDB, applicationName := newSiteSettingsFenceMutationDB(t)
@@ -51,6 +52,7 @@ func TestSiteSettingsMutationRechecksAuthorityAfterRootLockIntegration(t *testin
 }
 
 func TestSiteSettingsNoOpMutationStillRequiresFreshAdminIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	service := sitesettings.NewSiteSettingService(

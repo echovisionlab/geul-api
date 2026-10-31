@@ -139,10 +139,12 @@ func DocumentLayoutFromProto(layout *commonv1.DocumentLayout) (DocumentLayout, e
 	return result, nil
 }
 
-// Proto maps a validated persisted layout without producing unspecified enum values.
-func (l DocumentLayout) Proto() *commonv1.DocumentLayout {
+// Proto maps a validated persisted layout without producing unspecified enum
+// values. An invalid stored layout is an error so read paths can reject it
+// without crashing the request.
+func (l DocumentLayout) Proto() (*commonv1.DocumentLayout, error) {
 	if err := l.Validate(); err != nil {
-		panic(fmt.Sprintf("invalid persisted document layout: %v", err))
+		return nil, fmt.Errorf("invalid persisted document layout: %w", err)
 	}
 
 	result := &commonv1.DocumentLayout{HideTableOfContents: l.HideTableOfContents}
@@ -164,5 +166,5 @@ func (l DocumentLayout) Proto() *commonv1.DocumentLayout {
 	case DocumentRegionPlacementPinned:
 		result.Footer = commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED
 	}
-	return result
+	return result, nil
 }

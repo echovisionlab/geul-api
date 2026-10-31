@@ -35,6 +35,7 @@ func (a *artistTranslationAuditAppender) AppendDomainAuditInTransaction(
 var _ domainaudit.Appender = (*artistTranslationAuditAppender)(nil)
 
 func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)

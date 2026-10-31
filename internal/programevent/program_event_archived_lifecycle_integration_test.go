@@ -20,6 +20,7 @@ import (
 )
 
 func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Archived Program Event Admin")

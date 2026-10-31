@@ -10,6 +10,7 @@ import (
 )
 
 func TestManagedEditorRuntimeFixturesUseTypedContentDocumentsIntegration(t *testing.T) {
+	t.Parallel()
 	pg := SetupAppPostgres(t, AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
 	fixtures := []ManagedEditorEntity{
 		CreateManagedEditorEntity(t, pg.DB, nil, "", managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, "en"),

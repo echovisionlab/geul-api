@@ -19,6 +19,7 @@ import (
 )
 
 func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntityIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	pageID := seedHardCutPageFixture(t, db)
@@ -75,6 +76,7 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntityIntegration(t *t
 }
 
 func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAttachmentIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	pageID := seedHardCutPageFixture(t, db)
@@ -111,6 +113,7 @@ func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAtt
 }
 
 func TestMeshOptimizationHandleCompleteRequiresOptimizedSizeIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	pageID := seedHardCutPageFixture(t, db)
 	sourceID := seedMeshOptimizationSourceFile(t, db)
@@ -145,6 +148,7 @@ func TestMeshOptimizationHandleCompleteRequiresOptimizedSizeIntegration(t *testi
 }
 
 func TestMeshOptimizationHandleCompletePersistsExtensionlessBasenameIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	pageID := seedHardCutPageFixture(t, db)
 	sourceID := seedMeshOptimizationSourceFile(t, db)

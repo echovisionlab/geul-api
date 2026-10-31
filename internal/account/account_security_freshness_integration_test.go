@@ -16,6 +16,7 @@ import (
 )
 
 func TestAccountSecurityMutationsRejectStaleCurrentSessionIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()

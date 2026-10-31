@@ -2,8 +2,7 @@
 
 INTEGRATION_SCHEMA_ROOT ?= ../geul-schema
 INTEGRATION_POSTGRES_IMAGE ?= registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138
-# The pinned minio/minio digest is no longer pullable from Docker Hub; see README for the override.
-INTEGRATION_MINIO_IMAGE ?= cgr.dev/chainguard/minio:latest
+INTEGRATION_MINIO_IMAGE ?= cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82
 
 # Download dependencies.
 deps:

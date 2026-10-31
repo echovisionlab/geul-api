@@ -132,11 +132,14 @@ func (s *PostService) ListMyPosts(
 
 	protoPosts := make([]*managev1.Post, len(posts))
 	for i := range posts {
-		protoPosts[i] = s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
+		protoPosts[i], err = s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
 			readyOgAssets,
 			posts[i].SourceLocaleOgAssetID,
 			posts[i].OgAssetID,
 		), authorMembers[posts[i].ID], featuredDeliveries[posts[i].ID], authorities[posts[i].ID])
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return connect.NewResponse(&managev1.ListMyPostsResponse{
@@ -226,13 +229,17 @@ func (s *PostService) postResponseWithReadyOg(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(s.toProtoPostWithProjection(
+	protoPost, err := s.toProtoPostWithProjection(
 		post,
 		ogAsset,
 		authors[post.ID],
 		featuredDelivery,
 		authorities[post.ID],
-	)), nil
+	)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(protoPost), nil
 }
 
 func (s *PostService) hydratePostContentProjection(ctx context.Context, post *model.Post) error {
@@ -341,12 +348,15 @@ func (s *PostService) toProtoPostWithProjection(
 	authors []*commonv1.MemberSummary,
 	featuredImage *commonv1.MediaDelivery,
 	authority PostAuthority,
-) *managev1.Post {
-	post := s.toProtoPost(p, ogAsset)
+) (*managev1.Post, error) {
+	post, err := s.toProtoPost(p, ogAsset)
+	if err != nil {
+		return nil, err
+	}
 	post.AuthorMembers = authors
 	post.FeaturedImageDelivery = featuredImage
 	post.AllowedActions = postAllowedActions(p.ID, p.Status, authority)
-	return post
+	return post, nil
 }
 
 func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
@@ -502,7 +512,11 @@ var postSortConfig = queryutil.SortConfig{
 
 // toProtoPost converts a model.Post to protobuf Post (Domain Object -> DTO)
 // Note: Author is not populated here - use toProtoPostWithAuthor for that
-func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *managev1.Post {
+func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
+	documentLayout, err := p.DocumentLayout.Proto()
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	post := &managev1.Post{
 		Id:                    p.ID,
 		Title:                 p.Title,
@@ -513,7 +527,7 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 		BlockMedia:            p.BlockMedia,
 		Status:                managev1.PostStatus(managev1.PostStatus_value[string(p.Status)]),
 		CommentsEnabled:       p.CommentsEnabled,
-		DocumentLayout:        p.DocumentLayout.Proto(),
+		DocumentLayout:        documentLayout,
 		CreatedAt:             timestamppb.New(p.CreatedAt),
 		OgAsset:               ogAsset,
 	}
@@ -586,7 +600,7 @@ func (s *PostService) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) *ma
 		}
 	}
 
-	return post
+	return post, nil
 }
 
 func (s *PostService) normalizeMapPlaceID(ctx context.Context, raw string) (*string, error) {

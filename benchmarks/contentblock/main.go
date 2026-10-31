@@ -165,7 +165,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open SQL database: %w", err)
 	}
-	defer sqlDatabase.Close()
+	defer func() { _ = sqlDatabase.Close() }()
 	sqlDatabase.SetMaxOpenConns(1)
 	sqlDatabase.SetMaxIdleConns(1)
 	ctx := context.Background()

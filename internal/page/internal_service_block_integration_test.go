@@ -26,6 +26,7 @@ import (
 )
 
 func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Page Block Admin")
@@ -394,6 +395,7 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 }
 
 func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminID, "Page Metadata Admin")

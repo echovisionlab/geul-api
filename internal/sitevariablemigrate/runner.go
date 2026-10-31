@@ -120,11 +120,12 @@ func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contact
 		// compound locale keys. Identifiers below come only from the static allowlist.
 		var rows []struct{ Row []byte }
 		projection := "to_jsonb(t)"
-		if spec.jsonKind == "delivery_audit" {
+		switch spec.jsonKind {
+		case "delivery_audit":
 			projection = "jsonb_build_object('status',t.status,'render_snapshot',t.render_snapshot)"
-		} else if spec.jsonKind == "translation_audit" {
+		case "translation_audit":
 			projection = "jsonb_build_object('status',t.status,'request_manifest',t.request_manifest,'request_xliff',encode(t.request_xliff,'base64'))"
-		} else if spec.jsonKind == "text_audit" {
+		case "text_audit":
 			projection = "jsonb_build_object('" + spec.column + "',t.\"" + spec.column + "\")"
 		}
 		if err := db.WithContext(ctx).Raw(`SELECT ` + projection + ` AS row FROM "` + spec.table + `" t ORDER BY ` + spec.owner + func() string {
@@ -304,20 +305,21 @@ func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contact
 			case "email_template_translation", "page_translation":
 				rootTable := strings.TrimSuffix(spec.table, "_translation")
 				var root struct{ ContentDocumentID *string }
-				if err := db.Table(rootTable).Select("content_document_id").Where("id = ?", owner).Scan(&root).Error; err != nil {
+				if err := db.WithContext(ctx).Table(rootTable).Select("content_document_id").Where("id = ?", owner).Scan(&root).Error; err != nil {
 					return err
 				}
 				if root.ContentDocumentID != nil && *root.ContentDocumentID != "" {
 					ownerGroup = "document:" + *root.ContentDocumentID
 				}
 			}
-			if spec.table == "content_block_locale" {
+			switch spec.table {
+			case "content_block_locale":
 				var documentID string
 				if err := db.WithContext(ctx).Table("content_block").Select("document_id").Where("id = ?", owner).Scan(&documentID).Error; err != nil {
 					return err
 				}
 				ownerGroup = "document:" + documentID
-			} else if spec.table == "content_block" {
+			case "content_block":
 				ownerGroup = "document:" + owner
 			}
 			keyJSON, _ := json.Marshal(key)

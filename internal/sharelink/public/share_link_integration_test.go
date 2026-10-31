@@ -89,6 +89,7 @@ func integrationTargetKey(entityType managev1.ShareLinkEntityType, entityID stri
 }
 
 func TestPublicShareLinkValidateIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	resolver := &integrationTargetResolver{targets: map[string]sharelinkpublic.Target{}}
 	manageService := sharelinkdomain.NewService(db, integrationTargetAuthority{db: db})

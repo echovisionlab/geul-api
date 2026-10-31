@@ -23,8 +23,9 @@ import (
 )
 
 func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegration(t *testing.T) {
-	db := newCampaignConcurrentIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	t.Parallel()
+	stack := newCampaignLocalKratosStack(t)
+	db := openCampaignIntegrationDB(t, stack)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
 	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)

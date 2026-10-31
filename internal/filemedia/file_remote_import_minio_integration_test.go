@@ -18,7 +18,8 @@ import (
 )
 
 func TestUploadRemoteImportObjectUsesTransferManagerWithMinIOIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	s3Client := runtimeS3Client(t, stack)
 	svc := &FileService{
 		s3Client: s3Client,

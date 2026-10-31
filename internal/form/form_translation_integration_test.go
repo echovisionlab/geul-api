@@ -48,6 +48,7 @@ func (recorder *formProviderAuditRecorder) AppendDomainAuditInTransaction(
 }
 
 func TestFormTranslationPersistenceUsesCurrentSourceSchemaIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := context.Background()
 	now := time.Unix(1_750_000_000, 0).UTC()
@@ -93,6 +94,7 @@ func TestFormTranslationPersistenceUsesCurrentSourceSchemaIntegration(t *testing
 }
 
 func TestFormTranslationPublicSelectionUsesConfiguredPolicyIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := context.Background()
 	now := time.Unix(1_750_001_000, 0).UTC()
@@ -123,6 +125,7 @@ func TestFormTranslationPublicSelectionUsesConfiguredPolicyIntegration(t *testin
 }
 
 func TestPrepareSourceLocaleSwitchCreatesCanonicalEmptyFormRowIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := context.Background()
 	now := time.Unix(1_750_001_500, 0).UTC()
@@ -160,6 +163,7 @@ func TestPrepareSourceLocaleSwitchCreatesCanonicalEmptyFormRowIntegration(t *tes
 }
 
 func TestFormProviderUsesCurrentRootTopologyAcrossPointerSwitchIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := context.Background()
 	now := time.Unix(1_750_002_000, 0).UTC()
@@ -202,6 +206,7 @@ func TestFormProviderUsesCurrentRootTopologyAcrossPointerSwitchIntegration(t *te
 }
 
 func TestFormProviderPromotesLateTargetToCurrentSourceMutationIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := context.Background()
 	now := time.Unix(1_750_003_000, 0).UTC()
@@ -249,6 +254,7 @@ func TestFormProviderPromotesLateTargetToCurrentSourceMutationIntegration(t *tes
 }
 
 func TestFormProviderDoesNotReviveAbsentCurrentSourceTitleIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	ctx := context.Background()
 	now := time.Unix(1_750_004_000, 0).UTC()

@@ -40,10 +40,11 @@ func (p *recordingDeletionFanout) PublishSendEmail(_ context.Context, command *m
 }
 
 func TestProcessUserDeleteIdentityPreservesNameAndMemberEmails(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	primaryEmail := "primary@example.test"
+	primaryEmail := "primary-" + identityID + "@example.test"
 	secondaryEmail := "secondary@example.test"
 	nickname := "Preserved name"
 	seedDeletionIdentity(t, db, identityID, memberID, primaryEmail)
@@ -117,10 +118,11 @@ func TestProcessUserDeleteIdentityPreservesNameAndMemberEmails(t *testing.T) {
 }
 
 func TestProcessUserDeleteIdentityReplaySucceedsAfterEmailRetentionScrub(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	primaryEmail := "retained@example.test"
+	primaryEmail := "retained-" + identityID + "@example.test"
 	nickname := "Retained Member"
 	seedDeletionIdentity(t, db, identityID, memberID, primaryEmail)
 	require.NoError(t, db.Exec(`
@@ -155,10 +157,11 @@ func TestProcessUserDeleteIdentityReplaySucceedsAfterEmailRetentionScrub(t *test
 }
 
 func TestProcessUserDeleteIdentityResumesAfterIdentityDeletionBeforeTombstone(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	primaryEmail := "crash-replay@example.test"
+	primaryEmail := "crash-replay-" + identityID + "@example.test"
 	nickname := "Crash Replay"
 	seedDeletionIdentity(t, db, identityID, memberID, primaryEmail)
 	require.NoError(t, db.Exec(`
@@ -194,10 +197,11 @@ func TestProcessUserDeleteIdentityResumesAfterIdentityDeletionBeforeTombstone(t 
 }
 
 func TestProcessUserDeleteIdentitySkipsCompletionMailWhenNeverOnboarded(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	primaryEmail := "unonboarded-delete@example.test"
+	primaryEmail := "unonboarded-delete-" + identityID + "@example.test"
 	seedDeletionIdentity(t, db, identityID, memberID, primaryEmail)
 	require.NoError(t, db.Exec(`
 		INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails)

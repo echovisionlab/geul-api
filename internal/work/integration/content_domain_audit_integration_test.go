@@ -26,6 +26,7 @@ import (
 )
 
 func TestWorkDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminIdentityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, adminIdentityID, "Work audit admin")

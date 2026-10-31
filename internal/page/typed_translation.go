@@ -732,11 +732,15 @@ func buildProviderPageTargetDocument(
 			if err != nil {
 				return nil, err
 			}
-			destination := &contentv1.PageSectionLocale{SectionId: sectionID}
+			var destination *contentv1.PageSectionLocale
 			if existing := currentSections[sectionID]; existing != nil {
 				destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
 			} else {
 				destination = proto.Clone(candidateSection).(*contentv1.PageSectionLocale)
+			}
+			if destination.GetRichText() == nil {
+				// The target locale row may not carry a Rich Text value yet.
+				destination.Value = &contentv1.PageSectionLocale_RichText{RichText: &contentv1.RichTextSectionLocale{}}
 			}
 			destination.GetRichText().Blocks = overlay
 			result.LocaleOverlay.Sections = append(result.LocaleOverlay.Sections, destination)

@@ -20,6 +20,7 @@ import (
 )
 
 func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page AI document exact mutation")
@@ -185,6 +186,7 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 }
 
 func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	identityID := integrationTestUUID()
 	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page layout AI document")

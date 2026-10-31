@@ -65,7 +65,8 @@ func legalIntegrationDependencies(db *gorm.DB, cdnDomain string) legaldomain.Dep
 }
 
 func TestCancellingOnlyScheduledPrivacyClearsCanonicalOgRouteIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
 		db,
@@ -133,7 +134,8 @@ func targetIDs(targets []model.OgGenerationTarget) []string {
 }
 
 func TestPrivacyScheduleActivationKeepsMailLifecycleIndependentIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
 		db,
@@ -271,7 +273,8 @@ func TestPrivacyScheduleActivationKeepsMailLifecycleIndependentIntegration(t *te
 }
 
 func TestScheduledTermsActivationCancelsPendingUpdateDeliveryRunIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
 		db,
@@ -349,6 +352,7 @@ func TestScheduledTermsActivationCancelsPendingUpdateDeliveryRunIntegration(t *t
 }
 
 func TestImmediateLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegration(t *testing.T) {
+	t.Parallel()
 	db := newLegalIntegrationDB(t)
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	service := newPrivacyServiceForLegalIntegrationTest(
@@ -388,8 +392,9 @@ func TestImmediateLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegrat
 }
 
 func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("privacy", func(t *testing.T) {
-		db := newLegalIntegrationDB(t)
+		db := newLegalLocalKratosIntegrationDB(t)
 		seedLegalDeliveryTemplateIntegration(
 			t,
 			db,
@@ -479,7 +484,7 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 	})
 
 	t.Run("terms", func(t *testing.T) {
-		db := newLegalIntegrationDB(t)
+		db := newLegalLocalKratosIntegrationDB(t)
 		seedLegalDeliveryTemplateIntegration(
 			t,
 			db,
@@ -569,8 +574,56 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 	})
 }
 
+func TestTermsScheduleTransitionErrorsUseReadableMessagesIntegration(t *testing.T) {
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
+	seedLegalDeliveryTemplateIntegration(
+		t,
+		db,
+		email.EventTermsUpdate.String(),
+	)
+	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
+	service := newTermsServiceForLegalIntegrationTest(
+		db,
+		"https://example.com",
+		"https://cdn.example.com",
+		spiceDB,
+		legaldomain.WithTermsContentBlockStore(newLegalLifecycleContentBlockStore(t, spiceDB)),
+	)
+	draft, err := service.CreateTermsVersion(
+		ctx,
+		connect.NewRequest(&managev1.CreateTermsVersionRequest{
+			Title:    ptrString("Terms transition messages"),
+			Document: legalPolicyDocumentFixture("en", "Terms transition messages"),
+		}),
+	)
+	require.NoError(t, err)
+
+	_, err = service.CancelTermsSchedule(
+		ctx,
+		connect.NewRequest(&managev1.CancelTermsScheduleRequest{Id: draft.Msg.Id}),
+	)
+	var connectErr *connect.Error
+	require.ErrorAs(t, err, &connectErr)
+	require.Equal(t, connect.CodeFailedPrecondition, connectErr.Code())
+	require.Equal(t, "can only cancel scheduled terms", connectErr.Message())
+
+	schedule := connect.NewRequest(&managev1.ScheduleTermsRequest{
+		Id:               draft.Msg.Id,
+		ExpectedRevision: draft.Msg.Revision,
+		EffectiveFrom:    timestamppb.New(time.Now().Add(24 * time.Hour).UTC()),
+	})
+	_, err = service.ScheduleTerms(ctx, schedule)
+	require.NoError(t, err)
+	_, err = service.ScheduleTerms(ctx, schedule)
+	require.ErrorAs(t, err, &connectErr)
+	require.Equal(t, connect.CodeFailedPrecondition, connectErr.Code())
+	require.Equal(t, "can only schedule draft terms", connectErr.Message())
+}
+
 func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	store := newLegalLifecycleContentBlockStore(t, spiceDB)
 	contributor := integrationTestUUID()
@@ -638,7 +691,8 @@ func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
 }
 
 func TestLegalDeliveryTemplateAndLayoutLifecycleGuardsIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	templateID, layoutID := seedLegalDeliveryTemplateIntegration(
 		t,
@@ -876,7 +930,8 @@ func TestLegalDeliveryTemplateAndLayoutLifecycleGuardsIntegration(t *testing.T) 
 }
 
 func TestPrivacyCancelRejectsSendingDeliveryRunIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
 		db,
@@ -937,7 +992,8 @@ func TestPrivacyCancelRejectsSendingDeliveryRunIntegration(t *testing.T) {
 func TestPrivacyActivationDoesNotMutateSendingSupersededDeliveryRunIntegration(
 	t *testing.T,
 ) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
 		db,
@@ -1031,12 +1087,13 @@ func TestPrivacyActivationDoesNotMutateSendingSupersededDeliveryRunIntegration(
 }
 
 func TestPrivacyActivationDoesNotMutateStartedUpdateRunIntegration(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{
 		legaldomain.CampaignDeliveryRunStatusSending,
 		legaldomain.CampaignDeliveryRunStatusSent,
 	} {
 		t.Run(status, func(t *testing.T) {
-			db := newLegalIntegrationDB(t)
+			db := newLegalLocalKratosIntegrationDB(t)
 			seedLegalDeliveryTemplateIntegration(t, db, email.EventPrivacyUpdate.String())
 			seedLegalDeliveryTemplateIntegration(t, db, email.EventPrivacyEffective.String())
 			ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
@@ -1098,7 +1155,8 @@ func TestPrivacyActivationDoesNotMutateStartedUpdateRunIntegration(t *testing.T)
 }
 
 func TestTermsDeliveryHistorySurvivesDraftDeleteIntegration(t *testing.T) {
-	db := newLegalIntegrationDB(t)
+	t.Parallel()
+	db := newLegalLocalKratosIntegrationDB(t)
 	seedLegalDeliveryTemplateIntegration(
 		t,
 		db,

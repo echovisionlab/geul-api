@@ -19,6 +19,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestRunIntegrationSuiteCleanupsIsIdempotent(t *testing.T) {
+	t.Parallel()
 	integrationCleanupMu.Lock()
 	registeredBefore := integrationRegisteredCleanups
 	suiteBefore := integrationSuiteCleanups
@@ -49,6 +50,7 @@ func TestRunIntegrationSuiteCleanupsIsIdempotent(t *testing.T) {
 }
 
 func TestIntegrationSignalHandlerStopTransfersOwnershipIdempotently(t *testing.T) {
+	t.Parallel()
 	handler := newIntegrationSignalHandler()
 	cleanupCalls := 0
 	exitCalls := 0
@@ -67,6 +69,7 @@ func TestIntegrationSignalHandlerStopTransfersOwnershipIdempotently(t *testing.T
 }
 
 func TestIntegrationSignalHandlerRunsCleanupAndPreservesSignalExitCode(t *testing.T) {
+	t.Parallel()
 	handler := newIntegrationSignalHandler()
 	cleanupCalls := 0
 	exitCode := 0

@@ -270,6 +270,9 @@ func (s *PageService) buildPageResponse(
 	if s.blocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
+	if s.media == nil {
+		return nil, errs.InternalMsg("Page media resolver is not configured")
+	}
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, s.db)
 	if settingsErr != nil {
 		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
@@ -416,6 +419,10 @@ func (s *PageService) buildPageResponse(
 		return nil, errs.Internal(err)
 	}
 	pagedomain.OverlayPageSourceLocaleMetadataForPublic(&page, sourceMetadata)
+	documentLayout, err := page.DocumentLayout.Proto()
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 
 	protoPage := &openv1.Page{
 		AccessPolicy:   accessPolicy,
@@ -425,7 +432,7 @@ func (s *PageService) buildPageResponse(
 		Status:         s.toProtoStatus(page.Status),
 		Document:       document,
 		Revision:       snapshot.Document.Revision.String(),
-		DocumentLayout: page.DocumentLayout.Proto(),
+		DocumentLayout: documentLayout,
 		CreatedAt:      timestamppb.New(page.CreatedAt),
 		UpdatedAt:      timestamppb.New(page.UpdatedAt),
 	}
@@ -459,9 +466,6 @@ func (s *PageService) buildPageResponse(
 		protoPage.Summary = &resolved
 	}
 
-	if s.media == nil {
-		return nil, errs.InternalMsg("Page media resolver is not configured")
-	}
 	blockMedia, err = s.media.HydrateAuthorizedContentBlockMedia(
 		mediaasset.WithContentDownloadOwnerAuthorization(ctx, mediaAuthorization), blockMedia,
 	)

@@ -17,6 +17,7 @@ import (
 )
 
 func TestFormFeaturedImageMutationsRequireSiteAdmin(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	principal := auth.GetUser(ctx)

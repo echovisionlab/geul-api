@@ -32,6 +32,7 @@ func (writer *captureFailingMapAuditAppender) AppendDomainAuditInTransaction(
 }
 
 func TestMapThemeAuthorizationIsSynchronousAndCompensatedIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())

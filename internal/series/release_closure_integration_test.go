@@ -36,6 +36,7 @@ func (l seriesQueryCounter) Trace(ctx context.Context, begin time.Time, fc func(
 }
 
 func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	outsiderID := integrationTestUUID()
@@ -152,6 +153,7 @@ func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 }
 
 func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	authorID := integrationTestUUID()
@@ -275,6 +277,7 @@ func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
 }
 
 func TestDeleteSeriesClearsPostRelationAndPreservesFeaturedImageFileIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedSeriesActor(t, db, adminID, "Series delete admin")
@@ -358,6 +361,7 @@ func TestDeleteSeriesClearsPostRelationAndPreservesFeaturedImageFileIntegration(
 }
 
 func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedSeriesActor(t, db, adminID, "Concurrent Series delete admin")
@@ -418,6 +422,7 @@ func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T)
 }
 
 func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedSeriesActor(t, db, adminID, "Concurrent Series update admin")
@@ -485,6 +490,7 @@ func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T
 }
 
 func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	managerID := integrationTestUUID()
@@ -561,6 +567,7 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 }
 
 func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedSeriesActor(t, db, adminID, "Series query admin")
@@ -592,6 +599,7 @@ func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 }
 
 func TestListSeriesSimpleReturnsAllSeriesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	seedSeriesActor(t, db, adminID, "Series simple list admin")

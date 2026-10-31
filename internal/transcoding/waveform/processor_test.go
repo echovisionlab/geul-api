@@ -426,10 +426,7 @@ func TestProcessorHandleGenerateJobStopsQuietlyWhenCancelled(t *testing.T) {
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if processor.CancelJob(event.GetEventId()) {
-			break
-		}
+	for !processor.CancelJob(event.GetEventId()) {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for waveform job registration")
 		}

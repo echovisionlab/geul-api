@@ -638,9 +638,10 @@ func TestPageCodecDeleteAndReinsertSectionPersistsFinalOrderedState(t *testing.T
 				core.InsertBlockOperation(core.BlockID(ids[0]), "paragraph", core.BlockID(sectionID), ""),
 				core.SetFieldOperation(core.BlockID(ids[0]), "content", core.RichText(core.InlineText("After"))),
 			}
-			if test.deleteLast == "other" {
+			switch test.deleteLast {
+			case "other":
 				operations = append(operations, core.DeleteBlockOperation(core.BlockID(otherID)))
-			} else if test.deleteLast == "revived" {
+			case "revived":
 				operations = append(operations, core.DeleteBlockOperation(core.BlockID(sectionID)))
 			}
 			nodes, err := codec.Project(document)

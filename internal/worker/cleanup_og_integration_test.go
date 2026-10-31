@@ -66,6 +66,7 @@ func cancelWorkerOgGenerationEntityForTest(
 }
 
 func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	cutoff := now.Add(-unboundOgAssetRetention)
@@ -98,6 +99,7 @@ func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
 }
 
 func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	plan, err := requestWorkerOgGenerationForTest(
@@ -128,8 +130,8 @@ func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t
 }
 
 func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testing.T) {
-	pg, err := sharedWorkerIntegrationPostgres()
-	require.NoError(t, err)
+	t.Parallel()
+	pg := newWorkerIntegrationPostgres(t)
 	now := time.Now().UTC()
 	cutoff := now.Add(-unreadyAssetRetention)
 	digest := sha256.Sum256([]byte("completed"))
@@ -225,6 +227,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 }
 
 func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	ctx := context.Background()
 	s3Client, cfg := newWorkerIntegrationS3(t)
@@ -303,6 +306,7 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 }
 
 func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
 	old := now.Add(-25 * time.Hour)
@@ -348,7 +352,11 @@ func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegrati
 		workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, pointedWork.ID, "replacement", nil, nil),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.Model(&model.Work{}).Where("id = ?", pointedWork.ID).Update("og_asset_id", pointed.GenerationIDs[0]).Error)
+	// Work OG pointers live on the translation rows; the base column is legacy.
+	require.NoError(t, db.Exec(
+		`INSERT INTO work_translation (entity_id, locale, og_asset_id) VALUES (?, 'en', ?)`,
+		pointedWork.ID, pointed.GenerationIDs[0],
+	).Error)
 
 	require.NoError(t, ogCleanupForIntegration(&Handlers{db: db}).MarkExpiredTerminalGenerationAssets(t.Context(), now.Add(-unreadyAssetRetention), now))
 	for _, assetID := range []string{bound.GenerationIDs[0], pointed.GenerationIDs[0]} {

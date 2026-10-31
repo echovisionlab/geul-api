@@ -4,9 +4,7 @@ package integration
 
 import (
 	"context"
-	"fmt"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,44 +28,37 @@ import (
 	"gorm.io/gorm"
 )
 
-var (
-	publicIntegrationStack   *testutil.BackendIntegrationStack
-	publicIntegrationSpiceDB *auth.SpiceDBClient
-	publicIntegrationOnce    sync.Once
-	publicIntegrationErr     error
-	publicIntegrationMu      sync.Mutex
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if publicIntegrationStack != nil {
-		if err := publicIntegrationStack.Close(); err != nil && code == 0 {
-			fmt.Fprintf(os.Stderr, "close Work public integration stack: %v\n", err)
-			code = 1
-		}
-	}
-	os.Exit(code)
-}
-
-func sharedPublicIntegrationStack() (*testutil.BackendIntegrationStack, error) {
-	publicIntegrationOnce.Do(func() {
-		publicIntegrationStack, publicIntegrationErr = testutil.StartBackendIntegrationStack(context.Background())
-		if publicIntegrationErr == nil {
-			publicIntegrationSpiceDB = publicIntegrationStack.SpiceDBClient
-		}
-	})
-	return publicIntegrationStack, publicIntegrationErr
-}
+// publicIntegrationStacks maps each test's DB handle to the test's own
+// backend stack so helpers that receive only the DB can reach its SpiceDB.
+var publicIntegrationStacks sync.Map
 
 func newPublicIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	publicIntegrationMu.Lock()
-	t.Cleanup(publicIntegrationMu.Unlock)
-	stack, err := sharedPublicIntegrationStack()
+	return newPublicIntegrationStack(t).Postgres.DB
+}
+
+func newPublicIntegrationStack(t *testing.T) *testutil.BackendIntegrationStack {
+	t.Helper()
+	stack, err := testutil.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, testutil.ResetBackendIntegrationState(t.Context(), stack))
-	t.Cleanup(func() { require.NoError(t, testutil.ResetBackendIntegrationState(context.Background(), stack)) })
-	return stack.Postgres.DB
+	publicIntegrationStacks.Store(stack.Postgres.DB, stack)
+	t.Cleanup(func() {
+		publicIntegrationStacks.Delete(stack.Postgres.DB)
+		require.NoError(t, stack.Close())
+	})
+	return stack
+}
+
+func publicIntegrationStackFor(t *testing.T, db *gorm.DB) *testutil.BackendIntegrationStack {
+	t.Helper()
+	stack, ok := publicIntegrationStacks.Load(db)
+	require.True(t, ok, "db was not created by newPublicIntegrationDB")
+	return stack.(*testutil.BackendIntegrationStack)
+}
+
+func publicIntegrationSpiceDBFor(t *testing.T, db *gorm.DB) *auth.SpiceDBClient {
+	t.Helper()
+	return publicIntegrationStackFor(t, db).SpiceDBClient
 }
 
 func seedPublicAdminMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, nickname string) string {
@@ -86,7 +77,7 @@ func seedPublicAdminMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, ni
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
-	_, err = publicIntegrationSpiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
+	_, err = publicIntegrationSpiceDBFor(t, db).SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
 	require.NoError(t, err)
 	return memberID
 }
@@ -112,7 +103,7 @@ func newPublicWorkManageService(t *testing.T, db *gorm.DB, adminID string) *work
 	return workdomain.NewWorkService(
 		db,
 		newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDBFor(t, db),
 		&publicReferenceIdentityManager{identity: &auth.Identity{
 			ID: adminID, State: auth.KratosStateActive,
 			Traits: map[string]interface{}{"name": "Public Work Admin", "preferred_locale": "en"},

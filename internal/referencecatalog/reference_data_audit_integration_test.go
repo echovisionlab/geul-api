@@ -27,6 +27,7 @@ type referenceDataAuditRecord struct {
 }
 
 func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	ctx = referenceAuditedRequestContext(t, ctx)
@@ -138,6 +139,7 @@ func TestReferenceDataAuditsExactCRUDAndSkipsNoOpsIntegration(t *testing.T) {
 }
 
 func TestReferenceDataAuditAppendFailureRollsBackCreateIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	name := "Reference audit rollback"
 	slug := "reference-audit-rollback"
@@ -170,6 +172,7 @@ func TestReferenceDataAuditAppendFailureRollsBackCreateIntegration(t *testing.T)
 }
 
 func TestReferenceDataMenuTargetRewritesAuditAndRollBackTogetherIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	ctx = referenceAuditedRequestContext(t, ctx)

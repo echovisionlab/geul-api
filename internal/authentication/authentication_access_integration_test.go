@@ -14,6 +14,7 @@ import (
 )
 
 func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialData(t *testing.T) {
+	t.Parallel()
 	db := newAuthenticationIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()

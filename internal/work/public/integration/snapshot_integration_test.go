@@ -29,9 +29,9 @@ import (
 )
 
 func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
-	stack, err := sharedPublicIntegrationStack()
-	require.NoError(t, err)
+	t.Parallel()
+	stack := newPublicIntegrationStack(t)
+	db := stack.Postgres.DB
 	identityID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Name: "Public Snapshot Work Admin"})
 	memberID := seedPublicAdminMemberIdentityLink(t, db, identityID, "Public Snapshot Work Admin")
@@ -41,7 +41,7 @@ func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(
 	clientService := referencecatalog.NewClientService(
 		db,
 		referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		publicIntegrationSpiceDB,
+		stack.SpiceDBClient,
 	)
 	publishedClient, err := clientService.CreateClient(adminCtx, connect.NewRequest(&managev1.CreateClientRequest{
 		Name: "Published client " + suffix,
@@ -110,7 +110,7 @@ func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(
 	t.Cleanup(resumeProjection)
 	publicService := workpublic.NewWorkService(
 		publicDB,
-		publicIntegrationSpiceDB,
+		stack.SpiceDBClient,
 		extractedWorkPublicMediaHydrator{},
 		workSnapshotProjectionGate{
 			MediaResolver: newPublicWorkRuntimeForTest(publicDB, "https://cdn.example.com"),

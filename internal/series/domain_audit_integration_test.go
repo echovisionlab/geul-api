@@ -30,6 +30,7 @@ type postSeriesAuditRow struct {
 }
 
 func TestPostSeriesDomainAuditMutationVariantsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	managerID := integrationTestUUID()
@@ -119,6 +120,7 @@ func TestPostSeriesDomainAuditMutationVariantsIntegration(t *testing.T) {
 }
 
 func TestPostSeriesAuditFailureRollsBackProductAndAuthorizationIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()
 	managerID := integrationTestUUID()

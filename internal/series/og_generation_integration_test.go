@@ -20,6 +20,7 @@ import (
 )
 
 func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	seriesID := seedSeriesRow(t, db, "English Series", "localized-series-"+integrationTestUUID(), managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
 	now := time.Now().UTC()
@@ -69,6 +70,7 @@ func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegr
 }
 
 func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	seriesID := seedSeriesRow(
 		t,

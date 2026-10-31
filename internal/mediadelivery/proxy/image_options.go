@@ -65,7 +65,7 @@ func parseImageDimension(query url.Values, key, label string, public bool) (int,
 		return 0, err
 	}
 	// Poster thumbnails use 160x240; 240 is allowed only as a height.
-	if value > 4096 || (value > 0 && public && !isPublicImageDimension(value) && !(key == "h" && value == 240)) {
+	if value > 4096 || (value > 0 && public && !isPublicImageDimension(value) && (key != "h" || value != 240)) {
 		return 0, fmt.Errorf("unsupported image %s %d", label, value)
 	}
 	return value, nil

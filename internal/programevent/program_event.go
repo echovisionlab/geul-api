@@ -384,7 +384,7 @@ func (s *ProgramEventService) newProgramEvent(
 	}
 
 	now := time.Now().UTC()
-	sourceLocale := ""
+	var sourceLocale string
 	if strings.TrimSpace(request.SourceLocale) == "" {
 		sourceLocale = resolveInitialSourceLocale(ctx, s.db, acceptLanguage)
 	} else {

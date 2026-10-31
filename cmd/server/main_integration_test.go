@@ -10,6 +10,7 @@ import (
 )
 
 func TestPostgresPGMQReadinessCheckIntegration(t *testing.T) {
+	t.Parallel()
 	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,

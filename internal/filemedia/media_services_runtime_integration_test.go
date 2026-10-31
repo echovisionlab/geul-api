@@ -21,6 +21,7 @@ import (
 )
 
 func TestRuntimeIntegratedOGGenerationThroughAuthenticatedAPI(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedRuntimeStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	client := managev1connect.NewAdminServiceClient(http.DefaultClient, stack.BackendURL)
@@ -54,6 +55,7 @@ func TestRuntimeIntegratedOGGenerationThroughAuthenticatedAPI(t *testing.T) {
 }
 
 func TestRuntimeClientVideoAndMeshOptimization(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupSharedRuntimeStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	client := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestArtistSourceLocaleMetadataUsesRootAuthorityIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)

@@ -25,6 +25,7 @@ import (
 )
 
 func TestAccountAuditRecordsOnlyExactAuthorityTransitionsIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -159,6 +160,7 @@ func (failingAccountRoleAuditAppender) AppendDomainAuditInTransaction(context.Co
 }
 
 func TestSetAccountRoleRestoresDirectRoleWhenAuditFailsIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -186,6 +188,7 @@ func TestSetAccountRoleRestoresDirectRoleWhenAuditFailsIntegration(t *testing.T)
 }
 
 func TestSetAccountRoleRevalidatesActorLifecycleUnderIdentityFencesIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name       string
 		invalidate func(t *testing.T, stack *testutil.OryStack, actor *testutil.OryUser)
@@ -247,6 +250,7 @@ func TestSetAccountRoleRevalidatesActorLifecycleUnderIdentityFencesIntegration(t
 }
 
 func TestSetAccountRoleSynchronizesSpiceDBRoleAndWritesAuditIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -278,6 +282,7 @@ func TestSetAccountRoleSynchronizesSpiceDBRoleAndWritesAuditIntegration(t *testi
 }
 
 func TestSetAccountRoleSynchronizesEveryDirectRoleTransitionIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	service := NewAuditedAccountService(
@@ -320,6 +325,7 @@ func TestSetAccountRoleSynchronizesEveryDirectRoleTransitionIntegration(t *testi
 }
 
 func TestSetAccountRoleSameRoleDoesNotWriteAuditIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.Author().ID())
@@ -359,6 +365,7 @@ func (w closingAccountRoleAuditAppender) AppendDomainAuditInTransaction(context.
 }
 
 func TestSetAccountRoleSurfacesSpiceDBRestoreFailureIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())

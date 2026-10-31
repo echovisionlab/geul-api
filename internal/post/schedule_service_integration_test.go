@@ -13,6 +13,7 @@ import (
 )
 
 func TestProcessDueScheduledPostsDoesNotPublishTranslationWakeups(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC().Truncate(time.Minute)
 	dueIDs := []string{testutil.IntegrationUUID(), testutil.IntegrationUUID()}

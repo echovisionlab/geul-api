@@ -28,6 +28,7 @@ import (
 // the identity fence) is held. The request must fail without changing product
 // state or producing a durable command.
 func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("campaign create", func(t *testing.T) {
 		db, spiceDB, actorID, actorMemberID := seedCampaignAudienceAuthorityActor(t)
 		service := newCampaignAuthorityRaceService(t, db, spiceDB)
@@ -199,8 +200,8 @@ func (campaignAuthorityRaceEmailRendering) TestRecipientContext(actorMemberID st
 
 func seedCampaignAudienceAuthorityActor(t *testing.T) (*gorm.DB, *auth.SpiceDBClient, string, string) {
 	t.Helper()
-	db := newCampaignConcurrentIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	stack := newCampaignLocalKratosStack(t)
+	db := openCampaignIntegrationDB(t, stack)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	return db, stack.SpiceDBClient, actor.IdentityID, actor.MemberID
 }

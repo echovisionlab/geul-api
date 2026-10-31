@@ -163,6 +163,7 @@ func attachCollaborationResourcePolicy(
 }
 
 func TestAuthorizeCollaborationDelegatesEverySupportedResourceToCanonicalSpiceDBSubject(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
@@ -208,6 +209,7 @@ func TestAuthorizeCollaborationDelegatesEverySupportedResourceToCanonicalSpiceDB
 }
 
 func TestAuthorizeCollaborationDeniesWhenSpiceDBDeniesEdit(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
@@ -243,6 +245,7 @@ func TestAuthorizeCollaborationDeniesWhenSpiceDBDeniesEdit(t *testing.T) {
 }
 
 func TestAuthorizeCollaborationRejectsInvalidOrNonOnboardedSessionBeforeSpiceDB(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	nonOnboarded := seedCollaborationAuthorizationPrincipal(t, db, false)
 	spiceDB := integrationSpiceDB(t)
@@ -281,6 +284,7 @@ func TestAuthorizeCollaborationRejectsInvalidOrNonOnboardedSessionBeforeSpiceDB(
 }
 
 func TestAuthorizeCollaborationUsesArchivedObjectPermissionsForEveryLifecycleDomainIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	author := seedCollaborationAuthorizationPrincipal(t, db, true)
 	nonAuthor := seedCollaborationAuthorizationPrincipal(t, db, true)
@@ -529,6 +533,7 @@ func collaborationMapThemeVariant(color string) model.MapThemeVariant {
 }
 
 func TestAuthorizeCollaborationRejectsInvalidPermissionOrResourceIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	service := newAuthorizationService(db, &recordingCollaborationAuthorizationChecker{delegate: integrationSpiceDB(t)}, "")
@@ -548,6 +553,7 @@ func TestAuthorizeCollaborationRejectsInvalidPermissionOrResourceIntegration(t *
 }
 
 func TestAuthorizeCollaborationRejectsNonCanonicalLocaleIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	checker := &recordingCollaborationAuthorizationChecker{delegate: integrationSpiceDB(t)}
@@ -567,6 +573,7 @@ func TestAuthorizeCollaborationRejectsNonCanonicalLocaleIntegration(t *testing.T
 }
 
 func TestAuthorizeCollaborationArchivedPostRejectsResourceCollaboratorViewIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	collaborator := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)
@@ -592,6 +599,7 @@ func TestAuthorizeCollaborationArchivedPostRejectsResourceCollaboratorViewIntegr
 }
 
 func TestAuthorizeCollaborationHidesEveryMissingRootWithoutSpiceDBFallbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	principal := seedCollaborationAuthorizationPrincipal(t, db, true)
 	spiceDB := integrationSpiceDB(t)

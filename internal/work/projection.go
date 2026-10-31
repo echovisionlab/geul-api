@@ -106,23 +106,6 @@ func (s *WorkService) getWorkFeaturedImageAsset(ctx context.Context, workID stri
 	return asset
 }
 
-// getWorkCreditsWithError fetches credits for a work with error handling
-func (s *WorkService) getWorkCreditsWithError(ctx context.Context, workID string) ([]*managev1.WorkCredit, error) {
-	var credits []model.WorkCredit
-	if err := s.db.WithContext(ctx).
-		Where("work_id = ?", workID).
-		Order("sort_order").
-		Find(&credits).Error; err != nil {
-		return nil, err
-	}
-
-	protoCredits := make([]*managev1.WorkCredit, len(credits))
-	for i, c := range credits {
-		protoCredits[i] = s.toProtoCredit(ctx, &c)
-	}
-	return protoCredits, nil
-}
-
 func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*managev1.WorkClient, error) {
 	type clientRow struct {
 		ID          string

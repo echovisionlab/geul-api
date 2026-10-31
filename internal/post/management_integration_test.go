@@ -23,6 +23,7 @@ import (
 )
 
 func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Post query admin")
@@ -96,6 +97,7 @@ func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
 }
 
 func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminID := testutil.PostIntegrationUUID()
 	authorID := testutil.PostIntegrationUUID()

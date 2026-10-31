@@ -53,6 +53,7 @@ func (accountRoleNoopLifecyclePublisher) PublishUserDeleteAvatarWithExecutor(
 }
 
 func TestSetAccountRoleConcurrentPeerDemotionKeepsOneActiveAdminIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	first := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	second := stack.CreateUser(t, policyv1.Role.Admin().ID())

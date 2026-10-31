@@ -180,7 +180,7 @@ func (p *KratosPublicProxy) resolveFlowRecipient(
 	request *http.Request,
 	issuance AuthCodeIssuanceRequest,
 ) (string, error) {
-	flowKind := ""
+	var flowKind string
 	switch issuance.EventKey {
 	case email.EventLoginCode:
 		flowKind = "login"

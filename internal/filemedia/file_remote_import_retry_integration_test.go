@@ -26,7 +26,8 @@ import (
 )
 
 func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
 	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
 
@@ -123,7 +124,8 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 }
 
 func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownloadDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	correlationID := uuid.NewString()
 	entityID := uuid.NewString()
 	opts := remoteFileImportOptions{
@@ -185,7 +187,8 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 }
 
 func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	userID := uuid.NewString()
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
@@ -253,7 +256,8 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 }
 
 func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
 	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote retry track")
 
@@ -400,7 +404,8 @@ func validRemoteImportWebPBytes() []byte {
 }
 
 func TestRemoteImportAdvisoryLockSerializesSameOperationDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	fileID := uuid.NewString()
 	firstEntered := make(chan struct{})
 	releaseFirst := make(chan struct{})
@@ -454,7 +459,8 @@ func TestRemoteImportAdvisoryLockSerializesSameOperationDirectIntegration(t *tes
 }
 
 func TestRemoteImportAdvisoryLockUnlocksAfterRequestCancellationDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	fileID := uuid.NewString()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -478,7 +484,8 @@ func TestRemoteImportAdvisoryLockUnlocksAfterRequestCancellationDirectIntegratio
 }
 
 func TestMultipartCompletionAdvisoryLockSerializesSameSessionDirectIntegration(t *testing.T) {
-	stack := testutil.SetupSharedDirectMediaRuntimeStack(t)
+	t.Parallel()
+	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	uploadID := uuid.NewString()
 	fileID := uuid.NewString()
 	firstEntered := make(chan struct{})

@@ -20,6 +20,7 @@ import (
 )
 
 func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		invoke func(context.Context, *postdomain.PostService, string, string) error
@@ -106,6 +107,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 }
 
 func TestPostUpdateRechecksExistenceAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
@@ -138,6 +140,7 @@ func TestPostUpdateRechecksExistenceAfterRootLockIntegration(t *testing.T) {
 }
 
 func TestExportedLockedPostAccessChecksAuthorityAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		require  func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
@@ -173,6 +176,7 @@ func TestExportedLockedPostAccessChecksAuthorityAfterRootLockIntegration(t *test
 }
 
 func TestPostMutationRejectsMemberTombstonedBeforePrincipalLockIntegration(t *testing.T) {
+	t.Parallel()
 	db, spiceDB, actorID, actorMemberID, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
@@ -210,6 +214,7 @@ func TestPostMutationRejectsMemberTombstonedBeforePrincipalLockIntegration(t *te
 }
 
 func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	actorID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, actorID, "Create role race "+actorID[:8])
@@ -250,6 +255,7 @@ func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T)
 }
 
 func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *testing.T) {
+	t.Parallel()
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	targetID := testutil.PostIntegrationUUID()
 	targetMemberID := testutil.PostIntegrationMemberID(targetID)

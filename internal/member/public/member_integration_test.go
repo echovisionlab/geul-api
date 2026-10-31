@@ -51,7 +51,8 @@ func (l *memberQueryBudgetLogger) snapshot() []string {
 }
 
 func TestPublicMemberListAuthorsHasConstantQueryBudgetIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, spiceDB := newPublicIntegrationDB(t)
 	ctx := context.Background()
 	createdAt := time.Date(2026, 8, 4, 1, 0, 0, 0, time.UTC)
 
@@ -63,8 +64,8 @@ func TestPublicMemberListAuthorsHasConstantQueryBudgetIntegration(t *testing.T) 
 		testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
 			ID: identityID, Name: name, CreatedAt: createdAt.Add(time.Duration(index) * time.Minute),
 		})
-		memberID := seedPublicMemberIdentityLink(t, db, identityID, name)
-		publicSyncIntegrationRole(t, identityID, policyv1.Role.Author())
+		memberID := seedPublicMemberIdentityLink(t, db, spiceDB, identityID, name)
+		publicSyncIntegrationRole(t, spiceDB, identityID, policyv1.Role.Author())
 		memberIDs = append(memberIDs, memberID)
 		require.NoError(t, db.Model(&model.Member{}).Where("id = ?", memberID).Updates(structured.Fields{
 			"bio":        bio,
@@ -84,7 +85,7 @@ func TestPublicMemberListAuthorsHasConstantQueryBudgetIntegration(t *testing.T) 
 		t.Run("limit_"+string(rune('0'+limit)), func(t *testing.T) {
 			budget := newMemberQueryBudgetLogger()
 			budgetDB := db.Session(&gorm.Session{Logger: budget})
-			svc := NewMemberService(budgetDB, "https://cdn.example.test", publicIntegrationSpiceDB)
+			svc := NewMemberService(budgetDB, "https://cdn.example.test", spiceDB)
 
 			response, err := svc.ListAuthors(
 				ctx,
@@ -101,7 +102,8 @@ func TestPublicMemberListAuthorsHasConstantQueryBudgetIntegration(t *testing.T) 
 }
 
 func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrderIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, spiceDB := newPublicIntegrationDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -111,8 +113,8 @@ func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrde
 		testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
 			ID: identityID, Name: name, CreatedAt: now,
 		})
-		memberID := seedPublicMemberIdentityLink(t, db, identityID, name)
-		publicSyncIntegrationRole(t, identityID, role)
+		memberID := seedPublicMemberIdentityLink(t, db, spiceDB, identityID, name)
+		publicSyncIntegrationRole(t, spiceDB, identityID, role)
 		return memberID, identityID
 	}
 	authorID, _ := seed("Selected Author", policyv1.Role.Author())
@@ -125,7 +127,7 @@ func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrde
 		VALUES (?::uuid, ?::uuid, ?)
 	`, postID, authorID, now).Error)
 
-	response, err := NewMemberService(db, "https://cdn.example.test", publicIntegrationSpiceDB).ListAuthors(
+	response, err := NewMemberService(db, "https://cdn.example.test", spiceDB).ListAuthors(
 		ctx,
 		connect.NewRequest(&openv1.ListAuthorsRequest{MemberIds: []string{adminID, userID, authorID}}),
 	)
@@ -136,7 +138,7 @@ func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrde
 	require.Equal(t, authorID, response.Msg.Authors[1].Member.Id)
 	require.Equal(t, int32(1), response.Msg.Authors[1].PostCount)
 
-	_, err = NewMemberService(db, "https://cdn.example.test", publicIntegrationSpiceDB).ListAuthors(
+	_, err = NewMemberService(db, "https://cdn.example.test", spiceDB).ListAuthors(
 		ctx,
 		connect.NewRequest(&openv1.ListAuthorsRequest{MemberIds: []string{authorID, authorID}}),
 	)
@@ -144,14 +146,15 @@ func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrde
 }
 
 func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, spiceDB := newPublicIntegrationDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	identityID := uuid.NewString()
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
 		ID: identityID, Name: "Role Profile", CreatedAt: now,
 	})
-	memberID := seedPublicMemberIdentityLink(t, db, identityID, "Role Profile")
+	memberID := seedPublicMemberIdentityLink(t, db, spiceDB, identityID, "Role Profile")
 	bio := "stored biography"
 	website := "https://profile.example.test"
 	require.NoError(t, db.Model(&model.Member{}).Where("id = ?", memberID).Updates(structured.Fields{
@@ -166,7 +169,7 @@ func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t 
 		VALUES (?::uuid, ?::uuid, ?)
 	`, postID, memberID, now).Error)
 
-	service := NewMemberService(db, "https://cdn.example.test", publicIntegrationSpiceDB)
+	service := NewMemberService(db, "https://cdn.example.test", spiceDB)
 	assertVisibility := func(t *testing.T, visible bool) {
 		t.Helper()
 		profile, err := service.GetPublicMember(ctx, connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}))
@@ -190,7 +193,7 @@ func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t 
 
 	assertVisibility(t, false)
 	for _, role := range []policyv1.RoleID{policyv1.Role.Author(), policyv1.Role.User(), policyv1.Role.Admin()} {
-		publicSyncIntegrationRole(t, identityID, role)
+		publicSyncIntegrationRole(t, spiceDB, identityID, role)
 		assertVisibility(t, role != policyv1.Role.User())
 	}
 
@@ -201,7 +204,8 @@ func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t 
 }
 
 func TestDeletedMemberMarkerSurvivesPublicProfileAndAuthorProjectionIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, spiceDB := newPublicIntegrationDB(t)
 	ctx := context.Background()
 	memberID := uuid.NewString()
 	postID := uuid.NewString()
@@ -222,7 +226,7 @@ func TestDeletedMemberMarkerSurvivesPublicProfileAndAuthorProjectionIntegration(
 		VALUES (?::uuid, ?::uuid)
 	`, postID, memberID).Error)
 
-	svc := NewMemberService(db, "https://cdn.example.test", publicIntegrationSpiceDB)
+	svc := NewMemberService(db, "https://cdn.example.test", spiceDB)
 	profile, err := svc.GetPublicMember(
 		ctx,
 		connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}),
@@ -249,7 +253,8 @@ func TestDeletedMemberMarkerSurvivesPublicProfileAndAuthorProjectionIntegration(
 }
 
 func TestUnlinkedMemberIsImmediatelyScrubbedAsPublicTombstoneIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, spiceDB := newPublicIntegrationDB(t)
 	memberID := uuid.NewString()
 	nickname := "UnlinkedPrivateName"
 	bio := "Unlinked private bio"
@@ -264,7 +269,7 @@ func TestUnlinkedMemberIsImmediatelyScrubbedAsPublicTombstoneIntegration(t *test
 		AssetID: avatarAssetID, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar",
 	}).Error)
 
-	profile, err := NewMemberService(db, "https://cdn.example.test", publicIntegrationSpiceDB).GetPublicMember(
+	profile, err := NewMemberService(db, "https://cdn.example.test", spiceDB).GetPublicMember(
 		context.Background(),
 		connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}),
 	)
@@ -279,7 +284,8 @@ func TestUnlinkedMemberIsImmediatelyScrubbedAsPublicTombstoneIntegration(t *test
 }
 
 func TestUnonboardedMemberIsAbsentFromPublicProfileAndSharedProjectionIntegration(t *testing.T) {
-	db := newPublicIntegrationDB(t)
+	t.Parallel()
+	db, spiceDB := newPublicIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	email := "unonboarded@example.test"
@@ -305,7 +311,7 @@ func TestUnonboardedMemberIsAbsentFromPublicProfileAndSharedProjectionIntegratio
 		`UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid`, memberID, identityID,
 	).Error)
 
-	profile, err := NewMemberService(db, "https://cdn.example.test", publicIntegrationSpiceDB).GetPublicMember(
+	profile, err := NewMemberService(db, "https://cdn.example.test", spiceDB).GetPublicMember(
 		context.Background(),
 		connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}),
 	)

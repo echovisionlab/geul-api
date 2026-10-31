@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,6 +27,13 @@ const (
 )
 
 const integrationHarnessPackage = "./scripts/test/integration"
+
+// integrationProcessDependencies lists packages whose tests start other module
+// binaries; a change to such a binary's dependencies selects them as well.
+var integrationProcessDependencies = map[string][]string{
+	"./internal/filemedia":        {"./cmd/server"},
+	"./internal/referencecatalog": {"./cmd/server"},
+}
 
 var integrationCatalog = []integrationBand{
 	{
@@ -60,10 +68,12 @@ var integrationCatalog = []integrationBand{
 		},
 	},
 	{
-		// Uses the orchestrator-owned Kratos, SpiceDB, Oathkeeper, MinIO, or
-		// backend lease. Packages run one at a time with a backend reset between them.
-		Name:      "ory",
-		Resources: integrationSharedBackend,
+		// Uses the orchestrator-owned Kratos, SpiceDB, Oathkeeper or MinIO. Every
+		// test clones its own database and SpiceDB datastore, so packages and
+		// tests run concurrently on the shared services.
+		Name:             "ory",
+		Resources:        integrationSharedBackend,
+		ParallelPackages: true,
 		Packages: []string{
 			"./internal/account",
 			"./internal/adapters/collaboration",
@@ -99,7 +109,6 @@ var integrationCatalog = []integrationBand{
 			"./internal/post/public",
 			"./internal/programevent",
 			"./internal/programevent/public",
-			"./internal/referencecatalog",
 			"./internal/referencecatalog/public",
 			"./internal/release",
 			"./internal/series",
@@ -123,6 +132,7 @@ var integrationCatalog = []integrationBand{
 		Packages: []string{
 			"./cmd/backend-integration-stack",
 			"./internal/filemedia",
+			"./internal/referencecatalog",
 			"./internal/testutil",
 		},
 	},
@@ -155,9 +165,9 @@ func catalogPackagePaths() []string {
 	return packages
 }
 
-func discoverIntegrationPackages(repoRoot, goWork string) ([]string, error) {
+func discoverIntegrationPackages(ctx context.Context, repoRoot, goWork string) ([]string, error) {
 	format := `{{.Dir}}|{{join .TestGoFiles ","}}|{{join .XTestGoFiles ","}}`
-	command := exec.Command("go", "list", "-tags=integration", "-f", format, "./...")
+	command := exec.CommandContext(ctx, "go", "list", "-tags=integration", "-f", format, "./...")
 	command.Dir = repoRoot
 	command.Env = integrationCommandEnvironment(goWork)
 	output, err := command.Output()

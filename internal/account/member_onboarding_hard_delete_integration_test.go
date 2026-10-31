@@ -32,6 +32,7 @@ func (m *guardedUnonboardedIdentityManager) DeleteIdentity(context.Context, stri
 }
 
 func TestAdminUnonboardedDeleteQueuesHardDeleteWithActorAudit(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -97,6 +98,7 @@ func (failingUnonboardedDeleteAuditWriter) AppendDomainAuditInTransaction(contex
 }
 
 func TestUnonboardedDeleteAuditFailureRollsBackQueueInsert(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())

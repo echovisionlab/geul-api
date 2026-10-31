@@ -27,6 +27,7 @@ import (
 )
 
 func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()

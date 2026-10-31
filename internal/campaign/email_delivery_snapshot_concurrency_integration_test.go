@@ -28,6 +28,7 @@ import (
 func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 	t *testing.T,
 ) {
+	t.Parallel()
 	for _, deleteFirst := range []bool{false, true} {
 		name := "assignment_first"
 		if deleteFirst {
@@ -192,6 +193,7 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 	t *testing.T,
 ) {
+	t.Parallel()
 	for _, deleteFirst := range []bool{false, true} {
 		name := "assignment_first"
 		if deleteFirst {

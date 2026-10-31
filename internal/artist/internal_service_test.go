@@ -41,6 +41,7 @@ func seedInternalArtist(t *testing.T, db *gorm.DB, contentBlocks *contentblock.S
 }
 
 func TestInternalArtistParentRelationRejectsCyclesAndCanBeClearedIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()

@@ -208,6 +208,7 @@ func TestHandleCleanupDanglingFilesDoesNotDeleteLibraryFilesByAgeOrUsage(t *test
 }
 
 func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db := newWorkerIntegrationDB(t)
 	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
@@ -266,6 +267,7 @@ func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *t
 }
 
 func TestCleanupRetiredMediaGenerationsS3FailureDoesNotStarveFollowingRows(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db := newWorkerIntegrationDB(t)
 	now := time.Now().UTC()
@@ -305,6 +307,7 @@ func TestCleanupRetiredMediaGenerationsS3FailureDoesNotStarveFollowingRows(t *te
 }
 
 func TestHandleCleanupPublicAssetsDeletesObjectsPurgesPrefixAndFinalizesLifecycle(t *testing.T) {
+	t.Parallel()
 	t.Run("purge enabled", func(t *testing.T) {
 		testCleanupPublicAssetLifecycle(t, true)
 	})
@@ -406,8 +409,8 @@ func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 	require.Empty(t, listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, "asset/"))
 }
 
-// newWorkerIntegrationS3 remains the shared worker-test entrypoint used by
-// other integration files in this package.
+// newWorkerIntegrationS3 remains the worker-test entrypoint used by other
+// integration files in this package.
 func newWorkerIntegrationS3(t *testing.T) (*s3.Client, *config.Config) {
 	t.Helper()
 	client, cfg, err := newWorkerIntegrationS3FromSharedLease(t.Context())
@@ -435,6 +438,12 @@ func newWorkerIntegrationS3FromSharedLease(ctx context.Context) (*s3.Client, *co
 		options.BaseEndpoint = aws.String(cfg.S3Endpoint)
 		options.UsePathStyle = cfg.S3ForcePathStyle
 	})
+	// Each caller gets its own bucket so prefix listings only see objects the
+	// test wrote. The MinIO container is discarded with the suite.
+	cfg.S3Bucket = "it-worker-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(cfg.S3Bucket)}); err != nil {
+		return nil, nil, fmt.Errorf("create worker integration S3 bucket %s: %w", cfg.S3Bucket, err)
+	}
 	return client, cfg, nil
 }
 

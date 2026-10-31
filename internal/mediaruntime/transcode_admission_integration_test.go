@@ -14,6 +14,7 @@ import (
 )
 
 func TestTranscodeAdmissionReadsDurableCancellationIntegration(t *testing.T) {
+	t.Parallel()
 	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
 	identity := handler.JobIdentity{
 		EventID: uuid.NewString(), EntityType: apiv1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,

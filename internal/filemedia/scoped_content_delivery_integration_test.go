@@ -20,6 +20,7 @@ import (
 )
 
 func TestResolveAuthorizedPostFeaturedImageRejectsChangedOrPendingExactSlotIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		mutate func(*gorm.DB, scopedFeaturedFixture) error
@@ -64,6 +65,7 @@ func TestResolveAuthorizedPostFeaturedImageRejectsChangedOrPendingExactSlotInteg
 // Post editor delivery must use the exact Post owner and active attachment,
 // including when original downloads are disabled for the current editor.
 func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"active", "detached", "replaced", "deleting", "wrong owner"} {
 		t.Run(state, func(t *testing.T) {
 			db := newConcurrentServiceIntegrationDB(t)
@@ -101,6 +103,7 @@ func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
 }
 
 func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		mutate func(*gorm.DB, scopedBlockFixture) error
@@ -158,6 +161,7 @@ func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIn
 }
 
 func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		mutate func(context.Context, *sql.Tx, scopedBlockFixture) error
@@ -258,6 +262,7 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 }
 
 func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementIntegration(t *testing.T) {
+	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	fixture := seedScopedPageBlockFixture(t, db)
 	ownedBlockID := uuid.NewString()
@@ -300,6 +305,7 @@ func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementI
 }
 
 func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name   string
 		mutate func(context.Context, *sql.Tx, scopedFeaturedFixture) error

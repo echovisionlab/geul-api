@@ -34,6 +34,7 @@ func newSiteSettingIntegrationService(t *testing.T, db *gorm.DB) (*sitesettings.
 }
 
 func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
@@ -75,6 +76,7 @@ func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {
 
 // MCP general SVG ingest produces a ready image asset, rather than a dedicated logo asset.
 func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 	lightID, lightURL := seedSiteSettingReadyFile(t, db, "library-light", "image", "svg", "image/svg+xml", 1024)
@@ -116,6 +118,7 @@ func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
 }
 
 func TestSiteSettingLoaderAssetsUseOrderedRelationOnlyIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 	fileID := uuid.NewString()
@@ -154,6 +157,7 @@ func TestSiteSettingLoaderAssetsUseOrderedRelationOnlyIntegration(t *testing.T) 
 }
 
 func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
@@ -194,6 +198,7 @@ func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
 }
 
 func TestSiteSettingHomepageRequiresPublishedPageIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
@@ -238,6 +243,7 @@ func TestSiteSettingHomepageRequiresPublishedPageIntegration(t *testing.T) {
 }
 
 func TestSiteSettingOgInvalidationReturnsOneRunForOverlappingChangesIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
@@ -273,6 +279,7 @@ func TestSiteSettingOgInvalidationReturnsOneRunForOverlappingChangesIntegration(
 }
 
 func TestSiteSettingLegalOgBackgroundPersistsWithoutPublishedLegalContentIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
@@ -308,6 +315,7 @@ func TestSiteSettingLegalOgBackgroundPersistsWithoutPublishedLegalContentIntegra
 }
 
 func TestSiteSettingOgPlannerFailureRollsBackSettingAndRunIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 	missingAssetFileID := uuid.NewString()

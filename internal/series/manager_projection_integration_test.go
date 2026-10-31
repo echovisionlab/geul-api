@@ -21,6 +21,7 @@ import (
 // attribution, while the removed identity must immediately lose SpiceDB
 // authority to list or mutate the series.
 func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	db := newServiceIntegrationDB(t)
 	adminID := integrationTestUUID()

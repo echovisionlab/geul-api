@@ -21,6 +21,7 @@ import (
 )
 
 func TestLegalVersionCreateRejectsAdminRevokedWhileVersionLockWaitsIntegration(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []struct {
 		name     string
 		lockName string

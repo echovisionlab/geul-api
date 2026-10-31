@@ -30,6 +30,7 @@ const (
 )
 
 func TestAudienceSegmentTypeSwitchWithoutConfigClearsObservedFiltersIntegration(t *testing.T) {
+	t.Parallel()
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
 	userTagID := uuid.NewString()
@@ -63,6 +64,7 @@ func TestAudienceSegmentTypeSwitchWithoutConfigClearsObservedFiltersIntegration(
 }
 
 func TestAudienceArchivePreservesCampaignAndUserTagReferencesUnit(t *testing.T) {
+	t.Parallel()
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
 	segmentID := uuid.NewString()
@@ -107,6 +109,7 @@ func TestAudienceArchivePreservesCampaignAndUserTagReferencesUnit(t *testing.T) 
 }
 
 func TestAudienceSegmentUpdateRejectsActiveCampaignAndRunUnit(t *testing.T) {
+	t.Parallel()
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
 	segmentID := uuid.NewString()
@@ -153,6 +156,7 @@ func TestAudienceSegmentUpdateRejectsActiveCampaignAndRunUnit(t *testing.T) {
 }
 
 func TestAudienceArchiveCancelsScheduledWorkDetachesFilesAndRestoresUnit(t *testing.T) {
+	t.Parallel()
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
 	segmentID := uuid.NewString()
@@ -277,6 +281,7 @@ func TestAudienceArchiveCancelsScheduledWorkDetachesFilesAndRestoresUnit(t *test
 }
 
 func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T) {
+	t.Parallel()
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
 	segmentID := uuid.NewString()
@@ -334,6 +339,7 @@ func TestArchivedAudienceSegmentAdminCanUpdateMetadataAndConfigUnit(t *testing.T
 }
 
 func TestAudienceAdminListDefaultsToActiveAndCanIncludeArchivedUnit(t *testing.T) {
+	t.Parallel()
 	db := newAudienceAccessMutationDB(t)
 	spiceDB, adminCtx := audienceAccessAdminContext(t, db)
 	activeID := uuid.NewString()

@@ -15,6 +15,7 @@ import (
 )
 
 func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	admin := mapThemeAdminUser(t)
@@ -63,6 +64,7 @@ func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T
 }
 
 func TestMapThemeAdminSnapshotUpdateDenialAndAuditRollbackIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	admin := mapThemeAdminUser(t)

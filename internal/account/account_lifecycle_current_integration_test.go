@@ -80,6 +80,7 @@ func (p *lifecycleDeletionPublisher) PublishUserDeleteAvatar(_ context.Context, 
 }
 
 func TestAccountLifecycleDeletionCanCancelAndRecoverCurrentPair(t *testing.T) {
+	t.Parallel()
 	t.Run("cancel", func(t *testing.T) {
 		db, manager, spiceDB, memberID, identityID, email := setupAccountLifecyclePair(t, policyv1.Role.User())
 		publisher := &lifecycleEmailPublisher{}
@@ -185,6 +186,7 @@ func requireAccountDeletionAuditTransitions(
 }
 
 func TestScheduleImmediateUserDeletionRejectsLastActiveAdmin(t *testing.T) {
+	t.Parallel()
 	db, manager, spiceDB, memberID, identityID, _ := setupAccountLifecyclePair(t, policyv1.Role.Admin())
 	publisher := &lifecycleDeletionPublisher{}
 
@@ -196,6 +198,7 @@ func TestScheduleImmediateUserDeletionRejectsLastActiveAdmin(t *testing.T) {
 }
 
 func TestRequestDeletionSynchronizesRemovedPrimaryBeforeSnapshot(t *testing.T) {
+	t.Parallel()
 	db, manager, spiceDB, memberID, identityID, _ := setupAccountLifecyclePair(t, policyv1.Role.User())
 	fallbackEmail := "fallback-" + identityID + "@example.test"
 	manager.identity.Traits = map[string]interface{}{"email": fallbackEmail}

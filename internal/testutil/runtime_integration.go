@@ -151,6 +151,8 @@ func setupSuiteRuntimeStack(t *testing.T, backendURL, webURL, cdnURL, hookURL st
 	})
 
 	stack := newRuntimeStackFromBackendLease(ory, backend, backendURL, webURL, cdnURL)
+	stack.S3MediaBucket, stack.S3CacheBucket, err = openIsolatedS3Buckets(t.Context(), backend)
+	require.NoError(t, err)
 	stack.CollabURL = fmt.Sprintf("http://127.0.0.1:%d", reserveLocalPort(t))
 	stack.CollabHealth = fmt.Sprintf("http://127.0.0.1:%d/health", reserveLocalPort(t))
 	return stack
@@ -383,17 +385,17 @@ func (coordinator *runtimeApplicationCoordinator) activate(
 	return nil
 }
 
-func (stack *RuntimeStack) stopApplicationProcesses(ctx context.Context) error {
+func (s *RuntimeStack) stopApplicationProcesses(ctx context.Context) error {
 	processes := []*runtimeProcess{
-		stack.collabProc,
-		stack.transcoderProc,
-		stack.waveformProc,
-		stack.backendProc,
+		s.collabProc,
+		s.transcoderProc,
+		s.waveformProc,
+		s.backendProc,
 	}
-	stack.collabProc = nil
-	stack.transcoderProc = nil
-	stack.waveformProc = nil
-	stack.backendProc = nil
+	s.collabProc = nil
+	s.transcoderProc = nil
+	s.waveformProc = nil
+	s.backendProc = nil
 
 	for _, process := range processes {
 		if process != nil {
@@ -863,11 +865,7 @@ func startRuntimeProcess(t *testing.T, spec runtimeProcessSpec) *runtimeProcess 
 		if cmd.Process == nil {
 			return nil
 		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
-		return err
+		return signalRuntimeProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
 	}
 	cmd.WaitDelay = 10 * time.Second
 
@@ -1026,7 +1024,9 @@ func (process *runtimeProcess) stop(ctx context.Context) error {
 
 func signalRuntimeProcessGroup(pid int, signal syscall.Signal) error {
 	err := syscall.Kill(-pid, signal)
-	if errors.Is(err, syscall.ESRCH) {
+	// Darwin reports EPERM instead of ESRCH once the group holds only
+	// unreaped zombies; the group is our own child, so it is already exiting.
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.EPERM) {
 		return nil
 	}
 	return err
@@ -1225,7 +1225,7 @@ func reserveLocalPort(t *testing.T) int {
 	t.Helper()
 
 	for attempt := 0; attempt < 64; attempt++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		addr, ok := listener.Addr().(*net.TCPAddr)
 		require.True(t, ok)

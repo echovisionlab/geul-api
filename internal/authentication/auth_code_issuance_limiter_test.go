@@ -24,13 +24,13 @@ func newIntegrationAuthCodeIssuanceLimiter(
 	limits AuthCodeIssuanceLimits,
 ) (*AuthCodeIssuanceLimiter, *gorm.DB) {
 	t.Helper()
-	db := newConcurrentAuthenticationIntegrationDB(t)
-	require.NoError(t, db.Exec("DELETE FROM public.auth_code_issuance").Error)
+	db := newAuthenticationIntegrationDB(t)
 	limiter := NewAuthCodeIssuanceLimiter(db, []byte("test-key-secret"), limits)
 	return limiter, db
 }
 
 func TestAuthCodeIssuanceLimiterRejectsBeforeSecondIssuance(t *testing.T) {
+	t.Parallel()
 	limiter, db := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
 	limiter.now = func() time.Time { return now }
@@ -67,6 +67,7 @@ func TestAuthCodeIssuanceLimiterRejectsBeforeSecondIssuance(t *testing.T) {
 }
 
 func TestAuthCodeIssuanceLimiterReleaseRestoresAllBudgets(t *testing.T) {
+	t.Parallel()
 	limits := defaultAuthCodeIssuanceLimits()
 	limits.GlobalPerMinute = 1
 	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, limits)
@@ -88,6 +89,7 @@ func TestAuthCodeIssuanceLimiterReleaseRestoresAllBudgets(t *testing.T) {
 }
 
 func TestAuthCodeIssuanceLimiterSerializesConcurrentGlobalLimit(t *testing.T) {
+	t.Parallel()
 	limits := defaultAuthCodeIssuanceLimits()
 	limits.GlobalPerMinute = 1
 	limiter, db := newIntegrationAuthCodeIssuanceLimiter(t, limits)
@@ -142,6 +144,7 @@ func TestAuthCodeIssuanceLimiterSerializesConcurrentGlobalLimit(t *testing.T) {
 }
 
 func TestDeleteExpiredAuthCodeIssuancesIsBounded(t *testing.T) {
+	t.Parallel()
 	_, db := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
 	require.NoError(t, db.Exec(`
@@ -198,6 +201,7 @@ func TestDeleteExpiredAuthCodeIssuancesIsBounded(t *testing.T) {
 }
 
 func TestAuthCodeIssuanceLimiterCurrentReservationIsPurposeAndRecipientBound(t *testing.T) {
+	t.Parallel()
 	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	issuedAt := time.Date(2026, time.July, 31, 10, 0, 0, 123456789, time.UTC)
 	limiter.now = func() time.Time { return issuedAt }
@@ -238,6 +242,7 @@ func TestAuthCodeIssuanceLimiterCurrentReservationIsPurposeAndRecipientBound(t *
 }
 
 func TestAuthCodeIssuanceLimiterCurrentReservationRejectsTamperedAndMissingRecord(t *testing.T) {
+	t.Parallel()
 	limiter, db := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	request := AuthCodeIssuanceRequest{
 		EventKey:  email.EventVerificationCode,
@@ -270,6 +275,7 @@ func TestAuthCodeIssuanceLimiterCurrentReservationRejectsTamperedAndMissingRecor
 }
 
 func TestAuthCodeIssuanceLimiterEnforcesAddressBudgetAcrossPurposes(t *testing.T) {
+	t.Parallel()
 	limits := defaultAuthCodeIssuanceLimits()
 	limits.Cooldown = time.Millisecond
 	limits.AddressHourly = 2
@@ -302,6 +308,7 @@ func TestAuthCodeIssuanceLimiterEnforcesAddressBudgetAcrossPurposes(t *testing.T
 }
 
 func TestAuthCodeIssuanceLimiterUsesOneCooldownForLoginAndRegistration(t *testing.T) {
+	t.Parallel()
 	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
 	limiter.now = func() time.Time { return now }
@@ -325,6 +332,7 @@ func TestAuthCodeIssuanceLimiterUsesOneCooldownForLoginAndRegistration(t *testin
 }
 
 func TestAuthCodeIssuanceLimiterAcceptsFlowWhenRecipientIsUnavailable(t *testing.T) {
+	t.Parallel()
 	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 
 	_, allowed, _, err := limiter.Reserve(context.Background(), AuthCodeIssuanceRequest{
@@ -337,6 +345,7 @@ func TestAuthCodeIssuanceLimiterAcceptsFlowWhenRecipientIsUnavailable(t *testing
 }
 
 func TestAuthCodeIssuanceLimiterRejectsInvalidRequest(t *testing.T) {
+	t.Parallel()
 	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 
 	_, _, _, err := limiter.Reserve(context.Background(), AuthCodeIssuanceRequest{
@@ -361,7 +370,8 @@ func TestAuthCodeIssuanceLimiterRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestNewAuthCodeIssuanceLimiterRejectsInvalidConfiguration(t *testing.T) {
-	db := newConcurrentAuthenticationIntegrationDB(t)
+	t.Parallel()
+	db := newAuthenticationIntegrationDB(t)
 	valid := defaultAuthCodeIssuanceLimits()
 
 	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(nil, []byte("secret"), valid) })
@@ -372,6 +382,7 @@ func TestNewAuthCodeIssuanceLimiterRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestAuthCodeAdmissionHeadersEndToEnd(t *testing.T) {
+	t.Parallel()
 	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

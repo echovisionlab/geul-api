@@ -327,12 +327,16 @@ func (s *PostService) ListPostsAdmin(
 	}
 	postsWithStats := make([]*managev1.PostWithStats, len(posts))
 	for i := range posts {
+		protoPost, err := s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
+			readyOgAssets,
+			posts[i].SourceLocaleOgAssetID,
+			posts[i].OgAssetID,
+		), authorMembers[posts[i].ID], featuredDeliveries[posts[i].ID], authorities[posts[i].ID])
+		if err != nil {
+			return nil, err
+		}
 		postsWithStats[i] = &managev1.PostWithStats{
-			Post: s.toProtoPostWithProjection(&posts[i], manageOgAssetFromReadyMap(
-				readyOgAssets,
-				posts[i].SourceLocaleOgAssetID,
-				posts[i].OgAssetID,
-			), authorMembers[posts[i].ID], featuredDeliveries[posts[i].ID], authorities[posts[i].ID]),
+			Post:         protoPost,
 			ViewCount:    0,
 			CommentCount: commentCounts[posts[i].ID],
 		}
@@ -434,13 +438,17 @@ func (s *PostService) UpdatePost(
 		}
 		return nil, errs.Internal(err)
 	}
+	documentLayout, err := post.DocumentLayout.Proto()
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	return connect.NewResponse(&managev1.UpdatePostResponse{
 		Id:                    post.ID,
 		Changed:               changed,
 		Slug:                  post.Slug,
 		CommentsEnabled:       post.CommentsEnabled,
 		MapPlaceId:            post.MapPlaceID,
-		DocumentLayout:        post.DocumentLayout.Proto(),
+		DocumentLayout:        documentLayout,
 		ConfigurationRevision: post.ConfigurationRevision,
 		UpdatedAt:             timestamppb.New(post.UpdatedAt),
 	}), nil

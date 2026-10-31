@@ -19,6 +19,7 @@ import (
 )
 
 func TestEmailTemplateServiceCreateEmailTemplateSeedsCanonicalSourceLocaleRowIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
@@ -65,6 +66,7 @@ func TestEmailTemplateServiceCreateEmailTemplateSeedsCanonicalSourceLocaleRowInt
 }
 
 func TestEmailTemplateServiceCreateEmailTemplateRejectsInvalidSourceLocaleWithoutPersistenceIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	service := NewEmailTemplateService(
@@ -100,6 +102,7 @@ func TestEmailTemplateServiceCreateEmailTemplateRejectsInvalidSourceLocaleWithou
 }
 
 func TestEmailTemplateServiceCreateEmailTemplatePersistsRootDocumentAndSourceSubjectAtomicallyIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	service := NewEmailTemplateService(
@@ -139,6 +142,7 @@ func TestEmailTemplateServiceCreateEmailTemplatePersistsRootDocumentAndSourceSub
 }
 
 func TestEmailTemplateServiceListDoesNotRequireTranslationSourceStateIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	now := time.Now().UTC()
@@ -188,7 +192,8 @@ func TestEmailTemplateServiceListDoesNotRequireTranslationSourceStateIntegration
 }
 
 func TestCustomEmailTemplateVariablesFollowTypedSourceBlocksIntegration(t *testing.T) {
-	db := testutil.NewIntegrationDB(t)
+	t.Parallel()
+	db := newEmailAuthoringLocalKratosIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
 	templateService := NewEmailTemplateService(

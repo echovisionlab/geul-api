@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +18,7 @@ func TestIntegrationCatalogHasExactResourceSemantics(t *testing.T) {
 		parallelPackages bool
 	}{
 		{name: "db", resources: integrationPostgresOnly, parallelPackages: true},
-		{name: "ory", resources: integrationSharedBackend},
+		{name: "ory", resources: integrationSharedBackend, parallelPackages: true},
 		{name: "serial", resources: integrationRuntimeExclusive},
 	}
 	if len(integrationCatalog) != len(wantBands) {
@@ -52,11 +55,13 @@ func TestIntegrationResourceModesDriveBackendAndConcurrency(t *testing.T) {
 	if !ok || !db.ParallelPackages || integrationBandsNeedBackend([]integrationBand{db}) {
 		t.Fatalf("PostgreSQL-only band semantics = %#v", db)
 	}
-	for _, name := range []string{"ory", "serial"} {
-		band, ok := bandByName(name)
-		if !ok || band.ParallelPackages || !integrationBandsNeedBackend([]integrationBand{band}) {
-			t.Fatalf("backend band %s semantics = %#v", name, band)
-		}
+	ory, ok := bandByName("ory")
+	if !ok || !ory.ParallelPackages || !integrationBandsNeedBackend([]integrationBand{ory}) {
+		t.Fatalf("isolated backend band semantics = %#v", ory)
+	}
+	serial, ok := bandByName("serial")
+	if !ok || serial.ParallelPackages || !integrationBandsNeedBackend([]integrationBand{serial}) {
+		t.Fatalf("runtime-exclusive band semantics = %#v", serial)
 	}
 }
 
@@ -67,7 +72,7 @@ func TestRepositoryIntegrationPackagesExactlyMatchCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repository root: %v", err)
 	}
-	discoveredPackages, err := discoverIntegrationPackages(repoRoot, integrationGoWorkOff)
+	discoveredPackages, err := discoverIntegrationPackages(t.Context(), repoRoot, integrationGoWorkOff)
 	if err != nil {
 		t.Fatalf("discover integration packages: %v", err)
 	}
@@ -88,5 +93,44 @@ func TestVerifyIntegrationCatalogRejectsDrift(t *testing.T) {
 	}
 	if err := verifyIntegrationCatalog(append(discoveredPackages, "./internal/newintegration")); err == nil {
 		t.Fatal("expected unclassified integration package to fail")
+	}
+}
+
+// Tests that start application processes depend on those binaries too; the
+// affected-package selection only sees them through integrationProcessDependencies.
+func TestRuntimeStackPackagesDeclareProcessDependencies(t *testing.T) {
+	t.Parallel()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeHelper := regexp.MustCompile(`testutil\.Setup(Shared[A-Za-z]*)?(Direct[A-Za-z]*)?RuntimeStack[A-Za-z]*\(`)
+	var missing []string
+	err = filepath.WalkDir(filepath.Join(repoRoot, "internal"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !runtimeHelper.Match(contents) {
+			return nil
+		}
+		relative, err := filepath.Rel(repoRoot, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		packagePath := "./" + filepath.ToSlash(relative)
+		if _, ok := integrationProcessDependencies[packagePath]; !ok && !slices.Contains(missing, packagePath) {
+			missing = append(missing, packagePath)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) > 0 {
+		t.Fatalf("packages using runtime stacks must list their process dependencies: %v", missing)
 	}
 }

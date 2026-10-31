@@ -20,6 +20,7 @@ import (
 )
 
 func TestPostLateProviderTranslationCannotOverwritePromotedSourceIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminIdentityID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Post source promotion admin")

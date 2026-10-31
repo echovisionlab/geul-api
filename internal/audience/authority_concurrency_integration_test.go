@@ -18,6 +18,7 @@ import (
 )
 
 func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
+	t.Parallel()
 	t.Run("audience create", func(t *testing.T) {
 		db, spiceDB, actorID := seedAudienceAuthorityActor(t)
 		service := newAudienceServiceForTest(db, spiceDB)

@@ -44,7 +44,7 @@ func newExtractedPublicWorkService(
 	t.Helper()
 	return workpublic.NewWorkService(
 		db,
-		publicIntegrationSpiceDB,
+		publicIntegrationSpiceDBFor(t, db),
 		extractedWorkPublicMediaHydrator{},
 		newPublicWorkRuntimeForTest(db, cdnDomain),
 		workadapter.NewMemberSummaries(db, cdnDomain),

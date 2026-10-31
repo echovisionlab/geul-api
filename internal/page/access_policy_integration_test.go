@@ -20,6 +20,7 @@ import (
 )
 
 func TestPageAccessPolicyManagementIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	ctx = withPageAuditedRequestContext(t, ctx)
@@ -100,6 +101,7 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 }
 
 func TestPageAccessPolicyAbsentUpdateReadsLockedStateIntegration(t *testing.T) {
+	t.Parallel()
 	db := newServiceIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	service := NewPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"), newPageIntegrationFiles(db, spiceDB), noopAsyncPublisher{}, nil, spiceDB,

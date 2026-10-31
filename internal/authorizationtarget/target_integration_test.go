@@ -13,6 +13,7 @@ import (
 )
 
 func TestForMemberRequiresAnActiveOnboardedLinkedTargetIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 
@@ -35,6 +36,7 @@ func TestForMemberRequiresAnActiveOnboardedLinkedTargetIntegration(t *testing.T)
 }
 
 func TestEligibleMemberIDsAndLockReferencesIgnoreTemporaryIdentityStateIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 
@@ -78,6 +80,7 @@ func TestEligibleMemberIDsAndLockReferencesIgnoreTemporaryIdentityStateIntegrati
 }
 
 func TestValidateActivePairRejectsIdentityAsMemberIDIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 

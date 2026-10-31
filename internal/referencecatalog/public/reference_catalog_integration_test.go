@@ -16,6 +16,7 @@ import (
 )
 
 func TestPublicReferenceCatalogReadIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	suffix := testutil.IntegrationUUID()[:8]
 	categoryOne := seedPublicReferenceCategory(t, db, "Public Ref Category A "+suffix, "public-ref-category-a-"+suffix)

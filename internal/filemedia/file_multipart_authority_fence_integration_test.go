@@ -19,6 +19,7 @@ import (
 )
 
 func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorityIntegration(t *testing.T) {
+	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())

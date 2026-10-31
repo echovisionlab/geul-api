@@ -4,9 +4,6 @@ package public
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,81 +18,17 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-var publicIntegrationPostgres *testutil.AppPostgres
-var publicIntegrationSpiceDB *auth.SpiceDBClient
-var publicIntegrationStack *testutil.BackendIntegrationStack
-var publicIntegrationPostgresOnce sync.Once
-var publicIntegrationPostgresCleanup func() error
-var publicIntegrationPostgresErr error
-var publicIntegrationStateMu sync.Mutex
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if publicIntegrationPostgresCleanup != nil {
-		if err := publicIntegrationPostgresCleanup(); err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup member public integration postgres: %v\n", err)
-			if code == 0 {
-				code = 1
-			}
-		}
-	}
-	os.Exit(code)
-}
-
-func sharedPublicIntegrationPostgres() (*testutil.AppPostgres, error) {
-	publicIntegrationPostgresOnce.Do(func() {
-		stack, err := testutil.StartBackendIntegrationStack(context.Background())
-		if err != nil {
-			publicIntegrationPostgresErr = err
-			return
-		}
-		publicIntegrationPostgres = stack.Postgres
-		publicIntegrationSpiceDB = stack.SpiceDBClient
-		publicIntegrationStack = stack
-		publicIntegrationPostgresCleanup = stack.Close
-	})
-	return publicIntegrationPostgres, publicIntegrationPostgresErr
-}
-
-func newPublicIntegrationDB(t *testing.T) *gorm.DB {
+// newPublicIntegrationDB starts the test's own backend stack: its own database
+// and SpiceDB datastore, closed when the test ends.
+func newPublicIntegrationDB(t *testing.T) (*gorm.DB, *auth.SpiceDBClient) {
 	t.Helper()
-	preparePublicIntegrationState(t)
-	pg, err := sharedPublicIntegrationPostgres()
+	stack, err := testutil.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
-	return pg.DB
+	t.Cleanup(func() { require.NoError(t, stack.Close()) })
+	return stack.Postgres.DB, stack.SpiceDBClient
 }
 
-func preparePublicIntegrationState(t *testing.T) {
-	t.Helper()
-	publicIntegrationStateMu.Lock()
-	t.Cleanup(publicIntegrationStateMu.Unlock)
-
-	_, err := sharedPublicIntegrationPostgres()
-	require.NoError(t, err)
-	reset := func() error {
-		if err := testutil.ResetBackendIntegrationState(context.Background(), publicIntegrationStack); err != nil {
-			return err
-		}
-		for _, lookup := range []policyv1.SubjectLookup{
-			policyv1.Platform.LookupAdminSubjects(),
-			policyv1.Platform.LookupAuthorSubjects(),
-			policyv1.Platform.LookupUserSubjects(),
-		} {
-			subjects, err := publicIntegrationSpiceDB.LookupGlobalSubjects(context.Background(), lookup)
-			if err != nil {
-				return fmt.Errorf("verify SpiceDB %s baseline: %w", lookup.Permission(), err)
-			}
-			if len(subjects) != 0 {
-				return fmt.Errorf("SpiceDB %s baseline retains %d account identities", lookup.Permission(), len(subjects))
-			}
-		}
-		return nil
-	}
-	require.NoError(t, reset())
-	t.Cleanup(func() { require.NoError(t, reset()) })
-}
-
-func seedPublicMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, nickname string) string {
+func seedPublicMemberIdentityLink(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, identityID, nickname string) string {
 	t.Helper()
 	memberID := uuid.NewString()
 	require.NotEqual(t, identityID, memberID)
@@ -110,7 +43,7 @@ func seedPublicMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, nicknam
 		SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now,
 	}).Error)
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
-	publicSyncIntegrationRole(t, identityID, policyv1.Role.User())
+	publicSyncIntegrationRole(t, spiceDB, identityID, policyv1.Role.User())
 	return memberID
 }
 
@@ -127,10 +60,10 @@ func seedPublicPost(t *testing.T, db *gorm.DB, postID, slug string, publishedAt 
 	`, postID, slug, publishedAt, documentID).Error)
 }
 
-func publicSyncIntegrationRole(t *testing.T, identityID string, role policyv1.RoleID) {
+func publicSyncIntegrationRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
 	t.Helper()
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
-	_, err = publicIntegrationSpiceDB.SyncAccountIdentityGlobalRole(context.Background(), subject, role)
+	_, err = spiceDB.SyncAccountIdentityGlobalRole(context.Background(), subject, role)
 	require.NoError(t, err)
 }

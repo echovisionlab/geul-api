@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/stretchr/testify/require"
 )
@@ -49,4 +50,24 @@ func TestMCPLogsOriginalCauseBeforeGenericResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Tool calls reach services without the RPC boundary; the classified operation
+// context must still reach the log.
+func TestMCPLogsClassifiedOperationContext(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	cause := errs.Internal(fmt.Errorf("load campaign: %w", context.DeadlineExceeded))
+	handler := newTestHandler(t, testDependencies{dispatcher: dispatcherFunc(func(context.Context, Principal, string, ToolArguments) (ToolResult, error) {
+		return ToolResult{}, &ToolExecutionError{Message: "Service temporarily unavailable", Cause: cause}
+	})})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, rpcRequest(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_read","arguments":{}}}`))
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
+	require.Equal(t, "load campaign: context deadline exceeded", entry["failure_cause"])
+	require.NotContains(t, response.Body.String(), "load campaign")
 }

@@ -46,6 +46,7 @@ func (l *releaseDownloadPhaseOneBlockingLogger) Trace(
 }
 
 func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name       string
 		status     string
@@ -90,7 +91,8 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 			shareID := ""
 			if testCase.shareProof {
 				shareID = uuid.NewString()
-				expiresAt := now.Add(time.Hour)
+				// PostgreSQL keeps microseconds; the witness must match the stored value.
+				expiresAt := now.Add(time.Hour).Truncate(time.Microsecond)
 				require.NoError(t, db.Exec(`INSERT INTO share_link (id, token, entity_type, entity_id, expires_at) VALUES (?::uuid, ?, ?, ?::uuid, ?)`, shareID, uuid.NewString(), managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), releaseID, expiresAt).Error)
 				authorization.ShareLink = &mediaasset.ContentDownloadShareLinkWitness{
 					ID: shareID, EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), EntityID: releaseID, ExpiresAt: &expiresAt,
@@ -133,6 +135,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 }
 
 func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name       string
 		status     string
@@ -183,7 +186,8 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 			shareID := ""
 			if testCase.shareProof {
 				shareID = uuid.NewString()
-				expiresAt := time.Now().UTC().Add(time.Hour)
+				// PostgreSQL keeps microseconds; the witness must match the stored value.
+				expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
 				require.NoError(t, db.Exec(`INSERT INTO share_link (id, token, entity_type, entity_id, expires_at) VALUES (?::uuid, ?, ?, ?::uuid, ?)`, shareID, uuid.NewString(), managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), releaseID, expiresAt).Error)
 				authorization.ShareLink = &mediaasset.ContentDownloadShareLinkWitness{
 					ID: shareID, EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), EntityID: releaseID, ExpiresAt: &expiresAt,

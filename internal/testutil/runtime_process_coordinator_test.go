@@ -10,6 +10,7 @@ import (
 )
 
 func TestRuntimeApplicationCoordinatorStopsAndRestartsVariants(t *testing.T) {
+	t.Parallel()
 	coordinator := &runtimeApplicationCoordinator{}
 	healthy := &RuntimeStack{}
 	failing := &RuntimeStack{}
@@ -53,6 +54,7 @@ func stoppedRuntimeProcess(name string) *runtimeProcess {
 }
 
 func TestRuntimeProcessStopIsIdempotent(t *testing.T) {
+	t.Parallel()
 	process := stoppedRuntimeProcess("idempotent")
 	require.NoError(t, process.stop(context.Background()))
 	require.NoError(t, process.stop(context.Background()))

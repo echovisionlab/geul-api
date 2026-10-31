@@ -234,7 +234,11 @@ func (c *KratosClient) ListIdentities(ctx context.Context, page, perPage int) ([
 
 	var total int64
 	if totalStr := resp.Header.Get("X-Total-Count"); totalStr != "" {
-		fmt.Sscanf(totalStr, "%d", &total)
+		if _, err := fmt.Sscanf(totalStr, "%d", &total); err != nil {
+			// Report an unreadable count as unknown (0); paging callers then stop on a short page.
+			slog.WarnContext(ctx, "Kratos identity count header is invalid", "x_total_count", totalStr, failurecause.Attr(err))
+			total = 0
+		}
 	} else {
 		total = int64(len(identities))
 	}

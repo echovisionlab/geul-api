@@ -27,6 +27,7 @@ import (
 )
 
 func TestPostConfigurationRevisionContractIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.NewPostIntegrationDB(t)
 	adminIdentityID := testutil.PostIntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Post configuration revision admin")
@@ -166,6 +167,7 @@ func TestPostConfigurationRevisionContractIntegration(t *testing.T) {
 }
 
 func TestPostConfigurationRevisionSerializesConcurrentUpdatesIntegration(t *testing.T) {
+	t.Parallel()
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
@@ -330,11 +332,11 @@ func (capture *postConfigurationEventCapture) count() int {
 	return capture.notifications
 }
 
-func (publisher *postConfigurationEventCapture) NotifyProtobufWithExecutor(
+func (capture *postConfigurationEventCapture) NotifyProtobufWithExecutor(
 	ctx context.Context,
 	_ eventpkg.DBTX,
 	signal string,
 	message proto.Message,
 ) error {
-	return publisher.NotifyProtobuf(ctx, signal, message)
+	return capture.NotifyProtobuf(ctx, signal, message)
 }

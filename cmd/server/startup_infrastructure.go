@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -13,7 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
-func connectDatabase(dsn string, maxOpenConnections, maxIdleConnections int) (*gorm.DB, *sql.DB, error) {
+func connectDatabase(ctx context.Context, dsn string, maxOpenConnections, maxIdleConnections int) (*gorm.DB, *sql.DB, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -26,7 +27,7 @@ func connectDatabase(dsn string, maxOpenConnections, maxIdleConnections int) (*g
 	}
 	sqlDB.SetMaxOpenConns(maxOpenConnections)
 	sqlDB.SetMaxIdleConns(maxIdleConnections)
-	if err := sqlDB.Ping(); err != nil {
+	if err := sqlDB.PingContext(ctx); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			slog.Error("Database close after failed ping failed", "failure_cause", failurecause.Message(closeErr))
 		}

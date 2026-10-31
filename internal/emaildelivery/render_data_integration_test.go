@@ -10,6 +10,7 @@ import (
 )
 
 func TestEmailRenderDataUsesRuntimeSiteOriginIntegration(t *testing.T) {
+	t.Parallel()
 	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	require.NoError(t, db.Exec("UPDATE site_settings SET site_title = ? WHERE id = ?", "Example Studio", 1).Error)
 
