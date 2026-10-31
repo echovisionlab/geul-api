@@ -328,7 +328,18 @@ type workCreditArguments struct {
 	CreditRole *string `json:"credit_role,omitempty"`
 }
 
+// workCreditAdvertisedArguments mirrors each work credit tool schema; the
+// tools share workCreditArguments.
+var workCreditAdvertisedArguments = map[string][]string{
+	ToolWorkCreditAdd:    {"document_id", "group_id", "artist_id", "member_id", "name", "credit_role"},
+	ToolWorkCreditUpdate: {"credit_id", "group_id", "credit_role"},
+	ToolWorkCreditDelete: {"credit_id"},
+}
+
 func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if err := rejectUnadvertisedArguments(arguments, workCreditAdvertisedArguments[toolName]...); err != nil {
+		return executionError(err)
+	}
 	var input workCreditArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
