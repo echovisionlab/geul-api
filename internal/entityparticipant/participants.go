@@ -233,6 +233,12 @@ func (m participantMutation) lock(ctx context.Context) (*auth.UserInfo, error) {
 	if err := m.spec.LockRoot(ctx, m.tx, m.entityID); err != nil {
 		return nil, err
 	}
+	return m.lockPrincipal(ctx)
+}
+
+// lockPrincipal locks the principal and answers not found once the principal
+// is no longer active.
+func (m participantMutation) lockPrincipal(ctx context.Context) (*auth.UserInfo, error) {
 	principal, err := m.spec.LockActivePrincipal(ctx, m.tx)
 	if err != nil {
 		return nil, err
@@ -263,45 +269,69 @@ func (m participantMutation) currentRole() (string, error) {
 }
 
 func (m participantMutation) requireRoleChange(ctx context.Context, principal *auth.UserInfo, previous, next string) error {
-	action := auth.ResourceAction(m.spec.Policy.ManageParticipants)
-	if previous == RoleOwner && next != RoleOwner {
-		action = m.spec.Policy.RemoveOwner
-	}
-	if err := m.requirePermission(ctx, action, principal); err != nil {
+	if err := m.requireManage(ctx, principal, previous, next); err != nil {
 		return err
 	}
 	if previous != RoleNone && previous == next {
-		return errs.FailedPrecondition(m.spec.Title + " participant already has this role")
+		return m.alreadyHasRole()
 	}
 	return nil
 }
 
+// requireManage requires ManageParticipants, or RemoveOwner to demote an
+// Owner.
+func (m participantMutation) requireManage(ctx context.Context, principal *auth.UserInfo, previous, next string) error {
+	action := auth.ResourceAction(m.spec.Policy.ManageParticipants)
+	if previous == RoleOwner && next != RoleOwner {
+		action = m.spec.Policy.RemoveOwner
+	}
+	return m.requirePermission(ctx, action, principal)
+}
+
+func (m participantMutation) alreadyHasRole() error {
+	return errs.FailedPrecondition(m.spec.Title + " participant already has this role")
+}
+
 // removeRelation deletes the Member's relation and returns the role it had.
 func (m participantMutation) removeRelation(ctx context.Context, principal *auth.UserInfo) (string, error) {
+	role, err := m.requireRemove(ctx, principal)
+	if err != nil {
+		return RoleNone, err
+	}
+	return role, m.deleteForRemoval(role)
+}
+
+// requireRemove requires RemoveOwner to remove an Owner and
+// ManageParticipants otherwise, and returns the role the Member holds as far
+// as the owner table tells.
+func (m participantMutation) requireRemove(ctx context.Context, principal *auth.UserInfo) (string, error) {
 	ownerCount, err := m.countOwners(m.memberID)
 	if err != nil {
 		return RoleNone, err
 	}
 	if ownerCount > 0 {
-		if err := m.requirePermission(ctx, m.spec.Policy.RemoveOwner, principal); err != nil {
-			return RoleNone, err
-		}
-		if err := m.requireAnotherOwner(); err != nil {
-			return RoleNone, err
-		}
-		return RoleOwner, m.deleteRelation(RoleOwner)
+		return RoleOwner, m.requirePermission(ctx, m.spec.Policy.RemoveOwner, principal)
 	}
-	if err := m.requirePermission(ctx, m.spec.Policy.ManageParticipants, principal); err != nil {
-		return RoleNone, err
+	return RoleManager, m.requirePermission(ctx, m.spec.Policy.ManageParticipants, principal)
+}
+
+// deleteForRemoval deletes the relation requireRemove found. An Owner must
+// leave another Owner; a missing Manager relation answers not found.
+func (m participantMutation) deleteForRemoval(role string) error {
+	if role == RoleOwner {
+		if err := m.requireAnotherOwner(); err != nil {
+			return err
+		}
+		return m.deleteRelation(RoleOwner)
 	}
 	result := m.tx.Exec(m.spec.deleteRelationSQL(RoleManager), m.entityID, m.memberID)
 	if result.Error != nil {
-		return RoleNone, result.Error
+		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return RoleNone, errs.NotFoundMsg(m.spec.Title + " participant not found")
+		return errs.NotFoundMsg(m.spec.Title + " participant not found")
 	}
-	return RoleManager, nil
+	return nil
 }
 
 func (m participantMutation) requireAnotherOwner() error {

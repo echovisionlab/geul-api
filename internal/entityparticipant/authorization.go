@@ -12,9 +12,11 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -115,6 +117,15 @@ func (s Spec) RequireLockedPermission(ctx context.Context, tx *gorm.DB, checker 
 	return s.RequirePrincipalPermission(ctx, checker, entityID, action, principal)
 }
 
+// LockedAccess is the mutation.Access of RequireLockedPermission: the
+// principal is locked inside the mutation transaction and a denial answers
+// not found, as the entity's read paths do.
+func (s Spec) LockedAccess(checker PermissionChecker, entityID string, action auth.ResourceAction) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		return s.RequireLockedPermission(ctx, tx, checker, entityID, action)
+	})
+}
+
 // LockRoot locks the entity row for update.
 func (s Spec) LockRoot(ctx context.Context, tx *gorm.DB, entityID string) error {
 	var row struct {
@@ -173,6 +184,9 @@ const lastOwnerConstraint = "must retain at least one durable Owner"
 // Owner with the same wording the service uses.
 func (s Spec) MapMutationError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+		return err
+	}
+	if _, classified := errors.AsType[*domainerr.Error](err); classified {
 		return err
 	}
 	if strings.Contains(err.Error(), lastOwnerConstraint) {
