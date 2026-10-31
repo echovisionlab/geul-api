@@ -368,13 +368,13 @@ func loadCreativeContentSnapshotInTransaction(
 		return contentblock.Snapshot{}, creativeDocumentAuthority{}, errs.Internal(errors.New("content Block store is not configured"))
 	}
 	documentID, err := loadCreativeContentDocumentIDWithStrength(
-		ctx, tx, entityType, entityID, "SHARE",
+		ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 	)
 	if err != nil {
 		return contentblock.Snapshot{}, creativeDocumentAuthority{}, err
 	}
 	source, err := loadCreativeDocumentAuthorityWithStrength(
-		ctx, tx, entityType, entityID, "SHARE",
+		ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 	)
 	if err != nil {
 		return contentblock.Snapshot{}, creativeDocumentAuthority{}, err
@@ -453,7 +453,7 @@ func loadCreativeContentBlockBootstrap(
 	var output creativeContentBootstrapSnapshot
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		documentID, err := loadCreativeContentDocumentIDWithStrength(
-			ctx, tx, entityType, entityID, "SHARE",
+			ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 		)
 		if err != nil {
 			return err
@@ -496,7 +496,7 @@ func loadCreativeContentBlockBootstrap(
 			return errs.NoPermission("edit", "artist")
 		}
 		source, err := loadCreativeDocumentAuthorityWithStrength(
-			ctx, tx, entityType, entityID, "SHARE",
+			ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 		)
 		if err != nil {
 			return err
@@ -703,7 +703,7 @@ func loadCreativeContentDocumentIDWithLock(
 ) (uuid.UUID, error) {
 	strength := ""
 	if lock {
-		strength = "UPDATE"
+		strength = clause.LockingStrengthUpdate
 	}
 	return loadCreativeContentDocumentIDWithStrength(
 		ctx, db, entityType, entityID, strength,

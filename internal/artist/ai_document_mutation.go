@@ -18,6 +18,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var errRollbackArtistAIDocumentValidation = errors.New("rollback Artist AI document validation")
@@ -69,7 +70,7 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 	var output AIDocumentMutationResult
 	var input AIDocumentMutation
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadArtistAIDocumentRoot(ctx, tx, canonicalArtistID.String(), "UPDATE")
+		root, err := loadArtistAIDocumentRoot(ctx, tx, canonicalArtistID.String(), clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

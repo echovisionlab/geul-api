@@ -80,7 +80,7 @@ func (s *AIDocumentService) Load(ctx context.Context, pageID, locale string) (AI
 	}
 	var state AIDocumentState
 	err := s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, "SHARE")
+		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}

@@ -63,7 +63,7 @@ func loadLabelContentSnapshot(ctx context.Context, tx *gorm.DB, store *contentbl
 	if row.DocumentID == nil || *row.DocumentID == uuid.Nil {
 		return contentblock.Snapshot{}, labelSourceAuthority{}, errs.FailedPrecondition("label content document is not initialized")
 	}
-	source, err := loadLabelSourceAuthority(ctx, tx, labelID, "SHARE")
+	source, err := loadLabelSourceAuthority(ctx, tx, labelID, clause.LockingStrengthShare)
 	if err != nil {
 		return contentblock.Snapshot{}, labelSourceAuthority{}, err
 	}

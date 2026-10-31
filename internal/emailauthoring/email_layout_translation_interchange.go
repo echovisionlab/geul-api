@@ -55,14 +55,14 @@ func LoadEmailLayoutTranslationInterchangeTarget(
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, "SHARE")
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthShare)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
 	if targetLocale == authority.SourceLocale {
 		return EmailLayoutTranslationInterchangeTarget{}, errs.InvalidArgument("target_locale", "must differ from the Email Layout source locale")
 	}
-	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, targetLocale, "SHARE")
+	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, targetLocale, clause.LockingStrengthShare)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
@@ -97,13 +97,13 @@ func ApplyEmailLayoutTranslationInterchange(
 	if input.TargetLocale == sourceLocale {
 		return EmailLayoutTranslationInterchangeTarget{}, false, errs.InvalidArgument("target_locale", "must be a non-source Email Layout locale")
 	}
-	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, "UPDATE"); err != nil {
+	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, clause.LockingStrengthUpdate); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, references, layoutID); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, "UPDATE")
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
@@ -114,7 +114,7 @@ func ApplyEmailLayoutTranslationInterchange(
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
-	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, input.TargetLocale, "UPDATE")
+	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, input.TargetLocale, clause.LockingStrengthUpdate)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}

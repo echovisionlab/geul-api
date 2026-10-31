@@ -135,9 +135,9 @@ func loadArtistTargetLocaleState(
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
-	lock := "SHARE"
+	lock := clause.LockingStrengthShare
 	if forUpdate {
-		lock = "UPDATE"
+		lock = clause.LockingStrengthUpdate
 	}
 	lockedDocumentID, err := loadCreativeContentDocumentIDWithStrength(
 		ctx, tx, artistContentEntity, artistID, lock,

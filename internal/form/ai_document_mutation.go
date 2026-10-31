@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -23,6 +24,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ExecuteAIDocumentMutation is Form's exact DCDP mutation boundary. It locks
@@ -57,7 +59,7 @@ func (s *InternalFormService) ExecuteAIDocumentMutation(
 	var output AIDocumentMutationResult
 	var input AIDocumentMutation
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadFormAIDocumentRoot(ctx, tx, formID, "UPDATE")
+		root, err := loadFormAIDocumentRoot(ctx, tx, formID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

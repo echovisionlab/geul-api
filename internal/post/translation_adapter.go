@@ -112,7 +112,7 @@ func applyTypedTranslationCandidateWithDB(
 			)
 		}
 		state, loadErr := loadPostTargetLocaleStateForDocument(
-			ctx, tx, store, job.EntityID, documentID, job.TargetLocale, "UPDATE",
+			ctx, tx, store, job.EntityID, documentID, job.TargetLocale, clause.LockingStrengthUpdate,
 		)
 		if loadErr != nil {
 			return loadErr

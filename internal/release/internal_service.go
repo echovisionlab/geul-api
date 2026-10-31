@@ -20,6 +20,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // InternalReleaseService is the typed Block boundary used by the collaboration runtime.
@@ -228,7 +229,7 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 	var target releaseTargetLocaleMutationResult
 	var source releaseSourceLocale
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		source, err = loadReleaseSourceLocaleWithStrength(ctx, tx, req.Msg.ReleaseId, "UPDATE")
+		source, err = loadReleaseSourceLocaleWithStrength(ctx, tx, req.Msg.ReleaseId, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
@@ -345,7 +346,7 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 		if err := requireReleaseCollaborationContributors(ctx, tx, s.checkpoints, input.ReleaseId, input.ContributorMemberIds); err != nil {
 			return err
 		}
-		source, err = loadReleaseSourceLocaleWithStrength(ctx, tx, input.ReleaseId, "UPDATE")
+		source, err = loadReleaseSourceLocaleWithStrength(ctx, tx, input.ReleaseId, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -104,7 +105,7 @@ func (s *InternalFormService) ApplyTranslationInterchange(
 	if err := validateFormInterchangeMutation(mutation); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	root, err := loadFormAIDocumentRoot(ctx, tx, mutation.FormID, "UPDATE")
+	root, err := loadFormAIDocumentRoot(ctx, tx, mutation.FormID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
 	}

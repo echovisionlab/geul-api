@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -146,7 +147,7 @@ func (s *PageService) RestorePageVersion(
 	var sourceLocaleSwitched bool
 	restoredChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, version.PageID, "UPDATE")
+		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, version.PageID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

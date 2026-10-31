@@ -140,7 +140,7 @@ func (s *ProgramEventService) LoadAIDocumentState(
 
 	var state AIDocumentState
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadProgramEventAIDocumentRoot(ctx, tx, eventID, "SHARE")
+		root, err := loadProgramEventAIDocumentRoot(ctx, tx, eventID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}
@@ -306,7 +306,7 @@ func (s *ProgramEventService) ExecuteAIDocumentCommand(
 	var result AIDocumentResult
 	var command AIDocumentCommand
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadProgramEventAIDocumentRoot(ctx, tx, eventID, "UPDATE")
+		root, err := loadProgramEventAIDocumentRoot(ctx, tx, eventID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

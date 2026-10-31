@@ -124,9 +124,9 @@ func loadPageTargetLocaleState(
 	if err != nil {
 		return pageTargetLocaleState{}, err
 	}
-	lock := "SHARE"
+	lock := clause.LockingStrengthShare
 	if forUpdate {
-		lock = "UPDATE"
+		lock = clause.LockingStrengthUpdate
 	}
 	_, lockedDocumentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, lock)
 	if err != nil {

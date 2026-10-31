@@ -88,7 +88,7 @@ func LoadTranslationInterchangeTarget(
 	if snapshot.Document.Profile != emailContentProfile {
 		return TranslationInterchangeTarget{}, errs.FailedPrecondition("Campaign translation interchange requires the Email content profile")
 	}
-	metadata, exists, err := loadCampaignInterchangeMetadata(ctx, tx, campaignID, targetLocale, "SHARE")
+	metadata, exists, err := loadCampaignInterchangeMetadata(ctx, tx, campaignID, targetLocale, clause.LockingStrengthShare)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}

@@ -14,6 +14,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ProjectRichTextInterchangeTargets func(
@@ -84,7 +85,7 @@ func LoadTranslationInterchangeTarget(
 	plan *translation.ExtractionPlan,
 	project ProjectRichTextInterchangeTargets,
 ) (TranslationInterchangeTarget, error) {
-	state, err := loadWorkInterchangeState(ctx, tx, store, workID, locale, plan, "SHARE", project)
+	state, err := loadWorkInterchangeState(ctx, tx, store, workID, locale, plan, clause.LockingStrengthShare, project)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
@@ -107,7 +108,7 @@ func ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, err
 	}
 	state, err := loadWorkInterchangeState(
-		ctx, tx, store, mutation.WorkID, mutation.TargetLocale, mutation.Plan, "UPDATE", mutation.ProjectTargets,
+		ctx, tx, store, mutation.WorkID, mutation.TargetLocale, mutation.Plan, clause.LockingStrengthUpdate, mutation.ProjectTargets,
 	)
 	if err != nil {
 		return TranslationInterchangeResult{}, err

@@ -148,9 +148,9 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
-	lock := "SHARE"
+	lock := clause.LockingStrengthShare
 	if forUpdate {
-		lock = "UPDATE"
+		lock = clause.LockingStrengthUpdate
 	}
 	_, lockedDocumentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, lock)
 	if err != nil {

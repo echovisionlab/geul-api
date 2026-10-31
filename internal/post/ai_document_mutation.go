@@ -138,7 +138,7 @@ func (s *PostService) ExecuteAIDocumentMutation(
 	effects := &postAIDocumentMutationEffects{}
 	var mutation AIDocumentMutation
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadPostAIDocumentRoot(ctx, tx, postID, "UPDATE")
+		root, err := loadPostAIDocumentRoot(ctx, tx, postID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

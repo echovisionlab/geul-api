@@ -138,9 +138,9 @@ func loadReleaseTargetLocaleState(
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
-	strength := "SHARE"
+	strength := clause.LockingStrengthShare
 	if forUpdate {
-		strength = "UPDATE"
+		strength = clause.LockingStrengthUpdate
 	}
 	source, err := loadReleaseSourceLocaleWithStrength(ctx, tx, releaseID, strength)
 	if err != nil {

@@ -216,7 +216,7 @@ func applyPostTargetLocaleMutation(
 		return postTargetLocaleMutationResult{}, err
 	}
 	state, err := loadPostTargetLocaleStateForDocument(
-		ctx, tx, store, input.PostID, documentID, input.Locale, "UPDATE",
+		ctx, tx, store, input.PostID, documentID, input.Locale, clause.LockingStrengthUpdate,
 	)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, err
@@ -408,7 +408,7 @@ func deletePostTargetLocale(
 		return contentblock.Result{}, err
 	}
 	state, err := loadPostTargetLocaleStateForDocument(
-		ctx, tx, store, input.PostID, documentID, input.Locale, "UPDATE",
+		ctx, tx, store, input.PostID, documentID, input.Locale, clause.LockingStrengthUpdate,
 	)
 	if err != nil {
 		return contentblock.Result{}, err

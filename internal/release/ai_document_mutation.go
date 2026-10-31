@@ -19,6 +19,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var errRollbackReleaseAIDocumentValidation = errors.New("rollback Release AI document validation")
@@ -61,7 +62,7 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 	var input AIDocumentMutation
 	var sourceResult contentblock.Result
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadReleaseAIDocumentRoot(ctx, tx, canonicalReleaseID.String(), "UPDATE")
+		root, err := loadReleaseAIDocumentRoot(ctx, tx, canonicalReleaseID.String(), clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // TranslationEntrySelectSQL returns the Form-owned management projection.
@@ -54,7 +55,7 @@ func ApplyProviderTranslationCandidateWithDB(
 		return errs.InvalidArgument("candidate", "Form provider unit patch is required")
 	}
 
-	root, err := loadFormAIDocumentRoot(ctx, tx, job.EntityID, "UPDATE")
+	root, err := loadFormAIDocumentRoot(ctx, tx, job.EntityID, clause.LockingStrengthUpdate)
 	if err != nil {
 		return err
 	}

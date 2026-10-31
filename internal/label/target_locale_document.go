@@ -129,7 +129,7 @@ func loadLabelTargetLocaleState(
 
 func lockMode(forUpdate bool) string {
 	if forUpdate {
-		return "UPDATE"
+		return clause.LockingStrengthUpdate
 	}
 	return ""
 }

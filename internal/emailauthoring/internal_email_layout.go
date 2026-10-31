@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -85,7 +86,7 @@ func (s *InternalEmailLayoutService) SaveDocument(
 	now := dbtime.Now()
 	result := emailLayoutCollaborativeSaveResult{locale: roomLocale}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, r.EmailLayoutId, "UPDATE")
+		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, r.EmailLayoutId, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
@@ -337,7 +338,7 @@ func (s *InternalEmailLayoutService) LoadDocument(
 	}
 	var response *connect.Response[intrav1.LoadEmailLayoutDocumentResponse]
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, req.Msg.EmailLayoutId, "SHARE")
+		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, req.Msg.EmailLayoutId, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}

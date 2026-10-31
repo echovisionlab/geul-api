@@ -1,18 +1,20 @@
 package campaign
 
 import (
-	"connectrpc.com/connect"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"log/slog"
 	"strings"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -115,7 +117,7 @@ func (s *AIDocumentService) Load(ctx context.Context, campaignID, locale string)
 
 	var state AIDocumentState
 	err = s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, "SHARE")
+		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, clause.LockingStrengthShare)
 		if err != nil {
 			return err
 		}
@@ -176,7 +178,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	var output AIDocumentMutationResult
 	var currentDocumentRevision string
 	err = s.internal.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, "UPDATE")
+		root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, clause.LockingStrengthUpdate)
 		if err != nil {
 			return err
 		}
