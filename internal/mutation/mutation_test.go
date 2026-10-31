@@ -268,3 +268,57 @@ func TestLockOrderSortsAndDeduplicatesSubjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b"}, ordered)
 }
+
+func TestCheckedRunsTheCheckInsideTheTransaction(t *testing.T) {
+	runner, db := newTestRunner(t, &audittest.Recorder{})
+	denied := errors.New("contributor revoked")
+	var steps []string
+	spec := noteSpec(&steps, "contributed")
+	spec.Access = Checked(func(_ context.Context, tx *gorm.DB) error {
+		steps = append(steps, "check")
+		require.NoError(t, tx.Create(&note{Text: "inside"}).Error)
+		return denied
+	})
+
+	_, err := Run(memberRequestContext(t), runner, spec)
+
+	require.ErrorIs(t, err, denied)
+	require.Equal(t, []string{"check"}, steps)
+	require.Zero(t, noteCount(t, db))
+	_, err = Run(memberRequestContext(t), runner, Spec[note]{Access: Checked(nil), Change: spec.Change, Audit: spec.Audit})
+	require.ErrorContains(t, err, "access check is required")
+}
+
+func TestReadSeesOneSnapshot(t *testing.T) {
+	_, db := newTestRunner(t, &audittest.Recorder{})
+	require.NoError(t, db.Create(&note{Text: "stored"}).Error)
+	var read []note
+	require.NoError(t, Read(context.Background(), db, func(tx *gorm.DB) error { return tx.Find(&read).Error }))
+	require.Len(t, read, 1)
+	readErr := errors.New("read failed")
+	require.ErrorIs(t, Read(context.Background(), db, func(*gorm.DB) error { return readErr }), readErr)
+}
+
+func TestRunLocksTheTargetBeforeAccess(t *testing.T) {
+	runner, db := newTestRunner(t, &audittest.Recorder{})
+	var steps []string
+	spec := noteSpec(&steps, "locked")
+	spec.Lock = func(context.Context, *gorm.DB) error {
+		steps = append(steps, "lock")
+		return nil
+	}
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Equal(t, []string{"lock", "access", "change", "audit", "outbox"}, steps)
+
+	missing := errors.New("target not found")
+	steps = nil
+	spec.Lock = func(context.Context, *gorm.DB) error {
+		steps = append(steps, "lock")
+		return missing
+	}
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorIs(t, err, missing)
+	require.Equal(t, []string{"lock"}, steps)
+	require.EqualValues(t, 1, noteCount(t, db))
+}
