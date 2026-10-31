@@ -327,7 +327,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	if err := registerPATVerification(mux, cfg.PATVerificationSecret, personalAccessTokenHandlers.tokens); err != nil {
+	if err := registerPATVerification(mux, cfg.PATVerificationSecret, personalAccessTokenHandlers.tokens); err != nil { //nolint:staticcheck // legacy Worker verifier credential, retained for migration
 		return registeredServices{}, fmt.Errorf("initialize PAT verification: %w", err)
 	}
 	oathkeeperPATHandler, err := patauth.NewOathkeeper(cfg.TokenSigningSecret, cfg.InternalServiceHeaderName, personalAccessTokenHandlers.tokens)

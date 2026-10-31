@@ -89,6 +89,7 @@ func initializeApplicationDependencies(
 
 	var err error
 	deps.db, deps.sqlDB, err = connectDatabase(
+		ctx,
 		cfg.DatabaseDSN,
 		cfg.DatabaseMaxOpen,
 		cfg.DatabaseMaxIdle,
@@ -325,6 +326,6 @@ func (d *applicationDependencies) Close() {
 
 func closePublisher(publisher *mq.Publisher) {
 	if publisher != nil {
-		publisher.Close()
+		_ = publisher.Close()
 	}
 }

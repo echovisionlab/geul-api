@@ -1001,38 +1001,6 @@ func waitForFileIngestUploadEvent(
 	)
 }
 
-func waitForFileIngestFinalizedEvent(
-	t *testing.T,
-	receiver *fileIngestSignalReceiver,
-	timeout time.Duration,
-	match func(*managev1.FileIngestFinalizedEvent) bool,
-) *managev1.FileIngestFinalizedEvent {
-	t.Helper()
-	return waitForFileIngestProtoEvent(
-		t,
-		receiver,
-		timeout,
-		func() *managev1.FileIngestFinalizedEvent { return &managev1.FileIngestFinalizedEvent{} },
-		match,
-	)
-}
-
-func waitForFileIngestAttachedEvent(
-	t *testing.T,
-	receiver *fileIngestSignalReceiver,
-	timeout time.Duration,
-	match func(*managev1.FileIngestAttachedEvent) bool,
-) *managev1.FileIngestAttachedEvent {
-	t.Helper()
-	return waitForFileIngestProtoEvent(
-		t,
-		receiver,
-		timeout,
-		func() *managev1.FileIngestAttachedEvent { return &managev1.FileIngestAttachedEvent{} },
-		match,
-	)
-}
-
 func requireNoFileIngestFailedEvent(
 	t *testing.T,
 	receiver *fileIngestSignalReceiver,

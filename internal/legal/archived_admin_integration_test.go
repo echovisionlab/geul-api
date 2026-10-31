@@ -185,7 +185,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 
 			revision, err = testCase.apply(adminCtx, db, id, legalArchivedParagraphMutationBatch(loadedRevision, admin.MemberID.String()), store, spiceDB)
 			require.NoError(t, err)
-			revision, err = testCase.metadata(adminCtx, db, id, revision, "Admin archived metadata", []string{admin.MemberID.String()}, store, spiceDB)
+			_, err = testCase.metadata(adminCtx, db, id, revision, "Admin archived metadata", []string{admin.MemberID.String()}, store, spiceDB)
 			require.NoError(t, err)
 
 			err = legaldomain.RequireTranslationInterchangeViewWithDB(

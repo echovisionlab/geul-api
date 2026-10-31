@@ -145,7 +145,7 @@ func logStartupFailure(component string, err error) int {
 func registerHealthRoutes(mux *http.ServeMux, ready healthReadinessCheck) {
 	writeLive := func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusOK)
-		fmt.Fprintln(writer, "ok")
+		_, _ = fmt.Fprintln(writer, "ok")
 	}
 	mux.HandleFunc("/health/live", writeLive)
 
@@ -163,7 +163,7 @@ func registerHealthRoutes(mux *http.ServeMux, ready healthReadinessCheck) {
 			return
 		}
 		writer.WriteHeader(http.StatusOK)
-		fmt.Fprintln(writer, "ok")
+		_, _ = fmt.Fprintln(writer, "ok")
 	}
 	// /health remains the deployed readiness path. The explicit routes let a
 	// future orchestrator distinguish process liveness from dependency readiness.

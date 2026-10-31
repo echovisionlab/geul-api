@@ -125,7 +125,7 @@ func (client *fakeBackendIntegrationS3ResetClient) DeleteObjects(
 		return nil, err
 	}
 	for _, object := range input.Delete.Objects {
-		deleted := false
+		var deleted bool
 		if object.VersionId != nil {
 			bucket.versions, deleted = deleteFakeBackendIntegrationObjectVersion(
 				bucket.versions,

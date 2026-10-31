@@ -19,8 +19,8 @@ func IsAutomaticLegalNoticePublicHistoryToken(
 	entityType managev1.ShareLinkEntityType,
 	entityID string,
 ) (bool, error) {
-	referenceColumn := ""
-	eventKey := ""
+	var referenceColumn string
+	var eventKey string
 	switch entityType {
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
 		referenceColumn = "privacy_id"
@@ -104,10 +104,10 @@ func resolveLegalShareLinkAccess(
 		}
 	}
 
-	tableName := ""
-	scheduledStatus := ""
-	activeStatus := ""
-	archivedStatus := ""
+	var tableName string
+	var scheduledStatus string
+	var activeStatus string
+	var archivedStatus string
 	switch entityType {
 	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
 		tableName = "privacy_history"

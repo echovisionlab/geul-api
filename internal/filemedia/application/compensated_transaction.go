@@ -112,7 +112,7 @@ func executeCompensatedTransaction(
 	}()
 
 	if callbackErr := callback(tx, register); callbackErr != nil {
-		var result error = callbackErr
+		result := callbackErr
 		if compensationErr := compensate(); compensationErr != nil {
 			result = errors.Join(result, compensationErr)
 		}

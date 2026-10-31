@@ -732,7 +732,7 @@ func buildProviderPageTargetDocument(
 			if err != nil {
 				return nil, err
 			}
-			destination := &contentv1.PageSectionLocale{SectionId: sectionID}
+			var destination *contentv1.PageSectionLocale
 			if existing := currentSections[sectionID]; existing != nil {
 				destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
 			} else {

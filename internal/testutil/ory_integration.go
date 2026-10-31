@@ -450,7 +450,7 @@ func (baseline *IntegrationDatabaseBaseline) Restore(ctx context.Context) error 
 	if err != nil {
 		return fmt.Errorf("open PostgreSQL integration baseline: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	command := exec.CommandContext(
 		ctx,
 		"docker", "exec", "-i", "-e", "PGPASSWORD=test", baseline.postgres.ContainerID,

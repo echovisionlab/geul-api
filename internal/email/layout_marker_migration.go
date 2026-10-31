@@ -124,7 +124,7 @@ func layoutMigrationShape(content string) string {
 		if kind == html.EndTagToken && translation.IsExcludedHTMLElement(token.DataAtom) && excludedDepth > 0 {
 			excludedDepth--
 		}
-		shape.WriteString(fmt.Sprintf("%d:%s\n", kind, token.String()))
+		fmt.Fprintf(&shape, "%d:%s\n", kind, token.String())
 	}
 }
 

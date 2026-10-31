@@ -229,5 +229,4 @@ func (r publicServiceRegistration) register() {
 	publicSitemapPath, publicSitemapHandler := openv1connect.NewSitemapServiceHandler(publicSitemapService, publicHandlerOpts...)
 	mux.Handle(publicSitemapPath, publicSitemapHandler)
 	slog.Info("Registered public service", "path", publicSitemapPath)
-	return
 }

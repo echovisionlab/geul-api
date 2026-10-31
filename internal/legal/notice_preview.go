@@ -145,9 +145,9 @@ func deleteAutomaticLegalNoticePreviewShareLinks(
 	referenceType string,
 	referenceID string,
 ) error {
-	referenceColumn := ""
-	eventKey := ""
-	entityType := ""
+	var referenceColumn string
+	var eventKey string
+	var entityType string
 	switch referenceType {
 	case EmailDeliveryReferenceTypePrivacy:
 		referenceColumn = "privacy_id"

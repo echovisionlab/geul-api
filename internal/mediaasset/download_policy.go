@@ -502,7 +502,7 @@ func LockFileDownloadViewerFacts(
 	if strings.TrimSpace(user.IdentityID.String()) == "" || user.Banned {
 		return false, nil
 	}
-	active := false
+	var active bool
 	if db.Dialector.Name() == "sqlite" {
 		_, found, err := loadRestrictedFileDownloadMemberFacts(
 			ctx, db, user.MemberID.String(), user.IdentityID.String(),
@@ -727,10 +727,10 @@ func loadRestrictedFileDownloadMemberFacts(
 	identityID string,
 ) (restrictedFileDownloadMemberFacts, bool, error) {
 	if _, err := uuidutil.ParseCanonical(memberID, "member_id"); err != nil {
-		return restrictedFileDownloadMemberFacts{}, false, nil
+		return restrictedFileDownloadMemberFacts{}, false, nil //nolint:nilerr // a malformed member ID matches no row; report not found (deny), not a failure
 	}
 	if _, err := uuidutil.ParseCanonical(identityID, "identity_id"); err != nil {
-		return restrictedFileDownloadMemberFacts{}, false, nil
+		return restrictedFileDownloadMemberFacts{}, false, nil //nolint:nilerr // a malformed identity ID matches no row; report not found (deny), not a failure
 	}
 
 	query := db.WithContext(ctx).

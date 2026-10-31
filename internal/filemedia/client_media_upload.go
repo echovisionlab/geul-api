@@ -134,12 +134,12 @@ func (s *FileService) authorizedClientMediaSession(ctx context.Context, uploadID
 // HandleClientMediaArtifact relays only a hash-verified artifact from the sealed plan.
 func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", 405)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	identity, ok := auth.GatewayIdentityFromContext(r.Context())
 	if !ok {
-		http.Error(w, "authentication required", 401)
+		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
 	fileID, uploadID, bundleID, path := r.URL.Query().Get("fileId"), r.URL.Query().Get("uploadId"), r.URL.Query().Get("bundleId"), r.URL.Query().Get("path")
@@ -217,7 +217,7 @@ func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string,
 	if err != nil {
 		return errs.Internal(err)
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	defer func() {
 		if err := tmp.Close(); err != nil {
 			slog.ErrorContext(request.Context(), "Failed to close staged media artifact", failurecause.Attr(err), "bundle_id", bundleID)

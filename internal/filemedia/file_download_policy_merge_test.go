@@ -11,13 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func observedFileDownloadPolicy(audience managev1.FileDownloadAudience, segmentIDs ...string) *managev1.FileDownloadPolicyObservedState {
-	return &managev1.FileDownloadPolicyObservedState{
-		Audience:           audience,
-		AudienceSegmentIds: segmentIDs,
-	}
-}
-
 func TestUpdateFileDownloadPolicyRequiresObservedPolicy(t *testing.T) {
 	_, err := (&FileService{}).UpdateFileDownloadPolicy(context.Background(), connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{

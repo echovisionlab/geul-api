@@ -36,7 +36,7 @@ const integrationInternalServiceHeaderName = "X-Internal-Service"
 
 func main() {
 	ctx := context.Background()
-	hookServer, hookBaseURL, err := startHookServer()
+	hookServer, hookBaseURL, err := startHookServer(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start backend integration hook server: %v\n", failurecause.Message(err))
 		os.Exit(1)
@@ -141,8 +141,8 @@ type hookServer struct {
 	courierHandler http.Handler
 }
 
-func startHookServer() (*hookServer, string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func startHookServer(ctx context.Context) (*hookServer, string, error) {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, "", err
 	}

@@ -172,7 +172,7 @@ func (s *geminiAITextSession) GenerateText(
 
 		private := append([]string{s.apiKey, s.spec.SystemPrompt}, s.privateText...)
 		var apiError genai.APIError
-		apiErrorFound := false
+		var apiErrorFound bool
 		var apiErrorPointer *genai.APIError
 		if errors.As(cause, &apiErrorPointer) && apiErrorPointer != nil {
 			apiError = *apiErrorPointer

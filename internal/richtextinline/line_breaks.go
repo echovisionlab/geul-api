@@ -155,7 +155,7 @@ func CanonicalizeStorageLocale(data json.RawMessage) (json.RawMessage, error) {
 		}
 		var rows []map[string]json.RawMessage
 		if err := json.Unmarshal(table["rows"], &rows); err != nil {
-			return data, nil
+			return data, nil //nolint:nilerr // a table without a decodable rows array has no cells to normalize, so the input is returned unchanged
 		}
 		for _, row := range rows {
 			var cells []json.RawMessage

@@ -985,21 +985,6 @@ func collectPostIDs(posts []model.Post) []string {
 	return ids
 }
 
-func (s *PostService) overlayPostSourceLocaleDocument(
-	ctx context.Context,
-	post *model.Post,
-) error {
-	state, err := postdomain.LoadPostSourceLocaleDocumentStateForPublic(ctx, s.db, post.ID)
-	if err != nil {
-		return err
-	}
-	if state == nil {
-		return errs.NotFound("post_translation", post.ID)
-	}
-	postdomain.OverlayPostSourceLocaleDocumentForPublic(post, state)
-	return nil
-}
-
 func (s *PostService) overlayPostSourceLocaleDocuments(
 	ctx context.Context,
 	posts []model.Post,

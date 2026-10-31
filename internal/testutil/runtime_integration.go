@@ -383,17 +383,17 @@ func (coordinator *runtimeApplicationCoordinator) activate(
 	return nil
 }
 
-func (stack *RuntimeStack) stopApplicationProcesses(ctx context.Context) error {
+func (s *RuntimeStack) stopApplicationProcesses(ctx context.Context) error {
 	processes := []*runtimeProcess{
-		stack.collabProc,
-		stack.transcoderProc,
-		stack.waveformProc,
-		stack.backendProc,
+		s.collabProc,
+		s.transcoderProc,
+		s.waveformProc,
+		s.backendProc,
 	}
-	stack.collabProc = nil
-	stack.transcoderProc = nil
-	stack.waveformProc = nil
-	stack.backendProc = nil
+	s.collabProc = nil
+	s.transcoderProc = nil
+	s.waveformProc = nil
+	s.backendProc = nil
 
 	for _, process := range processes {
 		if process != nil {
@@ -1225,7 +1225,7 @@ func reserveLocalPort(t *testing.T) int {
 	t.Helper()
 
 	for attempt := 0; attempt < 64; attempt++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		addr, ok := listener.Addr().(*net.TCPAddr)
 		require.True(t, ok)

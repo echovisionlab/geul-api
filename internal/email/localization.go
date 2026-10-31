@@ -282,7 +282,7 @@ func loadEmailSourceLocale(ctx context.Context, db *gorm.DB, entityType, entityI
 	var sourceState struct {
 		SourceLocale string `gorm:"column:source_locale"`
 	}
-	table := ""
+	var table string
 	switch entityType {
 	case "email_template":
 		table = "email_template"

@@ -120,11 +120,12 @@ func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contact
 		// compound locale keys. Identifiers below come only from the static allowlist.
 		var rows []struct{ Row []byte }
 		projection := "to_jsonb(t)"
-		if spec.jsonKind == "delivery_audit" {
+		switch spec.jsonKind {
+		case "delivery_audit":
 			projection = "jsonb_build_object('status',t.status,'render_snapshot',t.render_snapshot)"
-		} else if spec.jsonKind == "translation_audit" {
+		case "translation_audit":
 			projection = "jsonb_build_object('status',t.status,'request_manifest',t.request_manifest,'request_xliff',encode(t.request_xliff,'base64'))"
-		} else if spec.jsonKind == "text_audit" {
+		case "text_audit":
 			projection = "jsonb_build_object('" + spec.column + "',t.\"" + spec.column + "\")"
 		}
 		if err := db.WithContext(ctx).Raw(`SELECT ` + projection + ` AS row FROM "` + spec.table + `" t ORDER BY ` + spec.owner + func() string {
@@ -311,13 +312,14 @@ func run(ctx context.Context, db *gorm.DB, apply bool, report io.Writer, contact
 					ownerGroup = "document:" + *root.ContentDocumentID
 				}
 			}
-			if spec.table == "content_block_locale" {
+			switch spec.table {
+			case "content_block_locale":
 				var documentID string
 				if err := db.WithContext(ctx).Table("content_block").Select("document_id").Where("id = ?", owner).Scan(&documentID).Error; err != nil {
 					return err
 				}
 				ownerGroup = "document:" + documentID
-			} else if spec.table == "content_block" {
+			case "content_block":
 				ownerGroup = "document:" + owner
 			}
 			keyJSON, _ := json.Marshal(key)

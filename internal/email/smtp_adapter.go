@@ -423,13 +423,13 @@ func (a *SMTPAdapter) newConn(ctx context.Context) (*smtpConn, error) {
 		return clientErr
 	})
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 
 	if err := a.startTLSIfAvailable(ctx, conn, client); err != nil {
-		client.Close()
-		conn.Close()
+		_ = client.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 
@@ -438,8 +438,8 @@ func (a *SMTPAdapter) newConn(ctx context.Context) (*smtpConn, error) {
 		if err := withSMTPConnContext(ctx, conn, func() error {
 			return client.Auth(auth)
 		}); err != nil {
-			client.Close()
-			conn.Close()
+			_ = client.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("authentication failed: %w", err)
 		}
 	}
@@ -464,7 +464,7 @@ func (a *SMTPAdapter) dialSMTPConnection(ctx context.Context, dialer *net.Dialer
 	if err := withSMTPConnContext(ctx, tlsConn, func() error {
 		return tlsConn.HandshakeContext(ctx)
 	}); err != nil {
-		rawConn.Close()
+		_ = rawConn.Close()
 		return nil, fmt.Errorf("TLS handshake failed: %w", err)
 	}
 	return tlsConn, nil

@@ -97,7 +97,7 @@ func (c *S3Client) Upload(ctx context.Context, key string, localPath string, con
 	if err != nil {
 		return fmt.Errorf("open upload file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {

@@ -98,7 +98,7 @@ func (s *BroadcastSubscriber) Start(ctx context.Context) error {
 			slog.ErrorContext(ctx, "PostgreSQL signal connection close failed", "signal", s.signal, "failure_cause", failurecause.Message(closeErr))
 		}
 		if ctx.Err() != nil || isClosed(s.closed) {
-			return nil
+			return nil //nolint:nilerr // context cancellation or Close is the normal shutdown path, not a listener failure
 		}
 		emitPostgreSQLSignalDependencyDegraded(ctx, "listener_disconnected")
 	}

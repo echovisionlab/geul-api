@@ -1,0 +1,51 @@
+version: "2"
+
+run:
+  timeout: 15m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - durationcheck
+    - errcheck
+    - govet
+    - ineffassign
+    - makezero
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+    - wastedassign
+  settings:
+    errcheck:
+      exclude-functions:
+        # Read-side closes: response bodies report nothing useful on Close, and
+        # row iteration errors surface through rows.Err (rowserrcheck).
+        - (io.ReadCloser).Close
+        - (*database/sql.Rows).Close
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1005
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1008
+  exclusions:
+    rules:
+      # Tests build throwaway requests and fixtures; context plumbing and
+      # cleanup error checks there add noise without catching defects.
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck
+          - noctx
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

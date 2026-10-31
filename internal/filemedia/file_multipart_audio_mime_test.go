@@ -281,9 +281,10 @@ func buildTestAIFFChunked(t *testing.T, formType string, chunks []testAIFFChunk)
 	t.Helper()
 	require.Len(t, formType, 4)
 
-	body := make([]byte, 12)
-	copy(body[:4], "FORM")
-	copy(body[8:12], formType)
+	body := make([]byte, 0, 12)
+	body = append(body, "FORM"...)
+	body = append(body, 0, 0, 0, 0)
+	body = append(body, formType...)
 	for _, chunk := range chunks {
 		require.Len(t, chunk.id, 4)
 		header := make([]byte, 8)

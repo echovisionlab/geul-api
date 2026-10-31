@@ -28,7 +28,7 @@ func RequireTranslationSourceMutable(
 	if entityID == "" {
 		return errs.InvalidArgument("entity_id", "Email Authoring translation source id is required")
 	}
-	table := ""
+	var table string
 	switch entityType {
 	case "email_template":
 		table = "email_template"

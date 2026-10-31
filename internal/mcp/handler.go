@@ -719,8 +719,8 @@ func validateTool(tool Tool) error {
 		return errors.New("mcp: invalid tool name length")
 	}
 	for _, character := range tool.Name {
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || character == '_' || character == '-' || character == '.') {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '_' && character != '-' && character != '.' {
 			return errors.New("mcp: invalid tool name")
 		}
 	}

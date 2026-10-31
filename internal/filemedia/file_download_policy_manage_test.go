@@ -446,3 +446,10 @@ func seedManageAudienceSegment(
 	).Error)
 	seedAudienceSegmentRelationsForTest(t, db, id, config)
 }
+
+func observedFileDownloadPolicy(audience managev1.FileDownloadAudience, segmentIDs ...string) *managev1.FileDownloadPolicyObservedState {
+	return &managev1.FileDownloadPolicyObservedState{
+		Audience:           audience,
+		AudienceSegmentIds: segmentIDs,
+	}
+}

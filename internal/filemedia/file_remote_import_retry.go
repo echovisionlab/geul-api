@@ -41,7 +41,7 @@ func resolveRemoteImportOperationIdentity(
 	if !isEditorFileIngestUploadType(opts.uploadType) &&
 		!requiresDurableFileIngestAttachment(projection) &&
 		!dedicatedPublicAsset &&
-		!(opts.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && strings.TrimSpace(opts.correlationID) != "") {
+		(opts.uploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || strings.TrimSpace(opts.correlationID) == "") {
 		return remoteImportOperationIdentity{
 			fileID:    uuid.NewString(),
 			attemptID: uuid.NewString(),

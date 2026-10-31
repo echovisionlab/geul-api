@@ -1020,7 +1020,7 @@ func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 	if entityID == "" {
 		return errs.Required("entity_id")
 	}
-	ownerTable := ""
+	var ownerTable string
 	switch entityType {
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
 		ownerTable = "post"

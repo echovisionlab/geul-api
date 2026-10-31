@@ -48,7 +48,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 
-	hookServer, hookBaseURL, err := startHookServer()
+	hookServer, hookBaseURL, err := startHookServer(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, hookServer.Close()) })
 

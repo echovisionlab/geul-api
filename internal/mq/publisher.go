@@ -70,7 +70,8 @@ func NewPublisher(db *sql.DB) (*Publisher, error) {
 	if db == nil {
 		return nil, fmt.Errorf("PostgreSQL connection is required")
 	}
-	if err := db.Ping(); err != nil {
+	// Constructors take no context; this matches db.Ping, which uses context.Background.
+	if err := db.PingContext(context.Background()); err != nil {
 		return nil, fmt.Errorf("connect PGMQ publisher: %w", err)
 	}
 	return &Publisher{db: db}, nil

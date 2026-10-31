@@ -232,3 +232,11 @@ func seedSourceAssetPromotionIntegrationFixture(
 	service := &FileService{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
 	return file, store, service
 }
+
+func (f *sourceAssetPromotionS3Fixture) blockTransfers() (<-chan struct{}, chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transferStarted = make(chan struct{})
+	f.releaseTransfer = make(chan struct{})
+	return f.transferStarted, f.releaseTransfer
+}

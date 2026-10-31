@@ -252,7 +252,7 @@ func (h *Handlers) trackedTranscodeJobByIdentityDB(
 	event *managev1.TranscodeCompleteEvent,
 	lock bool,
 ) (*model.TranscodeJob, error) {
-	queueName := ""
+	var queueName string
 	switch event.GetEventType() {
 	case managev1.TranscodeEventType_TRANSCODE_EVENT_TYPE_AUDIO:
 		queueName = eventpkg.QueueTranscoderAudio

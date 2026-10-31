@@ -185,7 +185,7 @@ func reflectMenuItemTopology(items []model.MenuItem, parentID string) string {
 		topology.WriteByte('/')
 		topology.WriteString(items[index].ID)
 		topology.WriteByte('@')
-		topology.WriteString(fmt.Sprintf("%d;", index))
+		fmt.Fprintf(&topology, "%d;", index)
 		topology.WriteString(reflectMenuItemTopology(items[index].Children, items[index].ID))
 	}
 	return topology.String()

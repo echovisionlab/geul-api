@@ -440,3 +440,5 @@ func markOgGenerationProcessingIntegration(t *testing.T, db *gorm.DB, runID stri
 		}).Error)
 	return leaseToken
 }
+
+func stringPtr(value string) *string { return &value }

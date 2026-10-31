@@ -216,15 +216,15 @@ func PrepareAppIntegrationTemplate(ctx context.Context, dsn, schemaRoot, postgre
 	if err != nil {
 		return fmt.Errorf("open integration template database: %w", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	if err := waitForAppPostgres(ctx, database); err != nil {
 		return err
 	}
-	if err := applyAppIntegrationPostgresInitAssets(database, postgresAssetRoot); err != nil {
+	if err := applyAppIntegrationPostgresInitAssets(ctx, database, postgresAssetRoot); err != nil {
 		return err
 	}
-	if err := applyAppIntegrationSchemaSQLFromRoot(database, schemaRoot); err != nil {
+	if err := applyAppIntegrationSchemaSQLFromRoot(ctx, database, schemaRoot); err != nil {
 		return err
 	}
 	return requireAppIntegrationSchemaContract(ctx, database)
@@ -335,7 +335,7 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 		return nil, nil, errors.Join(err, cleanup())
 	}
 	if opts.BootstrapKratosStub {
-		if err := bootstrapAppIntegrationSchemas(sqlDB); err != nil {
+		if err := bootstrapAppIntegrationSchemas(ctx, sqlDB); err != nil {
 			return nil, nil, errors.Join(err, cleanup())
 		}
 	}
@@ -421,6 +421,7 @@ func rebuildLeasedPGroongaIndexes(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("list leased PGroonga indexes: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	type indexName struct {
 		schema string
 		name   string
@@ -429,13 +430,11 @@ func rebuildLeasedPGroongaIndexes(ctx context.Context, database *sql.DB) error {
 	for rows.Next() {
 		var index indexName
 		if err := rows.Scan(&index.schema, &index.name); err != nil {
-			_ = rows.Close()
 			return fmt.Errorf("scan leased PGroonga index: %w", err)
 		}
 		indexes = append(indexes, index)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return fmt.Errorf("iterate leased PGroonga indexes: %w", err)
 	}
 	if err := rows.Close(); err != nil {
@@ -490,7 +489,7 @@ func loadAppIntegrationLease(path string) (AppIntegrationLeaseDescriptor, error)
 	if err != nil {
 		return AppIntegrationLeaseDescriptor{}, fmt.Errorf("open integration lease descriptor: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
 	var lease AppIntegrationLeaseDescriptor
@@ -561,7 +560,7 @@ func waitForAppPostgres(ctx context.Context, sqlDB *sql.DB) error {
 	}
 }
 
-func applyAppIntegrationPostgresInitAssets(sqlDB *sql.DB, assetRoot string) error {
+func applyAppIntegrationPostgresInitAssets(ctx context.Context, sqlDB *sql.DB, assetRoot string) error {
 	scriptPath, ok, err := appIntegrationPostgresInitScriptFile(assetRoot)
 	if err != nil {
 		return err
@@ -574,12 +573,12 @@ func applyAppIntegrationPostgresInitAssets(sqlDB *sql.DB, assetRoot string) erro
 	if err != nil {
 		return err
 	}
-	_, err = sqlDB.Exec(extensionsSQL)
+	_, err = sqlDB.ExecContext(ctx, extensionsSQL)
 	return err
 }
 
-func bootstrapAppIntegrationSchemas(sqlDB *sql.DB) error {
-	_, err := sqlDB.Exec(`
+func bootstrapAppIntegrationSchemas(ctx context.Context, sqlDB *sql.DB) error {
+	_, err := sqlDB.ExecContext(ctx, `
 		CREATE SCHEMA IF NOT EXISTS kratos;
 			CREATE TABLE IF NOT EXISTS kratos.identities (
 				id UUID PRIMARY KEY,
@@ -621,7 +620,7 @@ func applyAppIntegrationSchemaSQL(sqlDB *sql.DB) error {
 	return requireAppIntegrationSchemaContract(context.Background(), sqlDB)
 }
 
-func applyAppIntegrationSchemaSQLFromRoot(sqlDB *sql.DB, schemaRoot string) error {
+func applyAppIntegrationSchemaSQLFromRoot(ctx context.Context, sqlDB *sql.DB, schemaRoot string) error {
 	schemaFiles, err := appIntegrationSchemaSQLFiles(schemaRoot)
 	if err != nil {
 		return err
@@ -632,7 +631,7 @@ func applyAppIntegrationSchemaSQLFromRoot(sqlDB *sql.DB, schemaRoot string) erro
 		if err != nil {
 			return fmt.Errorf("read current schema SQL %s: %w", schemaFile, err)
 		}
-		if _, err := sqlDB.Exec(string(schemaSQL)); err != nil {
+		if _, err := sqlDB.ExecContext(ctx, string(schemaSQL)); err != nil {
 			return fmt.Errorf("apply current schema SQL %s: %w", schemaFile, err)
 		}
 	}

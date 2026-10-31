@@ -228,7 +228,7 @@ func TestApplicationRuntimeReportsMCPPrivateListenerFailure(t *testing.T) {
 
 	runtime := &applicationRuntime{}
 	failures := make(chan error, 1)
-	runtime.startHTTPServer("MCP private HTTP server", &http.Server{
+	runtime.startHTTPServer(t.Context(), "MCP private HTTP server", &http.Server{
 		Addr: listener.Addr().String(), Handler: http.NewServeMux(),
 	}, failures)
 
@@ -246,8 +246,8 @@ func TestApplicationRuntimeShutdownStopsBothHTTPServers(t *testing.T) {
 	failures := make(chan error, 1)
 	mainServer := &http.Server{Addr: "127.0.0.1:0", Handler: http.NewServeMux()}
 	mcpPrivateServer := &http.Server{Addr: "127.0.0.1:0", Handler: http.NewServeMux()}
-	runtime.startHTTPServer("HTTP server", mainServer, failures)
-	runtime.startHTTPServer("MCP private HTTP server", mcpPrivateServer, failures)
+	runtime.startHTTPServer(t.Context(), "HTTP server", mainServer, failures)
+	runtime.startHTTPServer(t.Context(), "MCP private HTTP server", mcpPrivateServer, failures)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()

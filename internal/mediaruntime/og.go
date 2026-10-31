@@ -40,7 +40,8 @@ func NewOGProcess(cfg *config.Config) (*OGProcess, error) {
 	if nodePath == "" {
 		nodePath = cfg.Media.NodePath
 	}
-	cmd := exec.Command(nodePath, script)
+	// The worker outlives construction and is stopped by Shutdown (SIGTERM drain, then Kill), so no context may kill it.
+	cmd := exec.CommandContext(context.Background(), nodePath, script)
 	cmd.Dir = filepath.Dir(filepath.Dir(script))
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	// Cmd.Environ preserves the deployment's telemetry configuration. Explicit

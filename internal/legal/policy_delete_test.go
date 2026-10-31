@@ -45,13 +45,14 @@ func TestPolicyDeletionCancelsOutstandingDeliveryAndPreservesSealedHistory(t *te
 			for _, run := range runs {
 				require.True(t, run.DefinitionSealed)
 				require.Equal(t, model.JSONFields{"sealed": "keep"}, run.RenderSnapshot)
-				if run.ID == "scheduled" || run.ID == "sending" {
+				switch run.ID {
+				case "scheduled", "sending":
 					require.Equal(t, "cancelled", run.Status)
 					require.Equal(t, 1, run.SkippedCount)
 					require.NotNil(t, run.CompletedAt)
-				} else if run.ID == "unrelated" {
+				case "unrelated":
 					require.Equal(t, "sending", run.Status)
-				} else {
+				default:
 					require.Equal(t, run.ID, run.Status)
 				}
 			}

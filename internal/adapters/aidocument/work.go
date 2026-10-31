@@ -317,7 +317,7 @@ func compileWorkMetadataOperation(
 	operation core.Operation,
 	index int,
 ) (bool, *core.OperationIssue) {
-	target := core.FieldTarget{}
+	var target core.FieldTarget
 	var value *core.Value
 	switch operation.Kind {
 	case core.OperationSetField:

@@ -67,9 +67,10 @@ func TestRichTextCodecDeleteAndReinsertPersistsFinalOrderedState(t *testing.T) {
 				core.InsertBlockOperation(core.BlockID(child.String()), "paragraph", core.BlockID(revived.String()), ""),
 				core.SetFieldOperation(core.BlockID(child.String()), "content", core.RichText(core.InlineText("After"))),
 			}
-			if test.deleteLast == "other" {
+			switch test.deleteLast {
+			case "other":
 				operations = append(operations, core.DeleteBlockOperation(core.BlockID(other.String())))
-			} else if test.deleteLast == "revived" {
+			case "revived":
 				operations = append(operations, core.DeleteBlockOperation(core.BlockID(revived.String())))
 			}
 			nodes, err := codec.Project(document)

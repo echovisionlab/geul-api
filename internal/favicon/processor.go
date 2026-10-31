@@ -99,7 +99,7 @@ func (p *imageMagickProcessor) Process(
 	if err != nil {
 		return nil, fmt.Errorf("create favicon processor workspace: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	sourceExtension := model.GetExtensionFromMime(sourceMime)
 	if sourceExtension == "bin" {

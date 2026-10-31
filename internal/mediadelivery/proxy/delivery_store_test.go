@@ -57,7 +57,7 @@ func (s *fakeDeliveryStore) Open(
 		return nil, s.openErr
 	}
 	if s.readErr != nil {
-		return &errorReadCloser{err: s.readErr}, nil
+		return &errorReadCloser{err: s.readErr}, nil //nolint:nilerr // the fake opens successfully and surfaces readErr from Read, simulating a mid-stream failure
 	}
 	body := s.body
 	if requestedRange != nil {

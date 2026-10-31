@@ -330,11 +330,11 @@ func (capture *postConfigurationEventCapture) count() int {
 	return capture.notifications
 }
 
-func (publisher *postConfigurationEventCapture) NotifyProtobufWithExecutor(
+func (capture *postConfigurationEventCapture) NotifyProtobufWithExecutor(
 	ctx context.Context,
 	_ eventpkg.DBTX,
 	signal string,
 	message proto.Message,
 ) error {
-	return publisher.NotifyProtobuf(ctx, signal, message)
+	return capture.NotifyProtobuf(ctx, signal, message)
 }

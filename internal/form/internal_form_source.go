@@ -135,7 +135,7 @@ func (s *InternalFormService) SaveDocument(
 				ctx, tx, r.FormId, locale, updates, writeNow,
 			)
 		}
-		changed := false
+		var changed bool
 		documentRevision := root.DocumentRevision
 		if locale == root.SourceLocale {
 			documentID, parseErr := uuid.Parse(root.DocumentID)

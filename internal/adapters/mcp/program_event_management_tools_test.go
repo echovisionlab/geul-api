@@ -224,9 +224,10 @@ func TestProgramEventManagementCreateReadUpdateLifecycleFlow(t *testing.T) {
 	idArguments := toolArguments(t, `{"document_id":"`+programEventManagementID+`"}`)
 	for _, name := range []string{ToolProgramEventCreate, ToolProgramEventSettingsGet, ToolProgramEventSettingsUpdate, ToolProgramEventPublish, ToolProgramEventArchive, ToolProgramEventPublish, ToolProgramEventDelete} {
 		arguments := idArguments
-		if name == ToolProgramEventCreate {
+		switch name {
+		case ToolProgramEventCreate:
 			arguments = programEventManagementCreateArguments(t)
-		} else if name == ToolProgramEventSettingsUpdate {
+		case ToolProgramEventSettingsUpdate:
 			arguments = toolArguments(t, `{"document_id":"`+programEventManagementID+`","all_day":true}`)
 		}
 		result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, name, arguments)
@@ -256,9 +257,10 @@ func TestProgramEventManagementPreservesOwningAuthorityAndSafeErrors(t *testing.
 				owner.err = connect.NewError(code, errors.New("owning service decision"))
 				tools, _ := NewProgramEventManagementTools(owner)
 				arguments := toolArguments(t, `{"document_id":"`+programEventManagementID+`"}`)
-				if name == ToolProgramEventCreate {
+				switch name {
+				case ToolProgramEventCreate:
 					arguments = programEventManagementCreateArguments(t)
-				} else if name == ToolProgramEventSettingsUpdate {
+				case ToolProgramEventSettingsUpdate:
 					arguments["all_day"] = json.RawMessage(`true`)
 				}
 				ctx := context.WithValue(t.Context(), programEventManagementContextKey{}, "authenticated actor")
