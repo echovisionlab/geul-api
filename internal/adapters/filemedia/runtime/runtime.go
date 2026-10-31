@@ -86,10 +86,10 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 	}
 	original := event.GetOriginal()
 	derivativeCount := len(event.GetGenerations())
-	slog.Info("Deleting file objects from storage",
-		"fileId", event.GetFileId(),
+	slog.InfoContext(ctx, "Deleting file objects from storage",
+		"file_id", event.GetFileId(),
 		"bucket", r.bucket,
-		"derivativeCount", derivativeCount,
+		"derivative_count", derivativeCount,
 	)
 
 	if original.GetObjectKey() != "" {
@@ -97,8 +97,8 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 			Bucket: aws.String(r.bucket),
 			Key:    aws.String(original.GetObjectKey()),
 		}); err != nil {
-			slog.ErrorContext(ctx, "Failed to delete original storage object", "failure_cause", failurecause.Message(err), "file_id", event.GetFileId(), "bucket", r.bucket, "derivative_count", derivativeCount)
-			return errors.New("failed to delete original storage object")
+			return failurecause.WithAttrs(fmt.Errorf("delete original storage object: %w", err),
+				slog.String("file_id", event.GetFileId()), slog.String("bucket", r.bucket))
 		}
 	}
 
@@ -108,7 +108,7 @@ func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDel
 		}
 	}
 
-	slog.Info("File objects deleted successfully", "fileId", event.GetFileId(), "derivativesDeleted", derivativeCount)
+	slog.InfoContext(ctx, "File objects deleted successfully", "file_id", event.GetFileId(), "derivative_count", derivativeCount)
 	return nil
 }
 

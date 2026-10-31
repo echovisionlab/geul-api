@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"sort"
 	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -67,8 +65,6 @@ func (tools *AdminSettingsTools) CallTool(ctx context.Context, _ mcpserver.Princ
 	if err == nil || errors.Is(err, mcpserver.ErrUnknownTool) {
 		return result, err
 	}
-	// Log the original cause before expectedToolError maps transient failures.
-	slog.ErrorContext(ctx, "MCP administrator settings tool failed", "tool", name, failurecause.Attr(err))
 	return expectedToolError(err)
 }
 

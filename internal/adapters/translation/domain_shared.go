@@ -128,8 +128,7 @@ func requireJobEdit(factory func(string) (policyv1.Can, error)) func(context.Con
 		}
 		decision, err := auth.AuthorizationDecision(ctx, can)
 		if err != nil {
-			slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err), "entity_id", entityID)
-			return errs.AuthenticationRequired()
+			return errs.WithCause(errs.AuthenticationRequired(), failurecause.WithAttrs(err, slog.String("entity_id", entityID)))
 		}
 		allowed, err := spiceDB.Can(ctx, decision)
 		if err != nil {
@@ -242,13 +241,11 @@ func requireTranslationPermission(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NotFound(can.Resource().Type(), entityID)

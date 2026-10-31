@@ -35,7 +35,7 @@ func (a *PublicAssets) ResolveReadyAssetForSourceFile(
 ) *commonv1.AssetRef {
 	refs, err := a.ResolveReadyAssetsForSourceFiles(ctx, []string{fileID}, kinds...)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to resolve Program Event public asset", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Program Event public asset resolution failed; serving without the asset", failurecause.Attr(err), "file_id", fileID)
 		return nil
 	}
 	return refs[strings.TrimSpace(fileID)]

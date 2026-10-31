@@ -3,7 +3,6 @@ package sharelinkadapter
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -240,13 +238,11 @@ func (a *Authority) requirePermission(ctx context.Context, target target, entity
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, checkErr := a.spiceDB.Can(ctx, decision)
 	if checkErr != nil {
-		slog.ErrorContext(ctx, "Authorization check failed", "failure_cause", failurecause.Message(checkErr))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
 	}
 	if !allowed {
 		return errs.NotFound(target.name, entityID)

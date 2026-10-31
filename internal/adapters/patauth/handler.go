@@ -79,7 +79,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, 1))
 	if err != nil || len(body) != 0 {
 		if err != nil {
-			slog.WarnContext(request.Context(), "Failed to read PAT verification request", "failure_cause", failurecause.Message(err))
+			failurecause.RecorderFrom(request.Context()).Record(failurecause.Of(err))
 		}
 		writer.WriteHeader(http.StatusBadRequest)
 		return
@@ -96,7 +96,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	defer cancel()
 	principal, err := handler.authenticator.Authenticate(ctx, request.Header.Get(APIKeyHeader))
 	if errors.Is(err, pat.ErrInvalidToken) {
-		slog.WarnContext(ctx, "PAT verification rejected", "failure_cause", failurecause.Message(err, request.Header.Get(APIKeyHeader), password))
+		failurecause.RecorderFrom(ctx).Record(failurecause.Of(err, request.Header.Get(APIKeyHeader), password))
 		writer.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -104,8 +104,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		if err == nil {
 			err = errors.New("PAT authenticator returned an incomplete principal")
 		}
-		cause := failurecause.Message(err, request.Header.Get(APIKeyHeader), password)
-		slog.ErrorContext(ctx, "PAT verification unavailable", "failure_cause", cause)
+		failurecause.RecorderFrom(ctx).Record(failurecause.Of(err, request.Header.Get(APIKeyHeader), password))
 		writer.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

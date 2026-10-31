@@ -404,7 +404,7 @@ func TestPageMixedMetadataAndContentRejectionKeepsOriginalOperationIndex(t *test
 	require.NoError(t, err)
 	command, generic := core.ValidateLoadedApply(loaded, request)
 	require.True(t, generic.Valid(), "%+v", generic)
-	_, issues, err := port.compile(api.state, uuid.MustParse(api.state.ViewerMemberID), loaded, command.Operations)
+	_, issues, err := port.compile(t.Context(), api.state, uuid.MustParse(api.state.ViewerMemberID), loaded, command.Operations)
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
 	require.Equal(t, 1, issues[0].Operation)

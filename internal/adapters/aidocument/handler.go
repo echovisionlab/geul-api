@@ -75,7 +75,7 @@ func (s *Service) ApplyAIDocumentOperations(ctx context.Context, request *connec
 		}
 		var conflictError *core.ConflictError
 		if errors.As(err, &conflictError) {
-			slog.WarnContext(ctx, "AI document mutation conflicted", "failure_cause", failurecause.Message(err))
+			slog.WarnContext(ctx, "AI document mutation conflicted", failurecause.Attr(err), "document_id", string(mutation.Document), "locale", string(mutation.Locale), "domain", string(mutation.Profile))
 			validation, conversionErr := validationToProto(core.ValidationResult{Conflict: &conflictError.Conflict})
 			if conversionErr != nil {
 				return nil, fmt.Errorf("convert AI document conflict: %w", conversionErr)

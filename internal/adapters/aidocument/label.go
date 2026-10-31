@@ -114,7 +114,7 @@ func (p *labelPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == labeldomain.AIDocumentExecutionValidate,
+			err, mode == labeldomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

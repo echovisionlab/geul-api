@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -304,7 +305,9 @@ func TestAdminSettingsUsesNativeAuthenticationBoundary(t *testing.T) {
 	}
 }
 
-func TestAdminSettingsLogsOriginalFailureCauseAndKeepsInternalFailurePrivate(t *testing.T) {
+// The MCP handler logs a tool failure once; the adapter returns the original
+// cause with it so that record keeps the cause behind a mapped message.
+func TestAdminSettingsReturnsOriginalFailureCauseAndKeepsInternalFailurePrivate(t *testing.T) {
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -319,14 +322,16 @@ func TestAdminSettingsLogsOriginalFailureCauseAndKeepsInternalFailurePrivate(t *
 	require.False(t, errors.As(err, &execution))
 	require.Empty(t, result.Content)
 	require.Nil(t, result.StructuredContent)
-	require.Contains(t, logs.String(), "private storage detail")
-	require.NotContains(t, logs.String(), "private-password")
-	require.NotContains(t, logs.String(), "sender@example.test")
+	cause := failurecause.Message(err)
+	require.Contains(t, cause, "private storage detail")
+	require.NotContains(t, cause, "private-password")
+	require.NotContains(t, cause, "sender@example.test")
 	owner.err = connect.NewError(connect.CodeUnavailable, errors.New("original upstream failure"))
 	_, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMailAdapterList, toolArguments(t, `{}`))
 	require.ErrorAs(t, err, &execution)
 	require.Equal(t, "The service is temporarily unavailable", execution.Message)
-	require.Contains(t, logs.String(), "original upstream failure")
+	require.Contains(t, failurecause.Message(execution.Cause), "original upstream failure")
+	require.Empty(t, logs.String())
 }
 
 func TestSiteSettingsGetBindingFailureReturnsNoPartialSettings(t *testing.T) {

@@ -140,11 +140,13 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		var revisionConflict *legal.AIDocumentRevisionConflict
 		if errors.As(err, &revisionConflict) {
-			slog.WarnContext(ctx, "Legal translation import conflicted", "failure_cause", failurecause.Message(err), "entity_type", command.EntityType, "entity_id", command.EntityID, "locale", command.TargetLocale, "domain", "translation")
-			return application.TranslationInterchangeApplyResult{}, connect.NewError(
+			return application.TranslationInterchangeApplyResult{}, errs.WithCause(connect.NewError(
 				connect.CodeAborted,
 				errors.New("legal content changed; reload before importing"),
-			)
+			), failurecause.WithAttrs(err,
+				slog.String("entity_type", command.EntityType), slog.String("entity_id", command.EntityID),
+				slog.String("locale", command.TargetLocale),
+			))
 		}
 		return application.TranslationInterchangeApplyResult{}, err
 	}

@@ -258,9 +258,10 @@ func requireBrowserSecurityPrincipal(ctx context.Context) (*auth.UserInfo, error
 func personalAccessTokenMetadataProto(metadata pat.Metadata) (*managev1.PersonalAccessToken, error) {
 	createdAt := timestamppb.New(metadata.CreatedAt)
 	if err := createdAt.CheckValid(); err != nil {
-		cause := failurecause.Message(err)
-		slog.Error("Stored personal access token timestamp is invalid", "failure_cause", cause, "token_id", string(metadata.ID))
-		return nil, errs.Internal(fmt.Errorf("stored personal access token has an invalid creation time"))
+		return nil, errs.Internal(failurecause.WithAttrs(
+			fmt.Errorf("stored personal access token has an invalid creation time: %w", err),
+			slog.String("token_id", string(metadata.ID)),
+		))
 	}
 	return &managev1.PersonalAccessToken{
 		Id:        string(metadata.ID),
@@ -271,14 +272,12 @@ func personalAccessTokenMetadataProto(metadata pat.Metadata) (*managev1.Personal
 func personalAccessTokenServiceError(err error, invalidField, tokenID string) error {
 	switch {
 	case errors.Is(err, pat.ErrInvalidInput):
-		cause := failurecause.Message(err)
-		slog.Warn("Personal access token input rejected", "failure_cause", cause, "field", invalidField)
 		if invalidField != "" {
 			return errs.InvalidArgument(invalidField, "invalid identifier")
 		}
-		return errs.Internal(fmt.Errorf("personal access token service rejected server-derived input"))
+		return errs.Internal(fmt.Errorf("personal access token service rejected server-derived input: %w", err))
 	case errors.Is(err, pat.ErrTokenAlreadyExists):
-		return errs.AlreadyExistsMsg("personal access token already exists")
+		return errs.WithCause(errs.AlreadyExistsMsg("personal access token already exists"), err)
 	case errors.Is(err, pat.ErrTokenNotFound):
 		return errs.NotFound("personal access token", tokenID)
 	default:

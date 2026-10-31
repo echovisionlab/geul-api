@@ -83,8 +83,7 @@ func (r *Registry) RequireForSubject(
 	subject auth.AccountIdentitySubject,
 ) error {
 	if _, err := auth.NewAccountIdentitySubject(subject.ID); err != nil {
-		slog.WarnContext(ctx, "Collaboration subject rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), failurecause.WithAttrs(err, slog.String("resource_type", resourceType.String())))
 	}
 	allowed, err := r.Authorize(ctx, resourceType, resourceID, permission, subject)
 	if err != nil {
@@ -108,8 +107,7 @@ func (r *Registry) RequireForSubjectInTx(
 		return errs.DependencyUnavailable("collaboration authorization transaction")
 	}
 	if _, err := auth.NewAccountIdentitySubject(subject.ID); err != nil {
-		slog.WarnContext(ctx, "Collaboration subject rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), failurecause.WithAttrs(err, slog.String("resource_type", resourceType.String())))
 	}
 	authorizer, ok := r.authorizers[resourceType]
 	if !ok {
@@ -151,8 +149,7 @@ func (r *Registry) RequireCurrentEdit(
 	}
 	subject, err := auth.NewAccountIdentitySubject(principal.IdentityID)
 	if err != nil {
-		slog.WarnContext(ctx, "Collaboration principal rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), failurecause.WithAttrs(err, slog.String("resource_type", resourceType.String())))
 	}
 	return r.RequireEditForSubject(ctx, resourceType, resourceID, subject)
 }

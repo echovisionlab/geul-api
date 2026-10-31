@@ -3,7 +3,6 @@ package filemedia
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -73,8 +71,7 @@ func maskPrivateDomainAccess(err error, domain, resourceID string) error {
 	if err != nil {
 		switch connect.CodeOf(err) {
 		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-			slog.Warn("File attachment access rejected", failurecause.Attr(err), "entity_type", domain, "entity_id", resourceID)
-			return errs.NotFound(domain, resourceID)
+			return errs.WithCause(errs.NotFound(domain, resourceID), err)
 		}
 	}
 	return err

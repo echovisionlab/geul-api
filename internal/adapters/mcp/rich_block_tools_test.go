@@ -153,7 +153,7 @@ func compileFocusedRichRequest(t *testing.T, request core.ApplyRequest) contentb
 		if err != nil {
 			t.Fatal(err)
 		}
-		batch, issues, err = codec.Compile(uuid.New(), document, core.LocaleRoleSource, request.ExpectedDocumentRevision, uuid.New(), request.Operations)
+		batch, issues, err = codec.Compile(t.Context(), uuid.New(), document, core.LocaleRoleSource, request.ExpectedDocumentRevision, uuid.New(), request.Operations)
 	} else {
 		codec, e := adapter.NewRichTextCodec(contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST)
 		if e != nil {

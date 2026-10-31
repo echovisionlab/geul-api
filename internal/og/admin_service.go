@@ -124,7 +124,7 @@ func (s *AdminService) RegenerateAllOgImages(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	slog.Info("queued one OG regeneration run for all targets", "runId", plan.RunID, "generationCount", len(plan.GenerationIDs))
+	slog.InfoContext(ctx, "Queued one OG regeneration run for all targets", "run_id", plan.RunID, "generation_count", len(plan.GenerationIDs))
 	return connect.NewResponse(&managev1.RegenerateAllOgImagesResponse{
 		RunId: plan.RunID, GenerationCount: boundedInt32(int64(len(plan.GenerationIDs))),
 	}), nil

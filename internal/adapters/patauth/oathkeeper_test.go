@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/member/pat"
 )
 
@@ -144,7 +145,7 @@ func TestOathkeeperNeverCachesAuthentication(t *testing.T) {
 	}
 }
 
-func TestOathkeeperLogsRedactedFailureCause(t *testing.T) {
+func TestOathkeeperRecordsRedactedFailureCause(t *testing.T) {
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
@@ -155,11 +156,13 @@ func TestOathkeeperLogsRedactedFailureCause(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx, recorder := failurecause.WithRecorder(t.Context())
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, oathkeeperRequest())
-	if w.Code != 503 || !strings.Contains(logs.String(), `"failure_cause":"database unavailable:`) ||
-		strings.Contains(logs.String(), oathkeeperTestToken) || strings.Contains(logs.String(), testSecret) {
-		t.Fatal("failure cause missing or private values leaked")
+	h.ServeHTTP(w, oathkeeperRequest().WithContext(ctx))
+	failure, recorded := recorder.Recorded()
+	if w.Code != 503 || logs.Len() != 0 || !recorded || !strings.HasPrefix(failure.Cause, "database unavailable:") ||
+		strings.Contains(failure.Cause, oathkeeperTestToken) || strings.Contains(failure.Cause, testSecret) {
+		t.Fatalf("failure cause missing, logged twice or private values leaked: %+v %s", failure, logs.String())
 	}
 }
 

@@ -125,7 +125,8 @@ func (s *InternalService) FailOgGeneration(
 func mapOgLifecycleError(err error) error {
 	var connectErr *connect.Error
 	if errors.As(err, &connectErr) {
-		return connectErr
+		// Wrap keeps the outer operation context behind the classified answer.
+		return errs.Wrap(err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFound("og_generation", "")

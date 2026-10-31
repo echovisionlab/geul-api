@@ -35,7 +35,7 @@ func TestPageLocalePresenceFollowsLastEffectiveWrite(t *testing.T) {
 			document := pagePresenceExternalVideoForTest(sectionID)
 			db, store, created := newCodecStoreForTest(t, "page")
 			path := []core.FieldPathSegment{core.ObjectPath("props"), core.ObjectPath("caption")}
-			seed, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), []core.Operation{
+			seed, issues, err := codec.Compile(t.Context(), created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), []core.Operation{
 				core.SetNestedFieldOperation(core.BlockID(sectionID), pageSectionLocaleField, path, core.Text("source")),
 			})
 			require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestPageLocalePresenceFollowsLastEffectiveWrite(t *testing.T) {
 				operations = append(operations, available[name])
 			}
 			command := pagePresenceValidateForTest(t, codec, document, snapshot, operations)
-			batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
+			batch, issues, err := codec.Compile(t.Context(), created.Document.ID, document, core.LocaleRoleSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
 			require.NoError(t, err)
 			require.Empty(t, issues)
 			snapshot = persistCodecBatchForTest(t, db, store, batch)
@@ -93,7 +93,7 @@ func TestPageLocalePresenceTargetEmptySetPreservesSharedRevision(t *testing.T) {
 	require.NoError(t, err)
 	sectionID := uuid.NewString()
 	db, store, created := newCodecStoreForTest(t, "page")
-	seed, issues, err := codec.Compile(created.Document.ID, pagePresenceExternalVideoForTest(sectionID), core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+	seed, issues, err := codec.Compile(t.Context(), created.Document.ID, pagePresenceExternalVideoForTest(sectionID), core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	snapshot := persistCodecBatchForTest(t, db, store, seed)
@@ -102,7 +102,7 @@ func TestPageLocalePresenceTargetEmptySetPreservesSharedRevision(t *testing.T) {
 	command := pagePresenceValidateForTest(t, codec, target, snapshot, []core.Operation{
 		core.SetNestedFieldOperation(core.BlockID(sectionID), pageSectionLocaleField, []core.FieldPathSegment{core.ObjectPath("props"), core.ObjectPath("caption")}, core.Text("")),
 	})
-	batch, issues, err := codec.Compile(created.Document.ID, target, core.LocaleRoleNonSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
+	batch, issues, err := codec.Compile(t.Context(), created.Document.ID, target, core.LocaleRoleNonSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	require.Empty(t, batch.Upserts)
@@ -148,7 +148,7 @@ func TestPageLocalePresencePrunesDeletedTableCell(t *testing.T) {
 	source.Base.Nodes[0].Section.GetRichText().Blocks = table.Base
 	source.LocaleOverlay.Sections[0].GetRichText().Blocks.Blocks = table.LocaleOverlay.Blocks
 	db, store, created := newCodecStoreForTest(t, "page")
-	seed, issues, err := codec.Compile(created.Document.ID, source, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+	seed, issues, err := codec.Compile(t.Context(), created.Document.ID, source, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	snapshot := persistCodecBatchForTest(t, db, store, seed)
@@ -160,7 +160,7 @@ func TestPageLocalePresencePrunesDeletedTableCell(t *testing.T) {
 		core.SetNestedFieldOperation(core.BlockID(blockID), richTextTableLocaleField, contentPath, core.RichText()),
 		core.UnsetNestedFieldOperation(core.BlockID(blockID), richTextTableField, cellPath),
 	})
-	batch, issues, err := codec.Compile(created.Document.ID, source, core.LocaleRoleSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
+	batch, issues, err := codec.Compile(t.Context(), created.Document.ID, source, core.LocaleRoleSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	snapshot = persistCodecBatchForTest(t, db, store, batch)
@@ -204,7 +204,7 @@ func TestPageLocalePresenceWholeUnitsUnsetClearsReinsertedLocale(t *testing.T) {
 		}}},
 	}
 	db, store, created := newCodecStoreForTest(t, "page")
-	seed, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
+	seed, issues, err := codec.Compile(t.Context(), created.Document.ID, document, core.LocaleRoleSource, core.Revision(created.Document.Revision.String()), uuid.New(), nil)
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	snapshot := persistCodecBatchForTest(t, db, store, seed)
@@ -222,7 +222,7 @@ func TestPageLocalePresenceWholeUnitsUnsetClearsReinsertedLocale(t *testing.T) {
 		core.SetNestedFieldOperation(core.BlockID(sectionID), pageSectionDataField, unitPath[:1], units),
 	}
 	command := pagePresenceValidateForTest(t, codec, document, snapshot, operations)
-	batch, issues, err := codec.Compile(created.Document.ID, document, core.LocaleRoleSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
+	batch, issues, err := codec.Compile(t.Context(), created.Document.ID, document, core.LocaleRoleSource, command.ExpectedDocumentRevision, uuid.New(), command.Operations)
 	require.NoError(t, err)
 	require.Empty(t, issues)
 	snapshot = persistCodecBatchForTest(t, db, store, batch)

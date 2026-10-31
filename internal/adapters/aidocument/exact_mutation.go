@@ -1,13 +1,10 @@
 package aidocumentadapter
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // exactMutationRun owns only the schema-independent exact-mutation steps that
@@ -64,25 +61,11 @@ func rejectExactMutation(domain string, result core.ValidationResult) error {
 	return &exactMutationValidationError{domain: domain, result: result}
 }
 
-func handleExactMutationValidationError(
-	ctx context.Context,
-	request core.ApplyRequest,
-	err error,
-	validate bool,
-) (core.ValidationResult, error, bool) {
+func handleExactMutationValidationError(err error, validate bool) (core.ValidationResult, error, bool) {
 	var invalid *exactMutationValidationError
 	if !errors.As(err, &invalid) {
 		return core.ValidationResult{}, nil, false
 	}
-	slog.WarnContext(ctx, "AI document validation rejected operations",
-		failurecause.Attr(err),
-		"domain", invalid.domain,
-		"document_id", string(request.Document),
-		"locale", string(request.Locale),
-		"validate_only", validate,
-		"issue_count", len(invalid.result.Issues),
-		core.IssuesLogAttr(invalid.result.Issues),
-	)
 	if validate {
 		return invalid.result, nil, true
 	}

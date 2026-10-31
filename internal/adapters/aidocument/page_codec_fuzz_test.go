@@ -73,11 +73,12 @@ func pageCodecFuzzDocumentForTest(t *testing.T, codec *PageCodec, text, caption,
 // compilePageRoundTrip compiles operations against document, rebuilds the
 // stored document from the resulting batch and projects it again.
 func compilePageRoundTrip(
+	t *testing.T,
 	codec *PageCodec,
 	document *contentv1.LocalizedPageDocument,
 	operations []core.Operation,
 ) ([]core.Node, []core.OperationIssue, error) {
-	batch, issues, err := codec.Compile(
+	batch, issues, err := codec.Compile(t.Context(),
 		uuid.MustParse(pageCodecFuzzDocument), document, core.LocaleRoleSource,
 		core.Revision(pageCodecFuzzRevision), uuid.MustParse(pageCodecFuzzContributor), operations,
 	)
@@ -103,7 +104,7 @@ func TestPageCodecProjectionGolden(t *testing.T) {
 			document := pageCodecFuzzDocumentForTest(t, codec, seed.text, seed.caption, seed.uri)
 			nodes, err := codec.Project(document)
 			require.NoError(t, err)
-			roundTrip, issues, err := compilePageRoundTrip(codec, document, nil)
+			roundTrip, issues, err := compilePageRoundTrip(t, codec, document, nil)
 			require.NoError(t, err)
 			require.Empty(t, issues)
 			require.Equal(t, nodes, roundTrip, "compile/project round trip changed the projection")
@@ -145,7 +146,7 @@ func FuzzPageCodecRoundTrip(f *testing.F) {
 		if !validation.Valid() {
 			return
 		}
-		written, issues, err := compilePageRoundTrip(codec, document, command.Operations)
+		written, issues, err := compilePageRoundTrip(t, codec, document, command.Operations)
 		if err != nil {
 			if connect.CodeOf(err) == connect.CodeInvalidArgument {
 				return
@@ -175,7 +176,7 @@ func FuzzPageCodecRoundTrip(f *testing.F) {
 
 		// The rebuilt document is itself a fixed point of a full compile.
 		stored := pageCodecFuzzRebuild(t, codec, document, command.Operations)
-		again, issues, err := compilePageRoundTrip(codec, stored, nil)
+		again, issues, err := compilePageRoundTrip(t, codec, stored, nil)
 		require.NoError(t, err)
 		require.Empty(t, issues)
 		require.Equal(t, written, again, "second compile/project round trip changed the projection")
@@ -184,7 +185,7 @@ func FuzzPageCodecRoundTrip(f *testing.F) {
 
 func pageCodecFuzzRebuild(t *testing.T, codec *PageCodec, document *contentv1.LocalizedPageDocument, operations []core.Operation) *contentv1.LocalizedPageDocument {
 	t.Helper()
-	batch, issues, err := codec.Compile(
+	batch, issues, err := codec.Compile(t.Context(),
 		uuid.MustParse(pageCodecFuzzDocument), document, core.LocaleRoleSource,
 		core.Revision(pageCodecFuzzRevision), uuid.MustParse(pageCodecFuzzContributor), operations,
 	)

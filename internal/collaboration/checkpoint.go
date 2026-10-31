@@ -2,12 +2,10 @@ package collaboration
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"gorm.io/gorm"
@@ -63,7 +61,6 @@ func (f *CheckpointFence) RequireCurrentContributorsForPermission(
 	for index, contributor := range contributors {
 		contributor = strings.TrimSpace(contributor)
 		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
-			slog.WarnContext(ctx, "Collaboration contributor rejected", "resource_type", resourceType.String(), "failure_cause", failurecause.Message(err))
 			return errs.InvalidArgument(
 				"contributor_member_ids",
 				"must contain canonical Member UUIDs",

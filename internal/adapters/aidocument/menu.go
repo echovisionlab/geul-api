@@ -155,7 +155,7 @@ func (p *menuAIDocumentPort) executeMutation(
 	)
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
-			ctx, request, err, mode == menudomain.AIDocumentExecutionValidate,
+			err, mode == menudomain.AIDocumentExecutionValidate,
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}

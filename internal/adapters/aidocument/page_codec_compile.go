@@ -1,6 +1,7 @@
 package aidocumentadapter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 // Compile applies Page section and nested Rich Text operations to one clone,
 // then lets the generated Page flattener validate and produce one Store batch.
 func (c *PageCodec) Compile(
+	ctx context.Context,
 	documentID uuid.UUID,
 	document *contentv1.LocalizedPageDocument,
 	role core.LocaleRole,
@@ -45,11 +47,10 @@ func (c *PageCodec) Compile(
 		if operation.InsertRelationItem != nil || operation.DeleteRelationItem != nil || operation.MoveRelationItem != nil {
 			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: "Page sections do not expose generic relations"}}, nil
 		}
-		if err := c.applyPageOperation(working, role, operation, deleted); err != nil {
-			slog.Warn("Page operation rejected", failurecause.Attr(err), "document_id", documentID.String(), "operation_index", index)
-			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil
+		if err := c.applyPageOperation(ctx, working, role, operation, deleted); err != nil {
+			return contentblock.Batch{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Message: err.Error()}}, nil //nolint:nilerr // an operation the document rejects is an operation issue, not a failure
 		}
-		c.updatePageAffectedLocaleValues(working, affected, operation)
+		c.updatePageAffectedLocaleValues(ctx, working, affected, operation)
 	}
 	mutation := &contentv1.PageSectionMutationBatch{
 		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
@@ -119,7 +120,7 @@ func (c *PageCodec) Compile(
 	return batch, nil, nil
 }
 
-func (c *PageCodec) updatePageAffectedLocaleValues(document *contentv1.LocalizedPageDocument, affected map[string]core.FieldTarget, operation core.Operation) {
+func (c *PageCodec) updatePageAffectedLocaleValues(ctx context.Context, document *contentv1.LocalizedPageDocument, affected map[string]core.FieldTarget, operation core.Operation) {
 	var replaced *core.FieldTarget
 	if operation.SetField != nil {
 		replaced = &operation.SetField.Target
@@ -129,7 +130,7 @@ func (c *PageCodec) updatePageAffectedLocaleValues(document *contentv1.Localized
 	for key, target := range affected {
 		// Track the current tree after every operation so a later same-ID insert
 		// cannot revive presence belonging to a deleted block or descendant.
-		if !c.pageLocaleValueTargetExists(document, target) ||
+		if !c.pageLocaleValueTargetExists(ctx, document, target) ||
 			(replaced != nil && pageFieldTargetContains(*replaced, target)) ||
 			(operation.ReplaceBlockKind != nil && operation.ReplaceBlockKind.Block == target.Block) {
 			delete(affected, key)
@@ -142,7 +143,7 @@ func (c *PageCodec) updatePageAffectedLocaleValues(document *contentv1.Localized
 		added = []core.FieldTarget{{Block: operation.InsertBlock.Block, Field: "content"}}
 	}
 	for _, target := range added {
-		if c.pageLocaleValueTargetExists(document, target) {
+		if c.pageLocaleValueTargetExists(ctx, document, target) {
 			affected[pageLocaleTargetKey(fieldTargetToProto(target))] = target
 		}
 	}
@@ -186,7 +187,7 @@ func pageLocaleSetLeaves(target core.FieldTarget, value core.Value) []core.Field
 	return result
 }
 
-func (c *PageCodec) pageLocaleValueTargetExists(document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
+func (c *PageCodec) pageLocaleValueTargetExists(ctx context.Context, document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
 	if _, _, exists := findPageNode(document, string(target.Block)); exists {
 		if target.Field != pageSectionLocaleField {
 			return false
@@ -203,7 +204,7 @@ func (c *PageCodec) pageLocaleValueTargetExists(document *contentv1.LocalizedPag
 		}
 		_, message, err := c.localeSectionMessage(locale.ProtoReflect())
 		if err != nil {
-			slog.Error("Failed to resolve Page locale section", failurecause.Attr(err), "block_id", string(target.Block), "field", string(target.Field))
+			slog.ErrorContext(ctx, "Failed to resolve Page locale section; treating the target as shared", failurecause.Attr(err), "block_id", string(target.Block), "field", string(target.Field))
 			return false
 		}
 		container, field, err := pageResolvePath(message, path, false)
@@ -235,7 +236,7 @@ func (c *PageCodec) pageLocaleValueTargetExists(document *contentv1.LocalizedPag
 		}
 		return false
 	}
-	return len(target.Path) == 0 && c.pageRichTextFieldIsLocale(document, target)
+	return len(target.Path) == 0 && c.pageRichTextFieldIsLocale(ctx, document, target)
 }
 
 func pageAffectedLocaleValues(affected map[string]core.FieldTarget) []*managev1.AIDocumentFieldTarget {
@@ -249,7 +250,7 @@ func pageAffectedLocaleValues(affected map[string]core.FieldTarget) []*managev1.
 	return targets
 }
 
-func (c *PageCodec) pageRichTextFieldIsLocale(document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
+func (c *PageCodec) pageRichTextFieldIsLocale(ctx context.Context, document *contentv1.LocalizedPageDocument, target core.FieldTarget) bool {
 	var kind core.BlockKind
 	for _, section := range document.GetBase().GetNodes() {
 		for _, node := range section.GetSection().GetRichText().GetBlocks().GetNodes() {
@@ -258,7 +259,7 @@ func (c *PageCodec) pageRichTextFieldIsLocale(document *contentv1.LocalizedPageD
 			}
 			resolved, _, err := c.rich.blockMessage(node.GetBlock().ProtoReflect())
 			if err != nil {
-				slog.Error("Failed to resolve Page rich text block ownership", "failure_cause", failurecause.Message(err), "block_id", string(target.Block), "field", string(target.Field))
+				slog.ErrorContext(ctx, "Failed to resolve Page rich text block ownership; treating the field as shared", failurecause.Attr(err), "block_id", string(target.Block), "field", string(target.Field))
 			}
 			if err == nil {
 				kind = resolved
@@ -334,7 +335,7 @@ func pageDocumentRichTextBlockExists(document *contentv1.LocalizedPageDocument, 
 	return false
 }
 
-func (c *PageCodec) applyPageOperation(document *contentv1.LocalizedPageDocument, role core.LocaleRole, operation core.Operation, deleted map[string]struct{}) error {
+func (c *PageCodec) applyPageOperation(ctx context.Context, document *contentv1.LocalizedPageDocument, role core.LocaleRole, operation core.Operation, deleted map[string]struct{}) error {
 	if role != core.LocaleRoleSource {
 		switch operation.Kind {
 		case core.OperationInsertBlock, core.OperationDeleteBlock, core.OperationMoveBlock, core.OperationReplaceBlockKind:
@@ -349,7 +350,7 @@ func (c *PageCodec) applyPageOperation(document *contentv1.LocalizedPageDocument
 				target = operation.UnsetField.Target
 			}
 			_, _, pageSection := findPageNode(document, string(target.Block))
-			if (pageSection && target.Field != pageSectionLocaleField) || (!pageSection && !c.pageRichTextFieldIsLocale(document, target)) {
+			if (pageSection && target.Field != pageSectionLocaleField) || (!pageSection && !c.pageRichTextFieldIsLocale(ctx, document, target)) {
 				return errors.New("target Page locale accepts only locale scalar fields")
 			}
 		}

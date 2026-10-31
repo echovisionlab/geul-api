@@ -92,7 +92,7 @@ func (a PublicAssets) ReadyRef(
 	}
 	if err := query.Order("created_at DESC, id DESC").Take(&asset).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "Failed to resolve public catalog asset", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Public catalog asset lookup failed; serving without the asset", failurecause.Attr(err), "file_id", source.FileID)
 		}
 		return nil
 	}
@@ -104,7 +104,7 @@ func (a PublicAssets) ReadyRef(
 	}
 	ref, err := mediaasset.NewLifecycle(db, a.cdnDomain).AssetRef(asset)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to resolve public catalog asset", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Public catalog asset reference failed; serving without the asset", failurecause.Attr(err), "file_id", source.FileID, "asset_id", asset.ID)
 		return nil
 	}
 	return ref

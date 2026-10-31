@@ -2,14 +2,12 @@ package series
 
 import (
 	"context"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 )
 
@@ -36,8 +34,7 @@ func (PostAccess) RequireLockedEdit(
 	// Post exists to a principal that cannot perform the selected Post action.
 	switch connect.CodeOf(err) {
 	case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-		slog.WarnContext(ctx, "Series Post access rejected", failurecause.Attr(err), "post_id", postID)
-		return errs.NotFound("post", postID)
+		return errs.WithCause(errs.NotFound("post", postID), err)
 	default:
 		return err
 	}
