@@ -1,0 +1,308 @@
+package aidocument
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+func (i DocumentIdentity) validate() error {
+	if _, ok := supportedDomainSet[i.Domain]; !ok {
+		return fmt.Errorf("unsupported document domain %q", i.Domain)
+	}
+	if err := validateOpaque("document reference", string(i.Reference), 256); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateLocale(locale Locale) error {
+	value := string(locale)
+	if value == "" || len(value) > 35 {
+		return fmt.Errorf("locale must contain 1 to 35 characters")
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || (character == '-' && index > 0 && index < len(value)-1) {
+			continue
+		}
+		return fmt.Errorf("locale %q is not a canonical locale identifier", locale)
+	}
+	return nil
+}
+
+func validateOpaque(name, value string, max int) error {
+	if value == "" || len(value) > max {
+		return fmt.Errorf("%s must contain 1 to %d characters", name, max)
+	}
+	if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\t") {
+		return fmt.Errorf("%s contains whitespace outside its opaque value", name)
+	}
+	return nil
+}
+
+// Stable protocol identities must not be array positions or paths derived
+// from positions. Domain adapters have to map positional persistence shapes to
+// stable semantic handles before entering this package.
+func validateStableID(name, value string, max int) error {
+	if err := validateOpaque(name, value, max); err != nil {
+		return err
+	}
+	if strings.ContainsAny(value, "[]") {
+		return fmt.Errorf("%s %q contains a positional path", name, value)
+	}
+	for _, segment := range strings.FieldsFunc(value, func(character rune) bool {
+		return character == '/' || character == '.' || character == ':'
+	}) {
+		allDigits := segment != ""
+		for _, character := range segment {
+			if character < '0' || character > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return fmt.Errorf("%s %q contains a positional index", name, value)
+		}
+	}
+	return nil
+}
+
+func (d Document) validate() error {
+	if err := d.Identity.validate(); err != nil {
+		return err
+	}
+	if err := validateOpaque("document revision", string(d.DocumentRevision), 256); err != nil {
+		return err
+	}
+	if err := validateLocale(d.SourceLocale); err != nil {
+		return fmt.Errorf("source locale: %w", err)
+	}
+	if err := validateLocale(d.Locale); err != nil {
+		return fmt.Errorf("requested locale: %w", err)
+	}
+	if d.Role() == LocaleRoleSource && !d.LocaleExists {
+		return errors.New("source locale must exist")
+	}
+	if d.Role() == LocaleRoleSource && d.TargetRevision != nil {
+		return errors.New("source locale cannot carry a target revision")
+	}
+	if d.Role() == LocaleRoleNonSource && d.LocaleExists {
+		if d.TargetRevision == nil {
+			return errors.New("existing target locale requires a target revision")
+		}
+		if err := validateOpaque("target revision", string(*d.TargetRevision), 256); err != nil {
+			return err
+		}
+	}
+	if d.Role() == LocaleRoleNonSource && !d.LocaleExists && d.TargetRevision != nil {
+		return errors.New("absent target locale cannot carry a target revision")
+	}
+	if d.Role() == LocaleRoleNonSource && !d.LocaleExists {
+		for _, node := range d.Nodes {
+			if len(node.Localized) != 0 {
+				return errors.New("absent translation locale cannot contain locale-owned values")
+			}
+			for _, relation := range node.Relations {
+				for _, item := range relation.Items {
+					if len(item.Localized) != 0 {
+						return errors.New("absent translation locale cannot contain relation-item locale-owned values")
+					}
+				}
+			}
+		}
+	}
+	if err := d.Catalog.validate(); err != nil {
+		return err
+	}
+	if err := validateNodes(d.Nodes); err != nil {
+		return err
+	}
+	return validateDocumentCatalogValues(d.Catalog, d.Nodes)
+}
+
+func validateNodes(nodes []Node) error {
+	if err := validateProjectedNodes(nodes); err != nil {
+		return err
+	}
+	ids := make(map[BlockID]struct{}, len(nodes))
+	for _, node := range nodes {
+		ids[node.ID] = struct{}{}
+	}
+	for _, node := range nodes {
+		if node.Parent != "" {
+			if _, ok := ids[node.Parent]; !ok {
+				return fmt.Errorf("block %q has missing parent %q", node.ID, node.Parent)
+			}
+		}
+		visited := map[BlockID]struct{}{node.ID: {}}
+		parent := node.Parent
+		for parent != "" {
+			if _, cycle := visited[parent]; cycle {
+				return fmt.Errorf("block %q is part of a parent cycle", node.ID)
+			}
+			visited[parent] = struct{}{}
+			for _, candidate := range nodes {
+				if candidate.ID == parent {
+					parent = candidate.Parent
+					break
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateProjectedNodes(nodes []Node) error {
+	ids := make(map[BlockID]struct{}, len(nodes))
+	parents := make(map[BlockID]BlockID, len(nodes))
+	for _, node := range nodes {
+		if err := validateStableID("block ID", string(node.ID), 160); err != nil {
+			return err
+		}
+		if _, duplicate := ids[node.ID]; duplicate {
+			return fmt.Errorf("duplicate block ID %q", node.ID)
+		}
+		ids[node.ID] = struct{}{}
+		parents[node.ID] = node.Parent
+		if node.Parent != "" {
+			if err := validateStableID("parent block ID", string(node.Parent), 160); err != nil {
+				return err
+			}
+		}
+		if node.Order < 0 {
+			return fmt.Errorf("block %q has negative order", node.ID)
+		}
+		if err := validateFieldValues(node.Shared); err != nil {
+			return fmt.Errorf("block %q shared fields: %w", node.ID, err)
+		}
+		if err := validateFieldValues(node.Localized); err != nil {
+			return fmt.Errorf("block %q localized fields: %w", node.ID, err)
+		}
+		files := make(map[string]struct{}, len(node.Files))
+		for _, binding := range node.Files {
+			key := nestedFieldKey(binding.Field, binding.Path)
+			if _, duplicate := files[key]; duplicate {
+				return fmt.Errorf("block %q has duplicate file target %q", node.ID, key)
+			}
+			files[key] = struct{}{}
+			if err := validateStableID("file field ID", string(binding.Field), 120); err != nil {
+				return err
+			}
+			for _, segment := range binding.Path {
+				if err := segment.validate(); err != nil {
+					return err
+				}
+			}
+			if err := validateFileReference(binding.File); err != nil {
+				return err
+			}
+		}
+		relations := make(map[RelationID]struct{}, len(node.Relations))
+		items := make(map[RelationItemID]struct{})
+		for _, relation := range node.Relations {
+			if err := validateStableID("relation ID", string(relation.ID), 120); err != nil {
+				return err
+			}
+			if _, duplicate := relations[relation.ID]; duplicate {
+				return fmt.Errorf("block %q has duplicate relation %q", node.ID, relation.ID)
+			}
+			relations[relation.ID] = struct{}{}
+			for _, item := range relation.Items {
+				if err := validateStableID("relation item ID", string(item.ID), 160); err != nil {
+					return err
+				}
+				if err := validateStableID("relation item kind", string(item.Kind), 80); err != nil {
+					return err
+				}
+				if _, duplicate := items[item.ID]; duplicate {
+					return fmt.Errorf("block %q has duplicate relation item ID %q", node.ID, item.ID)
+				}
+				items[item.ID] = struct{}{}
+				if item.Order < 0 {
+					return fmt.Errorf("relation item %q has negative order", item.ID)
+				}
+				if err := validateFieldValues(item.Shared); err != nil {
+					return fmt.Errorf("relation item %q shared fields: %w", item.ID, err)
+				}
+				if err := validateFieldValues(item.Localized); err != nil {
+					return fmt.Errorf("relation item %q localized fields: %w", item.ID, err)
+				}
+				itemFiles := make(map[string]struct{}, len(item.Files))
+				for _, binding := range item.Files {
+					key := nestedFieldKey(binding.Field, binding.Path)
+					if _, duplicate := itemFiles[key]; duplicate {
+						return fmt.Errorf("relation item %q has duplicate file target %q", item.ID, key)
+					}
+					itemFiles[key] = struct{}{}
+					if err := validateStableID("file field ID", string(binding.Field), 120); err != nil {
+						return err
+					}
+					for _, segment := range binding.Path {
+						if err := segment.validate(); err != nil {
+							return err
+						}
+					}
+					if err := validateFileReference(binding.File); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	for _, node := range nodes {
+		visited := map[BlockID]struct{}{node.ID: {}}
+		parent := node.Parent
+		for parent != "" {
+			if _, included := ids[parent]; !included {
+				break
+			}
+			if _, cycle := visited[parent]; cycle {
+				return fmt.Errorf("block %q is part of a parent cycle", node.ID)
+			}
+			visited[parent] = struct{}{}
+			parent = parents[parent]
+		}
+	}
+	return nil
+}
+
+func nestedFieldKey(field FieldID, path []FieldPathSegment) string {
+	key := string(field)
+	for _, segment := range path {
+		if segment.Field != "" {
+			key += "/field:" + string(segment.Field)
+		} else {
+			key += "/item:" + string(segment.Item)
+		}
+	}
+	return key
+}
+
+func validateFieldValues(fields []FieldValue) error {
+	seen := make(map[FieldID]struct{}, len(fields))
+	for _, field := range fields {
+		if err := validateStableID("field ID", string(field.ID), 120); err != nil {
+			return err
+		}
+		if _, duplicate := seen[field.ID]; duplicate {
+			return fmt.Errorf("duplicate field %q", field.ID)
+		}
+		seen[field.ID] = struct{}{}
+		if err := field.Value.validate(); err != nil {
+			return fmt.Errorf("field %q: %w", field.ID, err)
+		}
+	}
+	return nil
+}
+
+func validateFileReference(reference FileReference) error {
+	value := string(reference)
+	if err := validateOpaque("file reference", value, 256); err != nil {
+		return err
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return errors.New("inline data file payloads are forbidden")
+	}
+	return nil
+}
