@@ -56,18 +56,30 @@ func TestWorkContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 		"featured image": buildManageMediaMutationContentUpdatedEvent(
 			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, "work-1", "media.featured_image",
 		),
-		"collab source": buildWorkSourceContentUpdatedEvent(
-			"work-1", false, false, true, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "en", nil, true,
-		),
-		"collab target": buildWorkSourceContentUpdatedEvent(
-			"work-1", true, false, false, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "ko", &targetRevision, false,
-		),
-		"version restore": buildWorkSourceContentUpdatedEvent(
-			"work-1", true, true, true, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, "en", nil, true,
-		),
+		"collab source": buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             "work-1",
+			Fields:               []string{"content"},
+			DocumentRevision:     "revision",
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               "en",
+			DocumentStateChanged: true,
+		}),
+		"collab target": buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:         "work-1",
+			Fields:           []string{"title"},
+			DocumentRevision: "revision",
+			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:           "ko",
+			TargetRevision:   &targetRevision,
+		}),
+		"version restore": buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             "work-1",
+			Fields:               []string{"title", "summary", "content"},
+			DocumentRevision:     "revision",
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
+			Locale:               "en",
+			DocumentStateChanged: true,
+		}),
 	}
 	for name, event := range events {
 		require.NotNil(t, event, name)

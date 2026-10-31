@@ -14,6 +14,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -268,16 +269,15 @@ func postAIDocumentUpdatedEvent(
 	if result.ContentChanged && !slices.Contains(fields, "content") {
 		fields = append(fields, "content")
 	}
-	return buildPostBlockContentUpdatedEvent(
-		mutation.PostID,
-		fields,
-		result.DocumentRevision.String(),
-		[]string{mutation.ContributorMemberID.String()},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		mutation.Locale,
-		nil,
-		true,
-	)
+	return buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             mutation.PostID,
+		Fields:               fields,
+		DocumentRevision:     result.DocumentRevision.String(),
+		Contributors:         []string{mutation.ContributorMemberID.String()},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:               mutation.Locale,
+		DocumentStateChanged: true,
+	})
 }
 
 func (s *PostService) applyAIDocumentMutationInTransaction(

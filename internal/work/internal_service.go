@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -312,18 +313,14 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 		if err := mutate(tx); err != nil || !output.Content.Changed {
 			return err
 		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
-			req.Msg.WorkId,
-			false,
-			false,
-			true,
-			output.Content.DocumentRevision.String(),
-			req.Msg.Batch.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			output.TargetRevision,
-			locale == sourceLocale,
-		))
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: req.Msg.WorkId, Fields: []string{"content"},
+			DocumentRevision: output.Content.DocumentRevision.String(),
+			Contributors:     req.Msg.Batch.ContributorMemberIds,
+			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:           locale, TargetRevision: output.TargetRevision,
+			DocumentStateChanged: locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)
@@ -490,18 +487,13 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 		if !changed {
 			return nil
 		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
-			req.Msg.WorkId,
-			output.Mutation.TitleChanged,
-			output.Mutation.SummaryChanged,
-			false,
-			documentRevision,
-			req.Msg.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			plan.Locale,
-			output.TargetRevision,
-			plan.Locale == sourceLocale,
-		))
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: req.Msg.WorkId, Fields: output.Mutation.changedFields(),
+			DocumentRevision: documentRevision, Contributors: req.Msg.ContributorMemberIds,
+			Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale: plan.Locale, TargetRevision: output.TargetRevision,
+			DocumentStateChanged: plan.Locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)

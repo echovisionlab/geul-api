@@ -4,25 +4,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-// buildArtistContentUpdatedEvent emits the exact locale fence consumed by the
+// buildArtistLocaleContentUpdatedEvent emits the exact locale fence consumed by the
 // collaboration runtime. The shared Content Document revision advances only
 // for source-locale mutations; target-only changes carry their opaque target
 // revision and leave DocumentStateChanged false.
-func buildArtistContentUpdatedEvent(
-	artistID string,
-	fields []string,
-	revision string,
-	contributors []string,
-	source managev1.ContentUpdateSource,
-	locale string,
-	localeExists bool,
-	targetRevision *string,
-	documentStateChanged bool,
-) *managev1.ContentUpdatedEvent {
+func buildArtistLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
+	artistID, fields, revision, locale := change.EntityID, change.Fields, change.DocumentRevision, change.Locale
+	localeExists, targetRevision, documentStateChanged := !change.LocaleDeleted, change.TargetRevision, change.DocumentStateChanged
 	if strings.TrimSpace(artistID) == "" || strings.TrimSpace(revision) == "" || strings.TrimSpace(locale) == "" || len(fields) == 0 {
 		return nil
 	}
@@ -46,9 +39,9 @@ func buildArtistContentUpdatedEvent(
 	return &managev1.ContentUpdatedEvent{
 		EntityType:           managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST,
 		EntityId:             artistID,
-		Source:               source,
+		Source:               change.Source,
 		ChangedFields:        changedFields,
-		ContributorMemberIds: append([]string(nil), contributors...),
+		ContributorMemberIds: append([]string(nil), change.Contributors...),
 		DocumentStateChanged: documentStateChanged,
 		DocumentRevision:     &revision,
 		Locale:               &locale,

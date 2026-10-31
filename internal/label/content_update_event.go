@@ -45,24 +45,16 @@ func buildLabelStateTransitionContentUpdatedEvent(labelID string) *managev1.Cont
 	return &managev1.ContentUpdatedEvent{EntityType: managev1.ContentEntityType_CONTENT_ENTITY_TYPE_LABEL, EntityId: labelID, Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, ChangedFields: []*managev1.ContentUpdatedField{{Path: "state.status", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE}, {Path: "state.published_at", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_STATE}}, TimestampMs: time.Now().UnixMilli()}
 }
 
-// buildLabelContentUpdatedEvent emits the exact locale fence consumed by the
+// buildLabelLocaleContentUpdatedEvent emits the exact locale fence consumed by the
 // collaboration runtime. Source writes advance the shared document revision;
 // target writes carry only their opaque target revision and a target deletion
 // carries locale_exists=false.
-func buildLabelContentUpdatedEvent(
-	labelID string,
-	fields []string,
-	revision string,
-	contributors []string,
-	source managev1.ContentUpdateSource,
-	locale string,
-	localeExists bool,
-	targetRevision *string,
-	documentStateChanged bool,
-) *managev1.ContentUpdatedEvent {
-	labelID = strings.TrimSpace(labelID)
-	revision = strings.TrimSpace(revision)
-	locale = strings.TrimSpace(locale)
+func buildLabelLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
+	fields, targetRevision, documentStateChanged := change.Fields, change.TargetRevision, change.DocumentStateChanged
+	localeExists := !change.LocaleDeleted
+	labelID := strings.TrimSpace(change.EntityID)
+	revision := strings.TrimSpace(change.DocumentRevision)
+	locale := strings.TrimSpace(change.Locale)
 	if labelID == "" || revision == "" || locale == "" || len(fields) == 0 {
 		return nil
 	}
@@ -77,9 +69,9 @@ func buildLabelContentUpdatedEvent(
 	return &managev1.ContentUpdatedEvent{
 		EntityType:           managev1.ContentEntityType_CONTENT_ENTITY_TYPE_LABEL,
 		EntityId:             labelID,
-		Source:               source,
+		Source:               change.Source,
 		ChangedFields:        labelContentUpdatedFields(fields),
-		ContributorMemberIds: sliceutil.SortedUniqueTrimmed(contributors),
+		ContributorMemberIds: sliceutil.SortedUniqueTrimmed(change.Contributors),
 		DocumentStateChanged: documentStateChanged,
 		DocumentRevision:     &revision,
 		Locale:               &locale,

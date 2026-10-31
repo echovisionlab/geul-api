@@ -3,17 +3,22 @@ package work
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildWorkSourceContentUpdatedEvent(t *testing.T) {
-	event := buildWorkSourceContentUpdatedEvent(
-		"work-1", true, false, true, "document-revision",
-		[]string{"member-1"}, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en", nil, true,
-	)
+func TestBuildWorkLocaleContentUpdatedEvent(t *testing.T) {
+	event := buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "work-1",
+		Fields:               []string{"title", "content"},
+		DocumentRevision:     "document-revision",
+		Contributors:         []string{"member-1"},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:               "en",
+		DocumentStateChanged: true,
+	})
 	require.NotNil(t, event)
 	assert.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, event.EntityType)
 	assert.Equal(t, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, event.Source)
@@ -26,12 +31,15 @@ func TestBuildWorkSourceContentUpdatedEvent(t *testing.T) {
 	assert.Equal(t, []string{"title", "document.content"}, workContentUpdatedPaths(event.ChangedFields))
 }
 
-func TestBuildWorkSourceContentUpdatedEventForSummaryOnly(t *testing.T) {
-	event := buildWorkSourceContentUpdatedEvent(
-		"work-1", false, true, false, "document-revision", nil,
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en", nil, true,
-	)
+func TestBuildWorkLocaleContentUpdatedEventForSummaryOnly(t *testing.T) {
+	event := buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "work-1",
+		Fields:               []string{"summary"},
+		DocumentRevision:     "document-revision",
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:               "en",
+		DocumentStateChanged: true,
+	})
 	require.NotNil(t, event)
 	assert.True(t, event.DocumentStateChanged)
 	assert.Equal(t, []string{"summary"}, workContentUpdatedPaths(event.ChangedFields))
@@ -39,11 +47,15 @@ func TestBuildWorkSourceContentUpdatedEventForSummaryOnly(t *testing.T) {
 
 func TestBuildWorkTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T) {
 	targetRevision := "target-revision"
-	event := buildWorkSourceContentUpdatedEvent(
-		"work-1", false, true, false, "document-revision", []string{"member-1"},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko", &targetRevision, false,
-	)
+	event := buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "work-1",
+		Fields:           []string{"summary"},
+		DocumentRevision: "document-revision",
+		Contributors:     []string{"member-1"},
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:           "ko",
+		TargetRevision:   &targetRevision,
+	})
 	require.NotNil(t, event)
 	assert.False(t, event.DocumentStateChanged)
 	assert.Equal(t, "document-revision", event.GetDocumentRevision())

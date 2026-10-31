@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/lib/pq"
 )
@@ -75,51 +76,36 @@ func buildManageWorkContentUpdatedEvent(request *managev1.UpdateWorkRequest) *ma
 	)
 }
 
-func buildWorkSourceContentUpdatedEvent(
-	workID string,
-	titleChanged bool,
-	summaryChanged bool,
-	documentChanged bool,
-	revision string,
-	contributors []string,
-	source managev1.ContentUpdateSource,
-	locale string,
-	targetRevision *string,
-	documentStateChanged bool,
-) *managev1.ContentUpdatedEvent {
-	fields := make([]*managev1.ContentUpdatedField, 0, 3)
-	if titleChanged {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: "title", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT})
-	}
-	if summaryChanged {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: "summary", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT})
-	}
-	if documentChanged {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: "document.content", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT})
-	}
-	locale = strings.TrimSpace(locale)
-	if locale == "" || strings.TrimSpace(revision) == "" {
+var workLocaleContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
+	"title":   {path: "title", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT},
+	"summary": {path: "summary", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT},
+	"content": {path: "document.content", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT},
+}
+
+func buildWorkLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
+	locale := strings.TrimSpace(change.Locale)
+	if locale == "" || strings.TrimSpace(change.DocumentRevision) == "" {
 		return nil
 	}
-	if targetRevision != nil && (strings.TrimSpace(*targetRevision) == "" || documentStateChanged) {
+	targetRevision := change.TargetRevision
+	if targetRevision != nil && (strings.TrimSpace(*targetRevision) == "" || change.DocumentStateChanged) {
 		return nil
 	}
-	if targetRevision == nil && !documentStateChanged {
+	if targetRevision == nil && !change.DocumentStateChanged {
 		return nil
 	}
 	event := buildContentUpdatedEvent(
-		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-		workID, source, fields, documentStateChanged, revision, contributors,
+		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, change.EntityID, change.Source,
+		buildContentUpdatedFields(change.Fields, workLocaleContentUpdatedFieldSpecs),
+		change.DocumentStateChanged, change.DocumentRevision, change.Contributors,
 	)
 	if event == nil {
 		return nil
 	}
-	localeExists := true
+	localeExists := !change.LocaleDeleted
 	event.Locale = &locale
 	event.LocaleExists = &localeExists
-	if targetRevision != nil {
-		event.TargetRevision = targetRevision
-	}
+	event.TargetRevision = targetRevision
 	return event
 }
 

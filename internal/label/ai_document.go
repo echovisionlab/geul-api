@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -340,17 +341,17 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 			return nil
 		}
 		localeExists := input.Locale == input.ExpectedSource || output.TargetRevision != nil
-		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
-			input.LabelID,
-			[]string{"content"},
-			output.Content.DocumentRevision.String(),
-			[]string{input.ContributorMemberID.String()},
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-			input.Locale,
-			localeExists,
-			output.TargetRevision,
-			input.Locale == input.ExpectedSource,
-		))
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             input.LabelID,
+			Fields:               []string{"content"},
+			DocumentRevision:     output.Content.DocumentRevision.String(),
+			Contributors:         []string{input.ContributorMemberID.String()},
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+			Locale:               input.Locale,
+			LocaleDeleted:        !localeExists,
+			TargetRevision:       output.TargetRevision,
+			DocumentStateChanged: input.Locale == input.ExpectedSource,
+		}))
 	})
 	if errors.Is(err, errRollbackLabelAIDocumentValidation) {
 		return output, nil

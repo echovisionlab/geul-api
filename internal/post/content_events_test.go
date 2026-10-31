@@ -3,22 +3,22 @@ package post
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBuildPostContentUpdatedEvent(t *testing.T) {
-	event := buildPostBlockContentUpdatedEvent(
-		"post-1",
-		[]string{"summary", "content"},
-		"edit-1",
-		[]string{"member-1", "member-2"},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en",
-		nil,
-		true,
-	)
+	event := buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "post-1",
+		Fields:               []string{"summary", "content"},
+		DocumentRevision:     "edit-1",
+		Contributors:         []string{"member-1", "member-2"},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:               "en",
+		DocumentStateChanged: true,
+	})
 	require.NotNil(t, event)
 	assert.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST, event.EntityType)
 	assert.Equal(t, "post-1", event.EntityId)
@@ -36,11 +36,15 @@ func TestBuildPostContentUpdatedEvent(t *testing.T) {
 
 func TestBuildPostTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T) {
 	targetRevision := "target-revision"
-	event := buildPostBlockContentUpdatedEvent(
-		"post-1", []string{"summary"}, "document-revision", []string{"member-1"},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko", &targetRevision, false,
-	)
+	event := buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "post-1",
+		Fields:           []string{"summary"},
+		DocumentRevision: "document-revision",
+		Contributors:     []string{"member-1"},
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:           "ko",
+		TargetRevision:   &targetRevision,
+	})
 	require.NotNil(t, event)
 	assert.False(t, event.DocumentStateChanged)
 	assert.Equal(t, "document-revision", event.GetDocumentRevision())
@@ -51,16 +55,22 @@ func TestBuildPostTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T)
 
 func TestBuildPostContentUpdatedEventRejectsInconsistentLocaleFence(t *testing.T) {
 	targetRevision := "target-revision"
-	assert.Nil(t, buildPostBlockContentUpdatedEvent(
-		"post-1", []string{"content"}, "document-revision", nil,
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko", &targetRevision, true,
-	))
-	assert.Nil(t, buildPostBlockContentUpdatedEvent(
-		"post-1", []string{"content"}, "document-revision", nil,
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en", nil, false,
-	))
+	assert.Nil(t, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "post-1",
+		Fields:               []string{"content"},
+		DocumentRevision:     "document-revision",
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:               "ko",
+		TargetRevision:       &targetRevision,
+		DocumentStateChanged: true,
+	}))
+	assert.Nil(t, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "post-1",
+		Fields:           []string{"content"},
+		DocumentRevision: "document-revision",
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:           "en",
+	}))
 }
 
 func TestPostContentUpdatedFieldSpecs(t *testing.T) {

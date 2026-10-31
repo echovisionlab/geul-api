@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/optional"
@@ -333,17 +334,17 @@ func artistAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocu
 	}
 	exists := input.Locale == input.ExpectedSource || !input.DeleteTranslation
 	documentChanged := input.Locale == input.ExpectedSource
-	return buildArtistContentUpdatedEvent(
-		input.ArtistID,
-		[]string{"content"},
-		result.Revision,
-		[]string{contributor},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		input.Locale,
-		exists,
-		result.TargetRevision,
-		documentChanged,
-	)
+	return buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             input.ArtistID,
+		Fields:               []string{"content"},
+		DocumentRevision:     result.Revision,
+		Contributors:         []string{contributor},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:               input.Locale,
+		LocaleDeleted:        !exists,
+		TargetRevision:       result.TargetRevision,
+		DocumentStateChanged: documentChanged,
+	})
 }
 
 func createArtistAIDocumentTranslation(ctx context.Context, tx *gorm.DB, artistID, locale string) (bool, error) {

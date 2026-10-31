@@ -15,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -346,16 +347,15 @@ func (s *PostService) RestorePostVersion(
 		if sourceLocaleSwitched {
 			fields = append(fields, "sourceLocale")
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
-			version.PostID,
-			fields,
-			finalSnapshot.Document.Revision.String(),
-			restoreContributors,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
-			finalSnapshot.SourceLocale,
-			nil,
-			true,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             version.PostID,
+			Fields:               fields,
+			DocumentRevision:     finalSnapshot.Document.Revision.String(),
+			Contributors:         restoreContributors,
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
+			Locale:               finalSnapshot.SourceLocale,
+			DocumentStateChanged: true,
+		}))
 	})
 	if err != nil {
 		return nil, normalizePostContentBlockError(err)

@@ -46,17 +46,10 @@ func publishContentUpdatedEvent(
 	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
-func buildPostBlockContentUpdatedEvent(
-	postID string,
-	fields []string,
-	revision string,
-	contributorMemberIDs []string,
-	source managev1.ContentUpdateSource,
-	locale string,
-	targetRevision *string,
-	documentStateChanged bool,
-) *managev1.ContentUpdatedEvent {
-	locale = strings.TrimSpace(locale)
+func buildPostLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
+	postID, fields, revision, targetRevision := change.EntityID, change.Fields, change.DocumentRevision, change.TargetRevision
+	documentStateChanged := change.DocumentStateChanged
+	locale := strings.TrimSpace(change.Locale)
 	if postID == "" || locale == "" || strings.TrimSpace(revision) == "" {
 		return nil
 	}
@@ -70,11 +63,11 @@ func buildPostBlockContentUpdatedEvent(
 	if targetRevision == nil && !documentStateChanged {
 		return nil
 	}
-	localeExists := true
+	localeExists := !change.LocaleDeleted
 	event := &managev1.ContentUpdatedEvent{
 		EntityType: managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST,
-		EntityId:   postID, Source: source, ChangedFields: changedFields,
-		ContributorMemberIds: normalizeContributorMemberIDs(contributorMemberIDs),
+		EntityId:   postID, Source: change.Source, ChangedFields: changedFields,
+		ContributorMemberIds: normalizeContributorMemberIDs(change.Contributors),
 		DocumentStateChanged: documentStateChanged,
 		TimestampMs:          time.Now().UnixMilli(),
 		Locale:               &locale,

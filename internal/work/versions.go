@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -289,18 +290,22 @@ func (s *WorkService) RestoreWorkVersion(
 				return auditErr
 			}
 		}
-		event := buildWorkSourceContentUpdatedEvent(
-			version.WorkID,
-			titleChanged,
-			summaryChanged,
-			blocksChanged,
-			finalSnapshot.Document.Revision.String(),
-			restoreContributors,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
-			finalSnapshot.SourceLocale,
-			nil,
-			true,
-		)
+		fields := make([]string, 0, 3)
+		if titleChanged {
+			fields = append(fields, "title")
+		}
+		if summaryChanged {
+			fields = append(fields, "summary")
+		}
+		if blocksChanged {
+			fields = append(fields, "content")
+		}
+		event := buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: version.WorkID, Fields: fields,
+			DocumentRevision: finalSnapshot.Document.Revision.String(), Contributors: restoreContributors,
+			Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, Locale: finalSnapshot.SourceLocale,
+			DocumentStateChanged: true,
+		})
 		if sourceLocaleSwitched {
 			if event == nil {
 				event = buildContentUpdatedEvent(

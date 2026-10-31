@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -211,17 +212,17 @@ func (s *InternalLabelService) ApplyLabelBlockBatch(
 			if !result.Content.Changed {
 				return nil
 			}
-			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
-				req.Msg.LabelId,
-				[]string{"content"},
-				result.Content.DocumentRevision.String(),
-				req.Msg.Batch.GetContributorMemberIds(),
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				locale,
-				result.LocaleExists,
-				result.TargetRevision,
-				locale == result.SourceLocale,
-			))
+			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:             req.Msg.LabelId,
+				Fields:               []string{"content"},
+				DocumentRevision:     result.Content.DocumentRevision.String(),
+				Contributors:         req.Msg.Batch.GetContributorMemberIds(),
+				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:               locale,
+				LocaleDeleted:        !result.LocaleExists,
+				TargetRevision:       result.TargetRevision,
+				DocumentStateChanged: locale == result.SourceLocale,
+			}))
 		},
 	)
 	if err != nil {
@@ -252,17 +253,15 @@ func (s *InternalLabelService) UpdateLabelLocaleMetadata(
 			if !result.Advance.Changed {
 				return nil
 			}
-			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
-				req.Msg.LabelId,
-				[]string{"title"},
-				result.Advance.DocumentRevision.String(),
-				req.Msg.ContributorMemberIds,
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				locale,
-				true,
-				nil,
-				true,
-			))
+			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:             req.Msg.LabelId,
+				Fields:               []string{"title"},
+				DocumentRevision:     result.Advance.DocumentRevision.String(),
+				Contributors:         req.Msg.ContributorMemberIds,
+				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:               locale,
+				DocumentStateChanged: true,
+			}))
 		},
 	)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -153,17 +154,17 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 				return err
 			}
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.internal.asyncPublisher, buildPageContentUpdatedEvent(
-			mutation.PageID,
-			pageAIDocumentContentUpdatedFields(mutation),
-			result.DocumentRevision.String(),
-			[]string{mutation.ContributorMemberID},
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-			mutation.Locale,
-			!mutation.DeleteTranslation,
-			targetRevision,
-			mutation.Locale == mutation.ObservedSourceLocale,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.internal.asyncPublisher, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             mutation.PageID,
+			Fields:               pageAIDocumentContentUpdatedFields(mutation),
+			DocumentRevision:     result.DocumentRevision.String(),
+			Contributors:         []string{mutation.ContributorMemberID},
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+			Locale:               mutation.Locale,
+			LocaleDeleted:        mutation.DeleteTranslation,
+			TargetRevision:       targetRevision,
+			DocumentStateChanged: mutation.Locale == mutation.ObservedSourceLocale,
+		}))
 	})
 	if errors.Is(err, errRollbackPageAIDocumentValidation) {
 		return AIDocumentMutationResult{DocumentRevision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}, nil
