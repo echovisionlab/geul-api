@@ -107,23 +107,23 @@ func cloneFileBindings(values []FileBinding) {
 }
 
 func cloneValue(value Value) Value {
-	copy := value
-	copy.Inline = cloneInlineItems(value.Inline)
-	copy.List = append([]ListItem(nil), value.List...)
-	for index := range copy.List {
-		copy.List[index].Value = cloneValue(copy.List[index].Value)
+	cloned := value
+	cloned.Inline = cloneInlineItems(value.Inline)
+	cloned.List = append([]ListItem(nil), value.List...)
+	for index := range cloned.List {
+		cloned.List[index].Value = cloneValue(cloned.List[index].Value)
 	}
-	copy.Object = append([]ObjectField(nil), value.Object...)
-	for index := range copy.Object {
-		copy.Object[index].Value = cloneValue(copy.Object[index].Value)
+	cloned.Object = append([]ObjectField(nil), value.Object...)
+	for index := range cloned.Object {
+		cloned.Object[index].Value = cloneValue(cloned.Object[index].Value)
 	}
-	return copy
+	return cloned
 }
 
 func cloneInlineItems(items []InlineItem) []InlineItem {
-	copy := append([]InlineItem(nil), items...)
-	for index := range copy {
-		copy[index].Children = cloneInlineItems(copy[index].Children)
+	cloned := append([]InlineItem(nil), items...)
+	for index := range cloned {
+		cloned[index].Children = cloneInlineItems(cloned[index].Children)
 	}
-	return copy
+	return cloned
 }
