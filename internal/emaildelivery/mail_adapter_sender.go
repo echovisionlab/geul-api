@@ -3,6 +3,8 @@ package emaildelivery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz"
@@ -10,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // MailAdapterSenderUpdate cannot carry credentials or replace provider config.
@@ -86,6 +89,60 @@ func (s *MailAdapterService) senderConfig(adapter *model.MailAdapter, input Mail
 	}
 	// Retain the raw fields, including credentials and any future provider keys.
 	return candidate.Config, config, nil
+}
+
+// replacementConfig builds the provider config an admin Update requests. For
+// the same provider it is a merge over the stored config: an empty SES secret
+// access key or SMTP password keeps the stored secret, which responses never
+// return, and stored keys this service does not model are retained, as
+// senderConfig retains them. A provider switch replaces the config whole.
+func (s *MailAdapterService) replacementConfig(
+	adapter *model.MailAdapter,
+	adapterType model.MailAdapterType,
+	typeChanged bool,
+	request *managev1.UpdateMailAdapterRequest,
+) (model.MailAdapterConfig, structured.Value, error) {
+	sesConfig, smtpConfig := request.GetSesConfig(), request.GetSmtpConfig()
+	fields := map[string]json.RawMessage{}
+	if !typeChanged {
+		// An unreadable stored config has nothing to keep; the request
+		// replaces it whole.
+		if err := json.Unmarshal(adapter.Config.RawMessage, &fields); err != nil || fields == nil {
+			fields = map[string]json.RawMessage{}
+		}
+		switch adapterType {
+		case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String()):
+			if stored, err := adapter.GetSESConfig(); err == nil && sesConfig != nil && sesConfig.SecretAccessKey == "" {
+				sesConfig = proto.CloneOf(sesConfig)
+				sesConfig.SecretAccessKey = stored.SecretAccessKey
+			}
+		case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP.String()):
+			if stored, err := adapter.GetSMTPConfig(); err == nil && smtpConfig != nil && smtpConfig.Password == "" {
+				smtpConfig = proto.CloneOf(smtpConfig)
+				smtpConfig.Password = stored.Password
+			}
+		}
+		// from_name is the only modeled key a provider config omits when
+		// empty, so a request without it clears the stored name.
+		delete(fields, "from_name")
+	}
+	config, err := s.buildConfig(adapterType, sesConfig, smtpConfig)
+	if err != nil {
+		return model.MailAdapterConfig{}, nil, errs.InvalidArgumentMsg(err.Error())
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return model.MailAdapterConfig{}, nil, errs.Internal(fmt.Errorf("failed to set config: %w", err))
+	}
+	var requested map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &requested); err != nil {
+		return model.MailAdapterConfig{}, nil, errs.Internal(fmt.Errorf("failed to set config: %w", err))
+	}
+	maps.Copy(fields, requested)
+	if encoded, err = json.Marshal(fields); err != nil {
+		return model.MailAdapterConfig{}, nil, errs.Internal(fmt.Errorf("failed to set config: %w", err))
+	}
+	return model.MailAdapterConfig{RawMessage: encoded}, config, nil
 }
 
 func mailAdapterPrivateValues(adapter *model.MailAdapter) []string {

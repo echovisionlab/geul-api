@@ -270,9 +270,6 @@ func (s *PageService) buildPageResponse(
 	if s.blocks == nil {
 		return nil, errs.InternalMsg("Page content Block store is not configured")
 	}
-	if s.media == nil {
-		return nil, errs.InternalMsg("Page media resolver is not configured")
-	}
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, s.db)
 	if settingsErr != nil {
 		slog.ErrorContext(ctx, "content operation failed", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
@@ -309,7 +306,7 @@ func (s *PageService) buildPageResponse(
 				return errs.Internal(err)
 			}
 			if read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
-				return nil
+				return errs.NotFoundMsg("page not found")
 			}
 			if !read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
 				allowed, permissionErr := s.draftAccess.CanViewPageDraft(ctx, page.ID)

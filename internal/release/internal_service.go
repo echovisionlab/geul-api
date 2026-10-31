@@ -17,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -260,8 +259,8 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 			if err != nil || !target.Content.Changed {
 				return err
 			}
-			return appendReleaseRequestTargetLocaleAudit(
-				ctx, tx, s.auditWriter, req.Msg.ReleaseId, locale, sharedtelemetry.AuditItemOperationUpdated,
+			return appendReleaseRequestLocaleUpdatedAudit(
+				ctx, tx, s.auditWriter, req.Msg.ReleaseId, locale,
 			)
 		}
 		if req.Msg.ExpectedTargetRevision != nil {
@@ -277,16 +276,20 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 			return batchErr
 		}
 		result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, internalReleaseContentFence(req.Msg.ReleaseId))
-		if err != nil {
+		if err != nil || !result.Changed {
 			return err
 		}
 		if result.TranslationSourceChanged {
-			err = s.ogRefresher.RequestCurrent(ctx, tx, req.Msg.ReleaseId, "release_source_document_saved")
+			if err := s.ogRefresher.RequestCurrent(ctx, tx, req.Msg.ReleaseId, "release_source_document_saved"); err != nil {
+				return err
+			}
 		}
-		return err
+		return appendReleaseRequestLocaleUpdatedAudit(
+			ctx, tx, s.auditWriter, req.Msg.ReleaseId, source.SourceLocale,
+		)
 	})
 	if err != nil {
-		return nil, normalizeReleaseTargetWriterError(err)
+		return nil, normalizeReleaseContentBlockError(err)
 	}
 	response := &intrav1.ApplyReleaseBlockBatchResponse{Locale: locale}
 	if locale == source.SourceLocale {
@@ -378,8 +381,8 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 			if err != nil || !targetResult.Content.Changed {
 				return err
 			}
-			return appendReleaseRequestTargetLocaleAudit(
-				ctx, tx, s.auditWriter, input.ReleaseId, locale, sharedtelemetry.AuditItemOperationUpdated,
+			return appendReleaseRequestLocaleUpdatedAudit(
+				ctx, tx, s.auditWriter, input.ReleaseId, locale,
 			)
 		}
 		if input.ExpectedTargetRevision != nil {
@@ -453,16 +456,20 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 		if err != nil {
 			return normalizeReleaseContentBlockError(err)
 		}
-		if sourceResult.TranslationSourceChanged {
-			if sourceTitleChanged {
-				return s.ogRefresher.RequestCurrent(ctx, tx, input.ReleaseId, "release_source_title_saved")
-			}
+		if !sourceResult.Changed {
 			return nil
 		}
-		return nil
+		if sourceResult.TranslationSourceChanged && sourceTitleChanged {
+			if err := s.ogRefresher.RequestCurrent(ctx, tx, input.ReleaseId, "release_source_title_saved"); err != nil {
+				return err
+			}
+		}
+		return appendReleaseRequestLocaleUpdatedAudit(
+			ctx, tx, s.auditWriter, input.ReleaseId, source.SourceLocale,
+		)
 	})
 	if err != nil {
-		return nil, normalizeReleaseTargetWriterError(err)
+		return nil, normalizeReleaseContentBlockError(err)
 	}
 	response := &intrav1.UpdateReleaseLocaleMetadataResponse{Locale: locale}
 	if locale == source.SourceLocale {

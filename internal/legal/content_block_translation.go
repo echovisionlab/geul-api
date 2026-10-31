@@ -136,10 +136,17 @@ func ApplyTypedTranslationCandidateWithDB(
 	if err != nil {
 		return err
 	}
-	if _, err := parseLegalContentUUID(
+	expectedRevision, err := parseLegalContentUUID(
 		"content_document_revision", candidate.ContentDocumentRevision,
-	); err != nil {
+	)
+	if err != nil {
 		slog.WarnContext(ctx, "Legal translation source revision is invalid", "failure_cause", failurecause.Message(err), "entity_type", job.EntityType, "entity_id", job.EntityID, "locale", job.TargetLocale)
+		return translation.ErrSourceNoLongerCurrent
+	}
+	// A provider result whose target is now the source locale was requested
+	// for a different source, matching validatePostProviderSourceTarget.
+	if candidate.HasProviderUnitPatch() && job.TargetLocale == root.SourceLocale &&
+		job.SourceLocale != root.SourceLocale {
 		return translation.ErrSourceNoLongerCurrent
 	}
 	snapshot, err := store.LoadSnapshotInTransaction(
@@ -147,6 +154,11 @@ func ApplyTypedTranslationCandidateWithDB(
 	)
 	if err != nil {
 		return normalizeLegalContentBlockError(job.EntityType, err)
+	}
+	// A whole-locale candidate translates the source at its revision; Post
+	// discards one whose source has since changed the same way.
+	if !candidate.HasProviderUnitPatch() && expectedRevision != snapshot.Document.Revision {
+		return translation.ErrSourceNoLongerCurrent
 	}
 	var batch contentblock.Batch
 	if candidate.HasProviderUnitPatch() {

@@ -423,7 +423,8 @@ func requireAllowedMatrixPage(
 }
 
 // TestPublicPageHomepageAccessIntegration pins the homepage read, which only
-// projects published Pages and answers an empty response instead of an error.
+// projects published Pages: an unpublished root Page is not found, and an
+// unconfigured homepage answers an empty response.
 func TestPublicPageHomepageAccessIntegration(t *testing.T) {
 	t.Parallel()
 	fixture := newPageAccessMatrixFixture(t)
@@ -435,9 +436,13 @@ func TestPublicPageHomepageAccessIntegration(t *testing.T) {
 		viewer pageAccessViewer
 		reason commonv1.PageAccessReason
 		page   bool
+		// notFound marks a root Page the homepage read cannot show.
+		notFound bool
 	}{
 		{name: "published", state: pageStatePublished, reason: commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, page: true},
-		{name: "draft for manager", state: pageStateDraft, viewer: pageViewerAdmin, reason: commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED},
+		{name: "draft anonymous", state: pageStateDraft, notFound: true},
+		{name: "draft for manager", state: pageStateDraft, viewer: pageViewerAdmin, notFound: true},
+		{name: "unpublished anonymous", state: pageStateUnpublished, notFound: true},
 		{name: "authenticated anonymous", state: pageStatePublished, policy: authenticated, reason: commonv1.PageAccessReason_PAGE_ACCESS_REASON_AUTHENTICATION_REQUIRED},
 		{name: "authenticated signed in", state: pageStatePublished, policy: authenticated, viewer: pageViewerReader, reason: commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, page: true},
 	}
@@ -448,6 +453,15 @@ func TestPublicPageHomepageAccessIntegration(t *testing.T) {
 			setPublicHomepagePage(t, fixture.db, fixture.adminCtx, pageID)
 			svc, media := fixture.service(t)
 			response, err := svc.Get(fixture.viewerContext(tc.viewer), connect.NewRequest(&openv1.GetPageRequest{Slug: "/"}))
+			if tc.notFound {
+				require.Nil(t, response)
+				var connectErr *connect.Error
+				require.ErrorAs(t, err, &connectErr)
+				require.Equal(t, connect.CodeNotFound, connectErr.Code())
+				require.Equal(t, "page not found", connectErr.Message())
+				require.Empty(t, media.recorded())
+				return
+			}
 			require.NoError(t, err)
 			require.Equal(t, tc.reason, response.Msg.GetAccessReason())
 			if !tc.page {

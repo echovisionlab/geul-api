@@ -417,17 +417,6 @@ func TestUpdateReleaseLocaleMetadataRejectionsLeaveStateUnchangedIntegration(t *
 			code:    connect.CodeInvalidArgument,
 			message: "credit_notes: credit_id does not belong to the Release",
 		},
-		{
-			// validateReleaseCreditNotes admits empty target notes, but the
-			// schema forbids blank notes, so the write fails as an internal error.
-			name: "empty target credit note",
-			mutate: func(request *intrav1.UpdateReleaseLocaleMetadataRequest) {
-				request.Locale, request.ExpectedTargetRevision = "fr", proto.String(fixture.targetRevision)
-				request.CreditNotes = releaseCreditNotes(map[string]string{fixture.notedCredit: "  "})
-			},
-			code:    connect.CodeInternal,
-			message: `ERROR: new row for relation "release_credit_locale" violates check constraint "chk_release_credit_locale_note" (SQLSTATE 23514)`,
-		},
 	}
 
 	before := fixture.state(t)
@@ -530,7 +519,15 @@ func TestUpdateReleaseLocaleMetadataSourceLocaleIntegration(t *testing.T) {
 			require.Equal(t, before.Titles["fr"], after.Titles["fr"], "a source edit leaves the target title alone")
 			require.Equal(t, test.wantNotes(fixture), after.Notes["en"])
 			require.Equal(t, before.Notes["fr"], after.Notes["fr"])
-			require.Empty(t, after.Audits, "source metadata edits append no Domain Audit record")
+			if test.changed {
+				require.Equal(t, []releaseAuditRow{{
+					Action: string(sharedtelemetry.AuditReleaseUpdated), ChangedFields: pq.StringArray{"locale_content"},
+					Locale: proto.String("en"), ItemOperation: proto.String(string(sharedtelemetry.AuditItemOperationUpdated)),
+					ActorKind: "member", ActorMemberID: proto.String(fixture.contributor),
+				}}, after.Audits)
+			} else {
+				require.Empty(t, after.Audits, "an unchanged source edit appends no Domain Audit record")
+			}
 			require.Equal(t, test.wantReasons, fixture.og.reasons)
 			require.Zero(t, fixture.publisher.calls, "source metadata edits publish no content event")
 		})
@@ -546,15 +543,54 @@ func TestUpdateReleaseLocaleMetadataTargetLocaleIntegration(t *testing.T) {
 		changed   bool
 		wantTitle string
 		wantNotes func(f releaseLocaleMetadataFixture) map[string]string
+		// wantShown is the target note display, when the case pins it.
+		wantShown func(f releaseLocaleMetadataFixture) map[string]string
 	}{
 		{
-			name:      "title is stored untrimmed",
+			name:      "title is trimmed",
 			title:     proto.String("  Nouveau titre "),
 			changed:   true,
-			wantTitle: "  Nouveau titre ",
+			wantTitle: "Nouveau titre",
 			wantNotes: func(f releaseLocaleMetadataFixture) map[string]string {
 				return map[string]string{f.notedCredit: "Note francaise"}
 			},
+		},
+		{
+			name:      "padded unchanged title is a no-op",
+			title:     proto.String(" " + releaseMetadataTargetTitle + " "),
+			wantTitle: releaseMetadataTargetTitle,
+			wantNotes: func(f releaseLocaleMetadataFixture) map[string]string {
+				return map[string]string{f.notedCredit: "Note francaise"}
+			},
+		},
+		{
+			// An empty target note removes the target override; the credit
+			// then shows its source note.
+			name: "empty credit note removes the target note",
+			notes: func(f releaseLocaleMetadataFixture) *intrav1.ReleaseCreditNotesValue {
+				return &intrav1.ReleaseCreditNotesValue{Values: []*intrav1.ReleaseCreditNote{
+					{CreditId: f.notedCredit, Note: "  "}, {CreditId: f.plainCredit, Note: "Ajout"},
+				}}
+			},
+			changed:   true,
+			wantTitle: releaseMetadataTargetTitle,
+			wantNotes: func(f releaseLocaleMetadataFixture) map[string]string {
+				return map[string]string{f.plainCredit: "Ajout"}
+			},
+			wantShown: func(f releaseLocaleMetadataFixture) map[string]string {
+				return map[string]string{f.notedCredit: "Source note", f.plainCredit: "Ajout"}
+			},
+		},
+		{
+			name: "only empty credit notes clear every target note",
+			notes: func(f releaseLocaleMetadataFixture) *intrav1.ReleaseCreditNotesValue {
+				return &intrav1.ReleaseCreditNotesValue{Values: []*intrav1.ReleaseCreditNote{
+					{CreditId: f.notedCredit, Note: ""},
+				}}
+			},
+			changed:   true,
+			wantTitle: releaseMetadataTargetTitle,
+			wantNotes: func(releaseLocaleMetadataFixture) map[string]string { return nil },
 		},
 		{
 			name:  "credit notes replace the whole target set",
@@ -620,8 +656,52 @@ func TestUpdateReleaseLocaleMetadataTargetLocaleIntegration(t *testing.T) {
 			require.Equal(t, before.Titles["en"], after.Titles["en"])
 			require.Equal(t, test.wantNotes(fixture), after.Notes["fr"])
 			require.Equal(t, before.Notes["en"], after.Notes["en"])
+			if test.wantShown != nil {
+				shown, err := releasepkg.LoadReleaseCreditNotesForDisplay(
+					t.Context(), fixture.db, fixture.releaseID, "en", "fr",
+					[]string{fixture.notedCredit, fixture.plainCredit},
+				)
+				require.NoError(t, err)
+				require.Equal(t, test.wantShown(fixture), shown)
+			}
 			require.Empty(t, fixture.og.reasons, "target edits never request OG work")
 			require.Zero(t, fixture.publisher.calls)
 		})
 	}
+}
+
+func TestApplyReleaseBlockBatchSourceAuditIntegration(t *testing.T) {
+	t.Parallel()
+	fixture := newReleaseLocaleMetadataFixture(t)
+	before := fixture.state(t)
+	apply := func(text string) *intrav1.ApplyReleaseBlockBatchResponse {
+		t.Helper()
+		var blockID string
+		require.NoError(t, fixture.db.Raw(
+			`SELECT id::text FROM content_block WHERE document_id = ?::uuid ORDER BY id LIMIT 1`, fixture.documentID,
+		).Scan(&blockID).Error)
+		response, err := fixture.service.ApplyReleaseBlockBatch(fixture.ctx, connect.NewRequest(&intrav1.ApplyReleaseBlockBatchRequest{
+			ReleaseId: fixture.releaseID, Locale: "en",
+			Batch: testutil.NewParagraphBlockBatch(
+				creativeContentIntegrationDocument("en", ""), fixture.documentRevision(t), "en", blockID, text,
+				[]string{fixture.contributor},
+			),
+		}))
+		require.NoError(t, err)
+		return response.Msg
+	}
+
+	changed := apply("Edited release body")
+	require.True(t, changed.GetChanged())
+	sourceAudit := releaseAuditRow{
+		Action: string(sharedtelemetry.AuditReleaseUpdated), ChangedFields: pq.StringArray{"locale_content"},
+		Locale: proto.String("en"), ItemOperation: proto.String(string(sharedtelemetry.AuditItemOperationUpdated)),
+		ActorKind: "member", ActorMemberID: proto.String(fixture.contributor),
+	}
+	require.Equal(t, append(before.Audits, sourceAudit), fixture.state(t).Audits)
+	require.Equal(t, []string{"release_source_document_saved"}, fixture.og.reasons)
+
+	unchanged := apply("Edited release body")
+	require.False(t, unchanged.GetChanged())
+	require.Equal(t, append(before.Audits, sourceAudit), fixture.state(t).Audits, "an unchanged batch appends no record")
 }

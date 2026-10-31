@@ -86,9 +86,9 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		publisher.requireNone(t)
 	})
 
-	t.Run("config replacement verifies and drops omitted secrets", func(t *testing.T) {
+	t.Run("config replacement verifies and keeps the stored password and unknown keys", func(t *testing.T) {
 		server := newFakeSMTPServer(t, false)
-		adapter := seedSMTPMailAdapter(t, db, server, `{"provider_hint":"kept-only-by-sender-updates"}`)
+		adapter := seedSMTPMailAdapter(t, db, server, `{"provider_hint":"kept"}`)
 		service, publisher := newService()
 		response, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
 			Id: adapter.ID,
@@ -99,19 +99,21 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		require.Equal(t, []string{"replaced-sender@example.test"}, server.recipients())
+		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
-		// The admin RPC replaces the whole provider config: an omitted
-		// password and unknown stored keys are not carried over.
+		// The admin form never sees the stored password, so an empty one keeps
+		// it; an omitted sender name clears it.
 		require.JSONEq(t, `{
 			"host":"127.0.0.1","port":`+strconv.Itoa(int(server.port()))+`,"secure":false,
-			"user":"smtp-user","password":"","from_email":"replaced-sender@example.test"
+			"user":"smtp-user","password":"smtp-secret","from_email":"replaced-sender@example.test",
+			"provider_hint":"kept"
 		}`, string(stored.Config.RawMessage))
 		requireMailAdapterResponse(t, response.Msg.Adapter, stored, "replaced-sender@example.test")
 		requireMailAdapterAudits(t, db, adapter.ID, []string{"config"})
 		publisher.requireUpdated(t, adapter.ID)
 	})
 
-	t.Run("resending the same config still verifies", func(t *testing.T) {
+	t.Run("a new password replaces the stored one", func(t *testing.T) {
 		server := newFakeSMTPServer(t, false)
 		adapter := seedSMTPMailAdapter(t, db, server, `{}`)
 		service, publisher := newService()
@@ -119,12 +121,38 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		_, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
 			Id: adapter.ID,
 			Config: &managev1.UpdateMailAdapterRequest_SmtpConfig{SmtpConfig: &managev1.SMTPConfig{
-				Host: "127.0.0.1", Port: server.port(), User: "smtp-user", Password: "smtp-secret",
+				Host: "127.0.0.1", Port: server.port(), User: "smtp-user", Password: "rotated-secret",
 				FromEmail: "smtp-sender@example.test", FromName: &fromName,
 			}},
 		}))
 		require.NoError(t, err)
 		require.Equal(t, []string{"smtp-sender@example.test"}, server.recipients())
+		row := loadMailAdapter(t, db, adapter.ID)
+		stored, err := row.GetSMTPConfig()
+		require.NoError(t, err)
+		require.Equal(t, "rotated-secret", stored.Password)
+		requireMailAdapterAudits(t, db, adapter.ID, []string{"config"})
+		publisher.requireUpdated(t, adapter.ID)
+	})
+
+	t.Run("resending the stored config skips verification", func(t *testing.T) {
+		server := newFakeSMTPServer(t, false)
+		adapter := seedSMTPMailAdapter(t, db, server, `{}`)
+		service, publisher := newService()
+		fromName := "SMTP Sender"
+		// With and without the stored password, the request matches the
+		// stored config.
+		for _, password := range []string{"smtp-secret", ""} {
+			_, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
+				Id: adapter.ID,
+				Config: &managev1.UpdateMailAdapterRequest_SmtpConfig{SmtpConfig: &managev1.SMTPConfig{
+					Host: "127.0.0.1", Port: server.port(), User: "smtp-user", Password: password,
+					FromEmail: "smtp-sender@example.test", FromName: &fromName,
+				}},
+			}))
+			require.NoError(t, err)
+		}
+		require.Empty(t, server.recipients())
 		stored := loadMailAdapter(t, db, adapter.ID)
 		require.Equal(t, adapter.UpdatedAt.UTC(), stored.UpdatedAt.UTC())
 		requireMailAdapterAudits(t, db, adapter.ID, nil)
@@ -144,6 +172,7 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		require.Equal(t, []string{"switched@example.test"}, server.recipients())
+		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
 		require.Equal(t, model.MailAdapterType("MAIL_ADAPTER_TYPE_SMTP"), stored.Type)
 		require.JSONEq(t, `{
@@ -165,6 +194,7 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, []string{"renamed-sender@example.test"}, server.recipients())
+		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
 		require.JSONEq(t, `{
 			"host":"127.0.0.1","port":`+strconv.Itoa(int(server.port()))+`,"secure":false,
@@ -218,11 +248,11 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 				code: connect.CodeNotFound, message: "mail adapter not found: " + missingID,
 			},
 			{
-				name: "missing adapter is reported before authorization", ctx: outsiderCtx, server: server, missing: true,
+				name: "missing adapter is hidden from a non administrator", ctx: outsiderCtx, server: server, missing: true,
 				update: func(string) *managev1.UpdateMailAdapterRequest {
 					return &managev1.UpdateMailAdapterRequest{Id: missingID}
 				},
-				code: connect.CodeNotFound, message: "mail adapter not found: " + missingID,
+				code: connect.CodePermissionDenied, message: "admin access required",
 			},
 			{
 				name: "non administrator", ctx: outsiderCtx, server: server,
@@ -332,6 +362,18 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		}
 		require.Empty(t, server.recipients())
 		require.Empty(t, rejecting.recipients(), "a rejected MAIL FROM never reaches RCPT TO")
+	})
+
+	t.Run("delete authorizes before loading", func(t *testing.T) {
+		server := newFakeSMTPServer(t, false)
+		adapter := seedSMTPMailAdapter(t, db, server, `{}`)
+		service, publisher := newService()
+		for _, id := range []string{adapter.ID, testutil.IntegrationUUID()} {
+			_, err := service.Delete(outsiderCtx, connect.NewRequest(&managev1.DeleteMailAdapterRequest{Id: id}))
+			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "error: %v", err)
+		}
+		loadMailAdapter(t, db, adapter.ID)
+		publisher.requireNone(t)
 	})
 }
 
@@ -459,6 +501,7 @@ type fakeSMTPServer struct {
 	mu       sync.Mutex
 	rcpts    []string
 	conns    []net.Conn
+	open     int
 	wg       sync.WaitGroup
 }
 
@@ -491,6 +534,17 @@ func (s *fakeSMTPServer) recipients() []string {
 	return append([]string{}, s.rcpts...)
 }
 
+// requireClientsDisconnected waits for every client connection to end. A
+// verification adapter that is never closed keeps its pooled connection open.
+func (s *fakeSMTPServer) requireClientsDisconnected(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.open == 0
+	}, 10*time.Second, 10*time.Millisecond, "a verification connection is still open")
+}
+
 func (s *fakeSMTPServer) serve() {
 	defer s.wg.Done()
 	for {
@@ -500,11 +554,15 @@ func (s *fakeSMTPServer) serve() {
 		}
 		s.mu.Lock()
 		s.conns = append(s.conns, conn)
+		s.open++
 		s.mu.Unlock()
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
 			s.handle(conn)
+			s.mu.Lock()
+			s.open--
+			s.mu.Unlock()
 		}()
 	}
 }

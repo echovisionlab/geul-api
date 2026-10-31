@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/mail"
 	"reflect"
@@ -213,10 +214,10 @@ func (s *MailAdapterService) update(
 	var adapter model.MailAdapter
 	changed := false
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
 			return err
 		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 
@@ -246,27 +247,23 @@ func (s *MailAdapterService) update(
 		}
 
 		senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
-		configChanged := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
+		configRequested := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
 		var requestedConfig model.MailAdapterConfig
-		if configChanged {
+		configChanged := false
+		if configRequested {
 			var config structured.Value
 			if senderChanged {
 				requestedConfig, config, err = s.senderConfig(&adapter, *sender)
-				if err != nil {
-					return err
-				}
 			} else {
-				config, err = s.buildConfig(effectiveType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
-				if err != nil {
-					return errs.InvalidArgumentMsg(err.Error())
-				}
-				candidate := adapter
-				if err := candidate.SetConfig(config); err != nil {
-					return errs.Internal(fmt.Errorf("failed to set config: %w", err))
-				}
-				requestedConfig = candidate.Config
+				requestedConfig, config, err = s.replacementConfig(&adapter, effectiveType, typeChanged, req.Msg)
 			}
-			if !senderChanged || !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
+			if err != nil {
+				return err
+			}
+			// Only a changed sender or delivery setting needs a provider send to
+			// prove it; resending the stored config is a no-op.
+			configChanged = !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage)
+			if configChanged {
 				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
 					if senderChanged {
 						// Provider diagnostics can contain credentials. Keep their cause
@@ -301,7 +298,7 @@ func (s *MailAdapterService) update(
 			adapter.Type = effectiveType
 			changedFields = append(changedFields, "type")
 		}
-		if configChanged && !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
+		if configChanged {
 			updates["config"] = requestedConfig
 			adapter.Config = requestedConfig
 			changedFields = append(changedFields, "config")
@@ -380,10 +377,10 @@ func (s *MailAdapterService) Delete(
 
 	var adapter model.MailAdapter
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
+		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
 			return err
 		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, mailAdapterCan); err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
 		if err := tx.Delete(&adapter).Error; err != nil {
@@ -531,6 +528,7 @@ func (s *MailAdapterService) TestConfig(
 			Error:   &errStr,
 		}), nil
 	}
+	defer closeTransientMailAdapter(ctx, adapter)
 
 	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
 }
@@ -586,6 +584,7 @@ func (s *MailAdapterService) Test(
 			Error:   &errStr,
 		}), nil
 	}
+	defer closeTransientMailAdapter(ctx, adapter)
 
 	return sendAdapterTestEmail(ctx, adapter, testEmail, private...), nil
 }
@@ -622,6 +621,7 @@ func (s *MailAdapterService) verifyAdapterBeforeSave(
 	if err != nil {
 		return fmt.Errorf("failed to initialize adapter: %w", err)
 	}
+	defer closeTransientMailAdapter(ctx, sender)
 
 	probeEmail, err := probeEmailForConfig(adapterType, config)
 	if err != nil {
@@ -639,6 +639,18 @@ func (s *MailAdapterService) verifyAdapterBeforeSave(
 	}
 
 	return nil
+}
+
+// closeTransientMailAdapter releases the provider connections that an
+// adapter built for one verification or test send keeps pooled.
+func closeTransientMailAdapter(ctx context.Context, adapter email.Adapter) {
+	closer, ok := adapter.(io.Closer)
+	if !ok {
+		return
+	}
+	if err := closer.Close(); err != nil {
+		slog.WarnContext(ctx, "Failed to close transient mail adapter", "domain", "mail", failurecause.Attr(err))
+	}
 }
 
 func probeEmailForConfig(adapterType model.MailAdapterType, config structured.Value) (string, error) {
