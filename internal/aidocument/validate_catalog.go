@@ -9,18 +9,37 @@ func (c Catalog) validate() error {
 	if err := validateOpaque("catalog fingerprint", c.Fingerprint, 256); err != nil {
 		return err
 	}
-	kinds := make(map[BlockKind]struct{}, len(c.BlockKinds))
-	for _, kind := range c.BlockKinds {
+	kinds, err := validateBlockKinds(c.BlockKinds)
+	if err != nil {
+		return err
+	}
+	if err := validateFieldRules(c.Fields, kinds); err != nil {
+		return err
+	}
+	relations, err := validateRelationRules(c.Relations, kinds)
+	if err != nil {
+		return err
+	}
+	return validateRelationFieldRules(c.RelationFields, relations)
+}
+
+func validateBlockKinds(blockKinds []BlockKind) (map[BlockKind]struct{}, error) {
+	kinds := make(map[BlockKind]struct{}, len(blockKinds))
+	for _, kind := range blockKinds {
 		if err := validateStableID("block kind", string(kind), maxKindLength); err != nil {
-			return err
+			return nil, err
 		}
 		if _, duplicate := kinds[kind]; duplicate {
-			return fmt.Errorf("duplicate block kind %q", kind)
+			return nil, fmt.Errorf("duplicate block kind %q", kind)
 		}
 		kinds[kind] = struct{}{}
 	}
-	rules := make(map[string]struct{}, len(c.Fields))
-	for _, rule := range c.Fields {
+	return kinds, nil
+}
+
+func validateFieldRules(fields []FieldRule, kinds map[BlockKind]struct{}) error {
+	rules := make(map[string]struct{}, len(fields))
+	for _, rule := range fields {
 		if _, ok := kinds[rule.BlockKind]; !ok {
 			return fmt.Errorf("field %q refers to unknown block kind %q", rule.Field, rule.BlockKind)
 		}
@@ -32,47 +51,49 @@ func (c Catalog) validate() error {
 			return fmt.Errorf("duplicate field rule %q on %q", rule.Field, rule.BlockKind)
 		}
 		rules[key] = struct{}{}
-		if err := validateFieldRuleShape(rule.Field, rule.ValueKind, rule.Ownership, rule.Translatable, rule.File); err != nil {
+		if err := validateRuleSchema("field", rule); err != nil {
 			return err
-		}
-		if rule.Schema != nil {
-			if rule.Schema.Kind != rule.ValueKind || rule.Schema.Ownership != rule.Ownership || rule.Schema.Translatable != rule.Translatable || rule.Schema.File != rule.File {
-				return fmt.Errorf("field %q recursive schema root does not match its field rule", rule.Field)
-			}
-			if err := validateFieldSchema(*rule.Schema, 0); err != nil {
-				return fmt.Errorf("field %q schema: %w", rule.Field, err)
-			}
 		}
 	}
-	relations := make(map[string]map[RelationItemKind]struct{}, len(c.Relations))
-	for _, rule := range c.Relations {
+	return nil
+}
+
+// validateRelationRules returns the allowed item kinds of each relation rule
+// by relationRuleKey.
+func validateRelationRules(relationRules []RelationRule, kinds map[BlockKind]struct{}) (map[string]map[RelationItemKind]struct{}, error) {
+	relations := make(map[string]map[RelationItemKind]struct{}, len(relationRules))
+	for _, rule := range relationRules {
 		if _, ok := kinds[rule.BlockKind]; !ok {
-			return fmt.Errorf("relation %q refers to unknown block kind %q", rule.Relation, rule.BlockKind)
+			return nil, fmt.Errorf("relation %q refers to unknown block kind %q", rule.Relation, rule.BlockKind)
 		}
 		if err := validateStableID("relation ID", string(rule.Relation), maxCatalogIDLength); err != nil {
-			return err
+			return nil, err
 		}
 		key := relationRuleKey(rule.BlockKind, rule.Relation)
 		if _, duplicate := relations[key]; duplicate {
-			return fmt.Errorf("duplicate relation rule %q on %q", rule.Relation, rule.BlockKind)
+			return nil, fmt.Errorf("duplicate relation rule %q on %q", rule.Relation, rule.BlockKind)
 		}
 		itemKinds := make(map[RelationItemKind]struct{}, len(rule.ItemKinds))
 		for _, kind := range rule.ItemKinds {
 			if err := validateStableID("relation item kind", string(kind), maxKindLength); err != nil {
-				return err
+				return nil, err
 			}
 			if _, duplicate := itemKinds[kind]; duplicate {
-				return fmt.Errorf("duplicate relation item kind %q on relation %q", kind, rule.Relation)
+				return nil, fmt.Errorf("duplicate relation item kind %q on relation %q", kind, rule.Relation)
 			}
 			itemKinds[kind] = struct{}{}
 		}
 		if len(itemKinds) == 0 {
-			return fmt.Errorf("relation %q must allow at least one item kind", rule.Relation)
+			return nil, fmt.Errorf("relation %q must allow at least one item kind", rule.Relation)
 		}
 		relations[key] = itemKinds
 	}
-	relationFields := make(map[string]struct{}, len(c.RelationFields))
-	for _, rule := range c.RelationFields {
+	return relations, nil
+}
+
+func validateRelationFieldRules(relationFields []RelationFieldRule, relations map[string]map[RelationItemKind]struct{}) error {
+	seen := make(map[string]struct{}, len(relationFields))
+	for _, rule := range relationFields {
 		itemKinds, ok := relations[relationRuleKey(rule.BlockKind, rule.Relation)]
 		if !ok {
 			return fmt.Errorf("relation field %q refers to unknown relation %q", rule.Field, rule.Relation)
@@ -84,21 +105,31 @@ func (c Catalog) validate() error {
 			return err
 		}
 		key := relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)
-		if _, duplicate := relationFields[key]; duplicate {
+		if _, duplicate := seen[key]; duplicate {
 			return fmt.Errorf("duplicate relation field rule %q", rule.Field)
 		}
-		relationFields[key] = struct{}{}
-		if err := validateFieldRuleShape(rule.Field, rule.ValueKind, rule.Ownership, rule.Translatable, rule.File); err != nil {
+		seen[key] = struct{}{}
+		if err := validateRuleSchema("relation field", rule.fieldRule()); err != nil {
 			return err
 		}
-		if rule.Schema != nil {
-			if rule.Schema.Kind != rule.ValueKind || rule.Schema.Ownership != rule.Ownership || rule.Schema.Translatable != rule.Translatable || rule.Schema.File != rule.File {
-				return fmt.Errorf("relation field %q recursive schema root does not match its field rule", rule.Field)
-			}
-			if err := validateFieldSchema(*rule.Schema, 0); err != nil {
-				return fmt.Errorf("relation field %q schema: %w", rule.Field, err)
-			}
-		}
+	}
+	return nil
+}
+
+// validateRuleSchema checks a field rule's shape and, when it declares a
+// recursive schema, that the schema root repeats the rule.
+func validateRuleSchema(label string, rule FieldRule) error {
+	if err := validateFieldRuleShape(rule.Field, rule.ValueKind, rule.Ownership, rule.Translatable, rule.File); err != nil {
+		return err
+	}
+	if rule.Schema == nil {
+		return nil
+	}
+	if rule.Schema.Kind != rule.ValueKind || rule.Schema.Ownership != rule.Ownership || rule.Schema.Translatable != rule.Translatable || rule.Schema.File != rule.File {
+		return fmt.Errorf("%s %q recursive schema root does not match its field rule", label, rule.Field)
+	}
+	if err := validateFieldSchema(*rule.Schema, 0); err != nil {
+		return fmt.Errorf("%s %q schema: %w", label, rule.Field, err)
 	}
 	return nil
 }
