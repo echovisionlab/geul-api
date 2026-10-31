@@ -99,18 +99,21 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			)
 
 			planner := newWorkerOGPlanner(db, "https://cdn.example.com")
-			activePlan, err := legaladapter.RequestSaved(
-				t.Context(), db, planner, testCase.name, activeID, "", true, "seed_active_og",
-			)
-			require.NoError(t, err)
-			require.NotNil(t, activePlan)
+			// Saving a policy requests OG in its own transaction, which also
+			// owns the PGMQ enqueue.
+			requestSaved := func(documentID, reason string) *og.Plan {
+				var plan *og.Plan
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+					var err error
+					plan, err = legaladapter.RequestSaved(t.Context(), tx, planner, testCase.name, documentID, "", true, reason)
+					return err
+				}))
+				return plan
+			}
+			require.NotNil(t, requestSaved(activeID, "seed_active_og"))
 
 			// Saving/scheduling B while A is active must not seize the fixed route.
-			earlyPlan, err := legaladapter.RequestSaved(
-				t.Context(), db, planner, testCase.name, scheduledID, "", true, "scheduled_too_early",
-			)
-			require.NoError(t, err)
-			require.Nil(t, earlyPlan)
+			require.Nil(t, requestSaved(scheduledID, "scheduled_too_early"))
 
 			routeID := legaladapter.RouteID(testCase.name)
 			var englishTarget model.OgGenerationTarget
