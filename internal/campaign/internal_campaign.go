@@ -5,13 +5,13 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -126,7 +126,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 	}
 
 	var result contentblock.Result
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if locale != domain.SourceLocale {
 		contributors := req.Msg.GetBatch().GetContributorMemberIds()
 		if len(contributors) != 1 {
@@ -274,7 +274,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 
 	var result contentblock.AdvanceResult
 	var sourceLocale string
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if locale != domain.SourceLocale {
 		contributors := req.Msg.GetContributorMemberIds()
 		if len(contributors) != 1 {

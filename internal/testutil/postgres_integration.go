@@ -28,6 +28,8 @@ import (
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 )
 
 const appIntegrationPostgresInitScriptRelativePath = "init/02-extensions.sh"
@@ -309,7 +311,8 @@ func startLeasedAppPostgres(ctx context.Context, lease AppIntegrationLeaseDescri
 	}
 
 	database, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:  logger.Default.LogMode(logger.Silent),
+		NowFunc: dbtime.Now,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(

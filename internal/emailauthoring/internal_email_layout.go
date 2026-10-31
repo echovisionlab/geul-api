@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
@@ -81,7 +82,7 @@ func (s *InternalEmailLayoutService) SaveDocument(
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	result := emailLayoutCollaborativeSaveResult{locale: roomLocale}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, r.EmailLayoutId, "UPDATE")

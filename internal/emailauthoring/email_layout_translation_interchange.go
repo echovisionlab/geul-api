@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -144,7 +145,7 @@ func ApplyEmailLayoutTranslationInterchange(
 		return current, false, nil
 	}
 	if input.Now.IsZero() {
-		input.Now = time.Now().UTC()
+		input.Now = dbtime.Now()
 	} else {
 		input.Now = input.Now.UTC()
 	}

@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -62,7 +63,7 @@ func (s *InternalFormService) SaveDocument(
 		return nil, errs.InvalidArgument("present_locale_values", err.Error())
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	var result formCollaborativeSaveResult
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := s.translation.LockRoot(ctx, tx, r.FormId); err != nil {

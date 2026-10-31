@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -210,7 +211,7 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	if mutation.DeleteTranslation && (mutation.Metadata != AIDocumentMetadataPatch{} || hasPageAIDocumentBatchChanges(mutation.Batch)) {
 		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "translation deletion must be the only mutation")
 	}
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if mutation.Locale != mutation.ObservedSourceLocale {
 		result, targetRevision, err := applyPageTargetLocaleBatch(
 			ctx, tx, s.internal.contentBlocks, mutation.PageID, mutation.Batch.DocumentID,

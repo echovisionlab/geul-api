@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -23,7 +23,7 @@ func (m *MetadataJobManager) RecoverExpiredJobs(ctx context.Context, limit int) 
 	if limit <= 0 {
 		limit = metadataAIJobRecoveryBatch
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	now := dbtime.Now()
 	recoveryBefore := now.Add(-metadataAIJobRecoveryDelay)
 	staleBefore := now.Add(-metadataAIJobLeaseDuration)
 	queueTable := pq.QuoteIdentifier("q_" + eventpkg.QueueAiMetadataGenerate)

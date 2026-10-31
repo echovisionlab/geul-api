@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -98,7 +99,7 @@ func (s *EmailTemplateService) applyEmailTemplateUpdate(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, templateCan); err != nil {
 			return err
 		}
-		plan, err := buildEmailTemplateUpdatePlan(request, time.Now().UTC())
+		plan, err := buildEmailTemplateUpdatePlan(request, dbtime.Now())
 		if err != nil {
 			return err
 		}

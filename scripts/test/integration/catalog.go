@@ -48,6 +48,7 @@ var integrationCatalog = []integrationBand{
 			"./cmd/server",
 			"./internal/adapters/geoip",
 			"./internal/adapters/legal",
+			"./internal/adapters/memberpat",
 			"./internal/adapters/release",
 			"./internal/adapters/sitemap",
 			"./internal/adapters/sitesettings",

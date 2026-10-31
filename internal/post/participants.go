@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -229,7 +230,7 @@ func (s *PostService) AddPostAuthor(
 		).Error; err != nil {
 			return err
 		}
-		createdAt = time.Now().UTC()
+		createdAt = dbtime.Now()
 		if err := tx.Exec(`
 			INSERT INTO post_author (post_id, member_id, created_at)
 			VALUES (?::uuid, ?::uuid, ?)
@@ -421,7 +422,7 @@ func (s *PostService) AddPostCollaborator(
 				return err
 			}
 		}
-		createdAt = time.Now().UTC()
+		createdAt = dbtime.Now()
 		if err := tx.Exec(`
 			INSERT INTO post_collaborator (post_id, member_id, created_at)
 			VALUES (?::uuid, ?::uuid, ?)

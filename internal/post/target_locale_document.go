@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -289,7 +290,7 @@ func applyPostTargetLocaleMutation(
 
 	now := input.Now.UTC().Truncate(time.Microsecond)
 	if now.IsZero() {
-		now = time.Now().UTC().Truncate(time.Microsecond)
+		now = dbtime.Now()
 	}
 	result := postTargetLocaleMutationResult{
 		DocumentRevision: state.Snapshot.Document.Revision.String(),

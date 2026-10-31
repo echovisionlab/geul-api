@@ -15,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -239,7 +240,7 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 		return nil, normalizePageContentBlockError(err)
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	var result contentblock.Result
 	var targetRevision *string
 	var sourcePath bool
@@ -426,7 +427,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	var advance contentblock.AdvanceResult
 	var targetResult contentblock.Result
 	var targetRevision *string

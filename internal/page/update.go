@@ -4,12 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -113,7 +113,7 @@ func (s *PageService) applyPageUpdate(
 			return nil
 		}
 		// PostgreSQL keeps microseconds; respond with the value later reads return.
-		mutationNow := time.Now().UTC().Truncate(time.Microsecond)
+		mutationNow := dbtime.Now()
 		update.fields["updated_at"] = mutationNow
 		if err := tx.Model(page).Updates(update.fields).Error; err != nil {
 			return err

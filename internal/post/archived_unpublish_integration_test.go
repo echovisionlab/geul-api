@@ -48,12 +48,19 @@ func TestArchivedPostUnpublishStoresDirectDraftTransitionIntegration(t *testing.
 		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(authorID),
 	}))
 	require.NoError(t, err)
-	_, err = service.PublishPost(adminCtx, connect.NewRequest(&managev1.PublishPostRequest{Id: created.Msg.Id}))
+	published, err := service.PublishPost(adminCtx, connect.NewRequest(&managev1.PublishPostRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
+	var afterPublish model.Post
+	require.NoError(t, db.First(&afterPublish, "id = ?", created.Msg.Id).Error)
+	// Responses carry the stored instants, not the nanoseconds PostgreSQL drops.
+	require.True(t, afterPublish.UpdatedAt.Equal(published.Msg.UpdatedAt.AsTime()))
+	require.NotNil(t, afterPublish.PublishedAt)
+	require.True(t, afterPublish.PublishedAt.Equal(published.Msg.PublishedAt.AsTime()))
 	archived, err := service.ArchivePost(adminCtx, connect.NewRequest(&managev1.ArchivePostRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
 	var before model.Post
 	require.NoError(t, db.First(&before, "id = ?", created.Msg.Id).Error)
+	require.True(t, before.UpdatedAt.Equal(archived.Msg.UpdatedAt.AsTime()))
 
 	_, err = service.UnpublishPost(authorCtx, connect.NewRequest(&managev1.UnpublishPostRequest{Id: created.Msg.Id}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
@@ -73,6 +80,7 @@ func TestArchivedPostUnpublishStoresDirectDraftTransitionIntegration(t *testing.
 	require.NoError(t, db.First(&after, "id = ?", created.Msg.Id).Error)
 	require.Equal(t, model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()), after.Status)
 	require.True(t, after.UpdatedAt.After(before.UpdatedAt))
+	require.True(t, after.UpdatedAt.Equal(withdrawn.Msg.UpdatedAt.AsTime()))
 	require.Equal(t, before.PublishedAt, after.PublishedAt)
 
 	// A single archived->draft audit proves this call did not republish first.

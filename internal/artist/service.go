@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -694,7 +695,7 @@ func (s *ArtistService) PublishArtist(
 
 	var artist model.Artist
 	transitioned := false
-	now := time.Now()
+	now := dbtime.Now()
 	updates := structured.Fields{
 		"status":       managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String(),
 		"published_at": now,
@@ -751,7 +752,7 @@ func (s *ArtistService) UnpublishArtist(
 
 	var artist model.Artist
 	transitioned := false
-	now := time.Now()
+	now := dbtime.Now()
 	updates := structured.Fields{
 		"status":     managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String(),
 		"updated_at": now,

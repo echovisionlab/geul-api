@@ -16,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -144,7 +145,7 @@ func (s *MailAdapterService) Create(
 			Type:      adapterType,
 			IsActive:  req.Msg.IsActive,
 			Priority:  int(req.Msg.GetPriority()),
-			CreatedAt: time.Now(),
+			CreatedAt: dbtime.Now(),
 		}
 		if err := adapter.SetConfig(config); err != nil {
 			return errs.Internal(fmt.Errorf("failed to set config: %w", err))
@@ -308,7 +309,7 @@ func (s *MailAdapterService) update(
 			return nil
 		}
 		changed = true
-		now := time.Now()
+		now := dbtime.Now()
 		updates["updated_at"] = now
 		adapter.UpdatedAt = &now
 		if err := tx.Model(&adapter).Updates(updates).Error; err != nil {

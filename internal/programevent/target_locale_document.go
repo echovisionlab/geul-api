@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -280,7 +281,7 @@ func applyProgramEventTargetMutation(
 	}
 	now := input.Now.UTC().Truncate(time.Microsecond)
 	if now.IsZero() {
-		now = time.Now().UTC().Truncate(time.Microsecond)
+		now = dbtime.Now()
 	}
 	output := programEventTargetMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	var final programEventLocaleMetadataRow

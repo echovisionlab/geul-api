@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -220,7 +221,7 @@ func (s *ProgramEventService) ReorderProgramEventMedia(
 
 func programEventRelationMutationUpdatedAt(ctx context.Context, db *gorm.DB, eventID string, changed bool) (time.Time, error) {
 	if changed {
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		if err := db.WithContext(ctx).Model(&model.ProgramEvent{}).Where("id = ?", eventID).Update("updated_at", now).Error; err != nil {
 			return time.Time{}, errs.Internal(err)
 		}

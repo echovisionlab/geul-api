@@ -5,6 +5,7 @@ import (
 	"context"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -44,7 +45,7 @@ func (s *FormService) CreateForm(
 	if err := validateCanonicalFormSchema(req.Msg.Schema); err != nil {
 		return nil, errs.InvalidArgumentMsg(err.Error())
 	}
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	form, err := s.newFormFromRequest(req.Msg, normalizedSlug, now)
 	if err != nil {
 		return nil, err

@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 )
 
 const (
@@ -34,7 +36,7 @@ func NewPlanner(db *gorm.DB, cdnDomain string, config RenderConfig, projections 
 		cdnDomain:   cdnDomain,
 		config:      config,
 		projections: projections,
-		now:         time.Now,
+		now:         dbtime.Now,
 	}
 }
 
@@ -70,7 +72,7 @@ func NewLifecycle(db *gorm.DB, cdnDomain string, projections ...Projection) *Lif
 		db:          db,
 		cdnDomain:   cdnDomain,
 		projections: projections,
-		now:         time.Now,
+		now:         dbtime.Now,
 		lease:       defaultOgGenerationLease,
 	}
 }

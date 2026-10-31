@@ -16,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -404,7 +405,7 @@ func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
 	}
 
 	fence := legalAuthorizedAIDocumentFence(root, lockedState, sourceLocale)
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	output := legalAIDocumentApplyResult{
 		CurrentDocumentRevision: lockedState.Revision,
 	}

@@ -53,6 +53,9 @@ func TestCampaignServiceCRUDIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, created.Msg.Campaign.Id, fetched.Msg.Campaign.Id)
 	require.Equal(t, "Campaign Integration Subject", fetched.Msg.Campaign.Subject)
+	// Responses carry the stored instants, not the nanoseconds PostgreSQL drops.
+	require.True(t, fetched.Msg.Campaign.GetCreatedAt().AsTime().Equal(created.Msg.Campaign.GetCreatedAt().AsTime()))
+	require.True(t, fetched.Msg.Campaign.GetUpdatedAt().AsTime().Equal(created.Msg.Campaign.GetUpdatedAt().AsTime()))
 
 	nextName := "Campaign Integration Name Updated"
 	renamed, err := campaignSvc.UpdateCampaignName(ctx, connect.NewRequest(&managev1.UpdateCampaignNameRequest{
@@ -62,6 +65,9 @@ func TestCampaignServiceCRUDIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, nextName, renamed.Msg.Name)
 	require.True(t, renamed.Msg.Changed)
+	refetched, err := campaignSvc.GetCampaign(ctx, connect.NewRequest(&managev1.GetCampaignRequest{Id: created.Msg.Campaign.Id}))
+	require.NoError(t, err)
+	require.True(t, refetched.Msg.Campaign.GetUpdatedAt().AsTime().Equal(renamed.Msg.GetUpdatedAt().AsTime()))
 	require.Equal(t, "Campaign Integration Subject", fetched.Msg.Campaign.Subject)
 	requireCampaignSourceLocaleRow(t, db, created.Msg.Campaign.Id, "ko", "Campaign Integration Subject")
 

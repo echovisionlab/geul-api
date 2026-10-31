@@ -7,7 +7,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"log/slog"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
@@ -125,7 +125,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 	}
 
 	var result contentblock.Result
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if locale != domain.SourceLocale {
 		contributors := req.Msg.GetBatch().GetContributorMemberIds()
 		var targetRevision string
@@ -289,7 +289,7 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 	}
 
 	var result contentblock.AdvanceResult
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if locale != domain.SourceLocale {
 		contributors := req.Msg.GetContributorMemberIds()
 		batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}

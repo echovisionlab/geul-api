@@ -11,12 +11,14 @@ import (
 	"gorm.io/gorm/logger"
 	"gorm.io/plugin/opentelemetry/tracing"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 func connectDatabase(ctx context.Context, dsn string, maxOpenConnections, maxIdleConnections int) (*gorm.DB, *sql.DB, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:  logger.Default.LogMode(logger.Silent),
+		NowFunc: dbtime.Now,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to database: %w", err)

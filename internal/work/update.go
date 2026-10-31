@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -268,7 +268,7 @@ func (s *WorkService) applyWorkUpdatePlan(
 			return err
 		}
 		if len(changedFields) > 0 {
-			mutationNow := time.Now()
+			mutationNow := dbtime.Now()
 			plan.fields["updated_at"] = mutationNow
 			if err := tx.Model(work).Updates(plan.fields).Error; err != nil {
 				return err

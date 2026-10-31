@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -655,7 +656,7 @@ func (s *ProgramEventService) setProgramEventStatus(
 	publish bool,
 ) (*connect.Response[managev1.ProgramEventLifecycleMutationResponse], error) {
 	var current model.ProgramEvent
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Select("id", "status", "published_at", "updated_at").

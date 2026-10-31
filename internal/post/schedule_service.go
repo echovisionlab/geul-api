@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -127,7 +128,7 @@ func (s *PostService) CancelPostSchedule(
 		previousScheduledAt := post.ScheduledAt
 		previousTimeZone := post.ScheduledTimeZone
 		previousStatus := post.Status
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		if err := tx.Model(&post).Updates(structured.Fields{
 			"status":              managev1.PostStatus_POST_STATUS_DRAFT.String(),
 			"scheduled_at":        nil,
@@ -181,7 +182,7 @@ func (s *PostService) RepublishPost(
 		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
 			return errs.FailedPrecondition("only archived posts can be republished")
 		}
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		previousStatus := post.Status
 		updates := structured.Fields{
 			"status":              managev1.PostStatus_POST_STATUS_PUBLISHED.String(),

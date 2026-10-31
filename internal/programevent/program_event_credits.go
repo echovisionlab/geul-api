@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -73,7 +74,7 @@ func (s *ProgramEventService) AddProgramEventCredit(
 			CreditRole:  normalizedStringPtr(req.Msg.CreditRole),
 			Description: normalizedStringPtr(req.Msg.Description),
 			SortOrder:   sortOrder,
-			CreatedAt:   time.Now().UTC(),
+			CreatedAt:   dbtime.Now(),
 		}
 		if err := tx.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(&credit).Error; err != nil {
 			return errs.Internal(err)

@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -128,7 +129,7 @@ func (s *InternalPostSeriesService) SaveDocument(
 		return nil, err
 	}
 
-	now := time.Now().UTC()
+	now := dbtime.Now()
 	var documentRevision string
 	var targetRevision *string
 	err = s.documents.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

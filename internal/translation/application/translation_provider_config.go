@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"log/slog"
 	"reflect"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz"
@@ -169,7 +169,7 @@ func (s *TranslationService) CreateTranslationProvider(
 			return errs.InvalidArgument("config", err.Error())
 		}
 
-		now := time.Now().UTC()
+		now := dbtime.Now()
 		provider = &model.TranslationProviderConfig{
 			Name:      name,
 			Type:      providerType,

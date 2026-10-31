@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -34,7 +35,8 @@ func NewConcurrentPostIntegrationDB(t *testing.T) *gorm.DB {
 	stack := PrepareOryIntegrationConcurrentTest(t)
 	require.NotNil(t, stack)
 	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:  logger.Default.LogMode(logger.Silent),
+		NowFunc: dbtime.Now,
 	})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()

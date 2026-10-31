@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -321,7 +322,7 @@ func (s *PageService) CreatePage(
 		}
 	}
 
-	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	createdAt := dbtime.Now()
 	page := &model.Page{
 		DocumentLayout: model.DefaultDocumentLayout(),
 		AccessPolicy:   encodedPolicy,
@@ -651,7 +652,7 @@ func (s *PageService) PublishPage(
 		if err := RequireIndexedContentBlockAttachmentsReadyForPublication(ctx, tx, attachments); err != nil {
 			return err
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := dbtime.Now()
 		updates := structured.Fields{
 			"status":     managev1.PageStatus_PAGE_STATUS_PUBLISHED.String(),
 			"updated_at": now,
@@ -732,7 +733,7 @@ func (s *PageService) UnpublishPage(
 		if page.Status == model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()) {
 			return nil
 		}
-		now := time.Now().UTC().Truncate(time.Microsecond)
+		now := dbtime.Now()
 		updates := structured.Fields{"status": managev1.PageStatus_PAGE_STATUS_DRAFT.String(), "updated_at": now}
 		if err := tx.Model(&page).Updates(updates).Error; err != nil {
 			return err

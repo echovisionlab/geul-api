@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -214,7 +215,7 @@ func applyLabelTargetLocaleMutation(
 	}
 	now := input.Now.UTC().Truncate(time.Microsecond)
 	if now.IsZero() {
-		now = time.Now().UTC().Truncate(time.Microsecond)
+		now = dbtime.Now()
 	}
 	var finalUpdatedAt time.Time
 	authorizedFence := func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {

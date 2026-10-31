@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -294,7 +295,7 @@ func applyPageTargetLocaleBatchWithRevisionPolicy(
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Page target locale must exist before deletion")
 	}
 	if now.IsZero() {
-		now = time.Now().UTC()
+		now = dbtime.Now()
 	}
 	now = now.UTC().Truncate(time.Microsecond)
 	if patch.DeleteLocale {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -251,7 +252,7 @@ func applyReleaseTargetLocaleMutation(
 	}
 	now := input.Now.UTC().Truncate(time.Microsecond)
 	if now.IsZero() {
-		now = time.Now().UTC().Truncate(time.Microsecond)
+		now = dbtime.Now()
 	}
 	result := releaseTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	var finalMetadata releaseLocaleMetadataRow

@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -380,7 +381,7 @@ func (s *MeshOptimizationService) UseCandidate(ctx context.Context, candidateID 
 	if candidate.Status != model.MeshOptimizationCandidateStatusReady || candidate.OutputFileID == nil {
 		return nil, errs.FailedPrecondition("mesh optimization candidate is not ready")
 	}
-	now := time.Now()
+	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).
 		Model(&model.MeshOptimizationCandidate{}).
 		Where("id = ?", candidate.ID).
@@ -795,7 +796,7 @@ func (s *MeshOptimizationService) findOrCreateCandidate(
 		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
 	}
 
-	now := time.Now()
+	now := dbtime.Now()
 	expiresAt := now.Add(meshOptimizationCandidateTTL)
 	candidateID := uuid.New().String()
 	outputObjectID := uuid.New().String()
@@ -836,7 +837,7 @@ func (s *MeshOptimizationService) requeueCandidate(
 	candidate model.MeshOptimizationCandidate,
 	input MeshOptimizationGenerateInput,
 ) (model.MeshOptimizationCandidate, string, error) {
-	now := time.Now()
+	now := dbtime.Now()
 	expiresAt := now.Add(meshOptimizationCandidateTTL)
 	outputObjectID := uuid.New().String()
 	if _, err := meshMediaObjectTarget(outputObjectID, "glb", "model/gltf-binary"); err != nil {
@@ -859,10 +860,12 @@ func (s *MeshOptimizationService) requeueCandidate(
 		"cancelled_at":          nil,
 		"updated_at":            now,
 	}
-	if entityType := optionalMeshOptimizationEntityType(input.EntityType); entityType != nil {
+	entityType := optionalMeshOptimizationEntityType(input.EntityType)
+	if entityType != nil {
 		updates["entity_type"] = *entityType
 	}
-	if entityID := optionalNonEmptyString(input.EntityID); entityID != nil {
+	entityID := optionalNonEmptyString(input.EntityID)
+	if entityID != nil {
 		updates["entity_id"] = *entityID
 	}
 	if err := db.WithContext(ctx).Model(&model.MeshOptimizationCandidate{}).
@@ -883,6 +886,12 @@ func (s *MeshOptimizationService) requeueCandidate(
 	candidate.CompletedAt = nil
 	candidate.FailedAt = nil
 	candidate.CancelledAt = nil
+	if entityType != nil {
+		candidate.EntityType = entityType
+	}
+	if entityID != nil {
+		candidate.EntityID = entityID
+	}
 	return candidate, previousOutputObjectID, nil
 }
 

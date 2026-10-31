@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -537,7 +538,7 @@ func (s *PostService) updatePostWithDB(ctx context.Context, tx *gorm.DB, post *m
 	if len(changedFields) == 0 {
 		return false, nil
 	}
-	mutationNow := time.Now()
+	mutationNow := dbtime.Now()
 	update.fields["updated_at"] = mutationNow
 	if err := tx.Model(post).Clauses(clause.Returning{}).Updates(update.fields).Error; err != nil {
 		return false, err
@@ -729,7 +730,7 @@ func (s *PostService) PublishPost(
 			return errs.FailedPrecondition("only draft or scheduled posts can be published")
 		}
 
-		now := time.Now()
+		now := dbtime.Now()
 		previousStatus := post.Status
 		updates := structured.Fields{
 			"status":              managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
@@ -791,7 +792,7 @@ func (s *PostService) UnpublishPost(
 			post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
 			return errs.FailedPrecondition("only published or archived posts can be unpublished")
 		}
-		now := time.Now()
+		now := dbtime.Now()
 		previousStatus := post.Status
 		if err := tx.Model(&post).Updates(structured.Fields{
 			"status":              managev1.PostStatus_POST_STATUS_DRAFT.String(),
@@ -845,7 +846,7 @@ func (s *PostService) ArchivePost(
 		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
 			return errs.FailedPrecondition("only published posts can be archived")
 		}
-		now := time.Now()
+		now := dbtime.Now()
 		previousStatus := post.Status
 		if err := tx.Model(&post).Updates(structured.Fields{
 			"status":     managev1.PostStatus_POST_STATUS_ARCHIVED.String(),

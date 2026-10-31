@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/richtextinline"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -43,7 +44,7 @@ func NewStore(contract Contract, reuse FileReuseAuthorizer, options ...Option) (
 		contract: contract,
 		reuse:    reuse,
 		newUUID:  uuid.New,
-		now:      func() time.Time { return time.Now().UTC() },
+		now:      dbtime.Now,
 	}
 	for _, option := range options {
 		option(store)

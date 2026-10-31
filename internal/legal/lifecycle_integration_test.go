@@ -506,17 +506,22 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 			}),
 		)
 		require.NoError(t, err)
-		_, err = service.ScheduleTerms(
+		// Sub-microsecond digits PostgreSQL cannot keep must not reach the response.
+		scheduled, err := service.ScheduleTerms(
 			ctx,
 			connect.NewRequest(&managev1.ScheduleTermsRequest{
 				Id:               first.Msg.Id,
 				ExpectedRevision: first.Msg.Revision,
 				EffectiveFrom: timestamppb.New(
-					time.Now().Add(24 * time.Hour).UTC(),
+					time.Now().Add(24*time.Hour).UTC().Truncate(time.Second).Add(123456789),
 				),
 			}),
 		)
 		require.NoError(t, err)
+		storedSchedule := requireTermsHistoryTimes(t, db, first.Msg.Id)
+		require.True(t, storedSchedule.UpdatedAt.Equal(scheduled.Msg.GetUpdatedAt().AsTime()))
+		require.NotNil(t, storedSchedule.EffectiveFrom)
+		require.True(t, storedSchedule.EffectiveFrom.Equal(scheduled.Msg.GetEffectiveFrom().AsTime()))
 		second, err := service.CreateTermsVersion(
 			ctx,
 			connect.NewRequest(&managev1.CreateTermsVersionRequest{
@@ -553,13 +558,14 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 			second.Msg.Id,
 			managev1.TermsStatus_TERMS_STATUS_DRAFT.String(),
 		)
-		_, err = service.CancelTermsSchedule(
+		cancelled, err := service.CancelTermsSchedule(
 			ctx,
 			connect.NewRequest(&managev1.CancelTermsScheduleRequest{
 				Id: first.Msg.Id,
 			}),
 		)
 		require.NoError(t, err)
+		require.True(t, requireTermsHistoryTimes(t, db, first.Msg.Id).UpdatedAt.Equal(cancelled.Msg.GetUpdatedAt().AsTime()))
 		_, err = service.ScheduleTerms(
 			ctx,
 			connect.NewRequest(&managev1.ScheduleTermsRequest{
@@ -1303,4 +1309,16 @@ func newLegalLifecycleContentBlockStore(
 	store, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
 	return store
+}
+
+type termsHistoryTimes struct {
+	UpdatedAt     time.Time
+	EffectiveFrom *time.Time
+}
+
+func requireTermsHistoryTimes(t *testing.T, db *gorm.DB, id string) termsHistoryTimes {
+	t.Helper()
+	var times termsHistoryTimes
+	require.NoError(t, db.Raw("SELECT updated_at, effective_from FROM terms_history WHERE id = ?", id).Scan(&times).Error)
+	return times
 }
