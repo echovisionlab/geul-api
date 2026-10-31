@@ -383,22 +383,50 @@ func validateMultipartCompletionVerifiedMime(
 	return verifiedMime, nil
 }
 
-func completedMultipartFileRecord(session model.UploadSession) structured.Fields {
+// fileIngestRecord is the file row a verified ingest creates. A nil sha256
+// and empty ingest identifiers are left out of the insert.
+type fileIngestRecord struct {
+	id              string
+	fileName        string
+	mimeType        string
+	fileSize        int64
+	extension       string
+	sha256          []byte
+	ingestSlotID    string
+	ingestAttemptID string
+}
+
+func (r fileIngestRecord) columns() structured.Fields {
+	columns := structured.Fields{
+		"id":        r.id,
+		"file_name": r.fileName,
+		"mime_type": r.mimeType,
+		"file_size": r.fileSize,
+		"extension": r.extension,
+	}
+	if r.sha256 != nil {
+		columns["sha256"] = r.sha256
+	}
+	if r.ingestSlotID != "" {
+		columns["ingest_slot_id"] = r.ingestSlotID
+	}
+	if r.ingestAttemptID != "" {
+		columns["ingest_attempt_id"] = r.ingestAttemptID
+	}
+	return columns
+}
+
+func completedMultipartFileRecord(session model.UploadSession) fileIngestRecord {
 	extension := mediaExtension(session.DetectedMime)
-	file := structured.Fields{
-		"id":        session.FileID,
-		"file_name": storedFileBasename(session.FileName, session.FileID, extension),
-		"mime_type": derefString(session.DetectedMime),
-		"file_size": session.FileSize,
-		"extension": extension,
+	return fileIngestRecord{
+		id:              session.FileID,
+		fileName:        storedFileBasename(session.FileName, session.FileID, extension),
+		mimeType:        derefString(session.DetectedMime),
+		fileSize:        session.FileSize,
+		extension:       extension,
+		ingestSlotID:    derefString(session.SlotID),
+		ingestAttemptID: derefString(session.AttemptID),
 	}
-	if session.SlotID != nil && *session.SlotID != "" {
-		file["ingest_slot_id"] = *session.SlotID
-	}
-	if session.AttemptID != nil && *session.AttemptID != "" {
-		file["ingest_attempt_id"] = *session.AttemptID
-	}
-	return file
 }
 
 func ensureFileManagerDateFolder(ctx context.Context, tx *gorm.DB) (*string, error) {
@@ -435,13 +463,13 @@ func ensureFileManagerDateFolder(ctx context.Context, tx *gorm.DB) (*string, err
 
 func (s *FileService) createVerifiedFileIngestRecord(
 	ctx context.Context,
-	file structured.Fields,
+	record fileIngestRecord,
 	uploadType managev1.UploadType,
 	entityType managev1.TranscodeEntityType,
 	entityID string,
 	authority verifiedFileIngestAuthority,
 ) error {
-	fileID, _ := file["id"].(string)
+	fileID := record.id
 	if strings.TrimSpace(fileID) == "" {
 		return fmt.Errorf("completed file ID is required")
 	}
@@ -452,9 +480,8 @@ func (s *FileService) createVerifiedFileIngestRecord(
 		if err := authority.revalidate(ctx, tx, s, fileID, uploadType, entityType, entityID); err != nil {
 			return err
 		}
-		extension, _ := file["extension"].(string)
-		fileName, _ := file["file_name"].(string)
-		file["file_name"] = storedFileBasename(fileName, fileID, extension)
+		file := record.columns()
+		file["file_name"] = storedFileBasename(record.fileName, fileID, record.extension)
 		folderID, err := ensureFileManagerDateFolder(ctx, tx)
 		if err != nil {
 			return err

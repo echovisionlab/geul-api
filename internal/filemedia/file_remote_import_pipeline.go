@@ -21,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -661,22 +660,15 @@ func (s *FileService) finalizeRemoteImport(
 	return result, nil
 }
 
-func remoteImportFileRecord(request preparedRemoteImport, stored *storedRemoteImport) structured.Fields {
-	file := structured.Fields{
-		"id":        request.identity.fileID,
-		"mime_type": stored.mimeType,
-		"file_size": stored.size,
-		"extension": mediaExtension(&stored.mimeType),
-		"sha256":    stored.digest,
+func remoteImportFileRecord(request preparedRemoteImport, stored *storedRemoteImport) fileIngestRecord {
+	return fileIngestRecord{
+		id:              request.identity.fileID,
+		fileName:        stored.fileName,
+		mimeType:        stored.mimeType,
+		fileSize:        stored.size,
+		extension:       mediaExtension(&stored.mimeType),
+		sha256:          stored.digest,
+		ingestSlotID:    request.slotID,
+		ingestAttemptID: request.identity.attemptID,
 	}
-	if stored.fileName != "" {
-		file["file_name"] = stored.fileName
-	}
-	if request.slotID != "" {
-		file["ingest_slot_id"] = request.slotID
-	}
-	if request.identity.attemptID != "" {
-		file["ingest_attempt_id"] = request.identity.attemptID
-	}
-	return file
 }

@@ -6,7 +6,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -21,19 +20,20 @@ func TestApplyProgramEventTimeAndLocationUpdatesRevalidatesLockedTimeRange(t *te
 	}
 	newStart := timestamppb.New(base.Add(8 * time.Hour))
 	request := &managev1.UpdateProgramEventRequest{StartsAt: newStart}
-	fields := structured.Fields{"title": "keep concurrent title"}
+	keepTimezone := "Asia/Seoul"
+	update := programEventUpdate{timezone: &keepTimezone}
 
-	require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &initial, request))
-	require.Equal(t, base.Add(8*time.Hour), fields["starts_at"])
+	require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, request))
+	require.Equal(t, base.Add(8*time.Hour), *update.startsAt)
 
 	locked := model.ProgramEvent{
 		StartsAt:     base,
 		EndsAt:       timestampPtr(timestamppb.New(base.Add(6 * time.Hour))),
 		LocationMode: initial.LocationMode,
 	}
-	err := applyProgramEventTimeAndLocationUpdates(fields, &locked, request)
+	err := applyProgramEventTimeAndLocationUpdates(&update, &locked, request)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	require.Equal(t, "keep concurrent title", fields["title"])
+	require.Equal(t, keepTimezone, *update.timezone)
 }
 
 func TestProgramEventRelationWritesRequireObservedBaselines(t *testing.T) {
@@ -77,22 +77,22 @@ func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeC
 				MapPlaceID:   &initialPlace,
 			}
 			request := &managev1.UpdateProgramEventRequest{MapPlaceId: &requestedPlace}
-			fields := structured.Fields{"title": "keep title"}
+			keepTimezone := "Asia/Seoul"
+			update := programEventUpdate{timezone: &keepTimezone}
 
-			require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &initial, request))
-			require.Equal(t, "place-requested", *fields["map_place_id"].(*string))
+			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, request))
+			require.Equal(t, "place-requested", *update.mapPlaceID.value)
 
 			locked := model.ProgramEvent{
 				StartsAt:     initial.StartsAt,
 				LocationMode: lockedMode,
 				MapPlaceID:   nil,
 			}
-			require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &locked, request))
-			require.Contains(t, fields, "map_place_id")
-			require.Nil(t, fields["map_place_id"])
-			_, hasLocationModeUpdate := fields["location_mode"]
-			require.False(t, hasLocationModeUpdate)
-			require.Equal(t, "keep title", fields["title"])
+			require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &locked, request))
+			require.True(t, update.mapPlaceID.set)
+			require.Nil(t, update.mapPlaceID.value)
+			require.Nil(t, update.locationMode)
+			require.Equal(t, keepTimezone, *update.timezone)
 		})
 	}
 
@@ -103,11 +103,12 @@ func TestApplyProgramEventTimeAndLocationUpdatesDoesNotRestoreMapPlaceAfterModeC
 			LocationMode: mapPlaceMode,
 			MapPlaceID:   &initialPlace,
 		}
-		fields := structured.Fields{}
-		require.NoError(t, applyProgramEventTimeAndLocationUpdates(fields, &initial, &managev1.UpdateProgramEventRequest{
+		var update programEventUpdate
+		require.NoError(t, applyProgramEventTimeAndLocationUpdates(&update, &initial, &managev1.UpdateProgramEventRequest{
 			LocationMode: &requestMode,
 		}))
-		require.Equal(t, requestMode.String(), fields["location_mode"])
-		require.Nil(t, fields["map_place_id"])
+		require.Equal(t, requestMode.String(), *update.locationMode)
+		require.True(t, update.mapPlaceID.set)
+		require.Nil(t, update.mapPlaceID.value)
 	})
 }

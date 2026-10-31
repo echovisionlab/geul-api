@@ -194,128 +194,15 @@ func (s *MailAdapterService) update(
 		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&adapter, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
-
-		requestedName := adapter.Name
-		if req.Msg.Name != nil {
-			name := strings.TrimSpace(*req.Msg.Name)
-			if name == "" {
-				return errs.InvalidArgument("name", "cannot be empty")
-			}
-			if len(name) > 255 {
-				return errs.InvalidArgument("name", "must be at most 255 characters")
-			}
-			requestedName = name
-		}
-
-		effectiveType := adapter.Type
-		typeChanged := false
-		if req.Msg.Type != nil {
-			nextType := protoToModelAdapterType(*req.Msg.Type)
-			if nextType == "" {
-				return errs.InvalidArgument("type", "invalid adapter type")
-			}
-			if nextType != adapter.Type {
-				typeChanged = true
-				effectiveType = nextType
-			}
-		}
-
-		senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
-		configRequested := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
-		var requestedConfig model.MailAdapterConfig
-		configChanged := false
-		if configRequested {
-			var config structured.Value
-			if senderChanged {
-				requestedConfig, config, err = s.senderConfig(&adapter, *sender)
-			} else {
-				requestedConfig, config, err = s.replacementConfig(&adapter, effectiveType, typeChanged, req.Msg)
-			}
-			if err != nil {
-				return err
-			}
-			// Only a changed sender or delivery setting needs a provider send to
-			// prove it; resending the stored config is a no-op.
-			configChanged = !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage)
-			if configChanged {
-				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
-					if senderChanged {
-						// Provider diagnostics can contain credentials. Keep their cause
-						// for the redacted request record, never in an actionable MCP error.
-						return errs.WithCause(errs.InvalidArgument("config", "sender configuration verification failed; check provider configuration and sender verification"), err)
-					}
-					return errs.InvalidArgument("config", err.Error())
-				}
-			}
-		}
-
-		updates := structured.Fields{}
-		changedFields := make([]string, 0, 5)
-		if req.Msg.Name != nil && adapter.Name != requestedName {
-			updates["name"] = requestedName
-			adapter.Name = requestedName
-			changedFields = append(changedFields, "name")
-		}
-		if req.Msg.IsActive != nil && adapter.IsActive != *req.Msg.IsActive {
-			updates["is_active"] = *req.Msg.IsActive
-			adapter.IsActive = *req.Msg.IsActive
-			changedFields = append(changedFields, "active")
-		}
-		if req.Msg.Priority != nil && adapter.Priority != int(*req.Msg.Priority) {
-			updates["priority"] = *req.Msg.Priority
-			adapter.Priority = int(*req.Msg.Priority)
-			changedFields = append(changedFields, "priority")
-		}
-		if req.Msg.Type != nil && adapter.Type != effectiveType {
-			updates["type"] = effectiveType
-			adapter.Type = effectiveType
-			changedFields = append(changedFields, "type")
-		}
-		if configChanged {
-			updates["config"] = requestedConfig
-			adapter.Config = requestedConfig
-			changedFields = append(changedFields, "config")
-		}
-		if len(changedFields) == 0 {
-			return nil
-		}
-		changed = true
-		now := dbtime.Now()
-		updates["updated_at"] = now
-		adapter.UpdatedAt = &now
-		if err := tx.Model(&adapter).Updates(updates).Error; err != nil {
+		requested, err := s.requestedMailAdapterState(ctx, &adapter, req.Msg, sender)
+		if err != nil {
 			return err
 		}
-		if s.auditWriter == nil {
-			return nil
-		}
-		return domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMailAdapterUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMailAdapterConfigUpdatedAuditRecord(metadata, adapter.ID, changedFields)
-		})
+		changed, err = s.persistMailAdapterUpdate(ctx, tx, &adapter, req.Msg, requested)
+		return err
 	})
 	if err != nil {
-		if sender != nil {
-			err = failurecause.WithAttrs(
-				failurecause.WithPrivate(err, mailAdapterPrivateValues(&adapter)...),
-				slog.String("adapter_id", req.Msg.Id),
-			)
-		}
-		if connectErr, ok := errors.AsType[*connect.Error](err); ok {
-			if sender != nil {
-				// The outer context can carry provider credentials. The client sees
-				// the classified error alone; the request record keeps the redacted
-				// cause.
-				return nil, errs.WithCause(connectErr, err)
-			}
-			return nil, errs.Internal(err)
-		}
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("mail adapter", req.Msg.Id)
-		}
-		if sender != nil {
-			return nil, errs.WithCause(errs.InternalMsg("mail adapter sender update failed"), err)
-		}
-		return nil, errs.Internal(err)
+		return nil, classifyMailAdapterUpdateError(err, req.Msg.Id, sender, &adapter)
 	}
 	if !changed {
 		return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: toProtoMailAdapter(ctx, &adapter)}), nil
@@ -332,6 +219,171 @@ func (s *MailAdapterService) update(
 	return connect.NewResponse(&managev1.UpdateMailAdapterResponse{
 		Adapter: toProtoMailAdapter(ctx, &adapter),
 	}), nil
+}
+
+// requestedMailAdapterState is the validated state an update asks for. config
+// is set only when configChanged.
+type requestedMailAdapterState struct {
+	name          string
+	adapterType   model.MailAdapterType
+	config        model.MailAdapterConfig
+	configChanged bool
+}
+
+func (s *MailAdapterService) requestedMailAdapterState(
+	ctx context.Context,
+	adapter *model.MailAdapter,
+	msg *managev1.UpdateMailAdapterRequest,
+	sender *MailAdapterSenderUpdate,
+) (requestedMailAdapterState, error) {
+	requested := requestedMailAdapterState{name: adapter.Name, adapterType: adapter.Type}
+	if msg.Name != nil {
+		name := strings.TrimSpace(*msg.Name)
+		if name == "" {
+			return requested, errs.InvalidArgument("name", "cannot be empty")
+		}
+		if len(name) > 255 {
+			return requested, errs.InvalidArgument("name", "must be at most 255 characters")
+		}
+		requested.name = name
+	}
+	typeChanged := false
+	if msg.Type != nil {
+		nextType := protoToModelAdapterType(*msg.Type)
+		if nextType == "" {
+			return requested, errs.InvalidArgument("type", "invalid adapter type")
+		}
+		if nextType != adapter.Type {
+			typeChanged = true
+			requested.adapterType = nextType
+		}
+	}
+	var err error
+	requested.config, requested.configChanged, err = s.requestedMailAdapterConfig(ctx, adapter, msg, sender, requested, typeChanged)
+	return requested, err
+}
+
+// requestedMailAdapterConfig builds the configuration an update asks for and
+// verifies it with the provider when it differs from the stored one.
+func (s *MailAdapterService) requestedMailAdapterConfig(
+	ctx context.Context,
+	adapter *model.MailAdapter,
+	msg *managev1.UpdateMailAdapterRequest,
+	sender *MailAdapterSenderUpdate,
+	requested requestedMailAdapterState,
+	typeChanged bool,
+) (model.MailAdapterConfig, bool, error) {
+	senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
+	if !typeChanged && msg.GetSesConfig() == nil && msg.GetSmtpConfig() == nil && !senderChanged {
+		return model.MailAdapterConfig{}, false, nil
+	}
+	var requestedConfig model.MailAdapterConfig
+	var config structured.Value
+	var err error
+	if senderChanged {
+		requestedConfig, config, err = s.senderConfig(adapter, *sender)
+	} else {
+		requestedConfig, config, err = s.replacementConfig(adapter, requested.adapterType, typeChanged, msg)
+	}
+	if err != nil {
+		return model.MailAdapterConfig{}, false, err
+	}
+	// Only a changed sender or delivery setting needs a provider send to
+	// prove it; resending the stored config is a no-op.
+	if configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
+		return requestedConfig, false, nil
+	}
+	if err := s.verifyAdapterBeforeSave(ctx, requested.name, requested.adapterType, config); err != nil {
+		if senderChanged {
+			// Provider diagnostics can contain credentials. Keep their cause
+			// for the redacted request record, never in an actionable MCP error.
+			return model.MailAdapterConfig{}, false, errs.WithCause(errs.InvalidArgument("config", "sender configuration verification failed; check provider configuration and sender verification"), err)
+		}
+		return model.MailAdapterConfig{}, false, errs.InvalidArgument("config", err.Error())
+	}
+	return requestedConfig, true, nil
+}
+
+// persistMailAdapterUpdate writes the fields the request changed to adapter
+// and the row and audits them. It reports whether anything changed.
+func (s *MailAdapterService) persistMailAdapterUpdate(
+	ctx context.Context,
+	tx *gorm.DB,
+	adapter *model.MailAdapter,
+	msg *managev1.UpdateMailAdapterRequest,
+	requested requestedMailAdapterState,
+) (bool, error) {
+	updates := structured.Fields{}
+	changedFields := make([]string, 0, 5)
+	if msg.Name != nil && adapter.Name != requested.name {
+		updates["name"] = requested.name
+		adapter.Name = requested.name
+		changedFields = append(changedFields, "name")
+	}
+	if msg.IsActive != nil && adapter.IsActive != *msg.IsActive {
+		updates["is_active"] = *msg.IsActive
+		adapter.IsActive = *msg.IsActive
+		changedFields = append(changedFields, "active")
+	}
+	if msg.Priority != nil && adapter.Priority != int(*msg.Priority) {
+		updates["priority"] = *msg.Priority
+		adapter.Priority = int(*msg.Priority)
+		changedFields = append(changedFields, "priority")
+	}
+	if msg.Type != nil && adapter.Type != requested.adapterType {
+		updates["type"] = requested.adapterType
+		adapter.Type = requested.adapterType
+		changedFields = append(changedFields, "type")
+	}
+	if requested.configChanged {
+		updates["config"] = requested.config
+		adapter.Config = requested.config
+		changedFields = append(changedFields, "config")
+	}
+	if len(changedFields) == 0 {
+		return false, nil
+	}
+	now := dbtime.Now()
+	updates["updated_at"] = now
+	adapter.UpdatedAt = &now
+	if err := tx.Model(adapter).Updates(updates).Error; err != nil {
+		return true, err
+	}
+	if s.auditWriter == nil {
+		return true, nil
+	}
+	return true, domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditMailAdapterUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewMailAdapterConfigUpdatedAuditRecord(metadata, adapter.ID, changedFields)
+	})
+}
+
+// classifyMailAdapterUpdateError maps an update failure to the client answer.
+// A sender update may carry provider credentials in its cause, so it keeps
+// the cause behind a fixed client error and marks the adapter's secrets
+// private.
+func classifyMailAdapterUpdateError(err error, adapterID string, sender *MailAdapterSenderUpdate, adapter *model.MailAdapter) error {
+	if sender != nil {
+		err = failurecause.WithAttrs(
+			failurecause.WithPrivate(err, mailAdapterPrivateValues(adapter)...),
+			slog.String("adapter_id", adapterID),
+		)
+	}
+	if connectErr, ok := errors.AsType[*connect.Error](err); ok {
+		if sender != nil {
+			// The outer context can carry provider credentials. The client sees
+			// the classified error alone; the request record keeps the redacted
+			// cause.
+			return errs.WithCause(connectErr, err)
+		}
+		return errs.Internal(err)
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errs.NotFound("mail adapter", adapterID)
+	}
+	if sender != nil {
+		return errs.WithCause(errs.InternalMsg("mail adapter sender update failed"), err)
+	}
+	return errs.Internal(err)
 }
 
 // Delete deletes a mail adapter

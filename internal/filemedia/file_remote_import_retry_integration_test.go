@@ -88,14 +88,14 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 
 	err = service.createOrRestoreVerifiedRemoteImportRecord(
 		context.Background(),
-		map[string]interface{}{
-			"id":                identity.fileID,
-			"file_name":         fileName,
-			"mime_type":         mimeType,
-			"file_size":         int64(len(body)),
-			"extension":         extension,
-			"sha256":            digest[:],
-			"ingest_attempt_id": identity.attemptID,
+		fileIngestRecord{
+			id:              identity.fileID,
+			fileName:        fileName,
+			mimeType:        mimeType,
+			fileSize:        int64(len(body)),
+			extension:       extension,
+			sha256:          digest[:],
+			ingestAttemptID: identity.attemptID,
 		},
 		trackID,
 		"",

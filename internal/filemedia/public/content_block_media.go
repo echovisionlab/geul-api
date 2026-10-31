@@ -37,209 +37,330 @@ func (s *FileService) hydrateAuthorizedContentBlockMedia(
 		return items, nil
 	}
 
-	selectors := make([]mediaasset.ContentBlockDownloadSelector, 0, len(items))
+	targets := contentMediaTargets(items)
+	request := contentDownloadRequest{
+		user:      auth.GetUser(ctx),
+		selectors: make([]mediaasset.ContentBlockDownloadSelector, 0, len(targets)),
+	}
+	request.ownerAuthorization, request.ownerAuthorizationPresent = mediaasset.ContentDownloadOwnerAuthorizationFromContext(ctx)
+	for _, target := range targets {
+		request.selectors = append(request.selectors, target.selector)
+	}
+
+	var evaluation downloadEvaluation
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		evaluation, err = s.evaluateContentDownloads(ctx, tx, request)
+		return err
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.revalidateContentDownloads(ctx, tx, request, targets, evaluation)
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// contentMediaTarget is an item that references an active file through a
+// content Block selector. Other items are left as loaded.
+type contentMediaTarget struct {
+	item     *contentv1.ContentBlockMediaItem
+	fileID   string
+	selector mediaasset.ContentBlockDownloadSelector
+	key      string
+}
+
+func contentMediaTargets(items []*contentv1.ContentBlockMediaItem) []contentMediaTarget {
+	targets := make([]contentMediaTarget, 0, len(items))
 	for _, item := range items {
 		fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
 		selector := item.GetSelector()
 		if fileID == "" || selector == nil {
 			continue
 		}
-		selectors = append(selectors, mediaasset.ContentBlockDownloadSelector{
-			BlockID: selector.GetBlockId(), ReferencePath: selector.GetReferencePath(),
+		targets = append(targets, contentMediaTarget{
+			item:   item,
+			fileID: fileID,
+			selector: mediaasset.ContentBlockDownloadSelector{
+				BlockID: selector.GetBlockId(), ReferencePath: selector.GetReferencePath(),
+			},
+			key: mediaasset.ContentBlockDownloadPolicyKey(selector.GetBlockId(), selector.GetReferencePath()),
 		})
 	}
+	return targets
+}
 
+type contentDownloadRequest struct {
+	user                      *auth.UserInfo
+	ownerAuthorization        mediaasset.ContentDownloadOwnerAuthorization
+	ownerAuthorizationPresent bool
+	selectors                 []mediaasset.ContentBlockDownloadSelector
+}
+
+// contentDownloadFacts is what one pass observed about the selected
+// references; the locked pass reuses a decision only while they are unchanged.
+// Maps are keyed by content Block download policy key, owners by Block ID.
+type contentDownloadFacts struct {
+	ownerAuthorized   bool
+	owners            map[string]contentBlockDownloadOwnerWitness
+	relations         map[string]string
+	sources           map[string]mediaasset.FileDownloadSource
+	fingerprints      map[string]string
+	viewerFingerprint string
+}
+
+// downloadEvaluation is the unlocked pass: its facts and the download
+// decision it made for each source.
+type downloadEvaluation struct {
+	contentDownloadFacts
+	decisions map[string]*openv1.FileDownloadAccess
+}
+
+func (s *FileService) evaluateContentDownloads(
+	ctx context.Context,
+	tx *gorm.DB,
+	request contentDownloadRequest,
+) (downloadEvaluation, error) {
+	var evaluation downloadEvaluation
 	var err error
-	user := auth.GetUser(ctx)
-	var evaluatedSources map[string]mediaasset.FileDownloadSource
-	var evaluatedFingerprints map[string]string
-	var evaluatedViewerFingerprint string
-	var evaluatedOwners map[string]contentBlockDownloadOwnerWitness
-	var evaluatedRelations map[string]string
-	ownerAuthorization, ownerAuthorizationPresent := mediaasset.ContentDownloadOwnerAuthorizationFromContext(ctx)
-	evaluatedOwnerAuthorized := false
-	evaluatedDecisions := make(map[string]*openv1.FileDownloadAccess, len(selectors))
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		owners, ownerErr := loadContentBlockDownloadOwnerWitnesses(ctx, tx, selectors)
-		if ownerErr != nil {
-			return errs.Internal(ownerErr)
-		}
-		ownerAuthorized, authorizationErr := s.validateContentDownloadOwnerAuthorization(
-			ctx, tx, ownerAuthorization, ownerAuthorizationPresent, owners, false,
-		)
-		if authorizationErr != nil {
-			return authorizationErr
-		}
-		relations, relationErr := loadContentBlockMediaRelations(ctx, tx, selectors, false)
-		if relationErr != nil {
-			return errs.Internal(relationErr)
-		}
-		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(ctx, tx, selectors)
-		if loadErr != nil {
-			return errs.Internal(loadErr)
-		}
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, s.spiceDB, sources, user, s.segments)
-		if evaluateErr != nil {
-			return errs.Internal(evaluateErr)
-		}
-		signIn := make(map[string]bool, len(sources))
-		if user == nil || !user.Authenticated || user.MemberID == "" {
-			restricted := make(map[string]mediaasset.FileDownloadSource)
-			for key, source := range sources {
-				switch source.Audience {
-				case mediaasset.FileDownloadAudienceAuthenticated:
-					signIn[key] = true
-				case mediaasset.FileDownloadAudienceRestricted:
-					restricted[key] = source
-				}
-			}
-			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
-			if presenceErr != nil {
-				return errs.Internal(presenceErr)
-			}
-			for key, present := range presence {
-				signIn[key] = present
-			}
-		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, sources, s.segments)
-		if fingerprintErr != nil {
-			return errs.Internal(fingerprintErr)
-		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, sources, user)
-		if viewerErr != nil {
-			return errs.Internal(viewerErr)
-		}
-		for key, source := range sources {
-			if ownerAuthorized {
-				evaluatedDecisions[key] = effectiveFileDownloadAccess(source.Audience, user, allowed[key], signIn[key])
-			} else {
-				evaluatedDecisions[key] = unavailableFileDownloadAccess()
-			}
-		}
-		evaluatedSources = sources
-		evaluatedFingerprints = fingerprints
-		evaluatedViewerFingerprint = viewerFingerprint
-		evaluatedOwners = owners
-		evaluatedRelations = relations
-		evaluatedOwnerAuthorized = ownerAuthorized
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	evaluation.owners, err = loadContentBlockDownloadOwnerWitnesses(ctx, tx, request.selectors)
 	if err != nil {
-		return nil, err
+		return downloadEvaluation{}, errs.Internal(err)
 	}
+	evaluation.ownerAuthorized, err = s.validateContentDownloadOwnerAuthorization(
+		ctx, tx, request.ownerAuthorization, request.ownerAuthorizationPresent, evaluation.owners, false,
+	)
+	if err != nil {
+		return downloadEvaluation{}, err
+	}
+	evaluation.relations, err = loadContentBlockMediaRelations(ctx, tx, request.selectors, false)
+	if err != nil {
+		return downloadEvaluation{}, errs.Internal(err)
+	}
+	evaluation.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
+	if err != nil {
+		return downloadEvaluation{}, errs.Internal(err)
+	}
+	allowed, err := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, s.spiceDB, evaluation.sources, request.user, s.segments)
+	if err != nil {
+		return downloadEvaluation{}, errs.Internal(err)
+	}
+	signIn, err := contentDownloadSignInHints(ctx, tx, evaluation.sources, request.user)
+	if err != nil {
+		return downloadEvaluation{}, err
+	}
+	evaluation.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, evaluation.sources, s.segments)
+	if err != nil {
+		return downloadEvaluation{}, errs.Internal(err)
+	}
+	evaluation.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, evaluation.sources, request.user)
+	if err != nil {
+		return downloadEvaluation{}, errs.Internal(err)
+	}
+	evaluation.decisions = make(map[string]*openv1.FileDownloadAccess, len(request.selectors))
+	for key, source := range evaluation.sources {
+		if evaluation.ownerAuthorized {
+			evaluation.decisions[key] = effectiveFileDownloadAccess(source.Audience, request.user, allowed[key], signIn[key])
+		} else {
+			evaluation.decisions[key] = unavailableFileDownloadAccess()
+		}
+	}
+	return evaluation, nil
+}
 
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); lockErr != nil {
-			return errs.Internal(lockErr)
-		}
-		currentOwners, ownerErr := lockContentBlockDownloadOwners(ctx, tx, evaluatedOwners)
-		if ownerErr != nil {
-			return errs.Internal(ownerErr)
-		}
-		currentOwnerAuthorized, authorizationErr := s.validateContentDownloadOwnerAuthorization(
-			ctx, tx, ownerAuthorization, ownerAuthorizationPresent, currentOwners, true,
-		)
-		if authorizationErr != nil {
-			return authorizationErr
-		}
-		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, user)
-		if lockErr != nil {
-			return errs.Internal(lockErr)
-		}
-		currentRelations, relationErr := loadContentBlockMediaRelations(ctx, tx, selectors, true)
-		if relationErr != nil {
-			return errs.Internal(relationErr)
-		}
-		currentSources, loadErr := mediaasset.LoadContentBlockDownloadSources(ctx, tx, selectors)
-		if loadErr != nil {
-			return errs.Internal(loadErr)
-		}
-		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, currentSources, s.segments)
-		if fingerprintErr != nil {
-			return errs.Internal(fingerprintErr)
-		}
-		currentViewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, currentSources, user)
-		if viewerErr != nil {
-			return errs.Internal(viewerErr)
-		}
-		decisions := make(map[string]*openv1.FileDownloadAccess, len(items))
-		deliveryAccess := make(map[string]resolvedMediaAccess, len(items))
-		stableRelations := make(map[string]struct{}, len(items))
-		for _, item := range items {
-			fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
-			selector := item.GetSelector()
-			if fileID == "" || selector == nil {
-				continue
-			}
-			key := mediaasset.ContentBlockDownloadPolicyKey(selector.GetBlockId(), selector.GetReferencePath())
-			evaluatedOwner, evaluatedOwnerExists := evaluatedOwners[selector.GetBlockId()]
-			currentOwner, currentOwnerExists := currentOwners[selector.GetBlockId()]
-			decision := unavailableFileDownloadAccess()
-			evaluatedRelationFileID, evaluatedRelationExists := evaluatedRelations[key]
-			currentRelationFileID, currentRelationExists := currentRelations[key]
-			relationStable := evaluatedOwnerAuthorized && currentOwnerAuthorized &&
-				evaluatedRelationExists && currentRelationExists &&
-				evaluatedOwnerExists && currentOwnerExists && evaluatedOwner == currentOwner &&
-				evaluatedRelationFileID == fileID && currentRelationFileID == fileID
-			if relationStable {
-				if source, exists := currentSources[key]; exists {
-					if evaluated, evaluatedExists := evaluatedSources[key]; evaluatedExists &&
-						source.FileID == fileID && evaluated.FileID == fileID &&
-						currentFingerprints[key] == evaluatedFingerprints[key] {
-						if !fileDownloadDecisionDependsOnActiveViewer(evaluated, evaluatedDecisions[key]) ||
-							(viewerActive && currentViewerFingerprint == evaluatedViewerFingerprint) {
-							decision = evaluatedDecisions[key]
-						}
-					}
-				}
-			}
-			decisions[key] = decision
-			if relationStable {
-				stableRelations[key] = struct{}{}
-				deliveryAccess[fileID] = resolvedMediaAccess{}
-			}
-		}
-		deliveries, deliveryErr := s.buildScopedMediaURLsWithDB(ctx, tx, deliveryAccess)
-		if deliveryErr != nil {
-			return deliveryErr
-		}
-		for _, item := range items {
-			fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
-			selector := item.GetSelector()
-			if fileID == "" || selector == nil {
-				continue
-			}
-			key := mediaasset.ContentBlockDownloadPolicyKey(selector.GetBlockId(), selector.GetReferencePath())
-			decision := decisions[key]
-			if decision == nil {
-				decision = unavailableFileDownloadAccess()
-			}
-			if _, stable := stableRelations[key]; !stable {
-				applyContentBlockDownloadDecision(item, decision)
-				continue
-			}
-			if delivery := deliveries[fileID]; delivery != nil {
-				item.Delivery = proto.Clone(delivery).(*commonv1.MediaDelivery)
-				if decision.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
-					source := currentSources[key]
-					download, downloadErr := buildExpiringFileRef(
-						s.mediaDomain, s.mediaSecret, source.FileID, source.Extension,
-						source.MimeType, source.FileName, mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
-					)
-					if downloadErr != nil {
-						return errs.Internal(downloadErr)
-					}
-					item.Delivery.Download = download
-				}
-			}
-			applyContentBlockDownloadDecision(item, decision)
-		}
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-	if err != nil {
-		return nil, err
+// contentDownloadSignInHints reports, for a reader without a member session,
+// which sources signing in could open: authenticated-audience files and
+// restricted files whose segments exist.
+func contentDownloadSignInHints(
+	ctx context.Context,
+	tx *gorm.DB,
+	sources map[string]mediaasset.FileDownloadSource,
+	user *auth.UserInfo,
+) (map[string]bool, error) {
+	signIn := make(map[string]bool, len(sources))
+	if user != nil && user.Authenticated && user.MemberID != "" {
+		return signIn, nil
 	}
-	return items, nil
+	restricted := make(map[string]mediaasset.FileDownloadSource)
+	for key, source := range sources {
+		switch source.Audience {
+		case mediaasset.FileDownloadAudienceAuthenticated:
+			signIn[key] = true
+		case mediaasset.FileDownloadAudienceRestricted:
+			restricted[key] = source
+		}
+	}
+	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
+	for key, present := range presence {
+		signIn[key] = present
+	}
+	return signIn, nil
+}
+
+// lockedContentDownloads is the locked pass's facts plus whether the viewer's
+// account facts are still active.
+type lockedContentDownloads struct {
+	contentDownloadFacts
+	viewerActive bool
+}
+
+// revalidateContentDownloads locks what the evaluation depended on, reloads
+// it, and applies a delivery and download decision to each target. A target
+// whose relation changed only gets the unavailable decision.
+func (s *FileService) revalidateContentDownloads(
+	ctx context.Context,
+	tx *gorm.DB,
+	request contentDownloadRequest,
+	targets []contentMediaTarget,
+	evaluation downloadEvaluation,
+) error {
+	current, err := s.lockContentDownloads(ctx, tx, request, evaluation)
+	if err != nil {
+		return err
+	}
+	decisions := make(map[string]*openv1.FileDownloadAccess, len(targets))
+	deliveryAccess := make(map[string]resolvedMediaAccess, len(targets))
+	stableRelations := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		decision, stable := reusableDecision(target, evaluation, current)
+		decisions[target.key] = decision
+		if stable {
+			stableRelations[target.key] = struct{}{}
+			deliveryAccess[target.fileID] = resolvedMediaAccess{}
+		}
+	}
+	deliveries, err := s.buildScopedMediaURLsWithDB(ctx, tx, deliveryAccess)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		decision := decisions[target.key]
+		if decision == nil {
+			decision = unavailableFileDownloadAccess()
+		}
+		if _, stable := stableRelations[target.key]; !stable {
+			applyContentBlockDownloadDecision(target.item, decision)
+			continue
+		}
+		if err := s.applyDelivery(target.item, decision, deliveries[target.fileID], current.sources[target.key]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lockContentDownloads takes the policy, owner and viewer locks in the order
+// every download path uses, then reloads the facts the evaluation used.
+func (s *FileService) lockContentDownloads(
+	ctx context.Context,
+	tx *gorm.DB,
+	request contentDownloadRequest,
+	evaluation downloadEvaluation,
+) (lockedContentDownloads, error) {
+	var current lockedContentDownloads
+	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluation.sources); err != nil {
+		return current, errs.Internal(err)
+	}
+	var err error
+	current.owners, err = lockContentBlockDownloadOwners(ctx, tx, evaluation.owners)
+	if err != nil {
+		return current, errs.Internal(err)
+	}
+	current.ownerAuthorized, err = s.validateContentDownloadOwnerAuthorization(
+		ctx, tx, request.ownerAuthorization, request.ownerAuthorizationPresent, current.owners, true,
+	)
+	if err != nil {
+		return current, err
+	}
+	current.viewerActive, err = mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluation.sources, request.user)
+	if err != nil {
+		return current, errs.Internal(err)
+	}
+	current.relations, err = loadContentBlockMediaRelations(ctx, tx, request.selectors, true)
+	if err != nil {
+		return current, errs.Internal(err)
+	}
+	current.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
+	if err != nil {
+		return current, errs.Internal(err)
+	}
+	current.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, current.sources, s.segments)
+	if err != nil {
+		return current, errs.Internal(err)
+	}
+	current.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, current.sources, request.user)
+	if err != nil {
+		return current, errs.Internal(err)
+	}
+	return current, nil
+}
+
+// reusableDecision returns the evaluated decision for target when the locked
+// pass still sees the same owner, relation, source and policy, and the
+// unavailable decision otherwise. stable reports whether the owner and
+// relation held, which is what lets the target receive a delivery.
+func reusableDecision(
+	target contentMediaTarget,
+	evaluated downloadEvaluation,
+	current lockedContentDownloads,
+) (decision *openv1.FileDownloadAccess, stable bool) {
+	blockID, key := target.selector.BlockID, target.key
+	evaluatedOwner, evaluatedOwnerExists := evaluated.owners[blockID]
+	currentOwner, currentOwnerExists := current.owners[blockID]
+	evaluatedRelationFileID, evaluatedRelationExists := evaluated.relations[key]
+	currentRelationFileID, currentRelationExists := current.relations[key]
+	stable = evaluated.ownerAuthorized && current.ownerAuthorized &&
+		evaluatedRelationExists && currentRelationExists &&
+		evaluatedOwnerExists && currentOwnerExists && evaluatedOwner == currentOwner &&
+		evaluatedRelationFileID == target.fileID && currentRelationFileID == target.fileID
+	if !stable {
+		return unavailableFileDownloadAccess(), false
+	}
+	source, exists := current.sources[key]
+	evaluatedSource, evaluatedExists := evaluated.sources[key]
+	if !exists || !evaluatedExists ||
+		source.FileID != target.fileID || evaluatedSource.FileID != target.fileID ||
+		current.fingerprints[key] != evaluated.fingerprints[key] {
+		return unavailableFileDownloadAccess(), true
+	}
+	if fileDownloadDecisionDependsOnActiveViewer(evaluatedSource, evaluated.decisions[key]) &&
+		(!current.viewerActive || current.viewerFingerprint != evaluated.viewerFingerprint) {
+		return unavailableFileDownloadAccess(), true
+	}
+	return evaluated.decisions[key], true
+}
+
+// applyDelivery sets item's delivery, signing a download URL for source when
+// the decision allows a download, and then applies the decision.
+func (s *FileService) applyDelivery(
+	item *contentv1.ContentBlockMediaItem,
+	decision *openv1.FileDownloadAccess,
+	delivery *commonv1.MediaDelivery,
+	source mediaasset.FileDownloadSource,
+) error {
+	if delivery != nil {
+		item.Delivery = proto.Clone(delivery).(*commonv1.MediaDelivery)
+		if decision.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
+			download, err := buildExpiringFileRef(
+				s.mediaDomain, s.mediaSecret, source.FileID, source.Extension,
+				source.MimeType, source.FileName, mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
+			)
+			if err != nil {
+				return errs.Internal(err)
+			}
+			item.Delivery.Download = download
+		}
+	}
+	applyContentBlockDownloadDecision(item, decision)
+	return nil
 }
 
 func (s *FileService) validateContentDownloadOwnerAuthorization(

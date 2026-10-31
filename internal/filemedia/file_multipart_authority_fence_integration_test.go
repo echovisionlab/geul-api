@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -91,15 +90,15 @@ func seedFinalizingMultipartAuthoritySession(
 	return session
 }
 
-func verifiedMultipartAuthorityFile(fileID string) structured.Fields {
-	return structured.Fields{
-		"id":                fileID,
-		"file_name":         "authority.jpg",
-		"mime_type":         "image/jpeg",
-		"file_size":         int64(1024),
-		"extension":         "jpg",
-		"sha256":            make([]byte, 32),
-		"ingest_attempt_id": uuid.NewString(),
+func verifiedMultipartAuthorityFile(fileID string) fileIngestRecord {
+	return fileIngestRecord{
+		id:              fileID,
+		fileName:        "authority.jpg",
+		mimeType:        "image/jpeg",
+		fileSize:        1024,
+		extension:       "jpg",
+		sha256:          make([]byte, 32),
+		ingestAttemptID: uuid.NewString(),
 	}
 }
 

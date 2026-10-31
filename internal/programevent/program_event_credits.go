@@ -109,19 +109,16 @@ func (s *ProgramEventService) UpdateProgramEventCredit(
 			}
 			return errs.Internal(err)
 		}
-		updates := structured.Fields{}
+		update := programEventCreditUpdate{sortOrder: req.Msg.SortOrder}
 		if req.Msg.CreditRole != nil {
-			updates["credit_role"] = normalizedStringPtr(req.Msg.CreditRole)
+			update.creditRole = setNullableColumn(normalizedStringPtr(req.Msg.CreditRole))
 		}
 		if req.Msg.Description != nil {
-			updates["description"] = normalizedStringPtr(req.Msg.Description)
+			update.description = setNullableColumn(normalizedStringPtr(req.Msg.Description))
 		}
-		if req.Msg.SortOrder != nil {
-			updates["sort_order"] = req.Msg.GetSortOrder()
-		}
-		changed := programEventCreditChanged(credit, updates)
+		changed := update.changed(credit)
 		if changed {
-			if err := tx.WithContext(ctx).Model(&credit).Updates(updates).Error; err != nil {
+			if err := tx.WithContext(ctx).Model(&credit).Updates(update.columns()).Error; err != nil {
 				return errs.Internal(err)
 			}
 			if err := tx.WithContext(ctx).
@@ -264,17 +261,52 @@ func (s *ProgramEventService) ReorderProgramEventCredits(
 	}), nil
 }
 
-func programEventCreditChanged(credit model.ProgramEventCredit, updates structured.Fields) bool {
-	if value, ok := updates["credit_role"].(*string); ok && !sameNullableString(credit.CreditRole, value) {
-		return true
+// programEventCreditUpdate is an update to one credit row; unset and nil
+// fields are left alone.
+type programEventCreditUpdate struct {
+	artistID    nullableColumn[string]
+	memberID    nullableColumn[string]
+	displayName nullableColumn[string]
+	creditRole  nullableColumn[string]
+	description nullableColumn[string]
+	sortOrder   *int32
+}
+
+func (u programEventCreditUpdate) changed(credit model.ProgramEventCredit) bool {
+	for _, column := range []struct {
+		current *string
+		update  nullableColumn[string]
+	}{
+		{credit.ArtistID, u.artistID},
+		{credit.MemberID, u.memberID},
+		{credit.DisplayName, u.displayName},
+		{credit.CreditRole, u.creditRole},
+		{credit.Description, u.description},
+	} {
+		if column.update.set && !sameNullableString(column.current, column.update.value) {
+			return true
+		}
 	}
-	if value, ok := updates["description"].(*string); ok && !sameNullableString(credit.Description, value) {
-		return true
+	return u.sortOrder != nil && credit.SortOrder != *u.sortOrder
+}
+
+func (u programEventCreditUpdate) columns() structured.Fields {
+	columns := structured.Fields{}
+	for column, update := range map[string]nullableColumn[string]{
+		"artist_id":    u.artistID,
+		"member_id":    u.memberID,
+		"display_name": u.displayName,
+		"credit_role":  u.creditRole,
+		"description":  u.description,
+	} {
+		if update.set {
+			columns[column] = update.columnValue()
+		}
 	}
-	if value, ok := updates["sort_order"].(int32); ok && credit.SortOrder != value {
-		return true
+	if u.sortOrder != nil {
+		columns["sort_order"] = *u.sortOrder
 	}
-	return false
+	return columns
 }
 
 func replaceProgramEventArtists(ctx context.Context, db *gorm.DB, eventID string, artists []*managev1.ProgramEventArtist) error {
@@ -406,9 +438,17 @@ func replaceProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string
 			return result, errs.InvalidArgument("credits", "duplicate credit id")
 		}
 		seen[current.ID] = struct{}{}
-		updates := structured.Fields{"artist_id": normalizedStringPtr(credit.ArtistId), "member_id": normalizedStringPtr(credit.MemberId), "display_name": normalizedStringPtr(credit.DisplayName), "credit_role": normalizedStringPtr(credit.CreditRole), "description": normalizedStringPtr(credit.Description), "sort_order": credit.SortOrder}
-		if programEventCreditChangedAll(current, updates) {
-			if err := db.WithContext(ctx).Model(&current).Updates(updates).Error; err != nil {
+		sortOrder := credit.SortOrder
+		update := programEventCreditUpdate{
+			artistID:    setNullableColumn(normalizedStringPtr(credit.ArtistId)),
+			memberID:    setNullableColumn(normalizedStringPtr(credit.MemberId)),
+			displayName: setNullableColumn(normalizedStringPtr(credit.DisplayName)),
+			creditRole:  setNullableColumn(normalizedStringPtr(credit.CreditRole)),
+			description: setNullableColumn(normalizedStringPtr(credit.Description)),
+			sortOrder:   &sortOrder,
+		}
+		if update.changed(current) {
+			if err := db.WithContext(ctx).Model(&current).Updates(update.columns()).Error; err != nil {
 				return result, errs.Internal(err)
 			}
 			result.changes = append(result.changes, programEventCreditChange{id: current.ID, operation: sharedtelemetry.AuditItemOperationUpdated})
@@ -453,10 +493,6 @@ func sameProgramEventCredits(left []model.ProgramEventCredit, right []*managev1.
 		}
 	}
 	return true
-}
-
-func programEventCreditChangedAll(credit model.ProgramEventCredit, updates structured.Fields) bool {
-	return !sameNullableString(credit.ArtistID, updates["artist_id"].(*string)) || !sameNullableString(credit.MemberID, updates["member_id"].(*string)) || !sameNullableString(credit.DisplayName, updates["display_name"].(*string)) || programEventCreditChanged(credit, updates)
 }
 
 func loadProgramEventArtists(ctx context.Context, db *gorm.DB, eventID string) ([]*managev1.ProgramEventArtist, error) {

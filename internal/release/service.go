@@ -476,29 +476,13 @@ func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, 
 		var trackIDs []string
 		var sessionsRemaining bool
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
+			var err error
+			trackIDs, err = lockReleaseTrackIDs(ctx, tx, releaseID)
+			if err != nil {
 				return err
 			}
-			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-				Model(&model.Track{}).
-				Where("release_id = ?", releaseID).
-				Pluck("id", &trackIDs).Error; err != nil {
-				return err
-			}
-			if err := validateReleaseCascadeAuthorizationBatchSize(len(trackIDs)); err != nil {
-				return err
-			}
-			if len(trackIDs) == 0 {
-				return nil
-			}
-			var count int64
-			if err := tx.Model(&model.UploadSession{}).
-				Where("upload_type = ? AND entity_id IN ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackIDs).
-				Count(&count).Error; err != nil {
-				return err
-			}
-			sessionsRemaining = count != 0
-			return nil
+			sessionsRemaining, err = hasTrackUploadSessions(ctx, tx, trackIDs)
+			return err
 		}); err != nil {
 			return err
 		}
@@ -514,6 +498,51 @@ func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, 
 	return ErrTrackUploadSessionsChanged
 }
 
+// lockReleaseTrackIDs locks the Release and its Tracks and returns the Track
+// IDs, which must fit one authorization cascade batch.
+func lockReleaseTrackIDs(ctx context.Context, tx *gorm.DB, releaseID string) ([]string, error) {
+	if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
+		return nil, err
+	}
+	var trackIDs []string
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Model(&model.Track{}).
+		Where("release_id = ?", releaseID).
+		Pluck("id", &trackIDs).Error; err != nil {
+		return nil, err
+	}
+	if err := validateReleaseCascadeAuthorizationBatchSize(len(trackIDs)); err != nil {
+		return nil, err
+	}
+	return trackIDs, nil
+}
+
+func hasTrackUploadSessions(ctx context.Context, tx *gorm.DB, trackIDs []string) (bool, error) {
+	if len(trackIDs) == 0 {
+		return false, nil
+	}
+	var count int64
+	if err := tx.WithContext(ctx).Model(&model.UploadSession{}).
+		Where("upload_type = ? AND entity_id IN ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackIDs).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count != 0, nil
+}
+
+// ensureNoTrackUploadSessions fails with ErrTrackUploadSessionsChanged when an
+// upload started after the cleanup pass, so the caller cleans up again.
+func ensureNoTrackUploadSessions(ctx context.Context, tx *gorm.DB, trackIDs []string) error {
+	exists, err := hasTrackUploadSessions(ctx, tx, trackIDs)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrTrackUploadSessionsChanged
+	}
+	return nil
+}
+
 // DeleteRelease deletes a Release and every cascade-owned Track (Site Admin only).
 func (s *ReleaseService) DeleteRelease(
 	ctx context.Context,
@@ -522,144 +551,153 @@ func (s *ReleaseService) DeleteRelease(
 	if s.contentBlocks == nil {
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
+	releaseID := req.Msg.Id
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		err := requireLockedReleaseAction(ctx, tx, s.spiceDB, req.Msg.Id, releaseActionDelete)
-		return err
+		return requireLockedReleaseAction(ctx, tx, s.spiceDB, releaseID, releaseActionDelete)
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("release", req.Msg.Id)
+			return nil, errs.NotFound("release", releaseID)
 		}
 		return nil, err
 	}
 
-	var trackIDs []string
-	deleted := false
+	// Upload cleanup runs outside the deletion transaction, so an upload can
+	// start in between; the deletion then fails and cleanup runs again.
 	var uploadsChanged error
 	for range MaxTrackUploadCleanupPasses {
-		if err := s.cleanupReleaseTrackUploadSessions(ctx, req.Msg.Id); err != nil {
-			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
-				return nil, errs.WithCause(errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release"), err)
-			}
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errs.NotFound("release", req.Msg.Id)
-			}
-			return nil, errs.Internal(fmt.Errorf("cleanup release track audio uploads: %w", err))
+		if err := s.cleanupReleaseTrackUploadSessions(ctx, releaseID); err != nil {
+			return nil, classifyReleaseDeleteError(releaseID, fmt.Errorf("cleanup release track audio uploads: %w", err))
 		}
-
-		var err error
-		_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-			tx *gorm.DB,
-			write authzmutation.WriteRelationships,
-		) error {
-			if _, err := lockReleaseForUpdate(ctx, tx, req.Msg.Id); err != nil {
-				return err
-			}
-			trackIDs = nil
-			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-				Model(&model.Track{}).
-				Where("release_id = ?", req.Msg.Id).
-				Pluck("id", &trackIDs).Error; err != nil {
-				return err
-			}
-			if err := validateReleaseCascadeAuthorizationBatchSize(len(trackIDs)); err != nil {
-				return err
-			}
-			if len(trackIDs) > 0 {
-				var count int64
-				if err := tx.Model(&model.UploadSession{}).
-					Where("upload_type = ? AND entity_id IN ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackIDs).
-					Count(&count).Error; err != nil {
-					return err
-				}
-				if count != 0 {
-					return ErrTrackUploadSessionsChanged
-				}
-			}
-			if err := tx.
-				Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), req.Msg.Id).
-				Delete(&model.ShareLink{}).Error; err != nil {
-				return errs.Internal(err)
-			}
-			if err := s.og.CancelAndRelease(ctx, tx, req.Msg.Id); err != nil {
-				return err
-			}
-			if err := s.assets.ReleaseArtwork(ctx, tx, req.Msg.Id); err != nil {
-				return err
-			}
-			documentID, err := loadReleaseContentDocumentID(ctx, tx, req.Msg.Id)
-			if err != nil {
-				return err
-			}
-			if err := s.contentBlocks.DeleteDocument(
-				ctx,
-				tx,
-				documentID,
-				releaseContentDocumentFence(req.Msg.Id, func(context.Context, *gorm.DB) error { return nil }),
-			); err != nil {
-				return normalizeReleaseContentBlockError(err)
-			}
-			result := tx.Delete(&model.Release{}, "id = ?", req.Msg.Id)
-			if result.Error != nil {
-				return errs.Internal(result.Error)
-			}
-			if result.RowsAffected == 0 {
-				return errs.NotFound("release", req.Msg.Id)
-			}
-			removeReleasePolicy, err := policyv1.Release.DeletePolicy(req.Msg.Id)
-			if err != nil {
-				return err
-			}
-			restoreReleasePolicy, err := policyv1.Release.TouchPolicy(req.Msg.Id)
-			if err != nil {
-				return err
-			}
-			apply := make([]policyv1.RelationshipMutation, 0, len(trackIDs)+1)
-			compensate := make([]policyv1.RelationshipMutation, 0, len(trackIDs)+1)
-			apply = append(apply, removeReleasePolicy)
-			compensate = append(compensate, restoreReleasePolicy)
-			for _, trackID := range trackIDs {
-				removePolicy, err := policyv1.Track.DeletePolicy(trackID)
-				if err != nil {
-					return err
-				}
-				restorePolicy, err := policyv1.Track.TouchPolicy(trackID)
-				if err != nil {
-					return err
-				}
-				apply = append(apply, removePolicy)
-				compensate = append(compensate, restorePolicy)
-			}
-			if err := write(apply, compensate); err != nil {
-				return err
-			}
-			return s.appendReleaseDeletedAudit(ctx, tx, req.Msg.Id)
-		})
+		trackIDs, err := s.deleteReleaseOnce(ctx, releaseID)
 		if errors.Is(err, ErrTrackUploadSessionsChanged) {
 			uploadsChanged = err
 			continue
 		}
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errs.NotFound("release", req.Msg.Id)
-			}
-			return nil, errs.Internal(err)
+			return nil, classifyReleaseDeleteError(releaseID, err)
 		}
-		deleted = true
-		break
+		if err := s.waveformJobs.CancelTracks(
+			ctx,
+			trackIDs,
+			managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
+		); err != nil {
+			slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted release", "releaseId", releaseID, failurecause.Attr(err))
+		}
+		return connect.NewResponse(&managev1.DeleteResponse{
+			Success: true,
+		}), nil
 	}
-	if !deleted {
-		return nil, errs.WithCause(errs.FailedPrecondition("track audio uploads changed during deletion; retry the request"), uploadsChanged)
+	return nil, errs.WithCause(errs.FailedPrecondition("track audio uploads changed during deletion; retry the request"), uploadsChanged)
+}
+
+func classifyReleaseDeleteError(releaseID string, err error) error {
+	switch {
+	case errors.Is(err, ErrTrackUploadSessionNotAbortable):
+		return errs.WithCause(errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release"), err)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return errs.NotFound("release", releaseID)
+	default:
+		return errs.Internal(err)
 	}
-	if err := s.waveformJobs.CancelTracks(
+}
+
+// deleteReleaseOnce deletes the Release, its owned rows and the Release and
+// Track authorization policies in one transaction, and returns the deleted
+// Track IDs.
+func (s *ReleaseService) deleteReleaseOnce(ctx context.Context, releaseID string) ([]string, error) {
+	var trackIDs []string
+	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(
+		tx *gorm.DB,
+		write authzmutation.WriteRelationships,
+	) error {
+		var err error
+		trackIDs, err = lockReleaseTrackIDs(ctx, tx, releaseID)
+		if err != nil {
+			return err
+		}
+		if err := ensureNoTrackUploadSessions(ctx, tx, trackIDs); err != nil {
+			return err
+		}
+		if err := s.deleteReleaseCascade(ctx, tx, releaseID); err != nil {
+			return err
+		}
+		apply, compensate, err := releaseAuthzMutations(releaseID, trackIDs)
+		if err != nil {
+			return err
+		}
+		if err := write(apply, compensate); err != nil {
+			return err
+		}
+		return s.appendReleaseDeletedAudit(ctx, tx, releaseID)
+	})
+	return trackIDs, err
+}
+
+// deleteReleaseCascade removes the Release row and what it owns outside the
+// database cascade: share links, OG and artwork assets and its content
+// document.
+func (s *ReleaseService) deleteReleaseCascade(ctx context.Context, tx *gorm.DB, releaseID string) error {
+	if err := tx.
+		Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), releaseID).
+		Delete(&model.ShareLink{}).Error; err != nil {
+		return errs.Internal(err)
+	}
+	if err := s.og.CancelAndRelease(ctx, tx, releaseID); err != nil {
+		return err
+	}
+	if err := s.assets.ReleaseArtwork(ctx, tx, releaseID); err != nil {
+		return err
+	}
+	documentID, err := loadReleaseContentDocumentID(ctx, tx, releaseID)
+	if err != nil {
+		return err
+	}
+	if err := s.contentBlocks.DeleteDocument(
 		ctx,
-		trackIDs,
-		managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
+		tx,
+		documentID,
+		releaseContentDocumentFence(releaseID, func(context.Context, *gorm.DB) error { return nil }),
 	); err != nil {
-		slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted release", "releaseId", req.Msg.Id, failurecause.Attr(err))
+		return normalizeReleaseContentBlockError(err)
 	}
-	return connect.NewResponse(&managev1.DeleteResponse{
-		Success: true,
-	}), nil
+	result := tx.Delete(&model.Release{}, "id = ?", releaseID)
+	if result.Error != nil {
+		return errs.Internal(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return errs.NotFound("release", releaseID)
+	}
+	return nil
+}
+
+// releaseAuthzMutations deletes the Release and Track policies and, as
+// compensation, restores them.
+func releaseAuthzMutations(releaseID string, trackIDs []string) (apply, compensate []policyv1.RelationshipMutation, err error) {
+	removeReleasePolicy, err := policyv1.Release.DeletePolicy(releaseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	restoreReleasePolicy, err := policyv1.Release.TouchPolicy(releaseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	apply = make([]policyv1.RelationshipMutation, 0, len(trackIDs)+1)
+	compensate = make([]policyv1.RelationshipMutation, 0, len(trackIDs)+1)
+	apply = append(apply, removeReleasePolicy)
+	compensate = append(compensate, restoreReleasePolicy)
+	for _, trackID := range trackIDs {
+		removePolicy, err := policyv1.Track.DeletePolicy(trackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		restorePolicy, err := policyv1.Track.TouchPolicy(trackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		apply = append(apply, removePolicy)
+		compensate = append(compensate, restorePolicy)
+	}
+	return apply, compensate, nil
 }
 
 // =============================================================================

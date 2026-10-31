@@ -3,6 +3,7 @@ package page
 import (
 	"context"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -19,11 +20,11 @@ func TestPreparePageAccessPolicyPreservesRequestPresence(t *testing.T) {
 	absent, err := service.preparePageUpdate(context.Background(), &managev1.UpdatePageRequest{})
 	require.NoError(t, err)
 	require.Nil(t, absent.accessPolicy)
-	require.NotContains(t, absent.fields, "access_policy")
+	require.NotContains(t, absent.columns(time.Time{}), "access_policy")
 	reset, err := service.preparePageUpdate(context.Background(), &managev1.UpdatePageRequest{AccessPolicy: &commonv1.PageAccessPolicy{}})
 	require.NoError(t, err)
 	require.Equal(t, commonv1.PageAccessMode_PAGE_ACCESS_MODE_PUBLIC, reset.accessPolicy.Mode)
-	require.Contains(t, reset.fields, "access_policy")
+	require.Contains(t, reset.columns(time.Time{}), "access_policy")
 	_, err = service.preparePageUpdate(context.Background(), &managev1.UpdatePageRequest{AccessPolicy: &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode(999)}})
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	_, err = service.preparePageUpdate(context.Background(), &managev1.UpdatePageRequest{AccessPolicy: &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_USER}}})

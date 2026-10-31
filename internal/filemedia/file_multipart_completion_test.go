@@ -101,5 +101,5 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 		"file_size":         int64(512),
 		"ingest_slot_id":    siteLogoSlotEmailLight,
 		"ingest_attempt_id": "attempt-1",
-	}, completedMultipartFileRecord(session))
+	}, completedMultipartFileRecord(session).columns())
 }

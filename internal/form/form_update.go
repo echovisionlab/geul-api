@@ -25,7 +25,7 @@ import (
 )
 
 type formUpdatePlan struct {
-	fields              structured.Fields
+	row                 formRowUpdate
 	normalizedSlug      *string
 	nextSourceTitle     *string
 	nextSourceSchema    []byte
@@ -96,7 +96,7 @@ func (s *FormService) prepareFormUpdate(
 		return formUpdatePlan{}, err
 	}
 	plan := formUpdatePlan{
-		fields:         structured.Fields{"updated_at": time.Now()},
+		row:            formRowUpdate{next: *form, updatedAt: time.Now()},
 		normalizedSlug: normalizedSlug,
 	}
 	currentTitle := resolveFormTitle(currentSourceState.Title)
@@ -109,20 +109,20 @@ func (s *FormService) prepareFormUpdate(
 			plan.needsOg = true
 		}
 	}
-	nextForm := *form
-	applyFormSlugUpdate(plan.fields, &nextForm, r, normalizedSlug)
+	row := &plan.row
+	applyFormSlugUpdate(row, r, normalizedSlug)
 	if r.Schema != nil {
 		if !bytes.Equal(currentSourceState.ContentJSON, r.Schema) {
 			plan.nextSourceSchema = r.Schema
 		}
 	}
-	applyFormAccessUpdates(plan.fields, &nextForm, r)
-	passwordChanged, err := s.applyFormPasswordUpdate(plan.fields, form.AccessPassword, r.Password)
+	applyFormAccessUpdates(row, r)
+	passwordChanged, err := s.applyFormPasswordUpdate(row, r.Password)
 	if err != nil {
 		return formUpdatePlan{}, err
 	}
-	applyFormLimitAndScheduleUpdates(plan.fields, &nextForm, r)
-	if err := applyFormStatusUpdate(plan.fields, form, &nextForm, r, &plan); err != nil {
+	applyFormLimitAndScheduleUpdates(row, r)
+	if err := applyFormStatusUpdate(row, form, r, &plan); err != nil {
 		return formUpdatePlan{}, err
 	}
 	if r.ReplaceAllowedRoles || len(r.AllowedRoles) > 0 {
@@ -130,19 +130,79 @@ func (s *FormService) prepareFormUpdate(
 		if err != nil {
 			return formUpdatePlan{}, err
 		}
-		plan.fields["allowed_roles"] = pq.StringArray(allowedRoles)
-		nextForm.AllowedRoles = pq.StringArray(allowedRoles)
+		row.next.AllowedRoles = pq.StringArray(allowedRoles)
+		row.set(formColumnAllowedRoles)
 	}
-	if err := validateFormSettings(&nextForm); err != nil {
+	if err := validateFormSettings(&row.next); err != nil {
 		return formUpdatePlan{}, err
 	}
-	plan.settingsAuditFields = formSettingsAuditFields(form, &nextForm, passwordChanged)
-	if form.Status != nextForm.Status {
+	plan.settingsAuditFields = formSettingsAuditFields(form, &row.next, passwordChanged)
+	if form.Status != row.next.Status {
 		plan.lifecycleChanged = true
 		plan.previousStatus = form.Status
-		plan.nextStatus = nextForm.Status
+		plan.nextStatus = row.next.Status
 	}
 	return plan, nil
+}
+
+// formRowUpdate is the Form row an update leads to and the settings columns
+// the request sets on it; only those columns and updated_at are written.
+type formRowUpdate struct {
+	next      model.Form
+	columns   []formColumn
+	updatedAt time.Time
+}
+
+type formColumn string
+
+const (
+	formColumnSlug                     formColumn = "slug"
+	formColumnIsPublic                 formColumn = "is_public"
+	formColumnRequireAuth              formColumn = "require_auth"
+	formColumnAllowDuplicateSubmission formColumn = "allow_duplicate_submission"
+	formColumnAccessPassword           formColumn = "access_password"
+	formColumnMaxSubmissions           formColumn = "max_submissions"
+	formColumnOpensAt                  formColumn = "opens_at"
+	formColumnClosesAt                 formColumn = "closes_at"
+	formColumnStatus                   formColumn = "status"
+	formColumnAllowedRoles             formColumn = "allowed_roles"
+)
+
+func (u *formRowUpdate) set(column formColumn) {
+	u.columns = append(u.columns, column)
+}
+
+// values is the column map for the row write.
+func (u formRowUpdate) values() structured.Fields {
+	values := structured.Fields{"updated_at": u.updatedAt}
+	next := u.next
+	for _, column := range u.columns {
+		var value any
+		switch column {
+		case formColumnSlug:
+			value = next.Slug
+		case formColumnIsPublic:
+			value = next.IsPublic
+		case formColumnRequireAuth:
+			value = next.RequireAuth
+		case formColumnAllowDuplicateSubmission:
+			value = next.AllowDuplicateSubmission
+		case formColumnAccessPassword:
+			value = next.AccessPassword
+		case formColumnMaxSubmissions:
+			value = next.MaxSubmissions
+		case formColumnOpensAt:
+			value = next.OpensAt
+		case formColumnClosesAt:
+			value = next.ClosesAt
+		case formColumnStatus:
+			value = string(next.Status)
+		case formColumnAllowedRoles:
+			value = next.AllowedRoles
+		}
+		values[string(column)] = value
+	}
+	return values
 }
 
 func validateFormUpdateFieldConflicts(r *managev1.UpdateFormRequest) error {
@@ -185,45 +245,43 @@ func (s *FormService) normalizeFormUpdateSlug(
 	return &slug, nil
 }
 
-func applyFormSlugUpdate(fields structured.Fields, form *model.Form, r *managev1.UpdateFormRequest, slug *string) {
+func applyFormSlugUpdate(row *formRowUpdate, r *managev1.UpdateFormRequest, slug *string) {
 	switch {
 	case r.ClearSlug || r.Slug != nil && strings.TrimSpace(*r.Slug) == "":
-		fields["slug"] = nil
-		form.Slug = nil
+		row.next.Slug = nil
+		row.set(formColumnSlug)
 	case slug != nil:
-		fields["slug"] = *slug
-		form.Slug = slug
+		row.next.Slug = slug
+		row.set(formColumnSlug)
 	}
 }
 
-func applyFormAccessUpdates(fields structured.Fields, form *model.Form, r *managev1.UpdateFormRequest) {
+func applyFormAccessUpdates(row *formRowUpdate, r *managev1.UpdateFormRequest) {
 	if r.IsPublic != nil {
-		fields["is_public"] = *r.IsPublic
-		form.IsPublic = *r.IsPublic
+		row.next.IsPublic = *r.IsPublic
+		row.set(formColumnIsPublic)
 	}
 	if r.RequireAuth != nil {
-		fields["require_auth"] = *r.RequireAuth
-		form.RequireAuth = r.RequireAuth
+		row.next.RequireAuth = r.RequireAuth
+		row.set(formColumnRequireAuth)
 	}
 	if r.AllowDuplicateSubmission != nil {
-		fields["allow_duplicate_submission"] = *r.AllowDuplicateSubmission
-		form.AllowDuplicateSubmission = r.AllowDuplicateSubmission
+		row.next.AllowDuplicateSubmission = r.AllowDuplicateSubmission
+		row.set(formColumnAllowDuplicateSubmission)
 	}
 }
 
-func (s *FormService) applyFormPasswordUpdate(
-	fields structured.Fields,
-	currentHash *string,
-	password *string,
-) (bool, error) {
+func (s *FormService) applyFormPasswordUpdate(row *formRowUpdate, password *string) (bool, error) {
 	if password == nil {
 		return false, nil
 	}
+	currentHash := row.next.AccessPassword
 	if *password == "" {
 		if currentHash == nil {
 			return false, nil
 		}
-		fields["access_password"] = nil
+		row.next.AccessPassword = nil
+		row.set(formColumnAccessPassword)
 		return true, nil
 	}
 	if currentHash != nil {
@@ -239,52 +297,46 @@ func (s *FormService) applyFormPasswordUpdate(
 	if err != nil {
 		return false, errs.Internal(err)
 	}
-	fields["access_password"] = hash
+	row.next.AccessPassword = &hash
+	row.set(formColumnAccessPassword)
 	return true, nil
 }
 
-func applyFormLimitAndScheduleUpdates(fields structured.Fields, form *model.Form, r *managev1.UpdateFormRequest) {
+func applyFormLimitAndScheduleUpdates(row *formRowUpdate, r *managev1.UpdateFormRequest) {
 	switch {
 	case r.ClearMaxSubmissions:
-		fields["max_submissions"] = nil
-		form.MaxSubmissions = nil
+		row.next.MaxSubmissions = nil
+		row.set(formColumnMaxSubmissions)
 	case r.MaxSubmissions != nil:
-		fields["max_submissions"] = *r.MaxSubmissions
-		form.MaxSubmissions = r.MaxSubmissions
+		row.next.MaxSubmissions = r.MaxSubmissions
+		row.set(formColumnMaxSubmissions)
 	}
-	applyFormTimestampUpdate(
-		fields, "opens_at", r.ClearOpensAt, r.OpensAt,
-		func(value *time.Time) { form.OpensAt = value },
-	)
-	applyFormTimestampUpdate(
-		fields, "closes_at", r.ClearClosesAt, r.ClosesAt,
-		func(value *time.Time) { form.ClosesAt = value },
-	)
+	if update, ok := formTimestampUpdate(r.ClearOpensAt, r.OpensAt); ok {
+		row.next.OpensAt = update
+		row.set(formColumnOpensAt)
+	}
+	if update, ok := formTimestampUpdate(r.ClearClosesAt, r.ClosesAt); ok {
+		row.next.ClosesAt = update
+		row.set(formColumnClosesAt)
+	}
 }
 
-func applyFormTimestampUpdate(
-	fields structured.Fields,
-	column string,
-	clear bool,
-	value *timestamppb.Timestamp,
-	assign func(*time.Time),
-) {
+// formTimestampUpdate returns the requested value of an optional timestamp
+// and whether the request sets or clears it.
+func formTimestampUpdate(clear bool, value *timestamppb.Timestamp) (*time.Time, bool) {
 	if clear {
-		fields[column] = nil
-		assign(nil)
-		return
+		return nil, true
 	}
-	if value != nil {
-		timestamp := value.AsTime()
-		fields[column] = timestamp
-		assign(&timestamp)
+	if value == nil {
+		return nil, false
 	}
+	timestamp := value.AsTime()
+	return &timestamp, true
 }
 
 func applyFormStatusUpdate(
-	fields structured.Fields,
+	row *formRowUpdate,
 	current *model.Form,
-	next *model.Form,
 	r *managev1.UpdateFormRequest,
 	plan *formUpdatePlan,
 ) error {
@@ -297,10 +349,10 @@ func applyFormStatusUpdate(
 	if *r.Status != managev1.FormStatus_FORM_STATUS_DRAFT && *r.Status != managev1.FormStatus_FORM_STATUS_PUBLISHED {
 		return errs.InvalidArgument("status", "must be draft or published")
 	}
-	fields["status"] = r.Status.String()
-	next.Status = model.FormStatus(r.Status.String())
+	row.next.Status = model.FormStatus(r.Status.String())
+	row.set(formColumnStatus)
 	published := model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())
-	if current.Status != published && next.Status == published {
+	if current.Status != published && row.next.Status == published {
 		plan.needsOg = true
 		plan.refreshAllOgLocales = true
 	}
@@ -318,7 +370,7 @@ func (s *FormService) applyFormUpdate(
 			return err
 		}
 	}
-	if err := tx.WithContext(ctx).Model(form).Updates(plan.fields).Error; err != nil {
+	if err := tx.WithContext(ctx).Model(form).Updates(plan.row.values()).Error; err != nil {
 		return err
 	}
 	sourceLocale := form.SourceLocale

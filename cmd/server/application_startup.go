@@ -183,26 +183,26 @@ func initializeApplicationDependencies(
 		ogCleanup,
 	)
 	faviconCleanup := favicon.NewCleanup(deps.db)
-	deps.workerHandlers = worker.NewHandlers(
-		deps.db,
-		cfg,
-		deps.workerPublisher,
-		deps.adapterLoader,
-		deps.s3Client,
-		deps.kratosClient,
-		fileMediaRuntime,
-		mediaCleanup,
-		publicAssetCleanup,
-		ogCleanup,
-		faviconCleanup,
-		deps.metadataAIJobs,
-		deps.translationJobs,
-		deps.telemetryWriter,
-		deps.spicedbClient,
-		deps.og.planner,
-		accountadapter.MemberDeletion{},
-		worker.WithCampaignEmailRenderer(campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore)),
-	)
+	deps.workerHandlers = worker.NewHandlers(worker.HandlerDeps{
+		DB:               deps.db,
+		Config:           cfg,
+		Publisher:        deps.workerPublisher,
+		AdapterLoader:    deps.adapterLoader,
+		S3Client:         deps.s3Client,
+		KratosClient:     deps.kratosClient,
+		FileMediaRuntime: fileMediaRuntime,
+		MediaCleanup:     mediaCleanup,
+		PublicAssets:     publicAssetCleanup,
+		OGCleanup:        ogCleanup,
+		FaviconCleanup:   faviconCleanup,
+		MetadataAI:       deps.metadataAIJobs,
+		TranslationJobs:  deps.translationJobs,
+		AuditWriter:      deps.telemetryWriter,
+		SpiceDB:          deps.spicedbClient,
+		OGPlanner:        deps.og.planner,
+		MemberDeletion:   accountadapter.MemberDeletion{},
+		CampaignEmail:    campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore),
+	})
 	logApplicationDependenciesReady(cfg)
 	return deps, nil
 }

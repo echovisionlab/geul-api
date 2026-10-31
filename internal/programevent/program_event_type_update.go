@@ -33,14 +33,13 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
-		updates, err := prepareProgramEventTypeUpdates(request)
+		update, err := prepareProgramEventTypeUpdate(request)
 		if err != nil {
 			return err
 		}
-		changedFields := programEventTypeAuditChangedFields(eventType, updates)
+		changedFields := update.changedFields(eventType)
 		if len(changedFields) > 0 {
-			updates["updated_at"] = now
-			if err := tx.Model(&eventType).Updates(updates).Error; err != nil {
+			if err := tx.Model(&eventType).Updates(update.columns(now)).Error; err != nil {
 				if dberrors.IsUniqueViolation(err) {
 					return errs.WithCause(errs.SlugAlreadyExists("program event type", request.GetSlug()), err)
 				}
@@ -71,52 +70,79 @@ func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventTy
 	return eventType, nil
 }
 
-func prepareProgramEventTypeUpdates(request *managev1.UpdateProgramEventTypeRequest) (structured.Fields, error) {
-	updates := structured.Fields{}
+// programEventTypeUpdate is a validated event type configuration update; nil
+// fields are left alone.
+type programEventTypeUpdate struct {
+	slug              *string
+	status            *string
+	sortOrder         *int32
+	requiresPlace     *bool
+	requiresStreamURL *bool
+}
+
+func prepareProgramEventTypeUpdate(request *managev1.UpdateProgramEventTypeRequest) (programEventTypeUpdate, error) {
+	update := programEventTypeUpdate{
+		sortOrder:         request.SortOrder,
+		requiresPlace:     request.RequiresPlace,
+		requiresStreamURL: request.RequiresStreamUrl,
+	}
 	if request.Slug != nil {
 		slug, err := validateProgramEventSlug(request.GetSlug())
 		if err != nil {
-			return nil, err
+			return programEventTypeUpdate{}, err
 		}
-		updates["slug"] = slug
+		update.slug = &slug
 	}
 	if request.Status != nil {
 		status, err := validateProgramEventTypeStatus(request.GetStatus())
 		if err != nil {
-			return nil, err
+			return programEventTypeUpdate{}, err
 		}
-		updates["status"] = status
+		update.status = &status
 	}
-	if request.SortOrder != nil {
-		updates["sort_order"] = request.GetSortOrder()
-	}
-	if request.RequiresPlace != nil {
-		updates["requires_place"] = request.GetRequiresPlace()
-	}
-	if request.RequiresStreamUrl != nil {
-		updates["requires_stream_url"] = request.GetRequiresStreamUrl()
-	}
-	return updates, nil
+	return update, nil
 }
 
-func programEventTypeAuditChangedFields(eventType model.ProgramEventType, updates structured.Fields) []string {
-	changed := make([]string, 0, len(updates))
-	if value, ok := updates["slug"].(string); ok && value != eventType.Slug {
+func (u programEventTypeUpdate) changedFields(eventType model.ProgramEventType) []string {
+	changed := make([]string, 0, 5)
+	if u.slug != nil && *u.slug != eventType.Slug {
 		changed = append(changed, "slug")
 	}
-	if value, ok := updates["status"].(string); ok && value != eventType.Status {
+	if u.status != nil && *u.status != eventType.Status {
 		changed = append(changed, "status")
 	}
-	if value, ok := updates["sort_order"].(int32); ok && value != eventType.SortOrder {
+	if u.sortOrder != nil && *u.sortOrder != eventType.SortOrder {
 		changed = append(changed, "sort_order")
 	}
-	if value, ok := updates["requires_place"].(bool); ok && value != eventType.RequiresPlace {
+	if u.requiresPlace != nil && *u.requiresPlace != eventType.RequiresPlace {
 		changed = append(changed, "requires_place")
 	}
-	if value, ok := updates["requires_stream_url"].(bool); ok && value != eventType.RequiresStreamURL {
+	if u.requiresStreamURL != nil && *u.requiresStreamURL != eventType.RequiresStreamURL {
 		changed = append(changed, "requires_stream_url")
 	}
 	return changed
+}
+
+// columns is the program_event_type row update for the fields the request
+// sets.
+func (u programEventTypeUpdate) columns(updatedAt time.Time) structured.Fields {
+	columns := structured.Fields{"updated_at": updatedAt}
+	if u.slug != nil {
+		columns["slug"] = *u.slug
+	}
+	if u.status != nil {
+		columns["status"] = *u.status
+	}
+	if u.sortOrder != nil {
+		columns["sort_order"] = *u.sortOrder
+	}
+	if u.requiresPlace != nil {
+		columns["requires_place"] = *u.requiresPlace
+	}
+	if u.requiresStreamURL != nil {
+		columns["requires_stream_url"] = *u.requiresStreamURL
+	}
+	return columns
 }
 
 func validateProgramEventTypeStatus(status managev1.ProgramEventTypeStatus) (string, error) {

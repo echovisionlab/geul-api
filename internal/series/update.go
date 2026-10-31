@@ -19,9 +19,9 @@ import (
 )
 
 type seriesUpdatePlan struct {
-	fields   structured.Fields
-	nextSlug *string
-	now      time.Time
+	nextSlug   *string
+	nextStatus *string
+	now        time.Time
 }
 
 func (s *SeriesService) UpdateSeries(
@@ -49,20 +49,19 @@ func (s *SeriesService) UpdateSeries(
 }
 
 func buildSeriesUpdatePlan(request *managev1.UpdateSeriesRequest) (seriesUpdatePlan, error) {
-	plan := seriesUpdatePlan{now: time.Now().UTC(), fields: structured.Fields{}}
+	plan := seriesUpdatePlan{now: time.Now().UTC()}
 	if request.Slug != nil {
 		normalized, err := validateSeriesSlug(*request.Slug)
 		if err != nil {
 			return seriesUpdatePlan{}, err
 		}
 		plan.nextSlug = &normalized
-		plan.fields["slug"] = normalized
 	}
 	if request.Status != nil {
 		if err := validateSeriesStatus(*request.Status); err != nil {
 			return seriesUpdatePlan{}, err
 		}
-		plan.fields["status"] = *request.Status
+		plan.nextStatus = request.Status
 	}
 	return plan, nil
 }
@@ -80,20 +79,9 @@ func (s *SeriesService) applySeriesUpdate(
 		if err := loadSeriesForUpdate(tx, request.Id, &series); err != nil {
 			return err
 		}
-		oldSlug := series.Slug
-		if err := validateSeriesUpdateSlug(ctx, tx, request.Id, plan.nextSlug); err != nil {
-			return err
-		}
 		previousStatus := series.Status
-		metadataFields, lifecycleChanged := seriesAuditChanges(series, plan)
-		if err := applySeriesFields(tx, &series, plan, metadataFields, lifecycleChanged); err != nil {
-			return err
-		}
-		nextSlug := plan.nextSlug
-		if !containsSeriesAuditField(metadataFields, "slug") {
-			nextSlug = nil
-		}
-		if err := s.updateSeriesMenuSlug(ctx, tx, series.ID, oldSlug, nextSlug); err != nil {
+		metadataFields, lifecycleChanged, err := s.writeSeriesRoot(ctx, tx, &series, plan)
+		if err != nil {
 			return err
 		}
 		sourceChanged, err := s.updateSeriesSourceDocument(ctx, tx, series.ID, request, plan.now)
@@ -115,7 +103,7 @@ func (s *SeriesService) applySeriesUpdate(
 			return err
 		}
 		if lifecycleChanged {
-			if err := s.appendPostSeriesLifecycleAudit(ctx, tx, series.ID, postSeriesAuditState(previousStatus), postSeriesAuditState(plan.fields["status"].(string))); err != nil {
+			if err := s.appendPostSeriesLifecycleAudit(ctx, tx, series.ID, postSeriesAuditState(previousStatus), postSeriesAuditState(*plan.nextStatus)); err != nil {
 				return err
 			}
 		}
@@ -125,6 +113,33 @@ func (s *SeriesService) applySeriesUpdate(
 		return nil
 	})
 	return series, err
+}
+
+// writeSeriesRoot writes the requested slug and status to the locked series
+// and moves Menu targets to a changed slug. It returns the changed metadata
+// audit fields and whether the status changed.
+func (s *SeriesService) writeSeriesRoot(
+	ctx context.Context,
+	tx *gorm.DB,
+	series *model.Series,
+	plan seriesUpdatePlan,
+) ([]string, bool, error) {
+	oldSlug := series.Slug
+	if err := validateSeriesUpdateSlug(ctx, tx, series.ID, plan.nextSlug); err != nil {
+		return nil, false, err
+	}
+	metadataFields, lifecycleChanged := seriesAuditChanges(*series, plan)
+	if err := applySeriesFields(tx, series, plan, metadataFields, lifecycleChanged); err != nil {
+		return nil, false, err
+	}
+	nextSlug := plan.nextSlug
+	if !containsSeriesAuditField(metadataFields, "slug") {
+		nextSlug = nil
+	}
+	if err := s.updateSeriesMenuSlug(ctx, tx, series.ID, oldSlug, nextSlug); err != nil {
+		return nil, false, err
+	}
+	return metadataFields, lifecycleChanged, nil
 }
 
 func seriesUpdateAction(request *managev1.UpdateSeriesRequest) seriesAction {
@@ -160,8 +175,7 @@ func seriesAuditChanges(series model.Series, plan seriesUpdatePlan) ([]string, b
 	if plan.nextSlug != nil && *plan.nextSlug != series.Slug {
 		fields = append(fields, "slug")
 	}
-	status, statusPresent := plan.fields["status"].(string)
-	return fields, statusPresent && status != series.Status
+	return fields, plan.nextStatus != nil && *plan.nextStatus != series.Status
 }
 
 func containsSeriesAuditField(fields []string, expected string) bool {
@@ -186,7 +200,7 @@ func applySeriesFields(tx *gorm.DB, series *model.Series, plan seriesUpdatePlan,
 		updates["slug"] = *plan.nextSlug
 	}
 	if lifecycleChanged {
-		updates["status"] = plan.fields["status"]
+		updates["status"] = *plan.nextStatus
 	}
 	if len(updates) == 0 {
 		return nil
