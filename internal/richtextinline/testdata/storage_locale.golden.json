@@ -1,0 +1,50 @@
+{
+  "atoms_preserved": {
+    "output": "{\"content\":[{\"siteVariable\":{\"key\":\"site.title\"}},{\"hardBreak\":{}},{\"text\":{\"text\":\"x\"}},{\"hardBreak\":{}},{\"text\":{\"text\":\"y\"}}]}"
+  },
+  "escaped_backslash_only": {
+    "output": "{\"content\":[{\"text\":{\"text\":\"a\\\\nb\"}}]}"
+  },
+  "invalid_cells": {
+    "error": "json: cannot unmarshal string into Go value of type []jsontext.Value"
+  },
+  "invalid_inline": {
+    "error": "proto: (line 1:2): unknown field \"unknown\""
+  },
+  "invalid_json": {
+    "error": "invalid character '\\\\' looking for beginning of value"
+  },
+  "link_only_breaks": {
+    "output": "{\"content\":[{\"hardBreak\":{}}]}"
+  },
+  "link_runs": {
+    "output": "{\"content\":[{\"link\":{\"href\":\"/\",\"content\":[{\"text\":\"a\"}]}},{\"hardBreak\":{}},{\"link\":{\"href\":\"/\",\"content\":[{\"text\":\"b\",\"styles\":{\"code\":true}}]}},{\"hardBreak\":{}},{\"link\":{\"href\":\"/\",\"content\":[{\"text\":\"c\"}]}}]}"
+  },
+  "no_escape_shortcut": {
+    "output": "{\"paragraph\":{\"content\":[{\"text\":{\"text\":\"plain\"}}]}}"
+  },
+  "paragraph_crlf_edges": {
+    "output": "{\"paragraph\":{\"content\":[{\"hardBreak\":{}},{\"text\":{\"text\":\"a\"}},{\"hardBreak\":{}},{\"hardBreak\":{}},{\"text\":{\"text\":\"b\"}},{\"hardBreak\":{}}]}}"
+  },
+  "paragraph_lf": {
+    "output": "{\"paragraph\":{\"content\":[{\"text\":{\"text\":\"a\"}},{\"hardBreak\":{}},{\"text\":{\"text\":\"b\"}}]}}"
+  },
+  "paragraph_unicode_escape_lf": {
+    "output": "{\"paragraph\":{\"content\":[{\"text\":{\"text\":\"a\"}},{\"hardBreak\":{}},{\"text\":{\"text\":\"b\"}}]}}"
+  },
+  "plain_string_content": {
+    "output": "{\"content\":\"a\\nb\"}"
+  },
+  "props_untouched": {
+    "output": "{\"paragraph\":{\"content\":[{\"text\":{\"text\":\"x\"}},{\"hardBreak\":{}},{\"text\":{\"text\":\"y\"}}]},\"props\":{\"source\":\"a\\nb\"}}"
+  },
+  "styled_text": {
+    "output": "{\"paragraph\":{\"content\":[{\"text\":{\"text\":\"a\",\"styles\":{\"bold\":true,\"italic\":true}}},{\"hardBreak\":{}},{\"text\":{\"text\":\"b\",\"styles\":{\"bold\":true,\"italic\":true}}}]}}"
+  },
+  "table_cells": {
+    "output": "{\"table\":{\"content\":{\"rows\":[{\"cells\":[{\"cellId\":\"c1\",\"content\":[{\"text\":{\"text\":\"a\"}},{\"hardBreak\":{}},{\"text\":{\"text\":\"b\"}}]},{\"cellId\":\"c2\",\"content\":[{\"text\":{\"text\":\"same\"}}]}],\"rowId\":\"r\"}]}}}"
+  },
+  "table_without_rows": {
+    "output": "{\"content\":{\"caption\":\"a\\nb\"}}"
+  }
+}
