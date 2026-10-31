@@ -28,13 +28,13 @@ import (
 
 func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Label target admin")
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Label target admin")
 	requireInternalResourceAdmin(t, stack.SpiceDBClient, identityID)
 	store := newCreativeContentIntegrationStore(t, stack.SpiceDBClient)
-	labelID := seedInternalLabel(t, db, store, integrationMemberID(identityID))
+	labelID := seedInternalLabel(t, db, store, testutil.PostIntegrationMemberID(identityID))
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, labelID)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	title := "Label target locale"
@@ -267,7 +267,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	}
 	providerJob := &model.TranslationJob{
 		EntityType: labelContentEntity, EntityID: labelID, SourceLocale: "en", TargetLocale: "ja",
-		RequestedByMemberID: integrationMemberID(identityID),
+		RequestedByMemberID: testutil.PostIntegrationMemberID(identityID),
 	}
 	providerJobWithoutRequester := *providerJob
 	providerJobWithoutRequester.RequestedByMemberID = ""
@@ -314,7 +314,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	}))
 	jaAfterNoopReplacement := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
 	require.Equal(t, jaAfterReplacement.Msg.TargetRevision, jaAfterNoopReplacement.Msg.TargetRevision)
-	requireLabelTargetLocaleAuditsIntegration(t, db, labelID, integrationMemberID(identityID), map[string][]string{
+	requireLabelTargetLocaleAuditsIntegration(t, db, labelID, testutil.PostIntegrationMemberID(identityID), map[string][]string{
 		"de": {string(sharedtelemetry.AuditItemOperationCreated)},
 		"fr": {string(sharedtelemetry.AuditItemOperationCreated), string(sharedtelemetry.AuditItemOperationUpdated)},
 		"ja": {string(sharedtelemetry.AuditItemOperationCreated), string(sharedtelemetry.AuditItemOperationUpdated)},
@@ -521,7 +521,7 @@ func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
 		uuid.NewString(),
 		sharedtelemetry.MemberActor{
 			IdentityID: identityID,
-			MemberID:   integrationMemberID(identityID),
+			MemberID:   testutil.PostIntegrationMemberID(identityID),
 			SessionID:  uuid.NewString(),
 		},
 	)

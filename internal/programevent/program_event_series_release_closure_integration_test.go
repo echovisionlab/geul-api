@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -16,7 +17,7 @@ import (
 
 func TestProgramEventSeriesAdminListCapsRequestedPageSizeIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	suffix := uuid.NewString()
 	for index := 0; index < 105; index++ {
@@ -42,7 +43,7 @@ func TestProgramEventSeriesAdminListCapsRequestedPageSizeIntegration(t *testing.
 
 func TestProgramEventSeriesAdminGetAcceptsCanonicalSlugIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	id := uuid.NewString()
 	slug := "canonical-event-series-" + uuid.NewString()
@@ -66,7 +67,7 @@ func TestProgramEventSeriesAdminGetAcceptsCanonicalSlugIntegration(t *testing.T)
 
 func TestDeleteProgramEventSeriesDetachesEventsWithoutDeletingThemIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	seriesID := uuid.NewString()
 	eventTypeID := uuid.NewString()

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -80,7 +81,7 @@ func TestInternalMapServiceLoadsTypedSnapshotAndCASAllowsExactlyOneWriter(t *tes
 	admin := mapThemeAdminUser(t)
 	ctx := mapThemeMemberContext(admin)
 	themeService := mapThemeServiceForTest(t, db, spiceDB)
-	created, err := themeService.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("CAS "+integrationTestUUID())))
+	created, err := themeService.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("CAS "+testutil.IntegrationUUID())))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = themeService.DeleteMapTheme(ctx, connect.NewRequest(&managev1.DeleteMapThemeRequest{Id: created.Msg.Id}))
@@ -128,10 +129,10 @@ func TestInternalMapServiceLoadsTypedSnapshotAndCASAllowsExactlyOneWriter(t *tes
 
 func TestInternalMapServiceRejectsIncompleteSnapshotWithoutDBChanges(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
-	created, err := mapThemeServiceForTest(t, db, spiceDB).CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Invalid "+integrationTestUUID())))
+	created, err := mapThemeServiceForTest(t, db, spiceDB).CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Invalid "+testutil.IntegrationUUID())))
 	require.NoError(t, err)
 
 	snapshot := validDocumentSnapshot("Must not persist")

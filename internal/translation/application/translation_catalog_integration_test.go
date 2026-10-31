@@ -7,13 +7,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestTranslationOverviewUsesCompleteCatalogIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service := &TranslationService{db: db}
 	_, err := service.getTranslationOverviewStats(t.Context())
 	require.NoError(t, err)

@@ -31,9 +31,9 @@ type postSeriesAuditRow struct {
 
 func TestPostSeriesDomainAuditMutationVariantsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	managerID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	managerID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series audit admin")
 	seedSeriesActor(t, db, managerID, "Series audit manager")
 	stack := testutil.SetupOryStack(t)
@@ -55,14 +55,14 @@ func TestPostSeriesDomainAuditMutationVariantsIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	managerMemberID := integrationMemberID(managerID)
+	managerMemberID := testutil.PostIntegrationMemberID(managerID)
 	_, err = service.AddSeriesManager(ctx, connect.NewRequest(&managev1.AddSeriesManagerRequest{SeriesId: seriesID, MemberId: managerMemberID}))
 	require.NoError(t, err)
 	_, err = service.AddSeriesManager(ctx, connect.NewRequest(&managev1.AddSeriesManagerRequest{SeriesId: seriesID, MemberId: managerMemberID}))
 	require.NoError(t, err)
 
-	firstPostID := seedSeriesPost(t, db, integrationMemberID(adminID))
-	secondPostID := seedSeriesPost(t, db, integrationMemberID(adminID))
+	firstPostID := seedSeriesPost(t, db, testutil.PostIntegrationMemberID(adminID))
+	secondPostID := seedSeriesPost(t, db, testutil.PostIntegrationMemberID(adminID))
 	grantSeriesPostAuthorRelation(t, service, firstPostID, adminID)
 	grantSeriesPostAuthorRelation(t, service, secondPostID, adminID)
 	_, err = service.AssignPostToSeries(ctx, connect.NewRequest(&managev1.AssignPostToSeriesRequest{PostId: firstPostID, SeriesId: seriesID}))
@@ -102,7 +102,7 @@ func TestPostSeriesDomainAuditMutationVariantsIntegration(t *testing.T) {
 		require.Equal(t, wantActions[index], row.Action)
 		require.Equal(t, "post_series", row.TargetType)
 		require.Equal(t, seriesID, row.TargetID)
-		require.Equal(t, integrationMemberID(adminID), row.ActorMemberID)
+		require.Equal(t, testutil.PostIntegrationMemberID(adminID), row.ActorMemberID)
 		require.Equal(t, sharedtelemetry.RequestIDFromContext(ctx), row.RequestID)
 	}
 	require.JSONEq(t, `{}`, string(rows[0].Attributes))
@@ -121,9 +121,9 @@ func TestPostSeriesDomainAuditMutationVariantsIntegration(t *testing.T) {
 
 func TestPostSeriesAuditFailureRollsBackProductAndAuthorizationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	managerID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	managerID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series rollback admin")
 	seedSeriesActor(t, db, managerID, "Series rollback manager")
 	stack := testutil.SetupOryStack(t)
@@ -142,7 +142,7 @@ func TestPostSeriesAuditFailureRollsBackProductAndAuthorizationIntegration(t *te
 	base := auditedSeriesIntegrationService(t, db, adminID, stack.SpiceDBClient, apitelemetry.NewDurableWriter(db))
 	created, err := base.CreateSeries(ctx, connect.NewRequest(&managev1.CreateSeriesRequest{Title: "Manager rollback"}))
 	require.NoError(t, err)
-	managerMemberID := integrationMemberID(managerID)
+	managerMemberID := testutil.PostIntegrationMemberID(managerID)
 	_, err = failing.AddSeriesManager(ctx, connect.NewRequest(&managev1.AddSeriesManagerRequest{SeriesId: created.Msg.Id, MemberId: managerMemberID}))
 	require.Error(t, err)
 	requireSeriesManagerRelation(t, base, managerID, created.Msg.Id, false)
@@ -191,8 +191,8 @@ func seriesAuditContext(t *testing.T, identityID string) context.Context {
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.208")
 	require.NoError(t, err)
 	return auth.WithUser(sharedtelemetry.WithRequestContext(t.Context(), requestContext), &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(integrationMemberID(identityID)),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 

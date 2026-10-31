@@ -9,18 +9,19 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestLabelListReturnsPublishedLabelsOnlyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Label visibility admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label visibility admin")
 	ctx := artistIntegrationAdminCtx(adminID)
 	service := newLabelIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
-	suffix := integrationTestUUID()
+	suffix := testutil.IntegrationUUID()
 
 	publishedID := createIntegrationLabel(t, service, ctx, "Published label "+suffix, "published-label-"+suffix)
 	draftID := createIntegrationLabel(t, service, ctx, "Draft label "+suffix, "draft-label-"+suffix)

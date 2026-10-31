@@ -4,9 +4,9 @@ package account
 
 import (
 	"testing"
-	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -16,7 +16,7 @@ func seedActiveMemberEmailPair(t *testing.T, db *gorm.DB, identityID, email stri
 	t.Helper()
 	memberID := uuid.NewString()
 	name := "Email fixture " + memberID
-	now := time.Now().UTC()
+	now := testutil.DatabaseNow(t, db)
 	require.NoError(t, db.Exec(
 		`INSERT INTO account_identity (id, created_at)
 		 SELECT id, created_at

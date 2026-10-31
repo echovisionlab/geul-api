@@ -33,7 +33,7 @@ func (publisher *recordingCredentialHookEmailPublisher) PublishSendEmail(
 
 func TestAccountCredentialHookCompletesCommittedOIDCRemovalIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "credential-hook-" + identityID + "@example.test"
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
@@ -109,7 +109,7 @@ func TestAccountCredentialHookCompletesCommittedOIDCRemovalIntegration(t *testin
 
 func TestAccountCredentialHookCompletesCommittedPasskeyAdditionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	emailAddress := "passkey-hook-" + identityID + "@example.test"
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
@@ -176,7 +176,7 @@ func TestAccountCredentialHookCompletesCommittedPasskeyAdditionIntegration(t *te
 
 func TestAccountCredentialPreHookRejectsUnrecoverableAndUnbackedPrimaryIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	providerEmail := "provider-hook-" + identityID + "@example.test"
 	recoveryEmail := "recovery-hook-" + identityID + "@example.test"

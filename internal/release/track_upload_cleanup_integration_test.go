@@ -43,7 +43,7 @@ func (m *trackUploadCleanupFileManager) DeleteFileByID(_ context.Context, fileID
 func TestDeleteTrackStopsBeforeMutationWhenAudioUploadIsFinalizing(t *testing.T) {
 	t.Parallel()
 
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	trackID := uuid.NewString()
 	releaseID := testutil.CreateReleaseFixture(t, db)
 	originalFileID := uuid.NewString()

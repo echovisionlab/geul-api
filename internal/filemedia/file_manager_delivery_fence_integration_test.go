@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -322,7 +323,7 @@ func TestFileManagerDeleteHoldingPrincipalCompletesWithoutSignerDeadlockIntegrat
 
 func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
 	service := &FileService{
@@ -1020,7 +1021,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 func TestManageGlobalAuthorDownloadIsIndependentOfUsageDetachIntegration(t *testing.T) {
 	t.Parallel()
 	db, ctx, service, _, fileID, blockID := newManagePostCollaboratorFenceFixture(t)
-	grantIntegrationGlobalRole(t, service.spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
+	testutil.GrantIntegrationGlobalRole(t, service.spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
 	service.testBeforeManageDeliveryFence = func([]string) {
@@ -1197,12 +1198,12 @@ func newManagePostCollaboratorFenceFixture(
 ) (*gorm.DB, context.Context, *FileService, string, string, string) {
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Manage delivery collaborator")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Manage delivery collaborator")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 	service := &FileService{
 		db: db, spiceDB: spiceDB,

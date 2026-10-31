@@ -67,7 +67,7 @@ func (personalDataEmailPublisher) PublishSendEmailWithExecutor(
 
 func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	admin := seedMemberAdminListPair(
@@ -156,7 +156,7 @@ func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *test
 
 func TestMemberPersonalDataAccessFailsClosedWhenAppendFailsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	admin := seedMemberAdminListPair(
 		t, db, spiceDB, "Fail closed admin", memberAdminListEmail("fail-closed"),

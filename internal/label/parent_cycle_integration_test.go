@@ -22,13 +22,13 @@ import (
 
 func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Label hierarchy admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label hierarchy admin")
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(adminID),
-		MemberID:      auth.MemberID(integrationMemberID(adminID)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 		Onboarded:     true,
 	})
@@ -36,9 +36,9 @@ func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) 
 	contentBlocks := newCreativeContentIntegrationStore(t, stack.SpiceDBClient)
 	syncLabelParentIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
 
-	rootID := createLabelParentIntegrationFixture(t, db, stack.SpiceDBClient, contentBlocks, ctx, adminID, "Root label", "root-label-"+integrationTestUUID())
-	childID := createLabelParentIntegrationFixture(t, db, stack.SpiceDBClient, contentBlocks, ctx, adminID, "Child label", "child-label-"+integrationTestUUID())
-	grandchildID := createLabelParentIntegrationFixture(t, db, stack.SpiceDBClient, contentBlocks, ctx, adminID, "Grandchild label", "grandchild-label-"+integrationTestUUID())
+	rootID := createLabelParentIntegrationFixture(t, db, stack.SpiceDBClient, contentBlocks, ctx, adminID, "Root label", "root-label-"+testutil.IntegrationUUID())
+	childID := createLabelParentIntegrationFixture(t, db, stack.SpiceDBClient, contentBlocks, ctx, adminID, "Child label", "child-label-"+testutil.IntegrationUUID())
+	grandchildID := createLabelParentIntegrationFixture(t, db, stack.SpiceDBClient, contentBlocks, ctx, adminID, "Grandchild label", "grandchild-label-"+testutil.IntegrationUUID())
 	require.NoError(t, db.Table("label").Where("id = ?", childID).Update("parent_label_id", rootID).Error)
 	require.NoError(t, db.Table("label").Where("id = ?", grandchildID).Update("parent_label_id", childID).Error)
 
@@ -78,7 +78,7 @@ func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) 
 	_, err := service.UpdateLabelDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateLabelDocumentMetadataRequest{
 		LabelId:              rootID,
 		ExpectedRevision:     revision,
-		ContributorMemberIds: []string{integrationMemberID(adminID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(adminID)},
 		Update: &intrav1.LabelDocumentMetadataUpdate{ParentLabelId: &intrav1.NullableStringMutation{
 			Operation: &intrav1.NullableStringMutation_Set{Set: grandchildID},
 		}},

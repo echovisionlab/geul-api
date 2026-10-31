@@ -7,11 +7,11 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"slices"
 	"testing"
-	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	workogadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -26,7 +26,6 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	gormpostgres "gorm.io/driver/postgres"
@@ -54,13 +53,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
@@ -75,61 +67,16 @@ func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func integrationTestUUID() string { return uuid.NewString() }
-
 func ptrString(value string) *string { return &value }
-
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("geul-work-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
 	return testutil.SetupOryStack(t).SpiceDBClient
 }
 
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	t.Helper()
-	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
-	require.NoError(t, err)
-	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
-	require.NoError(t, err)
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	t.Helper()
-	email := identityID + "@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
-		ID: identityID, Email: email, Name: name,
-	})
-	memberID := integrationMemberID(identityID)
-	now := time.Now().UTC()
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO account_identity (id, created_at)
-			SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
-			ON CONFLICT (id) DO NOTHING
-		`, identityID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.Member{
-			ID: memberID, AccountIdentityID: &identityID, Nickname: name,
-			Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email},
-			SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now,
-		}).Error
-	}))
-	return memberID
-}
-
 func insertWorkIntegrationSession(t *testing.T, db *gorm.DB, identityID string) string {
 	t.Helper()
-	sessionID := integrationTestUUID()
+	sessionID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.sessions (
 			id, identity_id, active, authenticated_at, expires_at,

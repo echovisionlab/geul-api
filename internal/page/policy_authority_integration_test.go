@@ -23,11 +23,11 @@ import (
 
 func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Page policy admin")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page policy admin")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
 		MemberID:      auth.MemberID(memberID),
@@ -81,9 +81,9 @@ func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *tes
 
 func TestCollaborationSessionLockFencesRevocationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page collaboration session")
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page collaboration session")
 	sessionID := insertPageIntegrationSession(t, db, identityID)
 	locked := make(chan struct{})
 	release := make(chan struct{})
@@ -326,7 +326,7 @@ func TestCollaborationSessionRevocationFirstDeniesFinalFenceIntegration(t *testi
 	// Local kratos tables keep production READ COMMITTED fences on sessions.
 	db := testutil.SetupOryStackWithLocalKratos(t).DB
 	identityID := uuid.NewString()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page revoked collaboration session")
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page revoked collaboration session")
 	sessionID := insertPageIntegrationSession(t, db, identityID)
 	tx := db.Begin()
 	require.NoError(t, tx.Error)

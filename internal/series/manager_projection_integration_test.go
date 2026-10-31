@@ -23,12 +23,12 @@ import (
 func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *testing.T) {
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	identityID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	identityID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series relation reader")
 	seedSeriesActor(t, db, identityID, "Former Series manager")
-	memberID := integrationMemberID(identityID)
+	memberID := testutil.PostIntegrationMemberID(identityID)
 	seriesID := seedSeriesRow(
 		t, db, "Durable Series manager", "durable-series-manager-"+identityID,
 		managev1.SeriesStatus_SERIES_STATUS_DRAFT.String(),
@@ -75,7 +75,7 @@ func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *test
 	formerCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
 		MemberID:      auth.MemberID(memberID),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 	response, err := service.ListMySeries(formerCtx, connect.NewRequest(&managev1.ListMySeriesRequest{}))

@@ -17,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestMain(m *testing.M) {
@@ -46,8 +45,6 @@ const (
 	pageContentDocumentProfile = "page"
 	emailContentProfile        = "email"
 )
-
-func newServiceIntegrationDB(t *testing.T) *gorm.DB { return testutil.NewIntegrationDB(t) }
 
 func seedMemberForExternalKratosIdentity(t *testing.T, db *gorm.DB, identityID, email, name string) string {
 	t.Helper()
@@ -79,10 +76,6 @@ func seedServiceIntegrationContentDocument(t *testing.T, db *gorm.DB, profile st
 }
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient { return testutil.IntegrationSpiceDB(t) }
-
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, role)
-}
 
 func adminUserIntegrationAdminCtx(identityID string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{

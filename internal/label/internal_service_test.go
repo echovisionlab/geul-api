@@ -51,14 +51,14 @@ func seedInternalLabel(t *testing.T, db *gorm.DB, contentBlocks *contentblock.St
 
 func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Label source name admin")
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Label source name admin")
 	requireInternalResourceAdmin(t, stack.SpiceDBClient, identityID)
 	memberCtx := labelTargetMemberContext(t, identityID)
 	contentBlocks := newCreativeContentIntegrationStore(t, stack.SpiceDBClient)
-	labelID := seedInternalLabel(t, db, contentBlocks, integrationMemberID(identityID))
+	labelID := seedInternalLabel(t, db, contentBlocks, testutil.PostIntegrationMemberID(identityID))
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, labelID)
 	logoFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/source-name-save.webp", "logo")
 	var logoAssetID string
@@ -92,7 +92,7 @@ func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
 		requested_at, created_at, updated_at
 	) VALUES (?, 'label', ?, 'ko', 'en', ?, ?, 'queued', ?, '{}'::jsonb, ?, ?, ?, ?)`,
 		jobID, labelID, strings.Repeat("0", 64),
-		uuid.NewString(), requestXLIFF, integrationMemberID(identityID), now, now, now,
+		uuid.NewString(), requestXLIFF, testutil.PostIntegrationMemberID(identityID), now, now, now,
 	).Error)
 	var targetBefore struct{ Title string }
 	require.NoError(t, db.Table("label_translation").Where("entity_id = ? AND locale = 'ko'", labelID).Take(&targetBefore).Error)

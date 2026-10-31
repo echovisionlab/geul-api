@@ -33,7 +33,7 @@ func (l memberAdminQueryCounter) Trace(ctx context.Context, begin time.Time, fc 
 
 func TestListMembersAdminFiltersSortsAndKeepsConstantQueryCount(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceStack := testutil.SetupOryStack(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	alice := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Alice", memberAdminListEmail("alice"), policyv1.Role.Admin(), true, false, now.Add(-4*time.Hour))
@@ -143,7 +143,7 @@ func TestListMembersAdminFiltersSortsAndKeepsConstantQueryCount(t *testing.T) {
 
 func TestSearchMembersCanRestrictCandidatesToEffectiveAuthorsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceStack := testutil.SetupOryStack(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	author := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "Author candidate", memberAdminListEmail("author-candidate"), policyv1.Role.Author(), false, false, now)
@@ -170,7 +170,7 @@ func TestSearchMembersCanRestrictCandidatesToEffectiveAuthorsIntegration(t *test
 
 func TestListMemberTagsAdminAppliesFiltersAndSorts(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceStack := testutil.SetupOryStack(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	first := seedMemberAdminListPair(t, db, spiceStack.SpiceDBClient, "First", memberAdminListEmail("first"), policyv1.Role.User(), false, false, now)

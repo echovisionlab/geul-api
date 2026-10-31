@@ -10,15 +10,16 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestProgramEventSeriesPosterBindingLifecyclePreservesFiles(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	readyPoster := func() *model.PublicAsset {
-		fileID := seedImageBindingUploadedFileFixtureForKind(t, db, "program-event-series-poster-"+integrationTestUUID()+".webp", "poster")
+		fileID := seedImageBindingUploadedFileFixtureForKind(t, db, "program-event-series-poster-"+testutil.IntegrationUUID()+".webp", "poster")
 		var asset model.PublicAsset
 		require.NoError(t, db.Where("source_file_id = ? AND kind = ? AND status = ?", fileID, "poster", model.PublicAssetStatusReady).Take(&asset).Error)
 		return &asset

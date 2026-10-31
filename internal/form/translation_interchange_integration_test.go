@@ -17,14 +17,14 @@ import (
 
 func TestFormTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	formID := seedGuardedFormLocales(t, db, now)
 	require.NoError(t, db.Exec(
 		"DELETE FROM form_translation WHERE entity_id = ?::uuid AND locale = 'ko'", formID,
 	).Error)
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Form XLIFF admin")
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Form XLIFF admin")
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
 	service := newAuditedInternalFormServiceForIntegration(
 		db, nil, apitelemetry.NewDurableWriter(db), integrationSpiceDB(t),

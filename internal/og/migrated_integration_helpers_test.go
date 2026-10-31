@@ -9,11 +9,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	return testutil.NewIntegrationDB(t)
-}
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	return testutil.NewConcurrentPostIntegrationDB(t)

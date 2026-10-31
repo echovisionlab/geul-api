@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -15,9 +16,9 @@ import (
 
 func TestCreateReleaseExplicitSourceLocaleOverridesPreferencesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, adminID, "Release source locale Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release source locale Admin")
 	ctx := releaseIntegrationAdminCtx(adminID)
 	service := newReleaseIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
 	store := newPageIntegrationContentBlockStore(t, integrationSpiceDB(t))

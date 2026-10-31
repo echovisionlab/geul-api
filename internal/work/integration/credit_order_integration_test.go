@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -19,9 +20,9 @@ import (
 
 func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Credit Order Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work Credit Order Admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	service := newWorkIntegrationService(t, db, adminID, referenceNoopFileDeleter{})
 	workID := createCreditOrderWork(t, service, ctx, "Credit Order Main")
@@ -162,8 +163,8 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 	}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
-	unauthorizedID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, unauthorizedID, "Work Credit Order Unauthorized")
+	unauthorizedID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, unauthorizedID, "Work Credit Order Unauthorized")
 	unauthorizedCtx := workIntegrationAdminCtx(unauthorizedID)
 	_, err = service.MoveWorkCreditItem(unauthorizedCtx, connect.NewRequest(&managev1.MoveWorkCreditItemRequest{
 		WorkId:        workID,
@@ -179,7 +180,7 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 		ItemId:        creditTwo,
 		TargetGroupId: ptrString(groupOne),
 		After:         creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, creditOne),
-		Before:        creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, integrationTestUUID()),
+		Before:        creditOrderAnchor(managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, testutil.IntegrationUUID()),
 	}))
 	require.NoError(t, err)
 	require.Equal(t,
@@ -191,8 +192,8 @@ func TestWorkCreditMoveIntentPersistsCanonicalOrderIntegration(t *testing.T) {
 func TestUpdateWorkCreditGroupPreservesRequestEqualToStaleNameIntegration(t *testing.T) {
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Credit Group Update Admin")
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work Credit Group Update Admin")
 	ctx, cancel := context.WithTimeout(workIntegrationAdminCtx(adminID), 10*time.Second)
 	defer cancel()
 	service := newWorkIntegrationService(t, db, adminID, referenceNoopFileDeleter{})
@@ -265,7 +266,7 @@ func createCreditOrderWork(t *testing.T, service *workdomain.WorkService, ctx co
 	t.Helper()
 	isPresent := true
 	created, err := service.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title:     title + " " + integrationTestUUID(),
+		Title:     title + " " + testutil.IntegrationUUID(),
 		Type:      managev1.WorkType_WORK_TYPE_ARTICLE,
 		Year:      2026,
 		Month:     10,

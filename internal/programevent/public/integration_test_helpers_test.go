@@ -7,14 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -94,33 +91,6 @@ func publicPrincipalContext(memberID, identityID string) context.Context {
 		MemberID: auth.MemberID(memberID), IdentityID: auth.IdentityID(identityID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
-}
-
-func seedCanonicalPublicFileFixture(
-	t *testing.T,
-	db *gorm.DB,
-	fileName, mimeType, assetKind string,
-) (string, string) {
-	t.Helper()
-	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
-	fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
-	now := time.Now().UTC()
-	require.NoError(t, db.Create(&model.File{
-		ID: fileID, FileName: fileName, MimeType: mimeType, FileSize: 1024,
-		Extension: extension, SHA256: make([]byte, 32), CreatedAt: now,
-	}).Error)
-	assetID := uuid.NewString()
-	objectKey, err := mediaauth.AssetObjectKey(assetID, extension)
-	require.NoError(t, err)
-	fileSize := int64(1024)
-	require.NoError(t, db.Create(&model.PublicAsset{
-		ID: assetID, SourceFileID: &fileID, Kind: assetKind, ObjectKey: objectKey,
-		Extension: extension, MimeType: mimeType, FileSize: &fileSize, SHA256: make([]byte, 32),
-		Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now,
-		CreatedAt: now, UpdatedAt: now,
-	}).Error)
-	return fileID, assetID
 }
 
 func stringPtr(value string) *string { return &value }

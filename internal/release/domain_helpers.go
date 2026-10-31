@@ -37,12 +37,13 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []s
 	// These rows preserve durable attribution only. Authorization is the exact
 	// Release edit check performed when editor-collab admits each frame; Member
 	// existence here must never become a fallback grant.
-	var count int64
+	// PostgreSQL rejects row locks on aggregates, so lock the rows and count them here.
+	var locked []string
 	if err := tx.WithContext(ctx).Table("member").Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Where("id IN ?", unique).Count(&count).Error; err != nil {
+		Where("id IN ?", unique).Pluck("id::text", &locked).Error; err != nil {
 		return errs.Internal(err)
 	}
-	if count != int64(len(unique)) {
+	if len(locked) != len(unique) {
 		return errs.InvalidArgument("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil

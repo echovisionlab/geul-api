@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -16,7 +17,7 @@ import (
 
 func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	admin := mapThemeAdminUser(t)
 	ctx := withAuditedRequestContext(t, mapThemeMemberContext(admin))
@@ -65,7 +66,7 @@ func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T
 
 func TestMapThemeAdminSnapshotUpdateDenialAndAuditRollbackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	admin := mapThemeAdminUser(t)
 	ctx := withAuditedRequestContext(t, mapThemeMemberContext(admin))
@@ -74,7 +75,7 @@ func TestMapThemeAdminSnapshotUpdateDenialAndAuditRollbackIntegration(t *testing
 	require.NoError(t, err)
 	service := auditedMapThemeServiceForTest(t, db, spiceDB, apitelemetry.NewDurableWriter(db))
 	author := mapThemeAdminUser(t)
-	grantIntegrationGlobalRole(t, spiceDB, author.IdentityID, policyv1.Role.Author())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, author.IdentityID, policyv1.Role.Author())
 	input.Name = "Unauthorized change"
 	_, changed, err := service.UpdateMapThemeSnapshot(mapThemeMemberContext(author), created.Msg.Id, 1, input)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))

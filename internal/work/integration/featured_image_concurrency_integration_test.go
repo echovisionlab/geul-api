@@ -12,26 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestDeleteWorkFeaturedImageReloadsCurrentImageAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Featured Image Concurrency Admin")
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work Featured Image Concurrency Admin")
 	ctx, cancel := context.WithTimeout(workIntegrationAdminCtx(adminID), 10*time.Second)
 	defer cancel()
 	service := newWorkIntegrationService(t, db, adminID, &recordingWorkFileDeleter{})
 	present := true
 
 	created, err := service.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title: "Work Featured Image Concurrency " + integrationTestUUID(),
+		Title: "Work Featured Image Concurrency " + testutil.IntegrationUUID(),
 		Type:  managev1.WorkType_WORK_TYPE_ARTICLE, Year: 2026, Month: 8, IsPresent: &present,
 		Document: emptyWorkIntegrationDocument("en"),
 	}))
 	require.NoError(t, err)
-	fileID := integrationTestUUID()
+	fileID := testutil.IntegrationUUID()
 	seedIntegrationFile(t, db, fileID, "concurrent-featured", "image/webp", nil)
 
 	blocker := db.WithContext(ctx).Begin()

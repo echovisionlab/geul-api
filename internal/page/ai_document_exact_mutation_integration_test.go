@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,11 +22,11 @@ import (
 
 func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page AI document exact mutation")
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page AI document exact mutation")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := workIntegrationAdminCtx(identityID)
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
 	pageService := NewPageService(
@@ -187,11 +188,11 @@ func TestPageAIDocumentExactMutationAuthorizesBeforeCompilerOnceIntegration(t *t
 
 func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page layout AI document")
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page layout AI document")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := withPageAuditedRequestContext(t, workIntegrationAdminCtx(identityID))
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
 	pageService := NewPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"),

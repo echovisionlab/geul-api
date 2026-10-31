@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -23,9 +24,9 @@ import (
 
 func TestWorkSourceEditAndSwitchPreserveTargetsAndJobsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work source pointer Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work source pointer Admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	workService := newWorkIntegrationService(t, db, adminID, struct{}{})
 	present := true
@@ -41,7 +42,7 @@ func TestWorkSourceEditAndSwitchPreserveTargetsAndJobsIntegration(t *testing.T) 
 	require.NoError(t, db.Table("work").Select("source_locale").Where("id = ?", created.Msg.Id).Take(&initialSource).Error)
 	seedWorkPointerTarget(t, db, created.Msg.Id, "ko", "Stored Korean target")
 	seedWorkPointerTarget(t, db, created.Msg.Id, "fr", "Stored French target")
-	requesterMemberID := integrationMemberID(adminID)
+	requesterMemberID := testutil.PostIntegrationMemberID(adminID)
 	seedWorkPointerJob(t, db, created.Msg.Id, "ko", "queued", initialSource.SourceLocale, requesterMemberID)
 	seedWorkPointerJob(t, db, created.Msg.Id, "fr", "running", initialSource.SourceLocale, requesterMemberID)
 
@@ -61,7 +62,7 @@ func TestWorkSourceEditAndSwitchPreserveTargetsAndJobsIntegration(t *testing.T) 
 	editedTitle := "Work pointer source edited"
 	edited, err := internalWork.UpdateWorkLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateWorkLocaleMetadataRequest{
 		WorkId: created.Msg.Id, Locale: "en", Title: &editedTitle, ExpectedRevision: created.Msg.Revision,
-		ContributorMemberIds: []string{integrationMemberID(adminID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(adminID)},
 	}))
 	require.NoError(t, err)
 	require.True(t, edited.Msg.SourceChanged)
@@ -127,7 +128,7 @@ type workPointerLocaleSnapshot struct {
 
 func seedWorkPointerOgAsset(t *testing.T, db *gorm.DB, workID string, locale string) {
 	t.Helper()
-	assetID := integrationTestUUID()
+	assetID := testutil.IntegrationUUID()
 	digest := sha256.Sum256([]byte(assetID))
 	now := time.Now().UTC()
 	require.NoError(t, db.Exec(`
@@ -197,8 +198,8 @@ func seedWorkPointerJob(
 			operation_id, status, request_xliff, request_manifest, requested_by_member_id,
 			requested_at, created_at, updated_at
 		) VALUES (?::uuid, 'work', ?, ?, ?, ?, ?, ?, ?, '{}'::jsonb, ?::uuid, ?, ?, ?)
-	`, integrationTestUUID(), workID, targetLocale, sourceLocale, strings.Repeat("0", 63)+"1",
-		integrationTestUUID(), status,
+	`, testutil.IntegrationUUID(), workID, targetLocale, sourceLocale, strings.Repeat("0", 63)+"1",
+		testutil.IntegrationUUID(), status,
 		[]byte(`<?xml version="1.0" encoding="UTF-8"?><xliff xmlns="urn:oasis:names:tc:xliff:document:2.2" version="2.2"></xliff>`),
 		requesterMemberID, now, now, now).Error)
 }

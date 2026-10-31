@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -27,13 +28,13 @@ import (
 
 func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Page Version Restore Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Page Version Restore Admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withPageAuditedRequestContext(t, auth.WithUser(t.Context(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(adminID), MemberID: auth.MemberID(integrationMemberID(adminID)),
+		IdentityID: auth.IdentityID(adminID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	}))
 
@@ -75,8 +76,8 @@ func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t 
 		translation.EntryWrite{Now: time.Now().UTC()},
 	))
 
-	sectionID := integrationTestUUID()
-	memberID := integrationMemberID(adminID)
+	sectionID := testutil.IntegrationUUID()
+	memberID := testutil.PostIntegrationMemberID(adminID)
 	versionA, err := internalService.ApplyPageBlockBatch(
 		ctx,
 		connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
@@ -148,14 +149,14 @@ func TestPageVersionRestoreUsesOneRevisionAndPreservesTargetLocaleIntegration(t 
 	)
 	jobNow := time.Now().UTC()
 	activeJob := model.TranslationJob{
-		ID:                    integrationTestUUID(),
+		ID:                    testutil.IntegrationUUID(),
 		EntityType:            "page",
 		EntityID:              created.Msg.Id,
 		RequestedByMemberID:   memberID,
 		TargetLocale:          "fr",
 		SourceLocale:          "en",
 		RequestArtifactDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		OperationID:           integrationTestUUID(),
+		OperationID:           testutil.IntegrationUUID(),
 		Status:                "queued",
 		RequestXLIFF:          []byte(`<?xml version="1.0" encoding="UTF-8"?><xliff xmlns="urn:oasis:names:tc:xliff:document:2.2" version="2.2" srcLang="en" trgLang="fr"></xliff>`),
 		RequestManifest:       []byte(`{}`),

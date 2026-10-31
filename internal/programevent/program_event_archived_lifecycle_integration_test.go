@@ -21,13 +21,13 @@ import (
 
 func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Archived Program Event Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Archived Program Event Admin")
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := programEventIntegrationAdminCtx(adminID)
-	suffix := integrationTestUUID()
+	suffix := testutil.IntegrationUUID()
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
@@ -89,9 +89,9 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	}))
 	require.NoError(t, err)
 	require.Equal(t, managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED, archived.Msg.Status)
-	authorID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, authorID, "Archived Program Event Author")
-	grantIntegrationGlobalRole(t, spiceDB, authorID, policyv1.Role.Author())
+	authorID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, authorID, "Archived Program Event Author")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, authorID, policyv1.Role.Author())
 	authorCtx := programEventIntegrationAdminCtx(authorID)
 	viewed, err := eventService.GetProgramEvent(authorCtx, connect.NewRequest(&managev1.GetProgramEventRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	_, err = internalService.UpdateProgramEventLocaleMetadata(context.Background(), connect.NewRequest(&intrav1.UpdateProgramEventLocaleMetadataRequest{
 		EventId: created.Msg.Id, Title: &authorTitle, ExpectedRevision: authorBootstrap.Msg.DocumentRevision,
 		Locale:               "en",
-		ContributorMemberIds: []string{integrationMemberID(authorID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(authorID)},
 	}))
 	require.Error(t, err)
 	_, err = eventService.PublishProgramEvent(ctx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: created.Msg.Id}))
@@ -128,8 +128,8 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 
-	memberID := integrationMemberID(adminID)
-	blockID := integrationTestUUID()
+	memberID := testutil.PostIntegrationMemberID(adminID)
+	blockID := testutil.IntegrationUUID()
 	blockApplied, err := internalService.ApplyProgramEventBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 		EventId: created.Msg.Id,
 		Locale:  "en",

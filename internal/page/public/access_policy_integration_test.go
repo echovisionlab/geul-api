@@ -42,7 +42,7 @@ func TestPublicPageAudienceGatesAllProjectionAndReopensIntegration(t *testing.T)
 	require.NoError(t, db.Raw("SELECT content_document_id FROM page WHERE id=?::uuid", pageID).Scan(&documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block (id,document_id,container_slot,position,kind,shared_data) VALUES (?::uuid,?::uuid,'sections',0,'external-video','{"externalVideo":{"props":{"uri":"https://private.example.test/body-marker"}}}'::jsonb)`, uuid.NewString(), documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_block_locale(block_id,locale,localized_data) SELECT id,'en','{"externalVideo":{"props":{"caption":"private body caption"}}}'::jsonb FROM content_block WHERE document_id=?::uuid`, documentID).Error)
-	featuredID, ogID := seedCanonicalPublicFileFixture(t, db, "private-featured.webp", "image/webp", "image")
+	featuredID, ogID := testutil.SeedCanonicalPublicFileFixture(t, db, "private-featured.webp", "image/webp", "image")
 	require.NoError(t, db.Exec("UPDATE page SET status='PAGE_STATUS_PUBLISHED', published_at=now(), featured_image_file_id=?::uuid, og_asset_id=?::uuid WHERE id=?::uuid", featuredID, ogID, pageID).Error)
 	files := newPublicReferenceManageFileService(db)
 	access := publicPageAccessFixture{spiceDB: publicIntegrationSpiceDB(t)}

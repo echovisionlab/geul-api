@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -23,7 +24,7 @@ import (
 
 func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	publisher := &capturingAsyncPublisher{}
@@ -135,7 +136,7 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 
 func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(adminCtx).MemberID.String()
 	service := &FileService{
@@ -213,7 +214,7 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 
 func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	now := time.Now().UTC()
@@ -273,7 +274,7 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 
 func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	publisher := &capturingAsyncPublisher{}
@@ -315,7 +316,7 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 
 func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	service := &FileService{
@@ -367,7 +368,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 
 func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	principal := auth.GetUser(adminCtx)
 	identityID := principal.IdentityID.String()

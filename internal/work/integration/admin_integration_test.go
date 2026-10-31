@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -25,9 +26,9 @@ import (
 
 func TestWorkServiceAdminListIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Admin List Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work Admin List Admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	fileDeleter := &recordingWorkFileDeleter{}
 	workSvc := newWorkIntegrationService(t, db, adminID, fileDeleter)
@@ -104,7 +105,7 @@ func TestWorkServiceAdminListIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	featuredFileID := integrationTestUUID()
+	featuredFileID := testutil.IntegrationUUID()
 	seedIntegrationFile(t, db, featuredFileID, "list", "image/webp", nil)
 	_, err = workSvc.SetWorkFeaturedImage(ctx, connect.NewRequest(&managev1.SetWorkFeaturedImageRequest{
 		WorkId: beta.Msg.Id,
@@ -180,9 +181,9 @@ func TestWorkServiceAdminListIntegration(t *testing.T) {
 
 func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work File Retention Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work File Retention Admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	fileDeleter := &recordingWorkFileDeleter{}
 	workSvc := newWorkIntegrationService(t, db, adminID, fileDeleter)
@@ -190,7 +191,7 @@ func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
 	isPresent := true
 
 	created, err := workSvc.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title:     "Work File Retention " + integrationTestUUID(),
+		Title:     "Work File Retention " + testutil.IntegrationUUID(),
 		Type:      managev1.WorkType_WORK_TYPE_ARTICLE,
 		Year:      2026,
 		Month:     8,
@@ -200,8 +201,8 @@ func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
 	require.NoError(t, err)
 	requireSynchronousAuthorizedResource(t, workSpiceDB, policyv1.Work.LookupManage(), created.Msg.Id, adminID, true)
 
-	firstFeaturedID := integrationTestUUID()
-	secondFeaturedID := integrationTestUUID()
+	firstFeaturedID := testutil.IntegrationUUID()
+	secondFeaturedID := testutil.IntegrationUUID()
 	for _, fileID := range []string{firstFeaturedID, secondFeaturedID} {
 		seedIntegrationFile(t, db, fileID, "work-featured", "image/webp", nil)
 	}
@@ -223,11 +224,11 @@ func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
 	requireFileRowExists(t, db, firstFeaturedID)
 	requireFileRowExists(t, db, secondFeaturedID)
 
-	editorFileID := integrationTestUUID()
-	ownerFeaturedID := integrationTestUUID()
+	editorFileID := testutil.IntegrationUUID()
+	ownerFeaturedID := testutil.IntegrationUUID()
 	seedIntegrationFile(t, db, editorFileID, "work-editor", "image/webp", nil)
 	seedIntegrationFile(t, db, ownerFeaturedID, "work-owner-featured", "image/webp", nil)
-	blockID := integrationTestUUID()
+	blockID := testutil.IntegrationUUID()
 	workBlocks, blockStoreErr := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(workSpiceDB))
 	require.NoError(t, blockStoreErr)
 	internalWork := workdomain.NewInternalWorkService(
@@ -246,7 +247,7 @@ func TestWorkContentUnlinkPreservesLibraryFilesIntegration(t *testing.T) {
 			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 			Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
 			ExpectedRevision:        created.Msg.Revision,
-			ContributorMemberIds:    []string{integrationMemberID(adminID)},
+			ContributorMemberIds:    []string{testutil.PostIntegrationMemberID(adminID)},
 			BaseMutations: []*contentv1.RichTextBlockMutation{{
 				Operation: &contentv1.RichTextBlockMutation_Upsert{Upsert: &contentv1.UpsertRichTextBlock{
 					Node: &contentv1.RichTextBlockNode{

@@ -10,29 +10,30 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminIdentityID := integrationTestUUID()
-	managerIdentityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminIdentityID, "Label Owner")
-	seedExternalKratosIdentityWithTraits(t, db, managerIdentityID, "Label Manager")
+	db := testutil.NewIntegrationDB(t)
+	adminIdentityID := testutil.IntegrationUUID()
+	managerIdentityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Label Owner")
+	testutil.SeedPostIntegrationIdentity(t, db, managerIdentityID, "Label Manager")
 
-	adminMemberID := integrationMemberID(adminIdentityID)
-	managerMemberID := integrationMemberID(managerIdentityID)
+	adminMemberID := testutil.PostIntegrationMemberID(adminIdentityID)
+	managerMemberID := testutil.PostIntegrationMemberID(managerIdentityID)
 	adminCtx := artistIntegrationAdminCtx(adminIdentityID)
 	managerCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(managerIdentityID),
 		MemberID:      auth.MemberID(managerMemberID),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 	service := newLabelIntegrationService(t, db, adminIdentityID, &recordingArtistFileDeleter{})
-	slug := "label-owner-manager-" + integrationTestUUID()
+	slug := "label-owner-manager-" + testutil.IntegrationUUID()
 	created, err := service.CreateLabel(adminCtx, connect.NewRequest(&managev1.CreateLabelRequest{
 		Name: "Label Owner Manager",
 		Slug: &slug,

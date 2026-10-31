@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -184,7 +185,7 @@ func seedPublicProgramEventListQueryFixtures(t *testing.T, db *gorm.DB, count in
 
 		posterAssetID := ""
 		if index != count-1 {
-			fileID, assetID := seedCanonicalPublicFileFixture(
+			fileID, assetID := testutil.SeedCanonicalPublicFileFixture(
 				t, db, fmt.Sprintf("query-budget-poster-%02d.webp", index), "image/webp", "poster",
 			)
 			posterAssetID = assetID
@@ -194,7 +195,7 @@ func seedPublicProgramEventListQueryFixtures(t *testing.T, db *gorm.DB, count in
 				) VALUES (?::uuid, ?::uuid, ?::uuid, 'poster', 0, true, ?, ?)
 			`, uuid.NewString(), eventID, fileID, base, base).Error)
 			if index == 0 {
-				unselectedFileID, _ := seedCanonicalPublicFileFixture(
+				unselectedFileID, _ := testutil.SeedCanonicalPublicFileFixture(
 					t, db, "query-budget-unselected.webp", "image/webp", "poster",
 				)
 				require.NoError(t, db.Exec(`

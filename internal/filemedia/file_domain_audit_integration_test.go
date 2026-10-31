@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -22,11 +23,11 @@ import (
 
 func TestFileManagerDomainAuditIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "File audit admin")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File audit admin")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	service := &FileService{
@@ -81,11 +82,11 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 
 func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "File ingest audit admin")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File ingest audit admin")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	publisher := &capturingAsyncPublisher{}
@@ -94,9 +95,9 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	createdID := integrationTestUUID()
+	createdID := testutil.IntegrationUUID()
 	err := service.createVerifiedFileIngestRecord(ctx, structured.Fields{
-		"id": createdID, "file_name": "verified", "mime_type": "image/jpeg", "file_size": int64(1024), "extension": "jpg", "sha256": make([]byte, 32), "ingest_attempt_id": integrationTestUUID(),
+		"id": createdID, "file_name": "verified", "mime_type": "image/jpeg", "file_size": int64(1024), "extension": "jpg", "sha256": make([]byte, 32), "ingest_attempt_id": testutil.IntegrationUUID(),
 	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
 	require.NoError(t, err)
 	var createdRows []postSeriesAuditRow
@@ -108,10 +109,10 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	require.Equal(t, sharedtelemetry.RequestIDFromContext(ctx), createdRows[0].RequestID)
 	require.JSONEq(t, `{}`, string(createdRows[0].Attributes))
 
-	failingIngestID := integrationTestUUID()
+	failingIngestID := testutil.IntegrationUUID()
 	failingIngest := &FileService{db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}}
 	err = failingIngest.createVerifiedFileIngestRecord(ctx, structured.Fields{
-		"id": failingIngestID, "file_name": "must-rollback", "mime_type": "image/jpeg", "file_size": int64(1024), "extension": "jpg", "sha256": make([]byte, 32), "ingest_attempt_id": integrationTestUUID(),
+		"id": failingIngestID, "file_name": "must-rollback", "mime_type": "image/jpeg", "file_size": int64(1024), "extension": "jpg", "sha256": make([]byte, 32), "ingest_attempt_id": testutil.IntegrationUUID(),
 	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
 	require.Error(t, err)
 	var ingestCount int64

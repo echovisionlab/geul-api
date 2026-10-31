@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,9 +22,9 @@ import (
 // authority for the later write: the locked transaction must deny it.
 func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
-	suffix := integrationTestUUID()
+	suffix := testutil.IntegrationUUID()
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
@@ -80,7 +81,7 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 
 	// Restore the one actor for independent checks. The previous request did
 	// not mutate the Event, and only the direct global role is changing here.
-	grantIntegrationGlobalRole(t, spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Admin())
 
 	t.Run("series", func(t *testing.T) {
 		lockTx := lockAdminMutationRoot(t, db, "program_event_series", "id = '"+series.Msg.Id+"'::uuid")
@@ -102,7 +103,7 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 		require.Equal(t, "Program Event Series authority fence", title)
 	})
 
-	grantIntegrationGlobalRole(t, spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Admin())
 
 	t.Run("collaboration bootstrap", func(t *testing.T) {
 		sessionID := insertProgramEventIntegrationSession(t, db, auth.GetUser(ctx).IdentityID.String())

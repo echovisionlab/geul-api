@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -16,7 +17,7 @@ import (
 
 func TestFinalizeTombstoneRollsBackMemberStateWhenAccountAuditFails(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	memberID, identityID := seedBilateralDeletionPair(t, db, true, now.Add(-24*time.Hour))
 	email := deletionFixtureEmail(memberID)
@@ -48,7 +49,7 @@ func TestFinalizeTombstoneRollsBackMemberStateWhenAccountAuditFails(t *testing.T
 
 func TestFinalizeTombstoneDeletesMemberPersonalAccessTokensAndReplayIsNoOp(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	memberID, identityID := seedBilateralDeletionPair(t, db, true, now.Add(-24*time.Hour))
 	email := deletionFixtureEmail(memberID)
@@ -98,7 +99,7 @@ func TestFinalizeTombstoneDeletesMemberPersonalAccessTokensAndReplayIsNoOp(t *te
 
 func TestDeletionLifecycleRejectsNonBilateralIdentityWitness(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	lifecycle := DeletionLifecycle{}
 

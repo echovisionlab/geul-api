@@ -21,7 +21,7 @@ func TestLegalAuthorizationCreateDeleteIntegration(t *testing.T) {
 	t.Parallel()
 	db := newLegalIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site legal admin")
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site legal admin")
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	store, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))

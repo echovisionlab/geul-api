@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,7 @@ func (recorder *pagePublishStatementRecorder) snapshot() []string {
 
 func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	contentBlocks := newPageIntegrationContentBlockStore(t, spiceDB)
 	fileDeleter := &pageManagementFileService{recordingArtistFileDeleter: &recordingArtistFileDeleter{}}
@@ -66,7 +67,7 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 		WithPageMenuTargets(noopPageMenuTargets{}),
 	)
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	slug := "page-manager-" + suffix
 	otherSlug := "page-manager-other-" + suffix
 	summary := "Page manager workflow summary"
@@ -222,7 +223,7 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 		Update("homepage_page_id", created.Msg.Id)
 	require.NoError(t, homepageUpdate.Error)
 	require.Equal(t, int64(1), homepageUpdate.RowsAffected)
-	shareLinkID := integrationTestUUID()
+	shareLinkID := testutil.IntegrationUUID()
 	shareLinkExpiry := time.Now().UTC().Add(time.Hour)
 	require.NoError(t, db.Create(&model.ShareLink{
 		ID: shareLinkID, Token: "page-delete-" + shareLinkID,
@@ -269,7 +270,7 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 
 func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	admin, spiceDB := pageIntegrationAdmin(t, db)
 	pageSvc := NewPageService(
 		db,
@@ -281,15 +282,15 @@ func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
 		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 	)
-	slug := "page-admin-boundary-" + strings.ReplaceAll(integrationTestUUID(), "-", "")
+	slug := "page-admin-boundary-" + strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	page, err := pageSvc.CreatePage(admin, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Page Admin Boundary",
 		Slug:  &slug,
 	}))
 	require.NoError(t, err)
 
-	memberIdentityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, memberIdentityID, "Page authority member")
+	memberIdentityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, memberIdentityID, "Page authority member")
 	t.Cleanup(func() {
 		_ = db.Exec("DELETE FROM member WHERE id = ?::uuid", memberID).Error
 		_ = db.Exec("DELETE FROM kratos.identities WHERE id = ?::uuid", memberIdentityID).Error
@@ -302,7 +303,7 @@ func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 	})
 
 	_, draftByIDErr := pageSvc.GetPage(member, connect.NewRequest(&managev1.GetPageRequest{Id: page.Msg.Id}))
-	_, missingByIDErr := pageSvc.GetPage(member, connect.NewRequest(&managev1.GetPageRequest{Id: integrationTestUUID()}))
+	_, missingByIDErr := pageSvc.GetPage(member, connect.NewRequest(&managev1.GetPageRequest{Id: testutil.IntegrationUUID()}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(draftByIDErr))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(missingByIDErr))
 
@@ -315,7 +316,7 @@ func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 
 func TestPageSlugSupportsSafeNestedRoutesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	pageSvc := NewPageService(
 		db,
@@ -327,21 +328,21 @@ func TestPageSlugSupportsSafeNestedRoutesIntegration(t *testing.T) {
 		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
 		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
 	)
-	validSlug := "page-nested-" + strings.ReplaceAll(integrationTestUUID(), "-", "") + "/team"
+	validSlug := "page-nested-" + strings.ReplaceAll(testutil.IntegrationUUID(), "-", "") + "/team"
 	page, err := pageSvc.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Page Nested Route",
 		Slug:  &validSlug,
 	}))
 	require.NoError(t, err)
-	documentID := integrationTestUUID()
+	documentID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO content_document (id, profile, revision)
 		VALUES (?::uuid, 'post', ?::uuid)
-	`, documentID, integrationTestUUID()).Error)
+	`, documentID, testutil.IntegrationUUID()).Error)
 	require.NoError(t, db.Exec(`
 		INSERT INTO post (id, slug, content_document_id)
 		VALUES (?::uuid, 'article', ?::uuid)
-	`, integrationTestUUID(), documentID).Error)
+	`, testutil.IntegrationUUID(), documentID).Error)
 
 	for _, test := range []struct {
 		slug string
@@ -382,14 +383,14 @@ func TestPageSlugSupportsSafeNestedRoutesIntegration(t *testing.T) {
 
 func pageIntegrationAdmin(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Page integration admin")
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page integration admin")
 	t.Cleanup(func() {
 		_ = db.Exec("DELETE FROM member WHERE id = ?::uuid", memberID).Error
 		_ = db.Exec("DELETE FROM kratos.identities WHERE id = ?::uuid", identityID).Error
 	})
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,

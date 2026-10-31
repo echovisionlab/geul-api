@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -15,15 +16,15 @@ import (
 // comparing them with a later read sees no change.
 func TestWorkMutationResponsesMatchLaterReadsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work timestamp Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work timestamp Admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	workService := newWorkIntegrationService(t, db, adminID, referenceNoopFileDeleter{})
 	isPresent := true
 
 	created, err := workService.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title:     "Work timestamps " + integrationTestUUID(),
+		Title:     "Work timestamps " + testutil.IntegrationUUID(),
 		Type:      managev1.WorkType_WORK_TYPE_ARTICLE,
 		Year:      2026,
 		Month:     10,
@@ -37,7 +38,7 @@ func TestWorkMutationResponsesMatchLaterReadsIntegration(t *testing.T) {
 		return fetched.Msg
 	}
 
-	slug := "work-timestamps-" + integrationTestUUID()
+	slug := "work-timestamps-" + testutil.IntegrationUUID()
 	updated, err := workService.UpdateWork(ctx, connect.NewRequest(&managev1.UpdateWorkRequest{
 		Id: created.Msg.Id, Slug: &slug,
 	}))

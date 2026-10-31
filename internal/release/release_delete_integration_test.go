@@ -46,15 +46,15 @@ func (d *recordingReleaseDeleteFileDeleter) RequireNoTrackUploadSessionsWithDB(c
 
 func TestDeleteReleaseRejectsOversizedAtomicAuthorizationBatchBeforeMutationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release delete batch boundary admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release delete batch boundary admin")
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(adminID), MemberID: auth.MemberID(integrationMemberID(adminID)),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true,
+		IdentityID: auth.IdentityID(adminID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
 	})
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	files := &recordingReleaseDeleteFileDeleter{}
 	service := releasepkg.NewReleaseService(
 		db,
@@ -78,7 +78,7 @@ func TestDeleteReleaseRejectsOversizedAtomicAuthorizationBatchBeforeMutationInte
 	tracks := make([]model.Track, maxReleaseCascadeAuthorizationTracks+1)
 	for index := range tracks {
 		tracks[index] = model.Track{
-			ID:          integrationTestUUID(),
+			ID:          testutil.IntegrationUUID(),
 			ReleaseID:   release.Msg.Id,
 			TrackNumber: index + 1,
 			Title:       "Boundary track",
@@ -98,6 +98,20 @@ func TestDeleteReleaseRejectsOversizedAtomicAuthorizationBatchBeforeMutationInte
 	require.EqualValues(t, 1, releaseCount)
 	require.EqualValues(t, maxReleaseCascadeAuthorizationTracks+1, trackCount)
 	requireSynchronousAuthorizedResource(t, spiceDB, policyv1.Release.LookupManage(), release.Msg.Id, adminID, true)
+}
+
+func TestDeleteReleaseReportsUnknownReleaseAsNotFoundIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release delete unknown admin")
+	service := newReleaseIntegrationService(t, db, adminID, &recordingReleaseDeleteFileDeleter{})
+	unknown := testutil.IntegrationUUID()
+
+	response, err := service.DeleteRelease(releaseIntegrationAdminCtx(adminID), connect.NewRequest(&managev1.DeleteReleaseRequest{Id: unknown}))
+	require.Nil(t, response)
+	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.EqualError(t, err, "not_found: release not found: "+unknown)
 }
 
 type noopReleaseDeleteAsyncPublisher struct{}
@@ -125,19 +139,19 @@ func (noopReleaseDeleteAsyncPublisher) EnqueueProtobufWithExecutor(
 
 func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release Delete Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release Delete Admin")
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(adminID),
-		MemberID:      auth.MemberID(integrationMemberID(adminID)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 
 	fileDeleter := &recordingReleaseDeleteFileDeleter{}
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	releaseSvc := releasepkg.NewReleaseService(
 		db,
 		spiceDB,
@@ -166,7 +180,7 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 		AssetID: ogAsset.GetAssetId(), OwnerType: "release", OwnerID: releaseID, BindingKey: "og",
 	}))
 
-	artworkFileID := integrationTestUUID()
+	artworkFileID := testutil.IntegrationUUID()
 	seedFileDeleteLifecycleFile(t, db, artworkFileID, "artwork", "image/webp", "webp")
 	artworkAsset := seedHardCutReadyPublicAsset(t, db, "artwork", "webp", "image/webp", &artworkFileID)
 	artworkResp, err := releaseSvc.SetReleaseArtwork(ctx, connect.NewRequest(&managev1.SetReleaseArtworkRequest{
@@ -190,7 +204,7 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 	}))
 	require.NoError(t, err)
 
-	trackOriginalFileID := integrationTestUUID()
+	trackOriginalFileID := testutil.IntegrationUUID()
 	seedIntegrationFile(t, db, trackOriginalFileID, "original", "audio/wav", nil)
 	require.NoError(t, db.Model(&model.Track{}).
 		Where("id = ?", trackResp.Msg.Id).
@@ -225,18 +239,18 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 
 func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release Artwork Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release Artwork Admin")
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(adminID),
-		MemberID:      auth.MemberID(integrationMemberID(adminID)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	releaseSvc := releasepkg.NewReleaseService(
 		db,
 		spiceDB,
@@ -255,7 +269,7 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	}))
 	require.NoError(t, err)
 
-	firstFileID := integrationTestUUID()
+	firstFileID := testutil.IntegrationUUID()
 	seedFileDeleteLifecycleFile(t, db, firstFileID, "first", "image/webp", "webp")
 	firstAsset := seedHardCutReadyPublicAsset(t, db, "artwork", "webp", "image/webp", &firstFileID)
 	firstSet, err := releaseSvc.SetReleaseArtwork(ctx, connect.NewRequest(&managev1.SetReleaseArtworkRequest{
@@ -265,7 +279,7 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	require.NoError(t, err)
 	require.Empty(t, firstSet.Msg.GetOgGenerationRunId())
 
-	secondFileID := integrationTestUUID()
+	secondFileID := testutil.IntegrationUUID()
 	seedFileDeleteLifecycleFile(t, db, secondFileID, "second", "image/webp", "webp")
 	secondAsset := seedHardCutReadyPublicAsset(t, db, "artwork", "webp", "image/webp", &secondFileID)
 	secondSet, err := releaseSvc.SetReleaseArtwork(ctx, connect.NewRequest(&managev1.SetReleaseArtworkRequest{

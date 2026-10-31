@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -17,10 +18,10 @@ import (
 
 func TestProgramEventAIDocumentMetadataOwningTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
-	suffix := integrationTestUUID()
+	suffix := testutil.IntegrationUUID()
 	eventType, err := NewProgramEventTypeService(db, spiceDB).CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "aidocument-metadata-type-" + suffix, Locale: "en", Name: "Metadata test", RequiresPlace: ptrBool(false), RequiresStreamUrl: ptrBool(false)}))
 	require.NoError(t, err)
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
@@ -35,7 +36,7 @@ func TestProgramEventAIDocumentMetadataOwningTransactionIntegration(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, "Source event title", initial.Title)
 	require.Equal(t, "Source summary", *initial.Summary)
-	blockID := integrationTestUUID()
+	blockID := testutil.IntegrationUUID()
 	compile := func(state AIDocumentState) (AIDocumentCommand, error) {
 		batch, err := contentblock.BatchFromRichTextProto(state.ContentDocumentID, programEventParagraphMutationBatch(state.LocalizedDocument, state.DocumentRevision, blockID, "en", "New source body", []string{memberID}, true))
 		if err != nil {

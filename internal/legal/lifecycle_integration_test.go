@@ -513,7 +513,7 @@ func TestLegalScheduleAllowsOnlyOnePendingVersionIntegration(t *testing.T) {
 				Id:               first.Msg.Id,
 				ExpectedRevision: first.Msg.Revision,
 				EffectiveFrom: timestamppb.New(
-					time.Now().Add(24*time.Hour).UTC().Truncate(time.Second).Add(123456789),
+					time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second).Add(123456789),
 				),
 			}),
 		)
@@ -632,7 +632,7 @@ func TestDraftLegalDocumentTitlesUseBlockRevisionIntegration(t *testing.T) {
 	db := newLegalLocalKratosIntegrationDB(t)
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	store := newLegalLifecycleContentBlockStore(t, spiceDB)
-	contributor := integrationTestUUID()
+	contributor := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributor)
 
 	termsService := newTermsServiceForLegalIntegrationTest(

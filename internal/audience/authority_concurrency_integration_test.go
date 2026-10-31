@@ -11,6 +11,7 @@ import (
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 			result <- err
 		}()
 		requireAudienceMutationWaiting(t, result)
-		grantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
+		testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 		require.NoError(t, identityLock.Commit().Error)
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
 		var count int64
@@ -107,7 +108,7 @@ func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 			result := make(chan error, 1)
 			go func() { result <- test.invoke(audienceAuthorityContext(actorID), service, segmentID) }()
 			requireAudienceMutationWaiting(t, result)
-			grantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
+			testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 			require.NoError(t, rootLock.Commit().Error)
 			mutationErr := <-result
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(mutationErr), "error: %v", mutationErr)
@@ -119,12 +120,12 @@ func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 func seedAudienceAuthorityActor(t *testing.T) (*gorm.DB, *auth.SpiceDBClient, string) {
 	t.Helper()
 	db := newAudienceConcurrentIntegrationDB(t)
-	actorID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, actorID, "Audience authority race")
+	actorID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, actorID, "Audience authority race")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.Admin())
 	t.Cleanup(func() {
-		_ = db.Exec("DELETE FROM member WHERE id = ?::uuid", integrationMemberID(actorID)).Error
+		_ = db.Exec("DELETE FROM member WHERE id = ?::uuid", testutil.PostIntegrationMemberID(actorID)).Error
 		_ = db.Exec("DELETE FROM account_identity WHERE id = ?::uuid", actorID).Error
 		_ = db.Exec("DELETE FROM kratos.identities WHERE id = ?::uuid", actorID).Error
 	})
@@ -138,7 +139,7 @@ func seedAudienceAuthoritySegment(
 	archived bool,
 ) string {
 	t.Helper()
-	segmentID := integrationTestUUID()
+	segmentID := testutil.IntegrationUUID()
 	now := time.Now().UTC()
 	var archivedAt any
 	if archived {
@@ -156,8 +157,8 @@ func seedAudienceAuthoritySegment(
 func audienceAuthorityContext(identityID string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
-		MemberID:      auth.MemberID(integrationMemberID(identityID)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 }

@@ -62,7 +62,7 @@ func TestFormDomainAuditRootSettingsLifecycleAssetAndDeleteIntegration(t *testin
 	_, err = links.DeleteShareLink(ctx, connect.NewRequest(&managev1.DeleteShareLinkRequest{Id: dashboardLink.Msg.ShareLink.Id}))
 	require.NoError(t, err)
 
-	submission := &model.FormSubmission{ID: integrationTestUUID(), FormID: formID, Data: []byte(`{"private_answer":"must not audit"}`)}
+	submission := &model.FormSubmission{ID: testutil.IntegrationUUID(), FormID: formID, Data: []byte(`{"private_answer":"must not audit"}`)}
 	require.NoError(t, db.Create(submission).Error)
 	_, err = service.DeleteFormSubmission(ctx, connect.NewRequest(&managev1.DeleteFormSubmissionRequest{Id: submission.ID}))
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestFormDomainAuditRootSettingsLifecycleAssetAndDeleteIntegration(t *testin
 	require.Equal(t, sharedtelemetry.RequestIDFromContext(ctx), submissionAuditRows[0].RequestID)
 	require.JSONEq(t, `{}`, string(submissionAuditRows[0].Attributes))
 
-	rollbackSubmission := &model.FormSubmission{ID: integrationTestUUID(), FormID: formID, Data: []byte(`{"email":"private@example.test"}`)}
+	rollbackSubmission := &model.FormSubmission{ID: testutil.IntegrationUUID(), FormID: formID, Data: []byte(`{"email":"private@example.test"}`)}
 	require.NoError(t, db.Create(rollbackSubmission).Error)
 	failingDelete := newAuditedFormServiceForIntegration(t, db, identityID, writer, failingFormAuditAppender{}, spiceDB)
 	_, err = failingDelete.DeleteFormSubmission(ctx, connect.NewRequest(&managev1.DeleteFormSubmissionRequest{Id: rollbackSubmission.ID}))

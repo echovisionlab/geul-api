@@ -19,11 +19,11 @@ import (
 
 func TestPostSeriesTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Post Series XLIFF admin")
 	stack := testutil.SetupOryStack(t)
-	grantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
 	ctx := seriesAuditContext(t, adminID)
 	service := auditedSeriesIntegrationService(
 		t, db, adminID, stack.SpiceDBClient, apitelemetry.NewDurableWriter(db),

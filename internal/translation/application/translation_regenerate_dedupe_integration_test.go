@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -16,7 +17,7 @@ import (
 
 func TestRegenerateReturnsOneExactActiveJobUnderPostgresConcurrencyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	requestedBy := uuid.NewString()
 	require.NoError(t, db.Create(&model.Member{

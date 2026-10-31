@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -101,13 +102,13 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			db := newConcurrentServiceIntegrationDB(t)
-			identityID := integrationTestUUID()
-			memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Map Theme role race")
+			identityID := testutil.IntegrationUUID()
+			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Map Theme role race")
 			spiceDB := integrationSpiceDB(t)
-			grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 			ctx := postIntegrationAdminCtx(identityID, nil)
 			service := mapThemeServiceForTest(t, db, spiceDB)
-			theme, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Role-revoked source "+integrationTestUUID())))
+			theme, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Role-revoked source "+testutil.IntegrationUUID())))
 			require.NoError(t, err)
 			internal := NewInternalMapService(db, spiceDB)
 
@@ -118,7 +119,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 			result := make(chan error, 1)
 			go func() { result <- test.invoke(ctx, service, internal, theme.Msg.Id, memberID) }()
 			requireMapThemeMutationStillWaiting(t, result)
-			grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
+			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
 			require.NoError(t, lockTx.Commit().Error)
 
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))

@@ -103,7 +103,7 @@ func memberAuditCount(t *testing.T, db *gorm.DB, targetID string) int64 {
 
 func TestMemberProfileAuditPersistsOnlyApprovedFieldsAndSkipsNoOpIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "before")
 	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
 	ctx := memberAuditContext(t, fixture)
@@ -131,7 +131,7 @@ func TestMemberProfileAuditPersistsOnlyApprovedFieldsAndSkipsNoOpIntegration(t *
 
 func TestMemberProfileAuditFailureRollsBackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "before")
 	service := memberAuditService(t, db, failingDomainAuditAppender{})
 	nickname := "must-not-commit"
@@ -146,7 +146,7 @@ func TestMemberProfileAuditFailureRollsBackIntegration(t *testing.T) {
 
 func TestMemberPreferencesAndTagsAuditPersistExactAttributesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "member")
 	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
 	ctx := memberAuditContext(t, fixture)
@@ -193,7 +193,7 @@ func TestMemberPreferencesAndTagsAuditPersistExactAttributesIntegration(t *testi
 
 func TestMemberPreferencesAuditFailureRollsBackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "member")
 	service := memberAuditService(t, db, failingDomainAuditAppender{})
 	locale := "ko"
@@ -214,7 +214,7 @@ func TestMemberPreferencesAuditFailureRollsBackIntegration(t *testing.T) {
 
 func TestMemberTagAuditsCommitExactLifecycleAndSkipRejectedMutationsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	admin := createMemberAuditFixture(t, db, "member-tag-admin")
 	firstMember := createMemberAuditFixture(t, db, "member-tag-first")
 	secondMember := createMemberAuditFixture(t, db, "member-tag-second")
@@ -259,7 +259,7 @@ func TestMemberTagAuditsCommitExactLifecycleAndSkipRejectedMutationsIntegration(
 
 func TestMemberTagDeleteRejectsAudienceReferencesWithoutAuditIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	admin := createMemberAuditFixture(t, db, "member-tag-audience-admin")
 	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
 	syncIntegrationGlobalRole(t, testutil.SetupOryStack(t).SpiceDBClient, admin.IdentityID, policyv1.Role.Admin())
@@ -289,7 +289,7 @@ func TestMemberTagDeleteRejectsAudienceReferencesWithoutAuditIntegration(t *test
 
 func TestMemberTagAuditAppendFailureRollsBackCreateAndDeleteIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	admin := createMemberAuditFixture(t, db, "member-tag-failing-admin")
 	assignedMember := createMemberAuditFixture(t, db, "member-tag-failing-member")
 	service := memberAuditService(t, db, failingDomainAuditAppender{})
@@ -347,7 +347,7 @@ func (p memberAuditAvatarPromoter) PromoteUserAvatarAsset(context.Context, strin
 
 func TestMemberAvatarAuditRollbackAndNoOpIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "member")
 	fileID, assetID := uuid.NewString(), uuid.NewString()
 	now := time.Now().UTC()

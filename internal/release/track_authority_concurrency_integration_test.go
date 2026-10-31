@@ -35,10 +35,10 @@ func newReleaseTrackAuthorityRaceFixture(t *testing.T) releaseTrackAuthorityRace
 	t.Helper()
 
 	db := newConcurrentServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Release Track authority race")
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Release Track authority race")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseIntegrationAdminCtx(identityID)
 	files := &recordingReleaseDeleteFileDeleter{}
 	releases := releasepkg.NewReleaseService(
@@ -91,7 +91,7 @@ func (f releaseTrackAuthorityRaceFixture) createTrack(t *testing.T, title string
 
 func (f releaseTrackAuthorityRaceFixture) revokeAdmin(t *testing.T) {
 	t.Helper()
-	grantIntegrationGlobalRole(t, f.spiceDB, f.identity, policyv1.Role.User())
+	testutil.GrantIntegrationGlobalRole(t, f.spiceDB, f.identity, policyv1.Role.User())
 }
 
 func lockReleaseAuthorityRaceRoot(t *testing.T, db *gorm.DB, releaseID string) *gorm.DB {
@@ -187,7 +187,7 @@ func TestReleaseMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.
 
 	t.Run("artwork", func(t *testing.T) {
 		fixture := newReleaseTrackAuthorityRaceFixture(t)
-		fileID := integrationTestUUID()
+		fileID := testutil.IntegrationUUID()
 		seedFileDeleteLifecycleFile(t, fixture.db, fileID, "authority-race", "image/webp", "webp")
 		seedHardCutReadyPublicAsset(t, fixture.db, "artwork", "webp", "image/webp", &fileID)
 		lockTx := lockReleaseAuthorityRaceRoot(t, fixture.db, fixture.release)
@@ -363,7 +363,7 @@ func TestTrackCreditsObservedSnapshotPreservesConcurrentChangesIntegration(t *te
 	t.Parallel()
 	fixture := newReleaseTrackAuthorityRaceFixture(t)
 	trackID := fixture.createTrack(t, "Observed credit merge")
-	peerID := integrationTestUUID()
+	peerID := testutil.IntegrationUUID()
 	oldName := "Original credit"
 	deletedName := "Deleted by a peer"
 	peerName := "Added in another tab"
@@ -429,7 +429,7 @@ func TestTrackCreditsObservedSnapshotPreservesConcurrentChangesIntegration(t *te
 	require.NoError(t, err)
 	var foreignCredit model.TrackCredit
 	require.NoError(t, fixture.db.Where("track_id = ?", foreignTrackID).First(&foreignCredit).Error)
-	for _, unknownID := range []string{foreignCredit.ID, integrationTestUUID()} {
+	for _, unknownID := range []string{foreignCredit.ID, testutil.IntegrationUUID()} {
 		_, err = fixture.tracks.SetTrackCredits(fixture.ctx, connect.NewRequest(&managev1.SetTrackCreditsRequest{
 			TrackId:  trackID,
 			Credits:  []*managev1.TrackCreditInput{{Id: stringPtr(unknownID), CreditedName: stringPtr("Must be rejected")}},

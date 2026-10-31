@@ -129,7 +129,12 @@ func NewEmailContentBlockStore(t *testing.T, _ *auth.SpiceDBClient) *contentbloc
 }
 
 func NewParagraphBatch(document *contentv1.RichTextDocument, expectedRevision, locale, text string, contributors []string) *contentv1.RichTextBlockMutationBatch {
-	blockID := uuid.NewString()
+	return NewParagraphBlockBatch(document, expectedRevision, locale, uuid.NewString(), text, contributors)
+}
+
+// NewParagraphBlockBatch upserts paragraph blockID at the first position, so
+// repeated batches for one block rewrite its text instead of adding blocks.
+func NewParagraphBlockBatch(document *contentv1.RichTextDocument, expectedRevision, locale, blockID, text string, contributors []string) *contentv1.RichTextBlockMutationBatch {
 	return &contentv1.RichTextBlockMutationBatch{BlockCatalogFingerprint: document.GetBlockCatalogFingerprint(), Profile: document.GetProfile(), ExpectedRevision: expectedRevision, ContributorMemberIds: contributors, BaseMutations: []*contentv1.RichTextBlockMutation{{Operation: &contentv1.RichTextBlockMutation_Upsert{Upsert: &contentv1.UpsertRichTextBlock{Node: &contentv1.RichTextBlockNode{Block: &contentv1.RichTextBlock{Id: blockID, Value: &contentv1.RichTextBlock_Paragraph{Paragraph: &contentv1.ParagraphBlock{Props: &contentv1.ParagraphProps{}}}}, Placement: &contentv1.ContentBlockPlacement{Index: 0}}}}}}, LocaleMutationGroups: []*contentv1.RichTextLocaleMutationGroup{{Locale: locale, Mutations: []*contentv1.RichTextBlockLocaleMutation{{Operation: &contentv1.RichTextBlockLocaleMutation_Upsert{Upsert: &contentv1.UpsertRichTextBlockLocale{Block: &contentv1.RichTextBlockLocale{BlockId: blockID, Value: &contentv1.RichTextBlockLocale_Paragraph{Paragraph: &contentv1.ParagraphBlockLocale{Props: &contentv1.ParagraphLocaleProps{}, Content: []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{Text: &contentv1.RichTextStyledText{Text: text}}}}}}}}}}}}}}
 }
 

@@ -27,12 +27,12 @@ import (
 
 func TestWorkDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminIdentityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminIdentityID, "Work audit admin")
+	db := testutil.NewIntegrationDB(t)
+	adminIdentityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Work audit admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminIdentityID, policyv1.Role.Admin())
-	memberID := integrationMemberID(adminIdentityID)
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminIdentityID, policyv1.Role.Admin())
+	memberID := testutil.PostIntegrationMemberID(adminIdentityID)
 	contributorID := seedWorkAuditContributor(t, db, spiceDB)
 	memberCtx := withWorkAuditedRequestContext(t, workIntegrationAdminCtx(adminIdentityID))
 	writer := apitelemetry.NewDurableWriter(db)

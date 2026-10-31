@@ -15,6 +15,7 @@ import (
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -159,9 +160,9 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			adminSessionID := insertArchivedLegalIntegrationSession(t, db, admin.IdentityID.String())
 			store := newLegalLifecycleContentBlockStore(t, spiceDB)
 
-			authorID := integrationTestUUID()
-			authorMemberID := seedExternalKratosIdentityWithTraits(t, db, authorID, "Archived legal Author")
-			grantIntegrationGlobalRole(t, spiceDB, authorID, policyv1.Role.Author())
+			authorID := testutil.IntegrationUUID()
+			authorMemberID := testutil.SeedPostIntegrationIdentity(t, db, authorID, "Archived legal Author")
+			testutil.GrantIntegrationGlobalRole(t, spiceDB, authorID, policyv1.Role.Author())
 			authorSessionID := insertArchivedLegalIntegrationSession(t, db, authorID)
 			authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 				IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(authorMemberID),
@@ -179,9 +180,9 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			require.NoError(t, err, "a global Author may open an archived legal collaboration document read-only")
 			require.Equal(t, revision, loadedRevision)
 
-			_, err = testCase.apply(authorCtx, db, id, legalArchivedParagraphMutationBatch(loadedRevision, integrationMemberID(authorID)), store, spiceDB)
+			_, err = testCase.apply(authorCtx, db, id, legalArchivedParagraphMutationBatch(loadedRevision, testutil.PostIntegrationMemberID(authorID)), store, spiceDB)
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-			_, err = testCase.metadata(authorCtx, db, id, loadedRevision, "Author must not edit archived source metadata", []string{integrationMemberID(authorID)}, store, spiceDB)
+			_, err = testCase.metadata(authorCtx, db, id, loadedRevision, "Author must not edit archived source metadata", []string{testutil.PostIntegrationMemberID(authorID)}, store, spiceDB)
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 
 			revision, err = testCase.apply(adminCtx, db, id, legalArchivedParagraphMutationBatch(loadedRevision, admin.MemberID.String()), store, spiceDB)
@@ -312,7 +313,7 @@ func legalExactLocaleBlockCountIntegration(
 
 func insertArchivedLegalIntegrationSession(t *testing.T, db *gorm.DB, identityID string) string {
 	t.Helper()
-	sessionID := integrationTestUUID()
+	sessionID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.sessions (
 			id, identity_id, active, authenticated_at, expires_at,
@@ -326,7 +327,7 @@ func insertArchivedLegalIntegrationSession(t *testing.T, db *gorm.DB, identityID
 }
 
 func legalArchivedParagraphMutationBatch(expectedRevision, contributorMemberID string) *contentv1.RichTextBlockMutationBatch {
-	blockID := integrationTestUUID()
+	blockID := testutil.IntegrationUUID()
 	return &contentv1.RichTextBlockMutationBatch{
 		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_POLICY,

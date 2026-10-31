@@ -11,12 +11,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestOgGenerationBulkBatchesThousandsOfTargetsInOnePostgresTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	const targetCount = 3200
 	requests := make([]og.Request, targetCount)
 	for index := range requests {

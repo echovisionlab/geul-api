@@ -20,11 +20,11 @@ import (
 
 func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release authorization admin")
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release authorization admin")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withAuditedRequestContext(t, releaseIntegrationAdminCtx(adminID))
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(adminID))
 	require.NoError(t, err)

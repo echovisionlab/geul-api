@@ -10,12 +10,13 @@ import (
 
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestResolveFormOgGenerationPreservesExactSourceAndTranslationTitlesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	formID := seedFormSourceLocaleBaseRowAt(t, db, now)
 	seedFormSourceLocaleTranslationRow(t, db, formID, "ko", "원본 신청서 제목", []byte(`{"id":"source","steps":[]}`), nil, now)

@@ -3,10 +3,12 @@
 package form_test
 
 import (
-	"connectrpc.com/connect"
 	"encoding/json"
 	"testing"
 	"time"
+
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -19,15 +21,15 @@ import (
 // revision. There is no translation-source state or edit-hash side channel.
 func TestFormSourceSaveUsesContentDocumentRevisionCASIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Unix(1_700_009_000, 0).UTC()
 	formID := seedFormSourceLocaleBaseRowAt(t, db, now)
 	sourceSchema := []byte(`{"id":"source-schema","steps":[{"id":"step-1","title":"Contact","fields":[{"id":"field-email","key":"email","label":"Email","type":"email"}]}]}`)
 	seedFormSourceLocaleTranslationRow(t, db, formID, "en", "Contact", sourceSchema, ptrString("Contact\nEmail"), now)
-	identityID := integrationTestUUID()
-	contributorID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Form source mutation contributor")
+	identityID := testutil.IntegrationUUID()
+	contributorID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Form source mutation contributor")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	policy, err := policyv1.Form.TouchPolicy(formID)
 	require.NoError(t, err)
 	_, err = spiceDB.ApplyRelationships(t.Context(), policy)

@@ -23,13 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB { return testutil.NewIntegrationDB(t) }
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	return testutil.NewConcurrentPostIntegrationDB(t)
-}
-func integrationTestUUID() string { return testutil.IntegrationUUID() }
-func integrationMemberID(identityID string) string {
-	return testutil.PostIntegrationMemberID(identityID)
 }
 
 type recordingSeriesFileDeleter struct {
@@ -84,14 +79,6 @@ type ogEntitySnapshotForTest struct {
 	FeaturedImage *ogAssetSnapshotForTest `json:"featured_image,omitempty"`
 }
 
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	t.Helper()
-	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
-	require.NoError(t, err)
-	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
-	require.NoError(t, err)
-}
-
 func requireFileRowExists(t *testing.T, db *gorm.DB, fileID string) {
 	t.Helper()
 	var count int64
@@ -129,8 +116,8 @@ func grantSeriesPostAuthorRelation(t *testing.T, service *SeriesService, postID,
 
 func seedImageBindingUploadedFileFixture(t *testing.T, db *gorm.DB, key string) string {
 	t.Helper()
-	fileID := integrationTestUUID()
-	assetID := integrationTestUUID()
+	fileID := testutil.IntegrationUUID()
+	assetID := testutil.IntegrationUUID()
 	digest := sha256.Sum256([]byte(key))
 	objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
 	require.NoError(t, err)
@@ -147,19 +134,4 @@ func seedImageBindingUploadedFileFixture(t *testing.T, db *gorm.DB, key string) 
 		Status:      model.PublicAssetStatusReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now,
 	}).Error)
 	return fileID
-}
-
-// requireLockWaiters waits until want sessions of the test's own database are
-// blocked on a lock, so concurrent operations queue in a known order.
-func requireLockWaiters(t *testing.T, db *gorm.DB, want int) {
-	t.Helper()
-	require.Eventually(t, func() bool {
-		var waiting int
-		err := db.Raw(`
-			SELECT count(*)
-			FROM pg_stat_activity
-			WHERE datname = current_database()
-			  AND wait_event_type = 'Lock'`).Scan(&waiting).Error
-		return err == nil && waiting >= want
-	}, 10*time.Second, 10*time.Millisecond)
 }

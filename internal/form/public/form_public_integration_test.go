@@ -38,7 +38,7 @@ func TestPublicFormServiceAccessPasswordSubmitAndLimitIntegration(t *testing.T) 
 		MaxSubmissions:           publicInt32Ptr(1),
 		AllowDuplicateSubmission: boolPtr(true),
 	})
-	featuredImageFileID, _ := seedCanonicalPublicFileFixture(t, db, "featured.webp", "image/webp", "image")
+	featuredImageFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "featured.webp", "image/webp", "image")
 	_, err := newPublicManageFormService(t, db, adminID).SetFormFeaturedImage(
 		formPublicPrincipalContext(adminMemberID, adminID),
 		connect.NewRequest(&managev1.SetFormFeaturedImageRequest{

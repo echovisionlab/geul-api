@@ -40,13 +40,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
