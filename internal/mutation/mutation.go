@@ -253,6 +253,7 @@ type Audit struct {
 	build     domainaudit.Builder
 	memberID  string
 	unchanged bool
+	all       []Audit
 }
 
 // RequestAudit attributes the record to the request's member actor.
@@ -266,6 +267,23 @@ func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build doma
 	return Audit{action: action, build: build, memberID: memberID}
 }
 
+// Audits names every record of a mutation that changes several audited
+// facets at once, such as a Series update that edits metadata and moves its
+// lifecycle. Unchanged entries are skipped; when every entry is unchanged
+// the mutation declines its record.
+func Audits(audits ...Audit) Audit {
+	changed := make([]Audit, 0, len(audits))
+	for _, audit := range audits {
+		if !audit.unchanged {
+			changed = append(changed, audit)
+		}
+	}
+	if len(changed) == 0 {
+		return Unchanged()
+	}
+	return Audit{all: changed}
+}
+
 // Unchanged declines the record because the mutation changed nothing.
 func Unchanged() Audit {
 	return Audit{unchanged: true}
@@ -273,6 +291,13 @@ func Unchanged() Audit {
 
 func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) error {
 	switch {
+	case len(audit.all) != 0:
+		for _, each := range audit.all {
+			if err := r.appendAudit(ctx, tx, each); err != nil {
+				return err
+			}
+		}
+		return nil
 	case audit.unchanged:
 		return nil
 	case audit.action == "" || audit.build == nil:

@@ -160,6 +160,33 @@ func TestRunRequiresAnExplicitAuditDecision(t *testing.T) {
 	require.EqualValues(t, 1, noteCount(t, db))
 }
 
+func TestAuditsAppendsEveryChangedRecord(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "two facets")
+	record := func(action sharedtelemetry.AuditAction) Audit {
+		return RequestAudit(action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), "tag")
+		})
+	}
+	spec.Audit = func(note) Audit {
+		return Audits(record(sharedtelemetry.AuditMemberTagCreated), Unchanged(), record(sharedtelemetry.AuditMemberTagCreated))
+	}
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 2)
+
+	spec.Audit = func(note) Audit { return Audits(Unchanged(), Unchanged()) }
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 2)
+
+	spec.Audit = func(note) Audit { return Audits(Audit{}) }
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorContains(t, err, "return Unchanged")
+}
+
 func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 	runner, _ := newTestRunner(t, &audittest.Recorder{})
 	var steps []string
