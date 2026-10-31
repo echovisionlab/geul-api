@@ -422,49 +422,67 @@ func validateAcceptedApply(
 	if err := validateCanonicalOperations(result.Normalized); err != nil {
 		return ApplyResult{}, fmt.Errorf("domain port accepted invalid normalized operations: %w", err)
 	}
+	if err := validateAcceptedChanges(result); err != nil {
+		return ApplyResult{}, err
+	}
+	if err := validateRevisionAdvance(expectedDocumentRevision, expectedTargetRevision, result); err != nil {
+		return ApplyResult{}, err
+	}
+	return result, nil
+}
+
+// validateAcceptedChanges requires at most one change per normalized
+// operation, matching that operation's kind.
+func validateAcceptedChanges(result ApplyResult) error {
 	seenChanges := make(map[int]struct{}, len(result.Changes))
 	for _, change := range result.Changes {
 		if change.Operation < 0 || change.Operation >= len(result.Normalized) {
-			return ApplyResult{}, errors.New("domain port accepted change outside the normalized operation batch")
+			return errors.New("domain port accepted change outside the normalized operation batch")
 		}
 		if result.Normalized[change.Operation].Kind != change.Kind {
-			return ApplyResult{}, errors.New("domain port accepted change kind does not match its normalized operation")
+			return errors.New("domain port accepted change kind does not match its normalized operation")
 		}
 		if _, exists := seenChanges[change.Operation]; exists {
-			return ApplyResult{}, errors.New("domain port accepted duplicate changes for one normalized operation")
+			return errors.New("domain port accepted duplicate changes for one normalized operation")
 		}
 		seenChanges[change.Operation] = struct{}{}
 	}
-	if result.Changed {
-		if len(result.Changes) == 0 {
-			return ApplyResult{}, errors.New("domain port reported a changed mutation without accepted changes")
-		}
-		switch {
-		case result.TargetRevision != nil:
-			if result.DocumentRevision != expectedDocumentRevision {
-				return ApplyResult{}, errors.New("domain port advanced the document revision for a target-only mutation")
-			}
-			if expectedTargetRevision != nil && *result.TargetRevision == *expectedTargetRevision {
-				return ApplyResult{}, errors.New("domain port reported a changed target mutation without a new target revision")
-			}
-		case isDeleteTranslationOperations(result.Normalized):
-			if result.DocumentRevision != expectedDocumentRevision {
-				return ApplyResult{}, errors.New("domain port advanced the document revision for target deletion")
-			}
-		default:
-			if result.DocumentRevision == expectedDocumentRevision {
-				return ApplyResult{}, errors.New("domain port reported a changed source mutation without a new document revision")
-			}
-		}
-	} else {
+	return nil
+}
+
+// validateRevisionAdvance requires a changed mutation to advance exactly the
+// revision it wrote and a semantic no-op to advance neither.
+func validateRevisionAdvance(expectedDocumentRevision Revision, expectedTargetRevision *Revision, result ApplyResult) error {
+	if !result.Changed {
 		if result.DocumentRevision != expectedDocumentRevision || !equalRevision(result.TargetRevision, expectedTargetRevision) {
-			return ApplyResult{}, errors.New("domain port advanced a revision for a semantic no-op")
+			return errors.New("domain port advanced a revision for a semantic no-op")
 		}
 		if len(result.Changes) != 0 {
-			return ApplyResult{}, errors.New("domain port returned accepted changes for a semantic no-op")
+			return errors.New("domain port returned accepted changes for a semantic no-op")
+		}
+		return nil
+	}
+	if len(result.Changes) == 0 {
+		return errors.New("domain port reported a changed mutation without accepted changes")
+	}
+	switch {
+	case result.TargetRevision != nil:
+		if result.DocumentRevision != expectedDocumentRevision {
+			return errors.New("domain port advanced the document revision for a target-only mutation")
+		}
+		if expectedTargetRevision != nil && *result.TargetRevision == *expectedTargetRevision {
+			return errors.New("domain port reported a changed target mutation without a new target revision")
+		}
+	case isDeleteTranslationOperations(result.Normalized):
+		if result.DocumentRevision != expectedDocumentRevision {
+			return errors.New("domain port advanced the document revision for target deletion")
+		}
+	default:
+		if result.DocumentRevision == expectedDocumentRevision {
+			return errors.New("domain port reported a changed source mutation without a new document revision")
 		}
 	}
-	return result, nil
+	return nil
 }
 
 func isDeleteTranslationOperations(operations []Operation) bool {
