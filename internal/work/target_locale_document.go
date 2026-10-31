@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -248,6 +249,10 @@ func applyWorkTargetLocaleBatch(
 	}
 	if patch.DeleteLocale && state.TargetMetadata == nil {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Work target locale must exist before deletion")
+	}
+	if patch.UpdateTitle && patch.Title != nil {
+		trimmed := strings.TrimSpace(*patch.Title)
+		patch.Title = &trimmed
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
