@@ -4,12 +4,18 @@ package integration
 
 import (
 	"context"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -82,8 +88,14 @@ func seedPublicAdminMemberIdentityLink(t *testing.T, db *gorm.DB, identityID, ni
 	return memberID
 }
 
+// publicLegalAdminCtx is an administrator's request, so mutations can name
+// their audit records.
 func publicLegalAdminCtx(memberID, identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.97")
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
 		MemberID: auth.MemberID(memberID), IdentityID: auth.IdentityID(identityID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -98,21 +110,19 @@ func newPublicWorkRuntimeForTest(db *gorm.DB, cdnDomain string) *workadapter.Run
 	)
 }
 
-func newPublicWorkManageService(t *testing.T, db *gorm.DB, adminID string) *workdomain.WorkService {
+func newPublicWorkManageService(t *testing.T, db *gorm.DB, _ string) *workdomain.ConnectHandler {
 	t.Helper()
-	return workdomain.NewWorkService(
-		db,
-		newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
-		publicIntegrationSpiceDBFor(t, db),
-		&publicReferenceIdentityManager{identity: &auth.Identity{
-			ID: adminID, State: auth.KratosStateActive,
-			Traits: map[string]interface{}{"name": "Public Work Admin", "preferred_locale": "en"},
-		}},
-		publicReferenceAsyncPublisher{},
-		workdomain.WithWorkContentBlockStore(newPublicWorkContentBlockStore(t)),
-		workdomain.WithWorkContentBlockMediaHydrator(extractedWorkPublicMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "https://cdn.example.com")),
-	)
+	spiceDB := publicIntegrationSpiceDBFor(t, db)
+	service, err := workdomain.NewService(workdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Runtime: newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
+		Signals: publicReferenceAsyncPublisher{}, ContentBlocks: newPublicWorkContentBlockStore(t),
+		Media:       extractedWorkPublicMediaHydrator{},
+		Members:     workadapter.NewMemberSummaries(db, "https://cdn.example.com"),
+		Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}, Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	return workdomain.NewConnectHandler(service)
 }
 
 type publicReferenceIdentityManager struct{ identity *auth.Identity }

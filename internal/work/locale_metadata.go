@@ -3,12 +3,13 @@ package work
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
 
@@ -47,7 +48,7 @@ func loadWorkSourceLocaleMetadataByWorkID(
 		WHERE wt.entity_id::text IN ?
 	`, normalized).Scan(&rows)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 
 	states := make(map[string]*workSourceLocaleMetadata, len(rows))
@@ -78,7 +79,7 @@ func LoadRequiredSourceLocaleMetadata(
 	}
 	state := states[workID]
 	if state == nil {
-		return nil, errs.NotFound("work_translation", workID)
+		return nil, domainerr.ResourceNotFound("work_translation", workID)
 	}
 	return state, nil
 }
@@ -93,7 +94,7 @@ func createInitialWorkSourceLocaleMetadata(
 	now time.Time,
 ) error {
 	if strings.TrimSpace(sourceLocale) == "" {
-		return errs.InternalMsg("invalid initial Work source locale")
+		return errors.New("invalid initial Work source locale")
 	}
 
 	if err := db.WithContext(ctx).Exec(`
@@ -113,7 +114,7 @@ func createInitialWorkSourceLocaleMetadata(
 		now,
 		now,
 	).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }

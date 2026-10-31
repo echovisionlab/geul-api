@@ -37,7 +37,7 @@ func TestOptionalRelationReadFailuresLogCauseAndPreserveFallback(t *testing.T) {
 	mock.ExpectExec("ROLLBACK TO SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	mock.ExpectClose()
-	service := &WorkService{db: db}
+	service := &Service{db: db}
 	err = db.Transaction(func(tx *gorm.DB) error {
 		snapshot, readErr := service.loadWorkPublicRelationsSnapshot(t.Context(), tx, &model.Work{ID: "work-1"})
 		require.NoError(t, readErr)

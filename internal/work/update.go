@@ -2,19 +2,19 @@ package work
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -23,39 +23,85 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// UpdateWorkCommand edits Work settings. A nil field is left alone.
+// Metadata and Clients merge into the current values the changes from the
+// observed baseline the caller read, which they then require.
+type UpdateWorkCommand struct {
+	ID               string
+	Slug             *string
+	Type             *string
+	Metadata         structured.Fields
+	ObservedMetadata structured.Fields
+	Featured         *bool
+	Clients          *[]string
+	ObservedClients  *[]string
+	Year             *int32
+	Month            *int32
+	UntilYear        *int32
+	UntilMonth       *int32
+	IsPresent        *bool
+	MapPlaceID       *string
+}
+
 type workUpdatePlan struct {
 	fields         structured.Fields
 	normalizedSlug *string
 	slugPresent    bool
 }
 
-func (s *WorkService) UpdateWork(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateWorkRequest],
-) (*connect.Response[managev1.UpdateWorkResponse], error) {
-	work, err := loadWorkForUpdate(ctx, s.db, req.Msg.Id)
+// workUpdate is the outcome of an update.
+type workUpdate struct {
+	work          model.Work
+	changedFields []string
+	changed       bool
+}
+
+func (s *Service) UpdateWork(ctx context.Context, command UpdateWorkCommand) (*managev1.UpdateWorkResponse, error) {
+	if err := requireStoredWork(ctx, s.db, command.ID); err != nil {
+		return nil, err
+	}
+	plan, err := s.buildWorkUpdatePlan(ctx, command)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := s.buildWorkUpdatePlan(ctx, req.Msg)
+	update, err := mutation.Run(ctx, s.mutations, mutation.Spec[workUpdate]{
+		Access: lockedWork(command.ID, policyv1.Work.Manage, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (workUpdate, error) {
+			return s.applyWorkUpdatePlan(ctx, tx, command, plan)
+		},
+		Audit: func(update workUpdate) mutation.Audit {
+			if len(update.changedFields) == 0 {
+				return mutation.Unchanged()
+			}
+			return workUpdatedAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewWorkMetadataAuditRecord(metadata, update.work.ID, update.changedFields)
+			})
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, update workUpdate) error {
+			if !update.changed {
+				return nil
+			}
+			return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildManageWorkContentUpdatedEvent(command))
+		},
+	})
 	if err != nil {
+		if !mutation.IsClassified(err) && dberrors.IsUniqueViolation(err) {
+			return nil, domainerr.Duplicate("work", "slug", "slug").WithCause(err)
+		}
 		return nil, err
 	}
-	changed, err := s.applyWorkUpdatePlan(ctx, &work, req.Msg, plan)
-	if err != nil {
-		return nil, mapWorkUpdateError(err)
-	}
+	work := update.work
 	metadata, err := structpb.NewStruct(work.Metadata)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	clients, err := s.getWorkClients(ctx, work.ID)
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.UpdateWorkResponse{
+	return &managev1.UpdateWorkResponse{
 		Id:         work.ID,
-		Changed:    changed,
+		Changed:    update.changed,
 		Slug:       work.Slug,
 		Type:       managev1.WorkType(managev1.WorkType_value[work.Type]),
 		Metadata:   metadata,
@@ -68,26 +114,11 @@ func (s *WorkService) UpdateWork(
 		IsPresent:  work.IsPresent,
 		MapPlaceId: work.MapPlaceID,
 		UpdatedAt:  timestamppb.New(work.UpdatedAt),
-	}), nil
+	}, nil
 }
 
-func loadWorkForUpdate(ctx context.Context, db *gorm.DB, workID string) (model.Work, error) {
-	var work model.Work
-	err := db.WithContext(ctx).First(&work, "id = ?", workID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return model.Work{}, errs.NotFound("work", workID)
-	}
-	if err != nil {
-		return model.Work{}, errs.Internal(err)
-	}
-	return work, nil
-}
-
-func (s *WorkService) buildWorkUpdatePlan(
-	ctx context.Context,
-	request *managev1.UpdateWorkRequest,
-) (workUpdatePlan, error) {
-	slug, slugPresent := normalizeOptionalNullableString(request.Slug)
+func (s *Service) buildWorkUpdatePlan(ctx context.Context, command UpdateWorkCommand) (workUpdatePlan, error) {
+	slug, slugPresent := normalizeOptionalNullableString(command.Slug)
 	if err := s.validateWorkUpdateSlug(ctx, slug); err != nil {
 		return workUpdatePlan{}, err
 	}
@@ -96,14 +127,14 @@ func (s *WorkService) buildWorkUpdatePlan(
 		normalizedSlug: slug,
 		slugPresent:    slugPresent,
 	}
-	assignWorkUpdateScalarFields(plan.fields, request, slug, slugPresent)
-	if err := s.assignWorkUpdateMapPlace(ctx, plan.fields, request.MapPlaceId); err != nil {
+	assignWorkUpdateScalarFields(plan.fields, command, slug, slugPresent)
+	if err := s.assignWorkUpdateMapPlace(ctx, plan.fields, command.MapPlaceID); err != nil {
 		return workUpdatePlan{}, err
 	}
 	return plan, nil
 }
 
-func (s *WorkService) validateWorkUpdateSlug(ctx context.Context, slug *string) error {
+func (s *Service) validateWorkUpdateSlug(ctx context.Context, slug *string) error {
 	if slug == nil {
 		return nil
 	}
@@ -115,7 +146,7 @@ func (s *WorkService) validateWorkUpdateSlug(ctx context.Context, slug *string) 
 
 func assignWorkUpdateScalarFields(
 	updates structured.Fields,
-	request *managev1.UpdateWorkRequest,
+	command UpdateWorkCommand,
 	slug *string,
 	slugPresent bool,
 ) {
@@ -126,17 +157,17 @@ func assignWorkUpdateScalarFields(
 			updates["slug"] = *slug
 		}
 	}
-	if request.Type != nil {
-		updates["type"] = request.Type.String()
+	if command.Type != nil {
+		updates["type"] = *command.Type
 	}
-	if request.Featured != nil {
-		updates["featured"] = *request.Featured
+	if command.Featured != nil {
+		updates["featured"] = *command.Featured
 	}
 }
 
 func assignWorkUpdateRange(
 	work model.Work,
-	request *managev1.UpdateWorkRequest,
+	request UpdateWorkCommand,
 ) (structured.Fields, error) {
 	if request.Year == nil && request.Month == nil && request.UntilYear == nil &&
 		request.UntilMonth == nil && request.IsPresent == nil {
@@ -198,7 +229,7 @@ func cloneInt32(value *int32) *int32 {
 	return &cloned
 }
 
-func (s *WorkService) assignWorkUpdateMapPlace(
+func (s *Service) assignWorkUpdateMapPlace(
 	ctx context.Context,
 	updates structured.Fields,
 	requested *string,
@@ -218,79 +249,62 @@ func (s *WorkService) assignWorkUpdateMapPlace(
 	return nil
 }
 
-func (s *WorkService) applyWorkUpdatePlan(
+func (s *Service) applyWorkUpdatePlan(
 	ctx context.Context,
-	work *model.Work,
-	request *managev1.UpdateWorkRequest,
+	tx *gorm.DB,
+	command UpdateWorkCommand,
 	plan workUpdatePlan,
-) (bool, error) {
-	changed := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := requireLockedWorkPermission(ctx, tx, s.spiceDB, work.ID, policyv1.Work.Manage, workAuthorizationMutation); err != nil {
-			return err
+) (workUpdate, error) {
+	var update workUpdate
+	if err := tx.WithContext(ctx).Take(&update.work, "id = ?", command.ID).Error; err != nil {
+		return update, err
+	}
+	work := &update.work
+	if err := validateWorkUpdateObservedFields(command); err != nil {
+		return update, err
+	}
+	rangeFields, err := assignWorkUpdateRange(*work, command)
+	if err != nil {
+		return update, err
+	}
+	for field, value := range rangeFields {
+		plan.fields[field] = value
+	}
+	if command.Metadata != nil {
+		plan.fields["metadata"] = mergeWorkMetadataIntent(
+			sanitizeWorkMetadata(work.Metadata),
+			sanitizeWorkMetadata(command.ObservedMetadata),
+			sanitizeWorkMetadata(command.Metadata),
+		)
+	}
+	if plan.slugPresent && plan.normalizedSlug != nil {
+		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "work", "works", *plan.normalizedSlug); err != nil {
+			return update, err
 		}
-		var locked model.Work
-		if err := tx.WithContext(ctx).Take(&locked, "id = ?", work.ID).Error; err != nil {
-			return err
+	}
+	update.changedFields = workUpdateChangedFields(*work, plan.fields)
+	clientsChanged, clientIDs, err := workClientSetChanged(ctx, tx, work.ID, command.Clients, command.ObservedClients)
+	if err != nil {
+		return update, err
+	}
+	if len(update.changedFields) > 0 {
+		mutationNow := dbtime.Now()
+		plan.fields["updated_at"] = mutationNow
+		if err := tx.Model(work).Updates(plan.fields).Error; err != nil {
+			return update, err
 		}
-		*work = locked
-		if err := validateWorkUpdateObservedFields(request); err != nil {
-			return err
+		applyWorkUpdateFields(work, plan.fields)
+		work.UpdatedAt = mutationNow
+		update.changed = true
+	}
+	if clientsChanged {
+		if err := replaceWorkClients(ctx, tx, work.ID, clientIDs); err != nil {
+			return update, err
 		}
-		rangeFields, err := assignWorkUpdateRange(locked, request)
-		if err != nil {
-			return err
-		}
-		for field, value := range rangeFields {
-			plan.fields[field] = value
-		}
-		if request.Metadata != nil {
-			plan.fields["metadata"] = mergeWorkMetadataIntent(
-				sanitizeWorkMetadata(work.Metadata),
-				sanitizeWorkMetadata(request.ObservedMetadata.AsMap()),
-				sanitizeWorkMetadata(request.Metadata.AsMap()),
-			)
-		}
-		if plan.slugPresent && plan.normalizedSlug != nil {
-			if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "work", "works", *plan.normalizedSlug); err != nil {
-				return err
-			}
-		}
-		changedFields := workUpdateChangedFields(*work, plan.fields)
-		clientsChanged, clientIDs, err := workClientSetChanged(ctx, tx, work.ID, request.Clients, request.ObservedClients)
-		if err != nil {
-			return err
-		}
-		if len(changedFields) > 0 {
-			mutationNow := dbtime.Now()
-			plan.fields["updated_at"] = mutationNow
-			if err := tx.Model(work).Updates(plan.fields).Error; err != nil {
-				return err
-			}
-			applyWorkUpdateFields(work, plan.fields)
-			work.UpdatedAt = mutationNow
-			changed = true
-		}
-		if clientsChanged {
-			if err := replaceWorkClients(ctx, tx, work.ID, clientIDs); err != nil {
-				return err
-			}
-			changedFields = append(changedFields, "clients")
-			changed = true
-		}
-		if len(changedFields) > 0 {
-			if err := s.appendWorkAudit(ctx, tx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewWorkMetadataAuditRecord(metadata, work.ID, changedFields)
-			}); err != nil {
-				return err
-			}
-		}
-		if !changed {
-			return nil
-		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildManageWorkContentUpdatedEvent(request))
-	})
-	return changed, err
+		update.changedFields = append(update.changedFields, "clients")
+		update.changed = true
+	}
+	return update, nil
 }
 
 func applyWorkUpdateFields(work *model.Work, fields structured.Fields) {
@@ -375,12 +389,12 @@ func workUpdateChangedFields(work model.Work, fields structured.Fields) []string
 	return changed
 }
 
-func validateWorkUpdateObservedFields(request *managev1.UpdateWorkRequest) error {
-	if request.Metadata != nil && request.ObservedMetadata == nil {
-		return errs.InvalidArgument("observed_metadata", "is required when updating metadata")
+func validateWorkUpdateObservedFields(command UpdateWorkCommand) error {
+	if command.Metadata != nil && command.ObservedMetadata == nil {
+		return domainerr.InvalidField("observed_metadata", "is required when updating metadata")
 	}
-	if request.Clients != nil && request.ObservedClients == nil {
-		return errs.InvalidArgument("observed_clients", "is required when updating clients")
+	if command.Clients != nil && command.ObservedClients == nil {
+		return domainerr.InvalidField("observed_clients", "is required when updating clients")
 	}
 	return nil
 }
@@ -389,20 +403,20 @@ func workClientSetChanged(
 	ctx context.Context,
 	tx *gorm.DB,
 	workID string,
-	clients *managev1.WorkClientsUpdate,
-	observed *managev1.WorkClientsUpdate,
+	clients *[]string,
+	observed *[]string,
 ) (bool, []string, error) {
 	if clients == nil {
 		return false, nil, nil
 	}
 	if observed == nil {
-		return false, nil, errs.InvalidArgument("observed_clients", "is required when updating clients")
+		return false, nil, domainerr.InvalidField("observed_clients", "is required when updating clients")
 	}
 	var current []string
 	if err := tx.WithContext(ctx).Table("work_client").Where("work_id = ?", workID).Order("sort_order").Pluck("client_id", &current).Error; err != nil {
 		return false, nil, err
 	}
-	next := mergeWorkClientIntent(current, observed.ClientIds, clients.ClientIds)
+	next := mergeWorkClientIntent(current, *observed, *clients)
 	return !reflect.DeepEqual(current, next), next, nil
 }
 
@@ -431,10 +445,10 @@ func validateWorkClientIDs(ctx context.Context, tx *gorm.DB, clientIDs []string)
 	seen := make(map[string]struct{}, len(clientIDs))
 	for _, clientID := range clientIDs {
 		if strings.TrimSpace(clientID) == "" {
-			return errs.InvalidArgument("clients", "contains empty client id")
+			return domainerr.InvalidField("clients", "contains empty client id")
 		}
 		if _, exists := seen[clientID]; exists {
-			return errs.InvalidArgument("clients", "contains duplicate client id")
+			return domainerr.InvalidField("clients", "contains duplicate client id")
 		}
 		seen[clientID] = struct{}{}
 	}
@@ -443,17 +457,7 @@ func validateWorkClientIDs(ctx context.Context, tx *gorm.DB, clientIDs []string)
 		return err
 	}
 	if int(validCount) != len(clientIDs) {
-		return errs.InvalidArgument("clients", "contains unknown client id")
+		return domainerr.InvalidField("clients", "contains unknown client id")
 	}
 	return nil
-}
-
-func mapWorkUpdateError(err error) error {
-	if connect.CodeOf(err) != connect.CodeUnknown {
-		return err
-	}
-	if dberrors.IsUniqueViolation(err) {
-		return errs.WithCause(errs.SlugAlreadyExists("work", "slug"), err)
-	}
-	return errs.Internal(err)
 }

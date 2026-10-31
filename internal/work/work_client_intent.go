@@ -38,20 +38,9 @@ func mergeWorkClientIntent(current, observed, desired []string) []string {
 		}
 		position := len(merged)
 		if !orderChanged {
-			// Place local additions before the next surviving baseline member,
-			// without undoing a peer's reorder of the existing members.
-			for _, nextID := range desired[desiredIndex+1:] {
-				if _, wasObserved := observedSet[nextID]; !wasObserved {
-					continue
-				}
-				if index := slices.Index(merged, nextID); index >= 0 {
-					position = index
-					break
-				}
-			}
 			// A peer may have reversed the anchors; local additions still keep
 			// their requested order relative to one another.
-			position = max(position, additionPosition)
+			position = max(workClientAnchor(merged, desired[desiredIndex+1:], observedSet), additionPosition)
 		}
 		merged = slices.Insert(merged, position, clientID)
 		additionPosition = position + 1
@@ -60,26 +49,43 @@ func mergeWorkClientIntent(current, observed, desired []string) []string {
 	if !orderChanged {
 		return merged
 	}
+	return reorderWorkClients(merged, mergedSet, desired)
+}
 
-	// A deliberate local reorder controls baseline members that still exist, while preserving peer-added members (and their relative order) after that sequence.
+// workClientAnchor places a local addition before the next surviving
+// baseline member that follows it in desired, without undoing a peer's
+// reorder of the existing members; with none it goes last.
+func workClientAnchor(merged, following []string, observedSet map[string]struct{}) int {
+	for _, nextID := range following {
+		if _, wasObserved := observedSet[nextID]; !wasObserved {
+			continue
+		}
+		if index := slices.Index(merged, nextID); index >= 0 {
+			return index
+		}
+	}
+	return len(merged)
+}
+
+// reorderWorkClients applies a deliberate local reorder: it controls the
+// baseline members that still exist, and peer-added members keep their
+// relative order after that sequence.
+func reorderWorkClients(merged []string, mergedSet map[string]struct{}, desired []string) []string {
 	reordered := make([]string, 0, len(merged))
 	seen := make(map[string]struct{}, len(merged))
+	add := func(clientID string) {
+		if _, alreadyAdded := seen[clientID]; !alreadyAdded {
+			reordered = append(reordered, clientID)
+			seen[clientID] = struct{}{}
+		}
+	}
 	for _, clientID := range desired {
-		if _, exists := mergedSet[clientID]; !exists {
-			continue
+		if _, exists := mergedSet[clientID]; exists {
+			add(clientID)
 		}
-		if _, alreadyAdded := seen[clientID]; alreadyAdded {
-			continue
-		}
-		reordered = append(reordered, clientID)
-		seen[clientID] = struct{}{}
 	}
 	for _, clientID := range merged {
-		if _, alreadyAdded := seen[clientID]; alreadyAdded {
-			continue
-		}
-		reordered = append(reordered, clientID)
-		seen[clientID] = struct{}{}
+		add(clientID)
 	}
 	return reordered
 }

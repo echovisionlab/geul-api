@@ -457,15 +457,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(accountPath, accountHandler)
 	slog.Info("Registered service", "path", accountPath)
 
-	workService := work.NewAuditedWorkService(
-		db, workRuntime, spicedbClient, kratosClient, servicePublisher, telemetryWriter,
-		work.WithWorkContentBlockStore(contentBlockStore),
-		work.WithWorkContentBlockMediaHydrator(fileService),
-		work.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, cfg.CDNURL)),
-	)
-	workPath, workHandler := managev1connect.NewWorkServiceHandler(workService, handlerOpts...)
+	workService, err := work.NewService(work.Deps{
+		DB: db, SpiceDB: spicedbClient, Runtime: workRuntime, Signals: servicePublisher,
+		ContentBlocks: contentBlockStore, Media: fileService,
+		Members:     workadapter.NewMemberSummaries(db, cfg.CDNURL),
+		Checkpoints: collaborationRuntime.Checkpoints,
+		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Work service: %w", err)
+	}
+	workPath, workHandler := managev1connect.NewWorkServiceHandler(work.NewConnectHandler(workService), handlerOpts...)
 	mux.Handle(workPath, workHandler)
 	slog.Info("Registered service", "path", workPath)
+	internalWorkPath, internalWorkHandler := intrav1connect.NewInternalWorkServiceHandler(work.NewInternalConnectHandler(workService), internalHandlerOpts...)
+	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
+	slog.Info("Registered internal service", "path", internalWorkPath)
 
 	// Phase 2: CMS Services
 	postMembers := postadapter.NewMemberSummaries(db, cfg.CDNURL)
@@ -736,7 +743,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
 		collaborationRuntime:        collaborationRuntime,
 		pageRuntime:                 pageRuntime,
-		workRuntime:                 workRuntime,
 		fileService:                 fileService,
 		postMedia:                   postMedia,
 		programEventFiles:           programEventFiles,
@@ -749,7 +755,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, err
 	}
 	internalPageService := internalServices.page
-	internalWorkService := internalServices.work
 	internalEmailTemplateService := internalServices.emailTemplate
 	internalCampaignService := internalServices.campaign
 	internalFormService := internalServices.form
@@ -776,7 +781,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.page, err = aidocumentadapter.NewPageRegistration(internalPageService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Page AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.work, err = aidocumentadapter.NewWorkRegistration(internalWorkService); err != nil {
+	if aiDocumentRegistrations.work, err = aidocumentadapter.NewWorkRegistration(workService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Work AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.programEvent, err = aidocumentadapter.NewProgramEventRegistration(programEventService); err != nil {

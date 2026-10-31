@@ -5,8 +5,15 @@ package integration
 import (
 	"context"
 	"errors"
+	"net"
+	"sync"
 	"testing"
 	"time"
+
+	authzedv1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"google.golang.org/grpc"
 
 	"connectrpc.com/connect"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -42,25 +49,18 @@ func TestWorkAIDocumentTargetCASIsolationAndDeleteNoBumpIntegration(t *testing.T
 	require.NoError(t, err)
 	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(integrationSpiceDB(t)))
 	require.NoError(t, err)
-	internal := workdomain.NewInternalWorkService(
-		db, noopAsyncPublisher{}, newWorkRuntimeForTest(db, ""), integrationSpiceDB(t),
-		workdomain.WithInternalWorkContentBlockStore(store),
-		workdomain.WithInternalWorkDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))),
-	)
-	application, err := workdomain.NewAIDocumentService(internal)
-	require.NoError(t, err)
+	application := newWorkServiceForTest(t, workdomain.Deps{DB: db, ContentBlocks: store})
 	contributor := testutil.PostIntegrationMemberID(identityID)
 
 	load := func(locale string) workdomain.AIDocumentState {
 		t.Helper()
-		state, loadErr := application.Load(ctx, created.Msg.Id, locale)
+		state, loadErr := application.LoadAIDocument(ctx, created.Msg.Id, locale)
 		require.NoError(t, loadErr)
 		return state
 	}
 	apply := func(state workdomain.AIDocumentState, configure func(*workdomain.AIDocumentMutation)) (workdomain.AIDocumentMutationResult, error) {
 		t.Helper()
-		return application.Apply(ctx, workAIDocumentIntegrationMutation(state, contributor, configure))
+		return applyWorkAIDocument(ctx, application, workAIDocumentIntegrationMutation(state, contributor, configure))
 	}
 
 	koMissing := load("ko")
@@ -286,17 +286,8 @@ func TestWorkAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 		wantAction func(string) (policyv1.Can, error),
 	) {
 		t.Helper()
-		checker := &countingWorkAIDocumentPermissionChecker{allowed: allowed}
-		internal := workdomain.NewInternalWorkService(
-			db,
-			noopAsyncPublisher{},
-			newWorkRuntimeForTest(db, ""),
-			checker,
-			workdomain.WithInternalWorkContentBlockStore(store),
-			workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))),
-		)
-		application, err := workdomain.NewAIDocumentService(internal)
-		require.NoError(t, err)
+		checker := newCountingWorkPermissionServer(t, allowed)
+		application := newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: checker.client, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))})
 		compilerFailure := errors.New("stop after authorized Work compiler")
 		compilerCalls := 0
 		_, err = application.ExecuteAIDocumentMutation(
@@ -314,7 +305,7 @@ func TestWorkAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 			require.ErrorIs(t, err, compilerFailure)
 			require.Equal(t, 1, compilerCalls)
 		} else {
-			require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+			require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 			require.Zero(t, compilerCalls, "authorization denial reached the Work compiler")
 		}
 		want, err := wantAction(created.Msg.Id)
@@ -329,17 +320,8 @@ func TestWorkAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 	assertCompilerBoundary(true, policyv1.Work.EditArchived)
 	assertCompilerBoundary(false, policyv1.Work.EditArchived)
 
-	checker := &countingWorkAIDocumentPermissionChecker{allowed: true}
-	internal := workdomain.NewInternalWorkService(
-		db,
-		noopAsyncPublisher{},
-		newWorkRuntimeForTest(db, ""),
-		checker,
-		workdomain.WithInternalWorkContentBlockStore(store),
-		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))),
-	)
-	application, err := workdomain.NewAIDocumentService(internal)
-	require.NoError(t, err)
+	checker := newCountingWorkPermissionServer(t, true)
+	application := newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: checker.client, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))})
 	var beforeTitle string
 	var beforeRevision uuid.UUID
 	require.NoError(t, db.Raw(`
@@ -395,27 +377,48 @@ func TestWorkAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 	require.Equal(t, []string{wantArchived.Action().Permission()}, checker.permissions)
 }
 
-type countingWorkAIDocumentPermissionChecker struct {
+// countingWorkPermissionServer answers every SpiceDB check with allowed and
+// records the permission and resource of each.
+type countingWorkPermissionServer struct {
+	authzedv1.UnimplementedPermissionsServiceServer
+	client      *auth.SpiceDBClient
 	allowed     bool
+	mu          sync.Mutex
 	permissions []string
 	resourceIDs []string
 }
 
-func (c *countingWorkAIDocumentPermissionChecker) Can(
-	_ context.Context,
-	decision policyv1.AuthorizationDecision,
-) (bool, error) {
-	c.permissions = append(c.permissions, decision.Action().Permission())
-	c.resourceIDs = append(c.resourceIDs, decision.Resource().ID())
-	return c.allowed, nil
+func newCountingWorkPermissionServer(t *testing.T, allowed bool) *countingWorkPermissionServer {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	counting := &countingWorkPermissionServer{allowed: allowed}
+	authzedv1.RegisterPermissionsServiceServer(server, counting)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	counting.client, err = auth.NewSpiceDBClient(listener.Addr().String(), "test-token", true)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = counting.client.Close() })
+	return counting
 }
 
-func (c *countingWorkAIDocumentPermissionChecker) CheckActorCan(
-	_ context.Context,
-	_ policyv1.Actor,
-	_ policyv1.Can,
-) (bool, error) {
-	return c.allowed, nil
+func (c *countingWorkPermissionServer) CheckPermission(_ context.Context, request *authzedv1.CheckPermissionRequest) (*authzedv1.CheckPermissionResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.permissions = append(c.permissions, request.GetPermission())
+	c.resourceIDs = append(c.resourceIDs, request.GetResource().GetObjectId())
+	permissionship := authzedv1.CheckPermissionResponse_PERMISSIONSHIP_NO_PERMISSION
+	if c.allowed {
+		permissionship = authzedv1.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION
+	}
+	return &authzedv1.CheckPermissionResponse{Permissionship: permissionship}, nil
 }
 
-var _ workdomain.CollaborationPermissionChecker = (*countingWorkAIDocumentPermissionChecker)(nil)
+// applyWorkAIDocument applies an already compiled mutation.
+func applyWorkAIDocument(ctx context.Context, application *workdomain.Service, mutation workdomain.AIDocumentMutation) (workdomain.AIDocumentMutationResult, error) {
+	return application.ExecuteAIDocumentMutation(
+		ctx, mutation.WorkID, mutation.Locale, workdomain.AIDocumentExecutionApply,
+		func(workdomain.AIDocumentState) (workdomain.AIDocumentMutation, error) { return mutation, nil },
+	)
+}

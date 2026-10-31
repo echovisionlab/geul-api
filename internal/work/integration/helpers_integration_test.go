@@ -11,6 +11,12 @@ import (
 	"slices"
 	"testing"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	workdomain "github.com/echovisionlab/geul-api/internal/work"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
@@ -34,6 +40,44 @@ import (
 )
 
 var workIntegrationSuite *testutil.OryIntegrationSuite
+
+// newWorkServiceForTest builds the Work use cases, filling the
+// collaborators deps leaves unset from deps.DB.
+func newWorkServiceForTest(t *testing.T, deps workdomain.Deps) *workdomain.Service {
+	t.Helper()
+	if deps.SpiceDB == nil {
+		deps.SpiceDB = integrationSpiceDB(t)
+	}
+	if deps.Runtime == nil {
+		deps.Runtime = newWorkRuntimeForTest(deps.DB, "")
+	}
+	if deps.Signals == nil {
+		deps.Signals = noopAsyncPublisher{}
+	}
+	if deps.ContentBlocks == nil {
+		store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(deps.SpiceDB))
+		require.NoError(t, err)
+		deps.ContentBlocks = store
+	}
+	if deps.Media == nil {
+		deps.Media = passthroughWorkContentBlockMediaHydrator{}
+	}
+	if deps.Members == nil {
+		deps.Members = workogadapter.NewMemberSummaries(deps.DB, "")
+	}
+	if deps.Checkpoints == nil {
+		deps.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)
+	}
+	if deps.ShareLinks == nil {
+		deps.ShareLinks = sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}
+	}
+	if deps.Audit == nil {
+		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
+	}
+	service, err := workdomain.NewService(deps)
+	require.NoError(t, err)
+	return service
+}
 
 func TestMain(m *testing.M) {
 	flag.Parse()

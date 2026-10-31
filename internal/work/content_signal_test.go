@@ -47,8 +47,8 @@ func mockWorkSignalDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func TestWorkContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 	targetRevision := "target-revision"
 	events := map[string]*managev1.ContentUpdatedEvent{
-		"manage update": buildManageWorkContentUpdatedEvent(&managev1.UpdateWorkRequest{
-			Id: "work-1", Featured: proto.Bool(true),
+		"manage update": buildManageWorkContentUpdatedEvent(UpdateWorkCommand{
+			ID: "work-1", Featured: proto.Bool(true),
 		}),
 		"lifecycle": buildManageStateTransitionContentUpdatedEvent(
 			"work-1", []string{"state.status"},
@@ -97,7 +97,7 @@ func TestPublishWorkContentUpdatedRequiresOwningTransaction(t *testing.T) {
 		"work-1", []string{"state.status"},
 	)
 
-	require.Error(t, publishWorkContentUpdated(context.Background(), db, &mq.Publisher{}, event))
+	require.Error(t, contentsignal.PublishInTransaction(context.Background(), db, &mq.Publisher{}, event))
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT document.revision FROM work AS owner").WithArgs("work-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
@@ -107,7 +107,7 @@ func TestPublishWorkContentUpdatedRequiresOwningTransaction(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return publishWorkContentUpdated(context.Background(), tx, &mq.Publisher{}, event)
+		return contentsignal.PublishInTransaction(context.Background(), tx, &mq.Publisher{}, event)
 	}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -123,7 +123,7 @@ func TestPublishWorkContentUpdatedFailureRollsBackMutation(t *testing.T) {
 	mock.ExpectQuery("SELECT document.revision FROM work AS owner").WithArgs("work-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
 	mock.ExpectRollback()
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return publishWorkContentUpdated(context.Background(), tx, failingWorkSignalPublisher{err: failure}, event)
+		return contentsignal.PublishInTransaction(context.Background(), tx, failingWorkSignalPublisher{err: failure}, event)
 	})
 	require.ErrorIs(t, err, failure)
 	require.NoError(t, mock.ExpectationsWereMet())

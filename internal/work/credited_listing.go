@@ -2,13 +2,12 @@ package work
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -32,13 +31,18 @@ type creditedWorkRow struct {
 	MemberID          *string   `gorm:"column:member_id"`
 }
 
-func (s *WorkService) ListMyCreditedWorks(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMyCreditedWorksRequest],
-) (*connect.Response[managev1.ListMyCreditedWorksResponse], error) {
+// ListMyCreditedWorksQuery lists the credits of the caller and of the
+// Artists the caller owns or manages.
+type ListMyCreditedWorksQuery struct {
+	Page    Page
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+func (s *Service) ListMyCreditedWorks(ctx context.Context, query ListMyCreditedWorksQuery) (*managev1.ListMyCreditedWorksResponse, error) {
 	principal := auth.GetUser(ctx)
 	if principal == nil || principal.MemberID == "" {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 
 	memberID := principal.MemberID.String()
@@ -50,10 +54,10 @@ func (s *WorkService) ListMyCreditedWorks(
 		UNION
 		SELECT artist_id::text FROM artist_manager WHERE member_id = ?::uuid
 	`, memberID, memberID).Scan(&artistIDs).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
-	query := s.db.WithContext(ctx).
+	stored := s.db.WithContext(ctx).
 		Table("work_credit wc").
 		Joins("JOIN work w ON w.id = wc.work_id").
 		Joins("LEFT JOIN artist a ON a.id = wc.artist_id").
@@ -66,30 +70,30 @@ func (s *WorkService) ListMyCreditedWorks(
 		`)
 
 	if len(artistIDs) > 0 {
-		query = query.Where("(wc.member_id = ? OR wc.artist_id IN ?)", memberID, artistIDs)
+		stored = stored.Where("(wc.member_id = ? OR wc.artist_id IN ?)", memberID, artistIDs)
 	} else {
-		query = query.Where("wc.member_id = ?", memberID)
+		stored = stored.Where("wc.member_id = ?", memberID)
 	}
 
-	query, err = myCreditedWorkFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	stored, err = myCreditedWorkFilterConfig.ApplyFilters(stored, query.Filters)
 	if err != nil {
 		return nil, err
 	}
 
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := stored.Count(&total).Error; err != nil {
+		return nil, err
 	}
 
-	pg := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
+	pg := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.DefaultPaginationConfig)
 
-	query, err = myCreditedWorkSortConfig.ApplySort(query, req.Msg.Sorts)
+	stored, err = myCreditedWorkSortConfig.ApplySort(stored, query.Sorts)
 	if err != nil {
 		return nil, err
 	}
 
 	var rows []creditedWorkRow
-	err = pg.Apply(query).
+	err = pg.Apply(stored).
 		Select(`
 			w.id AS work_id,
  w.source_locale AS source_locale,
@@ -107,15 +111,12 @@ func (s *WorkService) ListMyCreditedWorks(
 		`).
 		Scan(&rows).Error
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
-	if s.members == nil {
-		return nil, errs.InternalMsg("Work Member summary loader is not configured")
-	}
 	memberSummaries, err := s.members.LoadMemberSummaries(ctx, []string{memberID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	protoWorks := make([]*managev1.MyCreditedWork, 0, len(rows))
 	for _, row := range rows {
@@ -126,13 +127,13 @@ func (s *WorkService) ListMyCreditedWorks(
 		protoWorks = append(protoWorks, credited)
 	}
 
-	return connect.NewResponse(&managev1.ListMyCreditedWorksResponse{
+	return &managev1.ListMyCreditedWorksResponse{
 		Works:      protoWorks,
 		Pagination: pg.BuildResponse(total),
-	}), nil
+	}, nil
 }
 
-func (s *WorkService) projectCreditedWork(
+func (s *Service) projectCreditedWork(
 	ctx context.Context,
 	row creditedWorkRow,
 	memberID string,
@@ -159,7 +160,7 @@ func (s *WorkService) projectCreditedWork(
 	}
 	if row.MemberID != nil && *row.MemberID == memberID {
 		if memberSummary == nil {
-			return nil, errs.InternalMsg("credited member is missing")
+			return nil, errors.New("credited member is missing")
 		}
 		credited.CreditType = managev1.MyCreditedWorkCreditType_MY_CREDITED_WORK_CREDIT_TYPE_MEMBER
 		credited.CreditedAs = memberSummary.GetNickname()

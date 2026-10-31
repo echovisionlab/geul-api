@@ -13,9 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
@@ -116,19 +114,8 @@ func newWorkEditorIntegrationService(
 	spiceDB *auth.SpiceDBClient,
 	identities map[string]*auth.Identity,
 	t *testing.T,
-) *workdomain.WorkService {
-	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(spiceDB))
-	require.NoError(t, err)
-	return workdomain.NewWorkService(
-		db,
-		newWorkRuntimeForTest(db, ""),
-		spiceDB,
-		&workEditorIdentityManager{identities: identities},
-		noopAsyncPublisher{},
-		workdomain.WithWorkContentBlockStore(store),
-		workdomain.WithWorkContentBlockMediaHydrator(passthroughWorkContentBlockMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "")),
-	)
+) *workdomain.ConnectHandler {
+	return workdomain.NewConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB}))
 }
 
 type workEditorIdentityManager struct {

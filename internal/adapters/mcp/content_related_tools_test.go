@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/work"
+
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -52,8 +54,8 @@ func TestContentRelatedToolsRouteFeaturedImageParticipantsAndCredits(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.featured.Msg.WorkId != managementWorkID || works.featured.Msg.FileId != "44444444-4444-4444-8444-444444444444" {
-		t.Fatalf("featured request = %#v", works.featured.Msg)
+	if works.featured.WorkID != managementWorkID || works.featured.FileID != "44444444-4444-4444-8444-444444444444" {
+		t.Fatalf("featured request = %#v", works.featured)
 	}
 
 	participant, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolPostCollaboratorAdd, toolArguments(t, `{"document_id":"`+managementPostID+`","member_id":"55555555-5555-4555-8555-555555555555"}`))
@@ -68,8 +70,8 @@ func TestContentRelatedToolsRouteFeaturedImageParticipantsAndCredits(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.credit.Msg.Name == nil || *works.credit.Msg.Name != "Sound designer" || credit.StructuredContent["credit_role"] != "sound" || credit.StructuredContent["changed"] != true {
-		t.Fatalf("credit = %#v %#v", works.credit.Msg, credit.StructuredContent)
+	if works.credit.Name == nil || *works.credit.Name != "Sound designer" || credit.StructuredContent["credit_role"] != "sound" || credit.StructuredContent["changed"] != true {
+		t.Fatalf("credit = %#v %#v", works.credit, credit.StructuredContent)
 	}
 }
 
@@ -237,7 +239,7 @@ func TestDocumentVersionsListEnforcesPaginationBeforeCallingApplication(t *testi
 				case "post":
 					pagination = posts.versions.Msg.Pagination
 				case "work":
-					pagination = works.versions.Msg.Pagination
+					pagination = &commonv1.PaginationRequest{Limit: works.versions.Page.Limit, Offset: works.versions.Page.Offset}
 				case "page":
 					pagination = pages.versions.Msg.Pagination
 				}
@@ -319,35 +321,39 @@ func TestWorkCreditMutationsRejectInvalidArgumentsBeforeOwner(t *testing.T) {
 }
 
 type recordingWorkRelated struct {
-	managev1connect.UnimplementedWorkServiceHandler
-	versions     *connect.Request[managev1.ListWorkVersionsRequest]
-	featured     *connect.Request[managev1.SetWorkFeaturedImageRequest]
-	credit       *connect.Request[managev1.AddWorkCreditRequest]
-	creditUpdate *connect.Request[managev1.UpdateWorkCreditRequest]
+	WorkRelatedApplication
+	versions     *work.ListWorkVersionsQuery
+	featured     *work.SetWorkFeaturedImageCommand
+	credit       *work.AddWorkCreditCommand
+	creditUpdate *work.UpdateWorkCreditCommand
 }
 
-func (r *recordingWorkRelated) ListWorkVersions(_ context.Context, request *connect.Request[managev1.ListWorkVersionsRequest]) (*connect.Response[managev1.ListWorkVersionsResponse], error) {
-	r.versions = request
-	return connect.NewResponse(&managev1.ListWorkVersionsResponse{Pagination: (queryutil.Pagination{Limit: request.Msg.Pagination.Limit, Offset: request.Msg.Pagination.Offset}).BuildResponse(6)}), nil
+func (r *recordingWorkRelated) ListWorkVersions(_ context.Context, query work.ListWorkVersionsQuery) (*managev1.ListWorkVersionsResponse, error) {
+	r.versions = &query
+	return &managev1.ListWorkVersionsResponse{Pagination: (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6)}, nil
 }
 
-func (r *recordingWorkRelated) SetWorkFeaturedImage(_ context.Context, request *connect.Request[managev1.SetWorkFeaturedImageRequest]) (*connect.Response[managev1.SetWorkFeaturedImageResponse], error) {
-	r.featured = request
-	return connect.NewResponse(&managev1.SetWorkFeaturedImageResponse{}), nil
+func (r *recordingWorkRelated) SetWorkFeaturedImage(_ context.Context, command work.SetWorkFeaturedImageCommand) (*managev1.SetWorkFeaturedImageResponse, error) {
+	r.featured = &command
+	return &managev1.SetWorkFeaturedImageResponse{}, nil
 }
 
-func (r *recordingWorkRelated) AddWorkCredit(_ context.Context, request *connect.Request[managev1.AddWorkCreditRequest]) (*connect.Response[managev1.WorkCredit], error) {
-	r.credit = request
-	return connect.NewResponse(&managev1.WorkCredit{Id: "77777777-7777-4777-8777-777777777777", Name: request.Msg.Name, CreditRole: request.Msg.CreditRole}), nil
+func (r *recordingWorkRelated) AddWorkCredit(_ context.Context, command work.AddWorkCreditCommand) (*managev1.WorkCredit, error) {
+	r.credit = &command
+	return &managev1.WorkCredit{Id: "77777777-7777-4777-8777-777777777777", Name: command.Name, CreditRole: command.CreditRole}, nil
 }
 
-func (r *recordingWorkRelated) UpdateWorkCreditGroup(_ context.Context, request *connect.Request[managev1.UpdateWorkCreditGroupRequest]) (*connect.Response[managev1.WorkCreditGroup], error) {
-	return connect.NewResponse(&managev1.WorkCreditGroup{Id: request.Msg.GroupId, Name: request.Msg.GetName()}), nil
+func (r *recordingWorkRelated) UpdateWorkCreditGroup(_ context.Context, command work.UpdateWorkCreditGroupCommand) (*managev1.WorkCreditGroup, error) {
+	name := ""
+	if command.Name != nil {
+		name = *command.Name
+	}
+	return &managev1.WorkCreditGroup{Id: command.GroupID, Name: name}, nil
 }
 
-func (r *recordingWorkRelated) UpdateWorkCredit(_ context.Context, request *connect.Request[managev1.UpdateWorkCreditRequest]) (*connect.Response[managev1.WorkCredit], error) {
-	r.creditUpdate = request
-	return connect.NewResponse(&managev1.WorkCredit{Id: request.Msg.CreditId, CreditRole: request.Msg.CreditRole}), nil
+func (r *recordingWorkRelated) UpdateWorkCredit(_ context.Context, command work.UpdateWorkCreditCommand) (*managev1.WorkCredit, error) {
+	r.creditUpdate = &command
+	return &managev1.WorkCredit{Id: command.CreditID, CreditRole: command.CreditRole}, nil
 }
 
 type recordingPageRelated struct {

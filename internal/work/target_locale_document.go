@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -82,7 +82,7 @@ func workTargetMetadataProjection(
 func normalizeWorkDocumentLocale(locale string) (string, error) {
 	normalized := localization.NormalizeExactSupportedLocale(locale)
 	if normalized == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalized, nil
 }
@@ -113,7 +113,7 @@ func loadOptionalWorkLocaleMetadataRow(ctx context.Context, tx *gorm.DB, workID,
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return workLocaleMetadataRow{}, false, nil
 		}
-		return workLocaleMetadataRow{}, false, errs.Internal(err)
+		return workLocaleMetadataRow{}, false, err
 	}
 	return row, true, nil
 }
@@ -124,7 +124,7 @@ func deriveWorkTargetRevision(documentRevision string, metadata workLocaleMetada
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -135,7 +135,7 @@ func validateWorkSourceStorage(
 ) error {
 	for _, group := range storage.LocaleGroups {
 		if group.Locale != sourceLocale {
-			return errs.CollaborationMutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Work source room mutation must match the current source locale",
 			)
@@ -158,7 +158,7 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 		return workTargetLocaleState{}, err
 	}
 	if lockedDocumentID != documentID {
-		return workTargetLocaleState{}, errs.FailedPrecondition("Work content document changed; reload before saving")
+		return workTargetLocaleState{}, domainerr.Precondition("Work content document changed; reload before saving")
 	}
 	domain, err := loadWorkContentDomainContext(ctx, tx, workID)
 	if err != nil {
@@ -169,14 +169,14 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 		return workTargetLocaleState{}, normalizeWorkContentBlockError(err)
 	}
 	if snapshot.SourceLocale != domain.SourceLocale || snapshot.Document.Profile != workContentDocumentProfile {
-		return workTargetLocaleState{}, errs.FailedPrecondition("Work content document source or profile is inconsistent")
+		return workTargetLocaleState{}, domainerr.Precondition("Work content document source or profile is inconsistent")
 	}
 	sourceMetadata, sourceExists, err := loadOptionalWorkLocaleMetadataRow(ctx, tx, workID, domain.SourceLocale, forUpdate)
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
 	if !sourceExists {
-		return workTargetLocaleState{}, errs.FailedPrecondition("Work source locale metadata is missing")
+		return workTargetLocaleState{}, domainerr.Precondition("Work source locale metadata is missing")
 	}
 	state := workTargetLocaleState{Snapshot: snapshot, SourceLocale: domain.SourceLocale, SourceMetadata: sourceMetadata}
 	if locale == domain.SourceLocale {
@@ -189,7 +189,7 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 	}
 	if !exists {
 		if targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return workTargetLocaleState{}, errs.FailedPrecondition("Work target locale Blocks exist without owning metadata")
+			return workTargetLocaleState{}, domainerr.Precondition("Work target locale Blocks exist without owning metadata")
 		}
 		return state, nil
 	}
@@ -230,20 +230,20 @@ func applyWorkTargetLocaleMutation(
 		return contentblock.Result{}, nil, err
 	}
 	if locale == state.SourceLocale {
-		return contentblock.Result{}, nil, errs.InvalidArgument("locale", "Work target locale must differ from source locale")
+		return contentblock.Result{}, nil, domainerr.InvalidField("locale", "Work target locale must differ from source locale")
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, nil, errs.FailedPrecondition("Work source locale changed; reload before saving")
+		return contentblock.Result{}, nil, domainerr.Precondition("Work source locale changed; reload before saving")
 	}
 	if patch.DeleteLocale && (patch.EnsureLocale || patch.UpdateTitle || patch.UpdateSummary || len(input.Batch.LocaleGroups) != 0) {
-		return contentblock.Result{}, nil, errs.InvalidArgument("operations", "Work translation deletion must be exclusive")
+		return contentblock.Result{}, nil, domainerr.InvalidField("operations", "Work translation deletion must be exclusive")
 	}
 	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
 	if patch.DeleteLocale && state.TargetMetadata == nil {
-		return contentblock.Result{}, nil, errs.FailedPrecondition("Work target locale must exist before deletion")
+		return contentblock.Result{}, nil, domainerr.Precondition("Work target locale must exist before deletion")
 	}
 	if patch.UpdateTitle && patch.Title != nil {
 		trimmed := strings.TrimSpace(*patch.Title)
@@ -265,7 +265,7 @@ func applyWorkTargetLocaleMutation(
 	if result.Changed {
 		if err := tx.WithContext(ctx).Table("work").Where("id = ?::uuid", workID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return contentblock.Result{}, nil, errs.Internal(err)
+			return contentblock.Result{}, nil, err
 		}
 	}
 	if patch.DeleteLocale {
@@ -295,10 +295,10 @@ func (w *workTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 	case w.patch.DeleteLocale:
 		deleted := tx.WithContext(ctx).Exec("DELETE FROM work_translation WHERE entity_id = ?::uuid AND locale = ?", w.workID, w.locale)
 		if deleted.Error != nil {
-			return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+			return contentblock.MetadataEffect{}, deleted.Error
 		}
 		if deleted.RowsAffected != 1 {
-			return contentblock.MetadataEffect{}, errs.InternalMsg("Work target locale disappeared while deleting")
+			return contentblock.MetadataEffect{}, errors.New("Work target locale disappeared while deleting")
 		}
 	case w.state.TargetMetadata == nil:
 		if err := w.create(ctx, tx); err != nil {
@@ -330,10 +330,10 @@ func (w *workTargetMetadataWrite) create(ctx context.Context, tx *gorm.DB) error
 		w.workID, w.locale, title, summary, w.now, w.now,
 	)
 	if created.Error != nil {
-		return errs.Internal(created.Error)
+		return created.Error
 	}
 	if created.RowsAffected != 1 {
-		return errs.InternalMsg("Work target locale could not be created")
+		return errors.New("Work target locale could not be created")
 	}
 	w.final = workLocaleMetadataRow{Locale: w.locale, Title: cloneOptionalString(title), Summary: cloneOptionalString(summary), UpdatedAt: w.now}
 	return nil
@@ -356,10 +356,10 @@ func (w *workTargetMetadataWrite) update(ctx context.Context, tx *gorm.DB, conte
 	updates["updated_at"] = w.final.UpdatedAt
 	updated := tx.WithContext(ctx).Table("work_translation").Where("entity_id = ?::uuid AND locale = ?", w.workID, w.locale).Updates(updates)
 	if updated.Error != nil {
-		return false, errs.Internal(updated.Error)
+		return false, updated.Error
 	}
 	if updated.RowsAffected != 1 {
-		return false, errs.InternalMsg("Work target locale disappeared while saving")
+		return false, errors.New("Work target locale disappeared while saving")
 	}
 	return true, nil
 }
@@ -369,7 +369,7 @@ func workContributorUUIDs(values []string) ([]uuid.UUID, error) {
 	for _, value := range values {
 		parsed, err := uuid.Parse(value)
 		if err != nil || parsed == uuid.Nil || parsed.String() != value {
-			return nil, errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
+			return nil, domainerr.InvalidField("contributor_member_ids", "must contain canonical Member UUIDs")
 		}
 		result = append(result, parsed)
 	}

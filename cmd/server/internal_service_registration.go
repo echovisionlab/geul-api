@@ -14,7 +14,6 @@ import (
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
@@ -25,7 +24,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
-	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
@@ -39,7 +37,6 @@ type internalContentServiceRegistration struct {
 	accountEmailChangeLifecycle *account.AccountEmailChangeLifecycle
 	collaborationRuntime        *collaborationadapter.Runtime
 	pageRuntime                 *pageadapter.Runtime
-	workRuntime                 *workadapter.Runtime
 	fileService                 *filemedia.FileService
 	postMedia                   postruntime.ContentBlockMedia
 	programEventFiles           *programeventadapter.Files
@@ -53,7 +50,6 @@ type internalContentServiceRegistration struct {
 // document registration; other services are owned by their registered routes.
 type internalContentServices struct {
 	page           *page.InternalPageService
-	work           *work.InternalWorkService
 	emailTemplate  *emailauthoring.InternalEmailTemplateService
 	campaign       *campaign.InternalCampaignService
 	form           *formdomain.InternalFormService
@@ -77,7 +73,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	accountEmailChangeLifecycle := r.accountEmailChangeLifecycle
 	collaborationRuntime := r.collaborationRuntime
 	pageRuntime := r.pageRuntime
-	workRuntime := r.workRuntime
 	fileService := r.fileService
 	postMedia := r.postMedia
 	programEventFiles := r.programEventFiles
@@ -146,20 +141,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalProgramEventPath, internalProgramEventHandler := intrav1connect.NewInternalProgramEventServiceHandler(internalProgramEventService, internalHandlerOpts...)
 	mux.Handle(internalProgramEventPath, internalRPCTrust.collab(internalProgramEventHandler))
 	slog.Info("Registered internal service", "path", internalProgramEventPath)
-
-	internalWorkService := work.NewInternalWorkService(
-		db,
-		servicePublisher,
-		workRuntime,
-		spicedbClient,
-		work.WithInternalWorkDomainAuditWriter(telemetryWriter),
-		work.WithInternalWorkCheckpoints(collaborationRuntime.Checkpoints),
-		work.WithInternalWorkContentBlockStore(contentBlockStore),
-		work.WithInternalWorkContentBlockMediaHydrator(fileService),
-	)
-	internalWorkPath, internalWorkHandler := intrav1connect.NewInternalWorkServiceHandler(internalWorkService, internalHandlerOpts...)
-	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
-	slog.Info("Registered internal service", "path", internalWorkPath)
 
 	internalMapService := maptheme.NewAuditedInternalMapService(db, telemetryWriter, spicedbClient)
 	internalMapPath, internalMapHandler := intrav1connect.NewInternalMapServiceHandler(internalMapService, internalHandlerOpts...)
@@ -233,7 +214,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	}
 	return internalContentServices{
 		page:           internalPageService,
-		work:           internalWorkService,
 		emailTemplate:  internalEmailTemplateService,
 		campaign:       internalCampaignService,
 		form:           internalFormService,

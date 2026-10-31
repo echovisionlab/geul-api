@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
@@ -308,7 +310,7 @@ func TestNormalizeWorkMapViewportRejectsNonFiniteZoom(t *testing.T) {
 		if _, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
 			Bounds: &openv1.WorkMapBounds{West: -20, East: 20, South: -10, North: 10},
 			Zoom:   zoom, WidthPx: 320, HeightPx: 320,
-		}); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		}); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("non-finite zoom %v error=%v; want InvalidArgument", zoom, err)
 		}
 	}

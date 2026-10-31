@@ -11,8 +11,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -53,12 +51,7 @@ func TestWorkSourceEditAndSwitchPreserveTargetsAndJobsIntegration(t *testing.T) 
 
 	blockStore, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(integrationSpiceDB(t)))
 	require.NoError(t, err)
-	internalWork := workdomain.NewInternalWorkService(
-		db, noopAsyncPublisher{}, newWorkRuntimeForTest(db, ""), integrationSpiceDB(t),
-		workdomain.WithInternalWorkDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		workdomain.WithInternalWorkContentBlockStore(blockStore),
-		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, integrationSpiceDB(t))),
-	)
+	internalWork := workdomain.NewInternalConnectHandler(newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: integrationSpiceDB(t), ContentBlocks: blockStore}))
 	editedTitle := "Work pointer source edited"
 	edited, err := internalWork.UpdateWorkLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateWorkLocaleMetadataRequest{
 		WorkId: created.Msg.Id, Locale: "en", Title: &editedTitle, ExpectedRevision: created.Msg.Revision,

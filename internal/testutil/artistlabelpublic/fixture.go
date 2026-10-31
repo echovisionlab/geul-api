@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -135,12 +138,15 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}), publisher,
 		releasedomain.WithReleaseContentBlockStore(contentBlocks),
 	)
-	manageWork := workdomain.NewWorkService(
-		db, workFixtureRuntime(db), spiceDB, identityManager, publisher,
-		workdomain.WithWorkContentBlockStore(contentBlocks),
-		workdomain.WithWorkContentBlockMediaHydrator(artistLabelMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, artistLabelPublicCDN)),
-	)
+	workService, err := workdomain.NewService(workdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Runtime: workFixtureRuntime(db), Signals: publisher,
+		ContentBlocks: contentBlocks, Media: artistLabelMediaHydrator{},
+		Members:     workadapter.NewMemberSummaries(db, artistLabelPublicCDN),
+		Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelinkdomain.EntityWork}, Audit: apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	manageWork := workdomain.NewConnectHandler(workService)
 	shareLinks := sharelinktest.NewHandler(t, db, spiceDB)
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
 	publicArtist := artistpublic.NewArtistService(

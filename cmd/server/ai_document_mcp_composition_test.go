@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	mcpadapter "github.com/echovisionlab/geul-api/internal/adapters/mcp"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
@@ -454,8 +455,12 @@ func (*compositionPostApplication) ListAIDocuments(
 	return postdomain.AIDocumentListResult{Items: []postdomain.AIDocumentListItem{}, Limit: 20}, nil
 }
 
+// compositionWorkApplication lists the Work use cases; no composition test
+// reaches one.
 type compositionWorkApplication struct {
-	managev1connect.UnimplementedWorkServiceHandler
+	mcpadapter.WorkDocumentDiscovery
+	mcpadapter.WorkManagementApplication
+	mcpadapter.WorkRelatedApplication
 }
 type compositionPageApplication struct {
 	managev1connect.UnimplementedPageServiceHandler

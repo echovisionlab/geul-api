@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/work"
+
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -246,13 +248,13 @@ func TestContentManagementCreateToolsBuildExactDomainRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.create.Header().Get("Accept-Language") != "en" || works.create.Msg.Type != managev1.WorkType_WORK_TYPE_PORTFOLIO || works.create.Msg.Metadata.GetFields()["key"].GetStringValue() != "value" {
-		t.Fatalf("Work create = %#v", works.create.Msg)
+	if works.create.AcceptLanguage != "en" || works.create.Type != managev1.WorkType_WORK_TYPE_PORTFOLIO.String() || works.create.Metadata["key"] != "value" {
+		t.Fatalf("Work create = %#v", works.create)
 	}
-	if works.create.Msg.UntilYear == nil || *works.create.Msg.UntilYear != 2026 || works.create.Msg.UntilMonth == nil || *works.create.Msg.UntilMonth != 8 {
-		t.Fatalf("Work create range = %#v", works.create.Msg)
+	if works.create.UntilYear == nil || *works.create.UntilYear != 2026 || works.create.UntilMonth == nil || *works.create.UntilMonth != 8 {
+		t.Fatalf("Work create range = %#v", works.create)
 	}
-	assertEmptyManagementDocument(t, works.create.Msg.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, "en")
+	assertEmptyManagementDocument(t, works.create.Document, contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, "en")
 	if workResult.StructuredContent["document_id"] != managementWorkID {
 		t.Fatalf("Work result = %#v", workResult.StructuredContent)
 	}
@@ -583,30 +585,30 @@ func (r *recordingPostManagement) SchedulePost(_ context.Context, req *connect.R
 }
 
 type recordingWorkManagement struct {
-	managev1connect.UnimplementedWorkServiceHandler
-	create      *connect.Request[managev1.CreateWorkRequest]
-	get         *connect.Request[managev1.GetWorkRequest]
+	WorkManagementApplication
+	create      *work.CreateWorkCommand
+	get         *work.GetWorkQuery
 	getResponse *managev1.Work
 	getErr      error
-	update      *connect.Request[managev1.UpdateWorkRequest]
+	update      *work.UpdateWorkCommand
 }
 
-func (r *recordingWorkManagement) GetWork(_ context.Context, req *connect.Request[managev1.GetWorkRequest]) (*connect.Response[managev1.Work], error) {
-	r.get = req
+func (r *recordingWorkManagement) GetWork(_ context.Context, query work.GetWorkQuery) (*managev1.Work, error) {
+	r.get = &query
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
-	return connect.NewResponse(r.getResponse), nil
+	return r.getResponse, nil
 }
 
-func (r *recordingWorkManagement) UpdateWork(_ context.Context, req *connect.Request[managev1.UpdateWorkRequest]) (*connect.Response[managev1.UpdateWorkResponse], error) {
-	r.update = req
-	return connect.NewResponse(&managev1.UpdateWorkResponse{Id: req.Msg.Id, Changed: true, UpdatedAt: timestamppb.Now()}), nil
+func (r *recordingWorkManagement) UpdateWork(_ context.Context, command work.UpdateWorkCommand) (*managev1.UpdateWorkResponse, error) {
+	r.update = &command
+	return &managev1.UpdateWorkResponse{Id: command.ID, Changed: true, UpdatedAt: timestamppb.Now()}, nil
 }
 
-func (r *recordingWorkManagement) CreateWork(_ context.Context, req *connect.Request[managev1.CreateWorkRequest]) (*connect.Response[managev1.Work], error) {
-	r.create = req
-	return connect.NewResponse(&managev1.Work{Id: managementWorkID, Title: req.Msg.Title, Type: req.Msg.Type, SourceLocale: req.Msg.SourceLocale, Status: managev1.WorkStatus_WORK_STATUS_DRAFT, Revision: "work-revision"}), nil
+func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.CreateWorkCommand) (*managev1.Work, error) {
+	r.create = &command
+	return &managev1.Work{Id: managementWorkID, Title: command.Title, Type: managev1.WorkType(managev1.WorkType_value[command.Type]), SourceLocale: command.SourceLocale, Status: managev1.WorkStatus_WORK_STATUS_DRAFT, Revision: "work-revision"}, nil
 }
 
 type recordingPageManagement struct {
@@ -655,7 +657,7 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if works.get.Msg.Id != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
+	if works.get.ID != managementWorkID || !reflect.DeepEqual(read.StructuredContent["metadata"], metadata.AsMap()) || !reflect.DeepEqual(read.StructuredContent["client_ids"], []any{managementPostID}) {
 		t.Fatalf("settings read = %#v", read.StructuredContent)
 	}
 	encoded, err := json.Marshal(map[string]any{
@@ -669,11 +671,11 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := works.update.Msg
-	if request.Metadata == nil || len(request.Metadata.Fields) != 0 || request.Clients == nil || len(request.Clients.ClientIds) != 0 {
+	request := works.update
+	if request.Metadata == nil || len(request.Metadata) != 0 || request.Clients == nil || len(*request.Clients) != 0 {
 		t.Fatalf("empty desired values lost presence: %#v", request)
 	}
-	if !reflect.DeepEqual(request.ObservedMetadata.AsMap(), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(request.ObservedClients.ClientIds, []string{managementPostID}) {
+	if !reflect.DeepEqual(map[string]any(request.ObservedMetadata), metadata.AsMap()) || request.ObservedClients == nil || !reflect.DeepEqual(*request.ObservedClients, []string{managementPostID}) {
 		t.Fatalf("observed baseline changed: %#v", request)
 	}
 }

@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -28,13 +28,13 @@ func parseWorkContentUUID(fieldName string, value string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
-		return uuid.Nil, errs.InvalidArgument(fieldName, "must be a canonical UUID")
+		return uuid.Nil, domainerr.InvalidField(fieldName, "must be a canonical UUID")
 	}
 	return parsed, nil
 }
 
 func normalizeWorkContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || mutation.IsClassified(err) {
 		return err
 	}
 	// A revision conflict keeps its cause, so a conflict found while storing
@@ -42,25 +42,31 @@ func normalizeWorkContentBlockError(err error) error {
 	// translation source no longer current) as one found by the pre-check.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		return errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err), err)
+		return domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+			targetConflict.Error(), domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg("work content document not found"), err)
+		return domainerr.New(domainerr.NotFound, "", "work content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "work content revision changed; reload before saving", err), err)
+		return domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
+			"work content revision changed; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
 		// The cause stays out of the chain: AI document callers would turn
 		// ErrFileReference into an operation issue, and Work has always
 		// answered FailedPrecondition here.
-		return errs.FailedPrecondition("a Work Block File reference is not attachable")
+		return domainerr.Precondition("a Work Block File reference is not attachable")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("work content document: %w", err))
+		return fmt.Errorf("work content document: %w", err)
 	}
 }
 
@@ -83,17 +89,17 @@ func loadWorkContentDocumentID(
 		Where("id = ?", workID).
 		Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return uuid.Nil, errs.NotFound("work", workID)
+		return uuid.Nil, domainerr.ResourceNotFound("work", workID)
 	}
 	if result.Error != nil {
-		return uuid.Nil, errs.Internal(result.Error)
+		return uuid.Nil, result.Error
 	}
 	if row.ContentDocumentID == nil || strings.TrimSpace(*row.ContentDocumentID) == "" {
-		return uuid.Nil, errs.FailedPrecondition("work content document is not initialized")
+		return uuid.Nil, domainerr.Precondition("work content document is not initialized")
 	}
 	documentID, err := uuid.Parse(*row.ContentDocumentID)
 	if err != nil {
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	return documentID, nil
 }
@@ -111,17 +117,17 @@ func loadWorkContentDocumentIDForRead(
 		Where("id = ?", workID).
 		Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return uuid.Nil, errs.NotFound("work", workID)
+		return uuid.Nil, domainerr.ResourceNotFound("work", workID)
 	}
 	if result.Error != nil {
-		return uuid.Nil, errs.Internal(result.Error)
+		return uuid.Nil, result.Error
 	}
 	if row.ContentDocumentID == nil || strings.TrimSpace(*row.ContentDocumentID) == "" {
-		return uuid.Nil, errs.FailedPrecondition("work content document is not initialized")
+		return uuid.Nil, domainerr.Precondition("work content document is not initialized")
 	}
 	documentID, err := uuid.Parse(*row.ContentDocumentID)
 	if err != nil {
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	return documentID, nil
 }
@@ -140,54 +146,54 @@ func requireWorkLoadPrincipal(
 	spiceDB CollaborationPermissionChecker,
 	workID string,
 	documentID uuid.UUID,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID string,
 ) (*auth.UserInfo, error) {
-	if principalMessage == nil {
-		return nil, errs.AuthenticationRequired()
+	if sessionID == "" {
+		return nil, domainerr.AuthenticationRequired()
 	}
 	work, err := lockWorkForContentDocument(ctx, db, documentID)
 	if err != nil {
 		return nil, err
 	}
 	if work.ID != workID {
-		return nil, errs.FailedPrecondition("Work content document changed; reload before editing")
+		return nil, domainerr.Precondition("Work content document changed; reload before editing")
 	}
 	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
 		ctx,
 		db,
-		principalMessage.GetSessionId(),
+		sessionID,
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if principal == nil || !principal.Authenticated {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if principal.Banned {
-		return nil, errs.AccountBanned()
+		return nil, domainerr.AccountBanned()
 	}
 	if !principal.Onboarded {
-		return nil, errs.NoPermission("edit", "work")
+		return nil, domainerr.NoPermission("edit", "work")
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, db, principal)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if !active {
-		return nil, errs.NoPermission("edit", "work")
+		return nil, domainerr.NoPermission("edit", "work")
 	}
 	action := workLifecycleAction(work.Status, policyv1.Work.Edit, workAuthorizationRead)
 	if err := requireWorkPermissionForCurrentActor(auth.WithUser(ctx, principal), spiceDB, workID, action); err != nil {
 		return nil, err
 	}
-	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, principalMessage.GetSessionId(), principal); err != nil {
+	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, sessionID, principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+			return nil, domainerr.AuthenticationRequired().WithCause(err)
 		}
-		return nil, errs.Internal(fmt.Errorf("lock Work collaboration session: %w", err))
+		return nil, fmt.Errorf("lock Work collaboration session: %w", err)
 	}
 	return principal, nil
 }
@@ -205,7 +211,7 @@ func lockWorkForContentDocument(
 		Where("content_document_id = ?", documentID).
 		Take(&work)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return lockedWorkContentRoot{}, errs.NotFound("work", documentID.String())
+		return lockedWorkContentRoot{}, domainerr.ResourceNotFound("work", documentID.String())
 	}
 	if result.Error != nil {
 		return lockedWorkContentRoot{}, result.Error
@@ -256,10 +262,10 @@ func workContentCreationFence(
 			return contentblock.DomainContext{}, err
 		}
 		if work.ID != workID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Work content document changed during creation")
+			return contentblock.DomainContext{}, domainerr.Precondition("Work content document changed during creation")
 		}
 		if strings.TrimSpace(sourceLocale) == "" {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Work source locale is invalid")
+			return contentblock.DomainContext{}, domainerr.Precondition("Work source locale is invalid")
 		}
 		return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 	}
@@ -279,13 +285,13 @@ func loadWorkContentDomainContext(
 		Where("id = ?", workID).
 		Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return contentblock.DomainContext{}, errs.FailedPrecondition("work translation source is not initialized")
+		return contentblock.DomainContext{}, domainerr.Precondition("work translation source is not initialized")
 	}
 	if result.Error != nil {
 		return contentblock.DomainContext{}, result.Error
 	}
 	if strings.TrimSpace(row.SourceLocale) == "" {
-		return contentblock.DomainContext{}, errs.FailedPrecondition("work source locale is empty")
+		return contentblock.DomainContext{}, domainerr.Precondition("work source locale is empty")
 	}
 	return contentblock.DomainContext{SourceLocale: row.SourceLocale}, nil
 }

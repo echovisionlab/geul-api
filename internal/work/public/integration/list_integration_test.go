@@ -11,11 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -76,16 +73,7 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	}))
 	require.NoError(t, err)
 
-	workSvc := workdomain.NewWorkService(
-		db,
-		newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),
-		publicIntegrationSpiceDBFor(t, db),
-		&publicReferenceIdentityManager{identity: &auth.Identity{ID: adminID}},
-		publicReferenceAsyncPublisher{},
-		workdomain.WithWorkContentBlockStore(newPublicWorkContentBlockStore(t)),
-		workdomain.WithWorkContentBlockMediaHydrator(extractedWorkPublicMediaHydrator{}),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "https://cdn.example.com")),
-	)
+	workSvc := newPublicWorkManageService(t, db, adminID)
 	published, err := workSvc.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
 		Title:     "Public Work " + suffix,
 		Slug:      stringPtr("public-work-" + suffix),

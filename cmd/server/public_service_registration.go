@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -112,16 +113,15 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicPostPath, publicPostHandler)
 	slog.Info("Registered public service", "path", publicPostPath)
 
-	publicWorkService := workpublic.NewWorkService(
-		db,
-		spicedbClient,
-		publicFileService,
-		workRuntime,
-		workadapter.NewMemberSummaries(db, cfg.CDNURL),
-		referencecatalogadapter.PublicMapPlaces{},
-		workpublic.WithWorkContentBlockStore(contentBlockStore),
-	)
-	publicWorkPath, publicWorkHandler := openv1connect.NewWorkServiceHandler(publicWorkService, publicHandlerOpts...)
+	publicWorkService, err := workpublic.NewService(workpublic.Deps{
+		DB: db, SpiceDB: spicedbClient, BlockMedia: publicFileService, Assets: workRuntime,
+		Members:   workadapter.NewMemberSummaries(db, cfg.CDNURL),
+		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ContentBlocks: contentBlockStore,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public Work service: %w", err)
+	}
+	publicWorkPath, publicWorkHandler := openv1connect.NewWorkServiceHandler(workpublic.NewConnectHandler(publicWorkService), publicHandlerOpts...)
 	mux.Handle(publicWorkPath, publicWorkHandler)
 	slog.Info("Registered public service", "path", publicWorkPath)
 

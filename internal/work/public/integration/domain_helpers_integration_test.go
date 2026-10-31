@@ -12,6 +12,7 @@ import (
 	workpublic "github.com/echovisionlab/geul-api/internal/work/public"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
@@ -40,15 +41,25 @@ func newExtractedPublicWorkService(
 	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
-) *workpublic.WorkService {
+) *workpublic.ConnectHandler {
 	t.Helper()
-	return workpublic.NewWorkService(
-		db,
-		publicIntegrationSpiceDBFor(t, db),
-		extractedWorkPublicMediaHydrator{},
-		newPublicWorkRuntimeForTest(db, cdnDomain),
-		workadapter.NewMemberSummaries(db, cdnDomain),
-		referencecatalogadapter.PublicMapPlaces{},
-		workpublic.WithWorkContentBlockStore(newPublicWorkContentBlockStore(t)),
-	)
+	return newPublicWorkHandler(t, workpublic.Deps{
+		DB: db, SpiceDB: publicIntegrationSpiceDBFor(t, db), BlockMedia: extractedWorkPublicMediaHydrator{},
+		Assets: newPublicWorkRuntimeForTest(db, cdnDomain), Members: workadapter.NewMemberSummaries(db, cdnDomain),
+	})
+}
+
+// newPublicWorkHandler builds the public Work reads, filling the
+// collaborators deps leaves unset.
+func newPublicWorkHandler(t *testing.T, deps workpublic.Deps) *workpublic.ConnectHandler {
+	t.Helper()
+	if deps.MapPlaces == nil {
+		deps.MapPlaces = referencecatalogadapter.PublicMapPlaces{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = newPublicWorkContentBlockStore(t)
+	}
+	service, err := workpublic.NewService(deps)
+	require.NoError(t, err)
+	return workpublic.NewConnectHandler(service)
 }

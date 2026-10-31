@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
@@ -67,7 +66,7 @@ func loadWorkSourceLocaleDocumentStates(
 		normalized,
 	).Scan(&rows)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 
 	states := make(map[string]*translationLocaleDocumentState, len(rows))

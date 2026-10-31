@@ -7,12 +7,10 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -39,26 +37,9 @@ func TestWorkDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testin
 	files := &filemedia.FileService{}
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
-	workService := workdomain.NewAuditedWorkService(
-		db,
-		newWorkRuntimeForTest(db, ""),
-		spiceDB,
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminIdentityID, "en")},
-		noopAsyncPublisher{},
-		writer,
-		workdomain.WithWorkContentBlockStore(contentBlocks),
-		workdomain.WithWorkContentBlockMediaHydrator(files),
-		workdomain.WithWorkMemberSummaryLoader(workadapter.NewMemberSummaries(db, "")),
-	)
-	internalService := workdomain.NewInternalWorkService(
-		db,
-		noopAsyncPublisher{},
-		newWorkRuntimeForTest(db, ""),
-		spiceDB,
-		workdomain.WithInternalWorkDomainAuditWriter(writer),
-		workdomain.WithInternalWorkContentBlockStore(contentBlocks),
-		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-	)
+	works := newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, Media: files, Audit: writer})
+	workService := workdomain.NewConnectHandler(works)
+	internalService := workdomain.NewInternalConnectHandler(works)
 
 	isPresent := true
 	created, err := workService.CreateWork(memberCtx, connect.NewRequest(&managev1.CreateWorkRequest{

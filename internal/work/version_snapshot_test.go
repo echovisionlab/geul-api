@@ -43,7 +43,7 @@ func TestWorkVersionProtoFormatting(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	version, err := (&WorkService{}).toProtoWorkVersion(&model.WorkVersion{
+	version, err := (&Service{}).toProtoWorkVersion(&model.WorkVersion{
 		ID: "work-version-1", Version: 4, Title: &title, Summary: &summary,
 		ContentSnapshot:      snapshot,
 		ContributorMemberIDs: []string{"member-2", "member-1", "member-2"},
