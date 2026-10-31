@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 type CollaborationPermissionChecker interface {
@@ -19,13 +20,13 @@ type CollaborationPermissionChecker interface {
 
 func requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []string) error {
 	if len(memberIDs) == 0 {
-		return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires contributors")
+		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
 	unique := make([]string, 0, len(memberIDs))
 	for _, memberID := range memberIDs {
 		memberID = strings.TrimSpace(memberID)
 		if memberID == "" || (len(unique) > 0 && unique[len(unique)-1] >= memberID) {
-			return errs.InvalidArgument("contributor_member_ids", "must contain sorted unique canonical Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "must contain sorted unique canonical Member UUIDs")
 		}
 		unique = append(unique, memberID)
 	}
@@ -36,28 +37,26 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []s
 	var locked []string
 	if err := tx.WithContext(ctx).Table("member").Clauses(clause.Locking{Strength: "KEY SHARE"}).
 		Where("id IN ?", unique).Pluck("id::text", &locked).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if len(locked) != len(unique) {
-		return errs.InvalidArgument("contributor_member_ids", "contains a Member that does not exist")
+		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil
 }
 
-func requireReleaseCollaborationContributors(
-	ctx context.Context,
-	tx *gorm.DB,
-	checkpoints persistencecheckpoint.ContributorFence,
-	releaseID string,
-	contributors []string,
-) error {
-	return checkpoints.RequireCurrentContributors(
-		ctx,
-		tx,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE,
-		releaseID,
-		contributors,
-	)
+// collaborationContributorsAccess is the Access of a collaboration save: the
+// save's authority is its contributors, not the request principal, and
+// each must still be a current contributor of the Release room.
+func (s *Service) collaborationContributorsAccess(releaseID string, contributors []string) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		if err := requireDocumentContributors(ctx, tx, contributors); err != nil {
+			return err
+		}
+		return s.checkpoints.RequireCurrentContributors(
+			ctx, tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, releaseID, contributors,
+		)
+	})
 }
 
 func RequireCollaborationEdit(
@@ -68,28 +67,28 @@ func RequireCollaborationEdit(
 	principal *auth.UserInfo,
 ) error {
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	if resourceKind != intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE {
-		return errs.InvalidArgument("resource.type", "must be Release")
+		return domainerr.InvalidField("resource.type", "must be Release")
 	}
 	if principal == nil || !principal.Authenticated {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	can, err := policyv1.Release.Edit(resourceID)
 	if err != nil {
-		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
+		return domainerr.InvalidField("resource.id", "must be a canonical resource UUID")
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Name(), "release")
+		return noPermission(can.Action().Name(), "release")
 	}
 	return nil
 }

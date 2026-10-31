@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-var _ TrackManagementApplication = (*releasedomain.TrackService)(nil)
+var _ TrackManagementApplication = (*releasedomain.Service)(nil)
 
 const (
 	trackTestID      = "11111111-1111-4111-8111-111111111111"
@@ -29,44 +29,44 @@ type recordingTrackApplication struct {
 	err     error
 	calls   int
 	ctx     context.Context
-	list    *managev1.ListTracksByReleaseRequest
-	create  *managev1.CreateTrackRequest
-	update  *managev1.UpdateTrackRequest
-	delete  *managev1.DeleteTrackRequest
-	credits *managev1.SetTrackCreditsRequest
-	reorder *managev1.ReorderTracksRequest
+	list    releasedomain.ListTracksQuery
+	create  releasedomain.CreateTrackCommand
+	update  releasedomain.UpdateTrackCommand
+	delete  releasedomain.DeleteTrackCommand
+	credits releasedomain.SetTrackCreditsCommand
+	reorder releasedomain.ReorderTracksCommand
 }
 
 func (a *recordingTrackApplication) record(ctx context.Context) { a.calls++; a.ctx = ctx }
-func (a *recordingTrackApplication) ListTracksByRelease(ctx context.Context, request *connect.Request[managev1.ListTracksByReleaseRequest]) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
+func (a *recordingTrackApplication) ListTracksByRelease(ctx context.Context, query releasedomain.ListTracksQuery) ([]*managev1.TrackWithCredits, error) {
 	a.record(ctx)
-	a.list = request.Msg
-	return connect.NewResponse(&managev1.ListTracksByReleaseResponse{Tracks: []*managev1.TrackWithCredits{trackWithCreditsFixture()}}), a.err
+	a.list = query
+	return []*managev1.TrackWithCredits{trackWithCreditsFixture()}, a.err
 }
-func (a *recordingTrackApplication) CreateTrack(ctx context.Context, request *connect.Request[managev1.CreateTrackRequest]) (*connect.Response[managev1.Track], error) {
+func (a *recordingTrackApplication) CreateTrack(ctx context.Context, command releasedomain.CreateTrackCommand) (*managev1.Track, error) {
 	a.record(ctx)
-	a.create = request.Msg
-	return connect.NewResponse(trackWithCreditsFixture().Track), a.err
+	a.create = command
+	return trackWithCreditsFixture().Track, a.err
 }
-func (a *recordingTrackApplication) UpdateTrack(ctx context.Context, request *connect.Request[managev1.UpdateTrackRequest]) (*connect.Response[managev1.Track], error) {
+func (a *recordingTrackApplication) UpdateTrack(ctx context.Context, command releasedomain.UpdateTrackCommand) (*managev1.Track, error) {
 	a.record(ctx)
-	a.update = request.Msg
-	return connect.NewResponse(trackWithCreditsFixture().Track), a.err
+	a.update = command
+	return trackWithCreditsFixture().Track, a.err
 }
-func (a *recordingTrackApplication) DeleteTrack(ctx context.Context, request *connect.Request[managev1.DeleteTrackRequest]) (*connect.Response[managev1.DeleteResponse], error) {
+func (a *recordingTrackApplication) DeleteTrack(ctx context.Context, command releasedomain.DeleteTrackCommand) error {
 	a.record(ctx)
-	a.delete = request.Msg
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), a.err
+	a.delete = command
+	return a.err
 }
-func (a *recordingTrackApplication) SetTrackCredits(ctx context.Context, request *connect.Request[managev1.SetTrackCreditsRequest]) (*connect.Response[managev1.TrackWithCredits], error) {
+func (a *recordingTrackApplication) SetTrackCredits(ctx context.Context, command releasedomain.SetTrackCreditsCommand) (*managev1.TrackWithCredits, error) {
 	a.record(ctx)
-	a.credits = request.Msg
-	return connect.NewResponse(trackWithCreditsFixture()), a.err
+	a.credits = command
+	return trackWithCreditsFixture(), a.err
 }
-func (a *recordingTrackApplication) ReorderTracks(ctx context.Context, request *connect.Request[managev1.ReorderTracksRequest]) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
+func (a *recordingTrackApplication) ReorderTracks(ctx context.Context, command releasedomain.ReorderTracksCommand) ([]*managev1.TrackWithCredits, error) {
 	a.record(ctx)
-	a.reorder = request.Msg
-	return connect.NewResponse(&managev1.ListTracksByReleaseResponse{Tracks: []*managev1.TrackWithCredits{trackWithCreditsFixture()}}), a.err
+	a.reorder = command
+	return []*managev1.TrackWithCredits{trackWithCreditsFixture()}, a.err
 }
 
 func trackWithCreditsFixture() *managev1.TrackWithCredits {
@@ -94,12 +94,12 @@ func TestTrackManagementDispatchesExactOwningRPCs(t *testing.T) {
 		check       func(*testing.T, *recordingTrackApplication, mcpserver.ToolResult)
 	}{
 		{ToolTrackList, `{"release_id":"` + trackTestRelease + `"}`, func(t *testing.T, a *recordingTrackApplication, result mcpserver.ToolResult) {
-			if a.list.ReleaseId != trackTestRelease || len(result.StructuredContent["tracks"].([]any)) != 1 {
+			if a.list.ReleaseID != trackTestRelease || len(result.StructuredContent["tracks"].([]any)) != 1 {
 				t.Fatalf("list=%+v result=%+v", a.list, result)
 			}
 		}},
 		{ToolTrackCreate, `{"release_id":"` + trackTestRelease + `","title":"New","duration_seconds":0,"lyrics":""}`, func(t *testing.T, a *recordingTrackApplication, result mcpserver.ToolResult) {
-			if a.create.ReleaseId != trackTestRelease || a.create.TrackNumber != 0 || a.create.Title != "New" || a.create.DurationSeconds == nil || *a.create.DurationSeconds != 0 || a.create.Lyrics == nil || *a.create.Lyrics != "" {
+			if a.create.ReleaseID != trackTestRelease || a.create.Title != "New" || a.create.DurationSeconds == nil || *a.create.DurationSeconds != 0 || a.create.Lyrics == nil || *a.create.Lyrics != "" {
 				t.Fatalf("create=%+v", a.create)
 			}
 			if result.StructuredContent["credits"] != nil || result.StructuredContent["observed"] != nil {
@@ -108,7 +108,7 @@ func TestTrackManagementDispatchesExactOwningRPCs(t *testing.T) {
 		}},
 		{ToolTrackSettingsUpdate, `{"track_id":"` + trackTestID + `","track_number":5,"title":"","duration_seconds":0,"processing_status":"","lyrics":"","clear_duration":true,"clear_audio_original":true,"clear_lyrics":true}`, func(t *testing.T, a *recordingTrackApplication, result mcpserver.ToolResult) {
 			request := a.update
-			if request.Id != trackTestID || request.TrackNumber == nil || *request.TrackNumber != 5 || request.Title == nil || *request.Title != "" || request.DurationSeconds == nil || *request.DurationSeconds != 0 || request.ProcessingStatus == nil || *request.ProcessingStatus != "" || request.Lyrics == nil || *request.Lyrics != "" || !request.ClearDuration || !request.ClearAudioOriginal || !request.ClearLyrics {
+			if request.ID != trackTestID || request.TrackNumber == nil || *request.TrackNumber != 5 || request.Title == nil || *request.Title != "" || request.DurationSeconds == nil || *request.DurationSeconds != 0 || request.ProcessingStatus == nil || *request.ProcessingStatus != "" || request.Lyrics == nil || *request.Lyrics != "" || !request.ClearDuration || !request.ClearAudioOriginal || !request.ClearLyrics {
 				t.Fatalf("update lost pointer/clear values: %+v", request)
 			}
 			if result.StructuredContent["observed"] != nil {
@@ -116,18 +116,18 @@ func TestTrackManagementDispatchesExactOwningRPCs(t *testing.T) {
 			}
 		}},
 		{ToolTrackDelete, `{"track_id":"` + trackTestID + `"}`, func(t *testing.T, a *recordingTrackApplication, result mcpserver.ToolResult) {
-			if a.delete.Id != trackTestID || result.StructuredContent["success"] != true {
+			if a.delete.ID != trackTestID || result.StructuredContent["success"] != true {
 				t.Fatalf("delete=%+v result=%+v", a.delete, result)
 			}
 		}},
 		{ToolTrackCreditsSet, `{"track_id":"` + trackTestID + `","credits":[],"observed":{"credits":[{"id":"` + trackTestCredit + `","artist_id":"` + trackTestArtist + `","member_id":null,"credited_name":null,"credit_role":"producer","sort_order":0}]}}`, func(t *testing.T, a *recordingTrackApplication, _ mcpserver.ToolResult) {
 			request := a.credits
-			if request.TrackId != trackTestID || len(request.Credits) != 0 || request.Observed == nil || len(request.Observed.Credits) != 1 || request.Observed.Credits[0].GetId() != trackTestCredit || request.Observed.Credits[0].GetArtistId() != trackTestArtist || request.Observed.Credits[0].GetCreditRole() != "producer" {
+			if request.TrackID != trackTestID || len(request.Credits) != 0 || request.Observed == nil || len(request.Observed.Items) != 1 || *request.Observed.Items[0].ID != trackTestCredit || *request.Observed.Items[0].ArtistID != trackTestArtist || *request.Observed.Items[0].CreditRole != "producer" {
 				t.Fatalf("credits=%+v", request)
 			}
 		}},
 		{ToolTrackReorder, `{"track_ids":["` + trackTestCredit + `","` + trackTestID + `"]}`, func(t *testing.T, a *recordingTrackApplication, _ mcpserver.ToolResult) {
-			if !reflect.DeepEqual(a.reorder.TrackIds, []string{trackTestCredit, trackTestID}) {
+			if !reflect.DeepEqual(a.reorder.TrackIDs, []string{trackTestCredit, trackTestID}) {
 				t.Fatalf("reorder=%+v", a.reorder)
 			}
 		}},
@@ -196,7 +196,7 @@ func TestTrackListCreditSnapshotRoundTripsWithoutHydratedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(application.credits.Credits) != 1 || application.credits.Credits[0].GetId() != trackTestCredit || application.credits.Observed.Credits[0].GetId() != trackTestCredit || application.credits.Observed.Credits[0].MemberId != nil {
+	if len(application.credits.Credits) != 1 || *application.credits.Credits[0].ID != trackTestCredit || *application.credits.Observed.Items[0].ID != trackTestCredit || application.credits.Observed.Items[0].MemberID != nil {
 		t.Fatalf("snapshot roundtrip=%+v", application.credits)
 	}
 	empty := trackWithCreditsOutput(&managev1.TrackWithCredits{Track: &managev1.Track{Id: trackTestID, ReleaseId: trackTestRelease}})

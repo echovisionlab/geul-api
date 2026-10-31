@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/release"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -16,11 +18,14 @@ import (
 
 func releaseDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindRelease, domainPortFunctions{
-		loadSourceDocument:  release.LoadTypedTranslationSourceDocument,
+		loadSourceDocument: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, releaseID string) (*core.SourceDocument, error) {
+			source, err := release.LoadTypedTranslationSourceDocument(ctx, db, store, releaseID)
+			return source, releaseConnectError(err)
+		},
 		buildExtractionPlan: release.BuildTranslationExtractionPlan,
 		buildCandidate:      release.BuildTranslationCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return release.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter)
+			return releaseConnectError(release.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter))
 		},
 		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditReleaseUpdated, sharedtelemetry.NewReleaseSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
@@ -31,8 +36,22 @@ func releaseDomainRegistration(auditWriter domainaudit.Appender) domainRegistrat
 			translationCanSet{view: policyv1.Release.View, edit: policyv1.Release.Edit},
 			"",
 		),
-		requireInterchangeEdit:  release.RequireLockedSourceLocaleEdit,
+		requireInterchangeEdit:  requireLockedReleaseSourceLocaleEdit,
 		requireJobRead:          requireJobEdit(policyv1.Release.Edit),
-		requireSourceLocaleEdit: release.RequireLockedSourceLocaleEdit,
+		requireSourceLocaleEdit: requireLockedReleaseSourceLocaleEdit,
 	})
+}
+
+func requireLockedReleaseSourceLocaleEdit(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, releaseID string) error {
+	return releaseConnectError(release.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, releaseID))
+}
+
+// releaseConnectError gives a Release use-case answer the Connect form the
+// translation application branches on; an unclassified error passes
+// through.
+func releaseConnectError(err error) error {
+	if classified, ok := errs.Classified(err); ok {
+		return classified
+	}
+	return err
 }

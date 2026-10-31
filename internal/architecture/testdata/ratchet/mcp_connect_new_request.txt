@@ -3,7 +3,7 @@
 4 internal/adapters/mcp/admin_settings_tools.go
 22 internal/adapters/mcp/content_management_tools.go
 27 internal/adapters/mcp/content_related_tools.go
-5 internal/adapters/mcp/document_discovery_tools.go
+4 internal/adapters/mcp/document_discovery_tools.go
 3 internal/adapters/mcp/file_block_tools.go
 8 internal/adapters/mcp/file_manager_tools.go
 14 internal/adapters/mcp/legal_policy_tools.go
@@ -15,7 +15,4 @@
 4 internal/adapters/mcp/program_event_media_tools.go
 3 internal/adapters/mcp/program_event_reference_tools.go
 6 internal/adapters/mcp/reference_discovery_tools.go
-9 internal/adapters/mcp/release_management_tools.go
-8 internal/adapters/mcp/release_relation_tools.go
-6 internal/adapters/mcp/track_management_tools.go
 7 internal/adapters/mcp/translation_calls.go

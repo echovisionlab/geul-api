@@ -8,17 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/translation"
-
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/translation"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
 type releaseManageContentProjection struct {
@@ -38,7 +39,7 @@ func loadReleaseManageContentProjection(
 	loadRoot ...func(context.Context, *gorm.DB) error,
 ) (releaseManageContentProjection, error) {
 	var projection releaseManageContentProjection
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		for _, load := range loadRoot {
 			if load != nil {
 				if err := load(ctx, tx); err != nil {
@@ -81,7 +82,7 @@ func loadReleaseManageContentProjection(
 			SourceOgAssetID: sourceOgAssetID,
 		}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return projection, err
 }
 
@@ -91,19 +92,15 @@ func loadReleaseSourceTitle(
 	releaseID string,
 	locale string,
 ) (string, error) {
-	table := "release_translation"
 	var row struct {
 		Title string `gorm:"column:title"`
 	}
 	if err := db.WithContext(ctx).
-		Table(table).
+		Table("release_translation").
 		Select("title").
 		Where("entity_id = ? AND locale = ?", releaseID, locale).
 		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errs.NotFound(table, releaseID)
-		}
-		return "", errs.Internal(err)
+		return "", missingAs(err, domainerr.ResourceNotFound("release_translation", releaseID))
 	}
 	return row.Title, nil
 }
@@ -116,30 +113,26 @@ func saveReleaseSourceLocaleMetadata(
 	input translationLocaleDocumentSaveInput,
 ) error {
 	if input.Title == nil || strings.TrimSpace(*input.Title) == "" {
-		return errs.InvalidArgument("title", "must not be empty")
+		return domainerr.InvalidField("title", "must not be empty")
 	}
 	source, err := loadReleaseSourceLocale(ctx, db, releaseID)
 	if err != nil {
 		return err
 	}
 	if source.SourceLocale != locale {
-		return errs.FailedPrecondition("source locale metadata must match translation source authority")
+		return domainerr.Precondition("source locale metadata must match translation source authority")
 	}
-	table := "release_translation"
 	now := input.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	return db.WithContext(ctx).Exec(
-		fmt.Sprintf(
-			`INSERT INTO %s (
-			 entity_id, locale, title, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT (entity_id, locale) DO UPDATE SET
-			 title = EXCLUDED.title,
-			 updated_at = EXCLUDED.updated_at`,
-			table,
-		),
+		`INSERT INTO release_translation (
+		 entity_id, locale, title, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (entity_id, locale) DO UPDATE SET
+		 title = EXCLUDED.title,
+		 updated_at = EXCLUDED.updated_at`,
 		releaseID, locale, strings.TrimSpace(*input.Title),
 		now, now,
 	).Error
@@ -165,7 +158,7 @@ func loadReleaseLocaleMetadataState(
 		return nil, nil
 	}
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 	return &row, nil
 }
@@ -198,12 +191,8 @@ func loadReleaseSourceLocaleWithStrength(
 	if strength != "" {
 		query = query.Clauses(clause.Locking{Strength: strength})
 	}
-	err := query.Take(&state).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return releaseSourceLocale{}, errs.NotFound(releaseContentEntity, releaseID)
-	}
-	if err != nil {
-		return releaseSourceLocale{}, errs.Internal(err)
+	if err := query.Take(&state).Error; err != nil {
+		return releaseSourceLocale{}, missingAs(err, releaseNotFound(releaseID))
 	}
 	return state, nil
 }
@@ -214,9 +203,6 @@ func loadReleaseContentSnapshotInTransaction(
 	store *contentblock.Store,
 	releaseID string,
 ) (contentblock.Snapshot, releaseSourceLocale, error) {
-	if store == nil {
-		return contentblock.Snapshot{}, releaseSourceLocale{}, errs.Internal(errors.New("content Block store is not configured"))
-	}
 	documentID, err := loadReleaseContentDocumentIDWithStrength(
 		ctx, tx, releaseID, clause.LockingStrengthShare,
 	)
@@ -234,7 +220,7 @@ func loadReleaseContentSnapshotInTransaction(
 		return contentblock.Snapshot{}, releaseSourceLocale{}, normalizeReleaseContentBlockError(err)
 	}
 	if strings.TrimSpace(snapshot.SourceLocale) != source.SourceLocale {
-		return contentblock.Snapshot{}, releaseSourceLocale{}, errs.Internal(errors.New("content document source locale does not match release root"))
+		return contentblock.Snapshot{}, releaseSourceLocale{}, errors.New("content document source locale does not match release root")
 	}
 	return snapshot, source, nil
 }
@@ -253,10 +239,10 @@ func initializeReleaseContentDocument(
 		return contentblock.Result{}, nil
 	}
 	if input.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT {
-		return contentblock.Result{}, errs.InvalidArgument("document.profile", "must be compact")
+		return contentblock.Result{}, domainerr.InvalidField("document.profile", "must be compact")
 	}
 	if input.GetSourceLocale() != sourceLocale {
-		return contentblock.Result{}, errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
+		return contentblock.Result{}, domainerr.InvalidField("document.source_locale", "must match the server-selected source locale")
 	}
 	replace, err := contentblock.ReplaceFromRichTextProto(
 		created.Document.ID,
@@ -283,50 +269,31 @@ type releaseContentBootstrapSnapshot struct {
 	Source   releaseSourceLocale
 }
 
+// loadReleaseContentBlockBootstrap reads the Release content snapshot a
+// collaboration room opens, after resolving the room's principal from its
+// session and checking its exact Release edit permission. loadMetadata
+// reads the room's metadata in the same snapshot.
 func loadReleaseContentBlockBootstrap(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
 	spiceDB CollaborationPermissionChecker,
 	releaseID string,
-	principalMessage *intrav1.CollaborationPrincipal,
+	principal *CollaborationPrincipal,
 	loadMetadata func(context.Context, *gorm.DB) error,
 ) (releaseContentBootstrapSnapshot, error) {
-	if principalMessage == nil {
-		return releaseContentBootstrapSnapshot{}, errs.AuthenticationRequired()
-	}
-	if store == nil {
-		return releaseContentBootstrapSnapshot{}, errs.Internal(errors.New("content Block store is not configured"))
+	if principal == nil {
+		return releaseContentBootstrapSnapshot{}, authenticationRequired()
 	}
 	var output releaseContentBootstrapSnapshot
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		documentID, err := loadReleaseContentDocumentIDWithStrength(
 			ctx, tx, releaseID, clause.LockingStrengthShare,
 		)
 		if err != nil {
 			return err
 		}
-		principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-			ctx, tx, principalMessage.GetSessionId(),
-		)
-		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			return errs.WithCause(errs.AuthenticationRequired(), err)
-		}
-		if err != nil {
-			return errs.Internal(fmt.Errorf("resolve Release collaboration principal: %w", err))
-		}
-		if principal == nil || !principal.Authenticated {
-			return errs.AuthenticationRequired()
-		}
-		if principal.Banned {
-			return errs.AccountBanned()
-		}
-		if !principal.Onboarded {
-			return errs.NoPermission("edit", releaseContentEntity)
-		}
-		if err := RequireCollaborationEdit(
-			ctx, spiceDB, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, releaseID, principal,
-		); err != nil {
+		if err := requireCollaborationSession(ctx, tx, spiceDB, releaseID, principal.SessionID); err != nil {
 			return err
 		}
 		source, err := loadReleaseSourceLocaleWithStrength(
@@ -342,17 +309,44 @@ func loadReleaseContentBlockBootstrap(
 			return normalizeReleaseContentBlockError(err)
 		}
 		if snapshot.SourceLocale != source.SourceLocale {
-			return errs.Internal(errors.New("content document source locale does not match translation authority"))
+			return errors.New("content document source locale does not match translation authority")
 		}
-		if loadMetadata != nil {
-			if err := loadMetadata(ctx, tx); err != nil {
-				return err
-			}
+		if err := loadMetadata(ctx, tx); err != nil {
+			return err
 		}
 		output = releaseContentBootstrapSnapshot{Snapshot: snapshot, Source: source}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return output, err
+}
+
+// requireCollaborationSession resolves the principal of a collaboration
+// room's session and requires its exact Release edit permission.
+func requireCollaborationSession(
+	ctx context.Context,
+	tx *gorm.DB,
+	spiceDB CollaborationPermissionChecker,
+	releaseID string,
+	sessionID string,
+) error {
+	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, tx, sessionID)
+	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
+		return authenticationRequired().WithCause(err)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve Release collaboration principal: %w", err)
+	}
+	switch {
+	case principal == nil || !principal.Authenticated:
+		return authenticationRequired()
+	case principal.Banned:
+		return accountBanned()
+	case !principal.Onboarded:
+		return noPermission("edit", releaseContentEntity)
+	}
+	return RequireCollaborationEdit(
+		ctx, spiceDB, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, releaseID, principal,
+	)
 }
 
 const (
@@ -392,7 +386,7 @@ func releaseContentDocumentFence(
 			return contentblock.DomainContext{}, err
 		}
 		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("content document authorization is required"))
+			return contentblock.DomainContext{}, errors.New("content document authorization is required")
 		}
 		if err := authorize(ctx, tx); err != nil {
 			return contentblock.DomainContext{}, err
@@ -411,7 +405,7 @@ func releaseContentCreationFence(
 			return contentblock.DomainContext{}, err
 		}
 		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("content document authorization is required"))
+			return contentblock.DomainContext{}, errors.New("content document authorization is required")
 		}
 		if err := authorize(ctx, tx); err != nil {
 			return contentblock.DomainContext{}, err
@@ -434,40 +428,51 @@ func lockReleaseTranslationSourceContext(
 		Select("source_locale").
 		Where("id = ?", releaseID).
 		Take(&source).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return contentblock.DomainContext{}, errs.NotFound(releaseContentEntity, releaseID)
-		}
-		return contentblock.DomainContext{}, errs.Internal(err)
+		return contentblock.DomainContext{}, missingAs(err, releaseNotFound(releaseID))
 	}
 	return contentblock.DomainContext{SourceLocale: source.SourceLocale}, nil
 }
 
+// normalizeReleaseContentBlockError answers the Content Block store's
+// sentinel failures. A revision conflict keeps its cause, so a conflict
+// found while storing takes the same errors.Is/As branches (AI document
+// conflict result, translation source no longer current) as one found by
+// the pre-check. Any other error passes through unchanged.
 func normalizeReleaseContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
-		return err
+	if err == nil {
+		return nil
 	}
-	// A revision conflict keeps its cause, so a conflict found while storing
-	// takes the same errors.Is/As branches (AI document conflict result,
-	// translation source no longer current) as one found by the pre-check.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		return errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err), err)
+		return releaseConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
-
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg("release content document not found"), err)
+		return notFound("release content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "release content revision changed; reload before saving", err), err)
+		return releaseConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "release content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks"), err)
+		return domainerr.InvalidField("blocks", "compact documents cannot contain File Blocks").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("release content document: %w", err))
+		return err
 	}
+}
+
+// releaseConflict is the collaboration conflict answer for cause: it reports
+// the current revisions cause carries and keeps cause in the chain.
+func releaseConflict(reason intrav1.CollaborationConflictReason, message string, cause error) error {
+	var state collaborationconflict.State
+	var revisions interface {
+		CollaborationRevisions() (string, string, *bool)
+	}
+	if errors.As(cause, &revisions) {
+		state.Document, state.Target, state.TargetExists = revisions.CollaborationRevisions()
+	}
+	return fmt.Errorf("%w: %w", collaborationconflict.Conflict(reason, message, state), cause)
 }
 
 func loadReleaseContentDocumentID(
@@ -494,7 +499,7 @@ func lockReleaseContentDocumentRoot(
 		return err
 	}
 	if expectedDocumentID == uuid.Nil || documentID != expectedDocumentID {
-		return errs.FailedPrecondition("content document ownership changed; reload before saving")
+		return domainerr.Precondition("content document ownership changed; reload before saving")
 	}
 	return nil
 }
@@ -520,9 +525,6 @@ func loadReleaseContentDocumentIDWithStrength(
 	releaseID string,
 	strength string,
 ) (uuid.UUID, error) {
-	if db == nil {
-		return uuid.Nil, errs.Internal(errors.New("content document database is required"))
-	}
 	query := db.WithContext(ctx).
 		Table("release").
 		Select("id", "content_document_id").
@@ -532,17 +534,14 @@ func loadReleaseContentDocumentIDWithStrength(
 	}
 	var root releaseContentDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound(releaseContentEntity, releaseID)
-		}
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, missingAs(err, releaseNotFound(releaseID))
 	}
 	if !root.ContentDocumentID.Valid || root.ContentDocumentID.String == "" {
-		return uuid.Nil, errs.FailedPrecondition("content document is not initialized")
+		return uuid.Nil, domainerr.Precondition("content document is not initialized")
 	}
 	documentID, err := uuid.Parse(root.ContentDocumentID.String)
 	if err != nil {
-		return uuid.Nil, errs.Internal(fmt.Errorf("invalid release content_document_id: %w", err))
+		return uuid.Nil, fmt.Errorf("invalid release content_document_id: %w", err)
 	}
 	return documentID, nil
 }

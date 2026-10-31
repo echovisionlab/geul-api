@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -93,14 +93,14 @@ func (e *AIDocumentRevisionConflictError) Error() string {
 func validateReleaseAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
 	releaseID, err := uuidFromCanonicalString(input.ReleaseID)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("release_id", "must be a canonical UUID")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("release_id", "must be a canonical UUID")
 	}
 	expected, err := uuidFromCanonicalString(input.ExpectedDocumentRevision)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("expected_revision", "must be a canonical UUID")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("expected_revision", "must be a canonical UUID")
 	}
 	if strings.TrimSpace(input.Locale) == "" || strings.TrimSpace(input.ExpectedSource) == "" {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "requested and source locales are required")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("locale", "requested and source locales are required")
 	}
 	modes := 0
 	if input.Batch != nil || input.SetTitle || len(input.CreditNotePatch) != 0 {
@@ -113,13 +113,13 @@ func validateReleaseAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uui
 		modes++
 	}
 	if modes != 1 {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("operation", "exactly one Release AI document mutation mode is required")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("operation", "exactly one Release AI document mutation mode is required")
 	}
 	if input.CreateTranslation && (input.Locale == input.ExpectedSource || input.ExpectedPresence) {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "only a missing non-source Release translation can be created")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("locale", "only a missing non-source Release translation can be created")
 	}
 	if input.DeleteTranslation && (input.Locale == input.ExpectedSource || !input.ExpectedPresence) {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "only an existing non-source Release translation can be deleted")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("locale", "only an existing non-source Release translation can be deleted")
 	}
 	return releaseID, expected, nil
 }

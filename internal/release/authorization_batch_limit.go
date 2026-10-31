@@ -1,6 +1,6 @@
 package release
 
-import errs "github.com/echovisionlab/geul-api/internal/errors"
+import "github.com/echovisionlab/geul-api/internal/domainerr"
 
 // SpiceDB v1.56 accepts at most 1,000 updates and 1,000 preconditions in one
 // atomic relationship write.
@@ -10,5 +10,5 @@ func validateAtomicAuthorizationRelationshipBatchSize(updateCount, preconditionC
 	if updateCount <= maxSpiceDBAtomicRelationshipMutations && preconditionCount <= maxSpiceDBAtomicRelationshipMutations {
 		return nil
 	}
-	return errs.FailedPrecondition(message)
+	return domainerr.Precondition(message)
 }

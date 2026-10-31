@@ -18,9 +18,9 @@ func NewPolicyAccess(checker *auth.SpiceDBClient) *PolicyAccess {
 }
 
 func (a *PolicyAccess) RequireLockedView(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	return a.authority.RequireLockedView(ctx, tx, a.checker, releaseID)
+	return connectError(a.authority.RequireLockedView(ctx, tx, a.checker, releaseID))
 }
 
 func (a *PolicyAccess) RequireLockedEdit(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	return a.authority.RequireLockedEdit(ctx, tx, a.checker, releaseID)
+	return connectError(a.authority.RequireLockedEdit(ctx, tx, a.checker, releaseID))
 }

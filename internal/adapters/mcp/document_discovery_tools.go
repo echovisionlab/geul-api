@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -49,7 +50,7 @@ type ProgramEventDocumentDiscovery interface {
 }
 
 type ReleaseDocumentDiscovery interface {
-	ListReleasesAdmin(context.Context, *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error)
+	ListReleasesAdmin(context.Context, releasedomain.ListReleasesQuery) (releasedomain.ReleasePage, error)
 }
 
 type ArtistDocumentDiscovery interface {
@@ -246,17 +247,15 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
 	case "release":
-		request := connect.NewRequest(&managev1.ListReleasesAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.releases.ListReleasesAdmin(ctx, releasedomain.ListReleasesQuery{
+			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
+			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.releases.ListReleasesAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Releases))
-		for _, item := range listed.Msg.Releases {
+		documents := make([]map[string]any, 0, len(listed.Releases))
+		for _, item := range listed.Releases {
 			if item == nil || item.Release == nil || item.Release.UpdatedAt == nil {
 				continue
 			}
@@ -266,7 +265,7 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 				release.Status, release.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, listed.Total, int(listed.Limit), nil
 	case "artist":
 		request := connect.NewRequest(&managev1.ListArtistsAdminRequest{
 			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},

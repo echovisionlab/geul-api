@@ -3,32 +3,29 @@ package release
 import (
 	"testing"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/model"
 )
 
-func TestReleaseAIDocumentLifecycleUsesExactGeneratedStatus(t *testing.T) {
+func TestReleaseAIDocumentLifecycleUsesExactStoredStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		status    string
-		published bool
-		valid     bool
+		status model.ReleaseStatus
+		valid  bool
 	}{
-		{status: managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String(), valid: true},
-		{status: managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), published: true, valid: true},
+		{status: model.ReleaseStatusDraft, valid: true},
+		{status: model.ReleaseStatusPublished, valid: true},
 		{status: "PUBLISHED"},
 		{status: "RELEASE_STATUS_PUBLISHED "},
 		{status: "BOGUS_PUBLISHED"},
 		{status: "RELEASE_STATUS_ARCHIVED"},
-		{status: managev1.ReleaseStatus_RELEASE_STATUS_UNSPECIFIED.String()},
+		{status: "RELEASE_STATUS_UNSPECIFIED"},
 	}
 	for _, test := range tests {
-		test := test
-		t.Run(test.status, func(t *testing.T) {
+		t.Run(string(test.status), func(t *testing.T) {
 			t.Parallel()
-			published, valid := releaseAIDocumentLifecycle(test.status)
-			if published != test.published || valid != test.valid {
-				t.Fatalf("releaseAIDocumentLifecycle(%q) = (%t, %t), want (%t, %t)", test.status, published, valid, test.published, test.valid)
+			if valid := knownReleaseLifecycle(test.status); valid != test.valid {
+				t.Fatalf("knownReleaseLifecycle(%q) = %t, want %t", test.status, valid, test.valid)
 			}
 		})
 	}

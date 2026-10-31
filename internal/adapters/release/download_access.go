@@ -253,7 +253,7 @@ func (a *DownloadAccess) validateLockedReleaseDownloadOwnerAuthorization(
 	}
 	switch authorization.Mode {
 	case mediaasset.ContentDownloadOwnerAccessPublic:
-		return status == managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), nil
+		return status == string(model.ReleaseStatusPublished), nil
 	case mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft:
 		user := auth.GetUser(ctx)
 		if user == nil || !user.Authenticated || user.Banned ||

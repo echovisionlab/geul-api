@@ -100,7 +100,7 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 		if errors.As(err, &conflict) {
 			return application.TranslationInterchangeApplyResult{}, connect.NewError(connect.CodeAborted, errors.New("translation target revision changed; reload before importing"))
 		}
-		return application.TranslationInterchangeApplyResult{}, err
+		return application.TranslationInterchangeApplyResult{}, releaseConnectError(err)
 	}
 	after, err := loadReleaseInterchangeTarget(
 		ctx, db, store, command.EntityType, command.EntityID, command.TargetLocale, command.Plan,
@@ -137,7 +137,7 @@ func loadReleaseInterchangeTarget(
 	}
 	target, err := releasedomain.LoadTypedTranslationInterchangeTarget(ctx, db, store, entityID, locale)
 	if err != nil {
-		return releaseInterchangeTarget{}, err
+		return releaseInterchangeTarget{}, releaseConnectError(err)
 	}
 	creative, err := projectCreativeInterchangeTarget(plan, target.Exists, target.Revision, target.Document)
 	if err != nil {

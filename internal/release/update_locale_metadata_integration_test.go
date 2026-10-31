@@ -15,11 +15,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -68,7 +68,7 @@ func (p *recordingReleaseAsyncPublisher) NotifyProtobufWithExecutor(context.Cont
 
 type releaseLocaleMetadataFixture struct {
 	db             *gorm.DB
-	service        *releasepkg.InternalReleaseService
+	service        *releasepkg.InternalConnectHandler
 	og             *recordingReleaseContentOG
 	publisher      *recordingReleaseAsyncPublisher
 	ctx            context.Context
@@ -117,12 +117,10 @@ func newReleaseLocaleMetadataFixture(t *testing.T) releaseLocaleMetadataFixture 
 	)
 	og := &recordingReleaseContentOG{}
 	publisher := &recordingReleaseAsyncPublisher{}
-	service := releasepkg.NewAuditedInternalReleaseService(
-		db, spiceDB, apitelemetry.NewDurableWriter(db), og, releaseadapter.NewArtistSummaries(db),
-		releasepkg.WithInternalReleaseContentBlockStore(store),
-		releasepkg.WithInternalReleaseCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		releasepkg.WithInternalReleaseAIDocumentPublisher(publisher),
-	)
+	service := releasepkg.NewInternalConnectHandler(releasetest.NewService(t, releasepkg.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: store,
+		Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), ContentSignals: publisher, ContentOG: og,
+	}))
 	var documentID string
 	require.NoError(t, db.Raw(`SELECT content_document_id::text FROM release WHERE id = ?`, releaseID).Scan(&documentID).Error)
 	contributor := testutil.PostIntegrationMemberID(adminID)

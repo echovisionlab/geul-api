@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -38,14 +38,14 @@ var releaseRelationTools = []mcpserver.Tool{
 
 // ReleaseRelationApplication retains the native observed-merge and permission boundaries.
 type ReleaseRelationApplication interface {
-	GetReleaseRelations(context.Context, *connect.Request[managev1.GetReleaseRelationsRequest]) (*connect.Response[managev1.GetReleaseRelationsResponse], error)
-	SetReleaseArtists(context.Context, *connect.Request[managev1.SetReleaseArtistsRequest]) (*connect.Response[managev1.SuccessResponse], error)
-	SetReleaseLabels(context.Context, *connect.Request[managev1.SetReleaseLabelsRequest]) (*connect.Response[managev1.SuccessResponse], error)
-	SetReleaseCategories(context.Context, *connect.Request[managev1.SetReleaseCategoriesRequest]) (*connect.Response[managev1.SuccessResponse], error)
-	SetReleaseGenres(context.Context, *connect.Request[managev1.SetReleaseGenresRequest]) (*connect.Response[managev1.SuccessResponse], error)
-	SetReleaseStyles(context.Context, *connect.Request[managev1.SetReleaseStylesRequest]) (*connect.Response[managev1.SuccessResponse], error)
-	SetReleaseFormats(context.Context, *connect.Request[managev1.SetReleaseFormatsRequest]) (*connect.Response[managev1.SuccessResponse], error)
-	SetReleaseCredits(context.Context, *connect.Request[managev1.SetReleaseCreditsRequest]) (*connect.Response[managev1.SuccessResponse], error)
+	GetReleaseRelations(context.Context, releasedomain.GetReleaseRelationsQuery) (*managev1.GetReleaseRelationsResponse, error)
+	SetReleaseArtists(context.Context, releasedomain.SetReleaseArtistsCommand) error
+	SetReleaseLabels(context.Context, releasedomain.SetReleaseLabelsCommand) error
+	SetReleaseCategories(context.Context, releasedomain.SetReleaseCategoriesCommand) error
+	SetReleaseGenres(context.Context, releasedomain.SetReleaseGenresCommand) error
+	SetReleaseStyles(context.Context, releasedomain.SetReleaseStylesCommand) error
+	SetReleaseFormats(context.Context, releasedomain.SetReleaseFormatsCommand) error
+	SetReleaseCredits(context.Context, releasedomain.SetReleaseCreditsCommand) error
 }
 
 type ReleaseRelationTools struct{ application ReleaseRelationApplication }
@@ -74,11 +74,11 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err := validateUUID("release_id", input.ReleaseID); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.GetReleaseRelations(ctx, connect.NewRequest(&managev1.GetReleaseRelationsRequest{ReleaseId: input.ReleaseID}))
+		relations, err := tools.application.GetReleaseRelations(ctx, releasedomain.GetReleaseRelationsQuery{ReleaseID: input.ReleaseID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return releaseRelationsResult(projectReleaseRelations(response.Msg))
+		return releaseRelationsResult(projectReleaseRelations(relations))
 	case ToolReleaseArtistsSet:
 		var input struct {
 			ReleaseID   string                         `json:"release_id"`
@@ -99,8 +99,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 				}
 			}
 		}
-		response, err := tools.application.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{ReleaseId: input.ReleaseID, Artists: input.Artists, Observed: &managev1.ReleaseArtistsSnapshot{Artists: input.Observed}, OrderIntent: input.OrderIntent}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseArtists(ctx, releasedomain.SetReleaseArtistsCommand{
+			ReleaseID: input.ReleaseID, Artists: releasedomain.ReleaseArtistInputsFromProto(input.Artists),
+			Observed:    &releasedomain.Snapshot[*releasedomain.ReleaseArtistInput]{Items: releasedomain.ReleaseArtistInputsFromProto(input.Observed)},
+			OrderIntent: releasedomain.RelationOrderIntentFromProto(input.OrderIntent),
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	case ToolReleaseLabelsSet:
 		var input struct {
 			ReleaseID   string                        `json:"release_id"`
@@ -121,8 +125,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 				}
 			}
 		}
-		response, err := tools.application.SetReleaseLabels(ctx, connect.NewRequest(&managev1.SetReleaseLabelsRequest{ReleaseId: input.ReleaseID, Labels: input.Labels, Observed: &managev1.ReleaseLabelsSnapshot{Labels: input.Observed}, OrderIntent: input.OrderIntent}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseLabels(ctx, releasedomain.SetReleaseLabelsCommand{
+			ReleaseID: input.ReleaseID, Labels: releasedomain.ReleaseLabelInputsFromProto(input.Labels),
+			Observed:    &releasedomain.Snapshot[*releasedomain.ReleaseLabelInput]{Items: releasedomain.ReleaseLabelInputsFromProto(input.Observed)},
+			OrderIntent: releasedomain.RelationOrderIntentFromProto(input.OrderIntent),
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	case ToolReleaseCategoriesSet:
 		var input struct {
 			ReleaseID string   `json:"release_id"`
@@ -135,8 +143,10 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err := validateReleaseRelationIDs(input.ReleaseID, input.IDs, input.Observed); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.SetReleaseCategories(ctx, connect.NewRequest(&managev1.SetReleaseCategoriesRequest{ReleaseId: input.ReleaseID, CategoryIds: input.IDs, Observed: &managev1.StringIdSnapshot{Ids: input.Observed}}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseCategories(ctx, releasedomain.SetReleaseCategoriesCommand{
+			ReleaseID: input.ReleaseID, CategoryIDs: input.IDs, Observed: &releasedomain.Snapshot[string]{Items: input.Observed},
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	case ToolReleaseGenresSet:
 		var input struct {
 			ReleaseID string   `json:"release_id"`
@@ -149,8 +159,10 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err := validateReleaseRelationIDs(input.ReleaseID, input.IDs, input.Observed); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.SetReleaseGenres(ctx, connect.NewRequest(&managev1.SetReleaseGenresRequest{ReleaseId: input.ReleaseID, GenreIds: input.IDs, Observed: &managev1.StringIdSnapshot{Ids: input.Observed}}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseGenres(ctx, releasedomain.SetReleaseGenresCommand{
+			ReleaseID: input.ReleaseID, GenreIDs: input.IDs, Observed: &releasedomain.Snapshot[string]{Items: input.Observed},
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	case ToolReleaseStylesSet:
 		var input struct {
 			ReleaseID string   `json:"release_id"`
@@ -163,8 +175,10 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err := validateReleaseRelationIDs(input.ReleaseID, input.IDs, input.Observed); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.application.SetReleaseStyles(ctx, connect.NewRequest(&managev1.SetReleaseStylesRequest{ReleaseId: input.ReleaseID, StyleIds: input.IDs, Observed: &managev1.StringIdSnapshot{Ids: input.Observed}}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseStyles(ctx, releasedomain.SetReleaseStylesCommand{
+			ReleaseID: input.ReleaseID, StyleIDs: input.IDs, Observed: &releasedomain.Snapshot[string]{Items: input.Observed},
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	case ToolReleaseFormatsSet:
 		var input struct {
 			ReleaseID string                         `json:"release_id"`
@@ -184,8 +198,11 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 				}
 			}
 		}
-		response, err := tools.application.SetReleaseFormats(ctx, connect.NewRequest(&managev1.SetReleaseFormatsRequest{ReleaseId: input.ReleaseID, Formats: input.Formats, Observed: &managev1.ReleaseFormatsSnapshot{Formats: input.Observed}}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseFormats(ctx, releasedomain.SetReleaseFormatsCommand{
+			ReleaseID: input.ReleaseID, Formats: releasedomain.ReleaseFormatInputsFromProto(input.Formats),
+			Observed: &releasedomain.Snapshot[*releasedomain.ReleaseFormatInput]{Items: releasedomain.ReleaseFormatInputsFromProto(input.Observed)},
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	case ToolReleaseCreditsSet:
 		var input struct {
 			ReleaseID   string                         `json:"release_id"`
@@ -215,8 +232,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 				}
 			}
 		}
-		response, err := tools.application.SetReleaseCredits(ctx, connect.NewRequest(&managev1.SetReleaseCreditsRequest{ReleaseId: input.ReleaseID, Credits: input.Credits, Observed: &managev1.ReleaseCreditsSnapshot{Credits: input.Observed}, OrderIntent: input.OrderIntent}))
-		return releaseRelationMutationResult(input.ReleaseID, response, err)
+		err := tools.application.SetReleaseCredits(ctx, releasedomain.SetReleaseCreditsCommand{
+			ReleaseID: input.ReleaseID, Credits: releasedomain.ReleaseCreditInputsFromProto(input.Credits),
+			Observed:    &releasedomain.Snapshot[*releasedomain.CreditInput]{Items: releasedomain.ReleaseCreditInputsFromProto(input.Observed)},
+			OrderIntent: releasedomain.RelationOrderIntentFromProto(input.OrderIntent),
+		})
+		return releaseRelationMutationResult(input.ReleaseID, err)
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
@@ -320,7 +341,7 @@ func projectReleaseRelations(source *managev1.GetReleaseRelationsResponse) relea
 	return output
 }
 
-func releaseRelationMutationResult(releaseID string, response *connect.Response[managev1.SuccessResponse], err error) (mcpserver.ToolResult, error) {
+func releaseRelationMutationResult(releaseID string, err error) (mcpserver.ToolResult, error) {
 	if err != nil {
 		return expectedToolError(err)
 	}
@@ -328,7 +349,7 @@ func releaseRelationMutationResult(releaseID string, response *connect.Response[
 		ReleaseID string `json:"release_id"`
 		Success   bool   `json:"success"`
 		NextStep  string `json:"next_step"`
-	}{releaseID, response.Msg.Success, "Call release_relations_get with this release_id for the next canonical observed snapshot."})
+	}{releaseID, true, "Call release_relations_get with this release_id for the next canonical observed snapshot."})
 }
 
 func releaseRelationsResult(value any) (mcpserver.ToolResult, error) {

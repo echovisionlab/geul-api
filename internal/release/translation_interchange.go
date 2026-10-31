@@ -2,10 +2,9 @@ package release
 
 import (
 	"context"
-	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"gorm.io/gorm"
 )
@@ -26,11 +25,8 @@ func LoadTypedTranslationInterchangeTarget(
 	releaseID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
-	if tx == nil || store == nil {
-		return TranslationInterchangeTarget{}, errs.Internal(errors.New("release translation interchange dependencies are not configured"))
-	}
 	if _, err := uuidFromCanonicalString(releaseID); err != nil {
-		return TranslationInterchangeTarget{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
+		return TranslationInterchangeTarget{}, domainerr.InvalidField("release_id", "must be a canonical UUID")
 	}
 	targetLocale, err := normalizeReleaseDocumentLocale(targetLocale)
 	if err != nil {
@@ -45,7 +41,7 @@ func LoadTypedTranslationInterchangeTarget(
 		return TranslationInterchangeTarget{}, err
 	}
 	if target.SourceLocale == targetLocale {
-		return TranslationInterchangeTarget{}, errs.InvalidArgument("target_locale", "must differ from the Release source locale")
+		return TranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", "must differ from the Release source locale")
 	}
 	document, err := contentblock.SnapshotToLocalizedRichTextDocument(target.Snapshot, targetLocale)
 	if err != nil {

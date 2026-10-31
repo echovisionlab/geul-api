@@ -4,7 +4,8 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -27,7 +28,7 @@ func TestReleaseTranslationApplyFenceAllowsDraftRootAndRejectsDeletedRoot(t *tes
 	documentID := uuid.New()
 	require.NoError(t, db.Exec(
 		`INSERT INTO release (id, status, content_document_id, source_locale) VALUES (?, ?, ?, ?)`,
-		releaseID, managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String(), documentID.String(), "en",
+		releaseID, string(model.ReleaseStatusDraft), documentID.String(), "en",
 	).Error)
 
 	fence := internalReleaseContentFence(releaseID)
@@ -39,5 +40,5 @@ func TestReleaseTranslationApplyFenceAllowsDraftRootAndRejectsDeletedRoot(t *tes
 	// make a late result applicable after Release deletion.
 	require.NoError(t, db.Exec(`DELETE FROM release WHERE id = ?`, releaseID).Error)
 	_, err = fence(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.Wrap(err).Code())
 }

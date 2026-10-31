@@ -11,7 +11,7 @@ import (
 )
 
 // loadReleaseArtists gets actual artists for every Release in one relation query.
-func (s *ReleaseService) loadReleaseArtists(ctx context.Context, releaseIDs []string) (map[string][]*openv1.ReleaseArtist, error) {
+func (s *Service) loadReleaseArtists(ctx context.Context, releaseIDs []string) (map[string][]*openv1.ReleaseArtist, error) {
 	var artists []struct {
 		ReleaseID   string  `gorm:"column:release_id"`
 		ArtistID    string  `gorm:"column:artist_id"`
@@ -83,7 +83,7 @@ func (s *ReleaseService) loadReleaseArtists(ctx context.Context, releaseIDs []st
 }
 
 // getReleaseLabels gets release labels.
-func (s *ReleaseService) getReleaseLabels(ctx context.Context, releaseID string) ([]*openv1.ReleaseLabel, error) {
+func (s *Service) getReleaseLabels(ctx context.Context, releaseID string) ([]*openv1.ReleaseLabel, error) {
 	var labels []struct {
 		ID            string  `gorm:"column:id"`
 		Name          string  `gorm:"column:name"`
@@ -132,7 +132,7 @@ func (s *ReleaseService) getReleaseLabels(ctx context.Context, releaseID string)
 	return protoLabels, nil
 }
 
-func (s *ReleaseService) getReleaseGenres(ctx context.Context, releaseID string) ([]*openv1.ReleaseReference, error) {
+func (s *Service) getReleaseGenres(ctx context.Context, releaseID string) ([]*openv1.ReleaseReference, error) {
 	var genres []struct {
 		ID   string `gorm:"column:id"`
 		Name string `gorm:"column:name"`
@@ -166,7 +166,7 @@ func (s *ReleaseService) getReleaseGenres(ctx context.Context, releaseID string)
 	return protoGenres, nil
 }
 
-func (s *ReleaseService) getReleaseStyles(ctx context.Context, releaseID string) ([]*openv1.ReleaseReference, error) {
+func (s *Service) getReleaseStyles(ctx context.Context, releaseID string) ([]*openv1.ReleaseReference, error) {
 	var styles []struct {
 		ID   string `gorm:"column:id"`
 		Name string `gorm:"column:name"`
@@ -200,7 +200,7 @@ func (s *ReleaseService) getReleaseStyles(ctx context.Context, releaseID string)
 	return protoStyles, nil
 }
 
-func (s *ReleaseService) getReleaseFormats(ctx context.Context, releaseID string) ([]*openv1.ReleaseFormat, error) {
+func (s *Service) getReleaseFormats(ctx context.Context, releaseID string) ([]*openv1.ReleaseFormat, error) {
 	var formats []struct {
 		ID          string  `gorm:"column:id"`
 		Name        string  `gorm:"column:name"`
@@ -243,7 +243,7 @@ func (s *ReleaseService) getReleaseFormats(ctx context.Context, releaseID string
 	return protoFormats, nil
 }
 
-func (s *ReleaseService) getReleaseCredits(
+func (s *Service) getReleaseCredits(
 	ctx context.Context,
 	releaseID string,
 	sourceLocale string,
@@ -279,7 +279,7 @@ type publicReleaseCreditRow struct {
 	ImageFileID  *string `gorm:"column:image_file_id"`
 }
 
-func (s *ReleaseService) loadReleaseCreditRows(ctx context.Context, releaseID string) ([]publicReleaseCreditRow, error) {
+func (s *Service) loadReleaseCreditRows(ctx context.Context, releaseID string) ([]publicReleaseCreditRow, error) {
 	var credits []publicReleaseCreditRow
 	err := s.db.WithContext(ctx).Raw(`
 			SELECT
@@ -332,7 +332,7 @@ type releaseCreditProjection struct {
 	noteByCreditID map[string]string
 }
 
-func (s *ReleaseService) loadReleaseCreditProjection(
+func (s *Service) loadReleaseCreditProjection(
 	ctx context.Context,
 	releaseID string,
 	credits []publicReleaseCreditRow,
@@ -372,7 +372,7 @@ func (s *ReleaseService) loadReleaseCreditProjection(
 	}, nil
 }
 
-func (s *ReleaseService) projectReleaseCredit(
+func (s *Service) projectReleaseCredit(
 	credit publicReleaseCreditRow,
 	projection releaseCreditProjection,
 ) *openv1.ReleaseCredit {
@@ -426,7 +426,7 @@ func releaseCreditDisplayName(credit publicReleaseCreditRow, members map[string]
 }
 
 // getReleaseTracks gets tracks for a release
-func (s *ReleaseService) getReleaseTracks(
+func (s *Service) getReleaseTracks(
 	ctx context.Context,
 	releaseID string,
 	releaseStatus string,
@@ -514,7 +514,7 @@ type releaseTrackMediaSources struct {
 	downloadByTrackID map[string]TrackDownloadAuthorization
 }
 
-func (s *ReleaseService) resolveReleaseTrackMedia(
+func (s *Service) resolveReleaseTrackMedia(
 	track model.Track,
 	sources releaseTrackMediaSources,
 ) (trackMediaDeliveryRefs, *openv1.FileDownloadAccess) {
@@ -578,7 +578,7 @@ type publicTrackCreditRow struct {
 	ImageFileID  *string `gorm:"column:image_file_id"`
 }
 
-func (s *ReleaseService) loadTrackCredits(ctx context.Context, trackIDs []string) (map[string][]*openv1.TrackCredit, error) {
+func (s *Service) loadTrackCredits(ctx context.Context, trackIDs []string) (map[string][]*openv1.TrackCredit, error) {
 	var credits []publicTrackCreditRow
 
 	err := s.db.WithContext(ctx).
@@ -646,7 +646,7 @@ func (s *ReleaseService) loadTrackCredits(ctx context.Context, trackIDs []string
 	return result, nil
 }
 
-func (s *ReleaseService) projectTrackCredit(
+func (s *Service) projectTrackCredit(
 	credit publicTrackCreditRow,
 	imageAssets map[string]*commonv1.AssetRef,
 ) *openv1.TrackCredit {

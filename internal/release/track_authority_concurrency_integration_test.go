@@ -13,10 +13,12 @@ import (
 
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -26,8 +28,8 @@ type releaseTrackAuthorityRaceFixture struct {
 	spiceDB  *auth.SpiceDBClient
 	identity string
 	ctx      context.Context
-	releases *releasepkg.ReleaseService
-	tracks   *releasepkg.TrackService
+	releases *releasepkg.ConnectHandler
+	tracks   *releasepkg.TrackConnectHandler
 	release  string
 }
 
@@ -41,26 +43,16 @@ func newReleaseTrackAuthorityRaceFixture(t *testing.T) releaseTrackAuthorityRace
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseIntegrationAdminCtx(identityID)
 	files := &recordingReleaseDeleteFileDeleter{}
-	releases := releasepkg.NewReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(files),
-		releaseadapter.NewAssets("cdn.example.com"),
-		releaseadapter.NewOG("cdn.example.com"),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopReleaseDeleteAsyncPublisher{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
-	tracks := releasepkg.NewTrackService(
-		db,
-		releaseadapter.NewTrackTranscodes(releaseIntegrationTranscoderPublisher{}),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		spiceDB,
-		releaseadapter.NewTrackFiles(files),
-		releaseadapter.NewMemberSummaries(db, "cdn.example.com"),
-		releaseadapter.NewArtistSummaries(db),
-	)
+	service := releasetest.NewService(t, releasepkg.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB),
+		ContentSignals: noopReleaseDeleteAsyncPublisher{}, TrackFiles: releaseadapter.NewTrackFiles(files),
+		Transcodes:   releaseadapter.NewTrackTranscodes(releaseIntegrationTranscoderPublisher{}),
+		WaveformJobs: releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
+		Assets:       releaseadapter.NewAssets("cdn.example.com"), OG: releaseadapter.NewOG("cdn.example.com"),
+		Members: releaseadapter.NewMemberSummaries(db, "cdn.example.com"),
+	})
+	releases := releasepkg.NewConnectHandler(service)
+	tracks := releasepkg.NewTrackConnectHandler(service)
 	created, err := releases.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Authority race release",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,

@@ -19,12 +19,14 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -85,7 +87,7 @@ type releaseDeleteFixture struct {
 	spiceDB    *auth.SpiceDBClient
 	ctx        context.Context
 	adminID    string
-	service    *releasepkg.ReleaseService
+	service    *releasepkg.ConnectHandler
 	cleaner    *releaseDeleteCleaner
 	waveforms  *recordingReleaseWaveformJobs
 	publisher  *recordingReleaseAsyncPublisher
@@ -109,12 +111,10 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 	waveforms := &recordingReleaseWaveformJobs{}
 	publisher := &recordingReleaseAsyncPublisher{}
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
-	service := releasepkg.NewAuditedReleaseService(
-		db, spiceDB, testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(cleaner), releaseadapter.NewAssets(""), releaseadapter.NewOG(""),
-		waveforms, publisher, apitelemetry.NewDurableWriter(db),
-		releasepkg.WithReleaseContentBlockStore(store),
-	)
+	service := releasepkg.NewConnectHandler(releasetest.NewService(t, releasepkg.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: store,
+		ContentSignals: publisher, TrackFiles: releaseadapter.NewTrackFiles(cleaner), WaveformJobs: waveforms,
+	}))
 	created, err := service.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Release delete characterization",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
@@ -123,11 +123,11 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 	require.NoError(t, err)
 	releaseID := created.Msg.Id
 
-	tracks := releasepkg.NewTrackService(
-		db, releaseadapter.NewTrackTranscodes(nil), releaseadapter.NewWaveformJobs(db, nil), spiceDB,
-		releaseadapter.NewTrackFiles(&releaseDeleteCleaner{}),
-		releaseadapter.NewMemberSummaries(db, ""), releaseadapter.NewArtistSummaries(db),
-	)
+	// The Tracks are fixture state: their creation audit stays in memory.
+	tracks := releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasepkg.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, ContentBlocks: store,
+		TrackFiles: releaseadapter.NewTrackFiles(&releaseDeleteCleaner{}),
+	}))
 	trackIDs := make([]string, 0, trackCount)
 	for index := range trackCount {
 		track, err := tracks.CreateTrack(ctx, connect.NewRequest(&managev1.CreateTrackRequest{

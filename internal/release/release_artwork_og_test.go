@@ -16,13 +16,13 @@ func TestReleaseProtoUsesArtworkAsOgAndIgnoresLegacyGeneratedAsset(t *testing.T)
 		Url:     "https://cdn.example.test/asset/release-artwork/artwork.webp",
 	}
 
-	result := (&ReleaseService{}).toProtoRelease(&model.Release{
+	result := toProtoRelease(&model.Release{
 		ID:        "release-1",
 		Title:     "Release",
 		Type:      "RELEASE_TYPE_ALBUM",
 		Status:    "RELEASE_STATUS_PUBLISHED",
 		OgAssetID: &legacyOgAssetID,
-	}, artwork)
+	}, nil, artwork)
 
 	require.Same(t, artwork, result.ArtworkAsset)
 	require.Same(t, artwork, result.OgAsset)
@@ -31,13 +31,13 @@ func TestReleaseProtoUsesArtworkAsOgAndIgnoresLegacyGeneratedAsset(t *testing.T)
 func TestReleaseProtoHasNoOgWithoutArtwork(t *testing.T) {
 	legacyOgAssetID := "legacy-generated-og"
 
-	result := (&ReleaseService{}).toProtoRelease(&model.Release{
+	result := toProtoRelease(&model.Release{
 		ID:        "release-1",
 		Title:     "Release",
 		Type:      "RELEASE_TYPE_ALBUM",
 		Status:    "RELEASE_STATUS_PUBLISHED",
 		OgAssetID: &legacyOgAssetID,
-	}, nil)
+	}, nil, nil)
 
 	require.Nil(t, result.ArtworkAsset)
 	require.Nil(t, result.OgAsset)

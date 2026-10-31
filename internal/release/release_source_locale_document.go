@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -28,16 +27,6 @@ func ReleaseSourceTitleSQL(tableAlias string) string {
 	return fmt.Sprintf("COALESCE(%s, '')", releaseSourceLocaleColumnSQL(tableAlias, "title"))
 }
 
-func saveReleaseSourceLocaleDocumentState(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	locale string,
-	input translationLocaleDocumentSaveInput,
-) error {
-	return saveReleaseSourceLocaleMetadata(ctx, db, releaseID, locale, input)
-}
-
 func touchReleaseSourceLocaleState(
 	ctx context.Context,
 	db *gorm.DB,
@@ -49,10 +38,10 @@ func touchReleaseSourceLocaleState(
 		Where("id = ?", releaseID).
 		Updates(structured.Fields{"updated_at": now})
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return errs.NotFound("release", releaseID)
+		return releaseNotFound(releaseID)
 	}
 	return nil
 }

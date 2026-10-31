@@ -1,13 +1,16 @@
 package release
 
 import (
+	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"testing"
 )
 
 func TestTrackAuthorityClientMediaCompletedDurationPreservesCAS(t *testing.T) {
@@ -17,7 +20,7 @@ func TestTrackAuthorityClientMediaCompletedDurationPreservesCAS(t *testing.T) {
 	trackID, releaseID, oldID, newID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	duration := 77
 	require.NoError(t, db.Exec(`INSERT INTO track (id,release_id,audio_original_file_id,download_audience) VALUES (?,?,?,'public')`, trackID, releaseID, oldID).Error)
-	authority := NewTrackAuthority(nil)
+	authority := NewTrackAuthority(&audittest.Recorder{})
 	wrongID := uuid.NewString()
 	_, err = authority.AttachOriginalWithDB(t.Context(), db, TrackOriginalAudioInput{TrackID: trackID, VerifiedFileID: newID, ExpectedCurrentFileID: &wrongID, ClientMediaReady: true, DurationSeconds: &duration})
 	require.Error(t, err)

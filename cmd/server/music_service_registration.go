@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -120,55 +121,43 @@ func (m musicServiceRegistration) registerLabel() *label.LabelService {
 	return labelService
 }
 
-func (m musicServiceRegistration) registerRelease() (*releasepkg.ReleaseService, *releasepkg.InternalReleaseService, *releasepkg.TrackService) {
+func (m musicServiceRegistration) registerRelease() (*releasepkg.Service, error) {
 	deps := m.dependencies
 	trackFileManager := filemediaadapter.NewTrackFileManager(m.files)
-	releaseTrackFiles := releaseadapter.NewTrackFiles(trackFileManager)
-	releaseAssets := releaseadapter.NewAssets(deps.cfg.CDNURL)
-	releaseOG := releaseadapter.NewOG(deps.cfg.CDNURL)
-	releaseContentOG := releaseadapter.NewContentOG(deps.og.refresher)
-	releaseWaveformJobs := releaseadapter.NewWaveformJobs(deps.db, deps.transcodeTracker)
+	artistSummaries := releaseadapter.NewArtistSummaries(deps.db)
+	memberSummaries := releaseadapter.NewMemberSummaries(deps.db, deps.cfg.CDNURL)
+	labelSummaries := releaseadapter.NewLabelSummaries(deps.db)
+	releaseService, err := releasepkg.NewService(releasepkg.Deps{
+		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, ContentBlocks: deps.contentBlockStore,
+		Checkpoints: m.checkpoints, ContentSignals: deps.servicePublisher,
+		TrackFiles:   releaseadapter.NewTrackFiles(trackFileManager),
+		Transcodes:   releaseadapter.NewTrackTranscodes(deps.transcodeTracker),
+		WaveformJobs: releaseadapter.NewWaveformJobs(deps.db, deps.transcodeTracker),
+		Assets:       releaseadapter.NewAssets(deps.cfg.CDNURL), OG: releaseadapter.NewOG(deps.cfg.CDNURL),
+		ContentOG: releaseadapter.NewContentOG(deps.og.refresher), Members: memberSummaries, Artists: artistSummaries,
+		Labels: labelSummaries,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize Release service: %w", err)
+	}
+	m.registerManage(managev1connect.NewReleaseServiceHandler(releasepkg.NewConnectHandler(releaseService), m.manageOptions...))
+	m.registerManage(managev1connect.NewTrackServiceHandler(releasepkg.NewTrackConnectHandler(releaseService), m.manageOptions...))
+	m.registerInternal(intrav1connect.NewInternalReleaseServiceHandler(releasepkg.NewInternalConnectHandler(releaseService), m.internalOptions...))
 
-	releaseService := releasepkg.NewAuditedReleaseService(
-		deps.db, deps.spicedbClient, deps.kratosClient, releaseTrackFiles, releaseAssets, releaseOG,
-		releaseWaveformJobs, deps.servicePublisher, deps.telemetryWriter,
-		releasepkg.WithReleaseContentBlockStore(deps.contentBlockStore),
-	)
-	m.registerManage(managev1connect.NewReleaseServiceHandler(releaseService, m.manageOptions...))
-
-	trackService := releasepkg.NewAuditedTrackService(
-		deps.db,
-		releaseadapter.NewTrackTranscodes(deps.transcodeTracker),
-		releaseWaveformJobs,
-		deps.spicedbClient,
-		releaseTrackFiles,
-		releaseadapter.NewMemberSummaries(deps.db, deps.cfg.CDNURL),
-		releaseadapter.NewArtistSummaries(deps.db),
-		deps.telemetryWriter,
-	)
-	m.registerManage(managev1connect.NewTrackServiceHandler(trackService, m.manageOptions...))
-
-	internalReleaseService := releasepkg.NewAuditedInternalReleaseService(
-		deps.db, deps.spicedbClient, deps.telemetryWriter, releaseContentOG, releaseadapter.NewArtistSummaries(deps.db),
-		releasepkg.WithInternalReleaseContentBlockStore(deps.contentBlockStore),
-		releasepkg.WithInternalReleaseCheckpoints(m.checkpoints),
-		releasepkg.WithInternalReleaseAIDocumentPublisher(deps.servicePublisher),
-	)
-	m.registerInternal(intrav1connect.NewInternalReleaseServiceHandler(internalReleaseService, m.internalOptions...))
-
-	publicReleaseService := publicrelease.NewReleaseService(
-		deps.db, deps.spicedbClient, releaseadapter.NewPublicMedia(
+	publicReleaseService, err := publicrelease.NewService(publicrelease.Deps{
+		DB: deps.db, SpiceDB: deps.spicedbClient, ContentBlocks: deps.contentBlockStore,
+		Media: releaseadapter.NewPublicMedia(
 			deps.cfg.CDNURL, deps.cfg.MediaURL, deps.cfg.MediaSigningSecret, m.downloadTTL,
 		),
-		releaseadapter.NewDownloadAccess(deps.db, deps.spicedbClient, mediaassetadapter.NewSegmentConfigs()),
-		releaseadapter.NewMemberSummaries(deps.db, deps.cfg.CDNURL),
-		releaseadapter.NewArtistSummaries(deps.db),
-		releaseadapter.NewLabelSummaries(deps.db),
-		publicrelease.WithReleaseContentBlockStore(deps.contentBlockStore),
-	)
-	m.registerPublic(openv1connect.NewReleaseServiceHandler(publicReleaseService, m.publicOptions...))
+		Downloads: releaseadapter.NewDownloadAccess(deps.db, deps.spicedbClient, mediaassetadapter.NewSegmentConfigs()),
+		Members:   memberSummaries, Artists: artistSummaries, Labels: labelSummaries,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize public Release service: %w", err)
+	}
+	m.registerPublic(openv1connect.NewReleaseServiceHandler(publicrelease.NewConnectHandler(publicReleaseService), m.publicOptions...))
 
-	return releaseService, internalReleaseService, trackService
+	return releaseService, nil
 }
 
 func (m musicServiceRegistration) registerTaxonomy() (*referencecatalog.GenreService, *referencecatalog.StyleService, *referencecatalog.FormatService) {

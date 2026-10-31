@@ -3,6 +3,8 @@ package release
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -37,7 +39,7 @@ func TestTrackAuthorityReplacementResetsPolicyAndSameFilePreserves(t *testing.T)
 	require.NoError(t, db.Create(&model.TrackDownloadAudienceSegment{
 		TrackID: trackID, AudienceSegmentID: segmentID,
 	}).Error)
-	authority := NewTrackAuthority(nil)
+	authority := NewTrackAuthority(&audittest.Recorder{})
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		result, attachErr := authority.AttachOriginalWithDB(t.Context(), tx, TrackOriginalAudioInput{

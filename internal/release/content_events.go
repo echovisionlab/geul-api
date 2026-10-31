@@ -38,22 +38,10 @@ var releaseContentUpdatedFieldSpecs = map[string]releaseContentUpdatedFieldSpec{
 	"artworkUrl":      {path: "media.artwork", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_MEDIA},
 }
 
-// publishContentUpdatedEvent schedules content.updated in the caller's
-// mutation transaction so the signal commits or rolls back with the data.
-func publishContentUpdatedEvent(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
-
-func buildManageReleaseContentUpdatedEvent(request *managev1.UpdateReleaseRequest) *managev1.ContentUpdatedEvent {
-	if request == nil {
-		return nil
-	}
-	return buildReleaseContentUpdatedEvent(request.Id, releaseUpdatedFields(request))
+// publishContentUpdated schedules content.updated in the caller's mutation
+// transaction so the signal commits or rolls back with the data.
+func (s *Service) publishContentUpdated(ctx context.Context, tx *gorm.DB, event *managev1.ContentUpdatedEvent) error {
+	return contentsignal.PublishInTransaction(ctx, tx, s.contentSignals, event)
 }
 
 func buildReleaseStateTransitionContentUpdatedEvent(releaseID string, paths []string) *managev1.ContentUpdatedEvent {
@@ -106,28 +94,24 @@ func newReleaseContentUpdatedEvent(releaseID string, fields []*managev1.ContentU
 	}
 }
 
-func releaseUpdatedFields(request *managev1.UpdateReleaseRequest) []string {
+// releaseUpdatedFields names the settings an update supplies.
+func releaseUpdatedFields(command UpdateReleaseCommand) []string {
 	fields := make([]string, 0, 7)
-	if request.Slug != nil {
-		fields = append(fields, "slug")
-	}
-	if request.Type != nil {
-		fields = append(fields, "type")
-	}
-	if request.SpotifyUrl != nil {
-		fields = append(fields, "spotifyUrl")
-	}
-	if request.AppleMusicUrl != nil {
-		fields = append(fields, "appleMusicUrl")
-	}
-	if request.BandcampUrl != nil {
-		fields = append(fields, "bandcampUrl")
-	}
-	if request.YoutubeMusicUrl != nil {
-		fields = append(fields, "youtubeMusicUrl")
-	}
-	if request.CatalogNumber != nil {
-		fields = append(fields, "catalogNumber")
+	for _, field := range []struct {
+		name     string
+		supplied bool
+	}{
+		{"slug", command.Slug != nil},
+		{"type", command.Type != nil},
+		{"spotifyUrl", command.SpotifyURL != nil},
+		{"appleMusicUrl", command.AppleMusicURL != nil},
+		{"bandcampUrl", command.BandcampURL != nil},
+		{"youtubeMusicUrl", command.YoutubeMusicURL != nil},
+		{"catalogNumber", command.CatalogNumber != nil},
+	} {
+		if field.supplied {
+			fields = append(fields, field.name)
+		}
 	}
 	return fields
 }

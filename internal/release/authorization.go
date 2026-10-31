@@ -5,8 +5,9 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -62,21 +63,21 @@ func (action trackObjectAction) can(trackID string) (policyv1.Can, error) {
 func requireReleaseGlobalAction(ctx context.Context, checker CollaborationPermissionChecker, can policyv1.Can) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.NotAuthenticated()
+		return notAuthenticated()
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.AdminRequired()
+		return adminRequired()
 	}
 	return nil
 }
@@ -84,7 +85,7 @@ func requireReleaseGlobalAction(ctx context.Context, checker CollaborationPermis
 func requireReleaseCreate(ctx context.Context, checker CollaborationPermissionChecker) error {
 	can, err := policyv1.Release.Create()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return requireReleaseGlobalAction(ctx, checker, can)
 }
@@ -92,7 +93,7 @@ func requireReleaseCreate(ctx context.Context, checker CollaborationPermissionCh
 func requireReleaseList(ctx context.Context, checker CollaborationPermissionChecker) error {
 	can, err := policyv1.Release.List()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return requireReleaseGlobalAction(ctx, checker, can)
 }
@@ -105,25 +106,25 @@ func requireReleaseAction(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := action.can(releaseID)
 	if err != nil {
-		return errs.WithCause(errs.NotFound("release", releaseID), err)
+		return releaseNotFound(releaseID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NotFound("release", releaseID)
+		return releaseNotFound(releaseID)
 	}
 	return nil
 }
@@ -136,25 +137,25 @@ func requireTrackAction(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := action.can(trackID)
 	if err != nil {
-		return errs.WithCause(errs.NotFound("track", trackID), err)
+		return domainerr.ResourceNotFound("track", trackID).WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return authenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Permission(), "track")
+		return noPermission(can.Action().Permission(), "track")
 	}
 	return nil
 }
@@ -168,14 +169,14 @@ func requireActiveTrackAction(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !active {
-		return errs.NotFound("track", trackID)
+		return domainerr.ResourceNotFound("track", trackID)
 	}
 	return requireTrackAction(ctx, checker, trackID, action)
 }
@@ -205,17 +206,33 @@ func requireActiveReleaseAction(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
-		return errs.AuthenticationRequired()
+		return authenticationRequired()
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !active {
-		return errs.NotFound("release", releaseID)
+		return releaseNotFound(releaseID)
 	}
 	if err := requireReleaseAction(ctx, checker, releaseID, action); err != nil {
 		return err
 	}
 	return nil
+}
+
+// releaseAccess is the Access of a Release mutation: the caller's identity
+// fence and the exact object permission, read inside the transaction. A
+// denial answers not found, as the Release RPCs always have.
+func (s *Service) releaseAccess(releaseID string, action releaseObjectAction) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		return requireActiveReleaseAction(ctx, tx, s.spiceDB, releaseID, action)
+	})
+}
+
+// trackAccess is the Access of a Track mutation.
+func (s *Service) trackAccess(trackID string, action trackObjectAction) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		return requireActiveTrackAction(ctx, tx, s.spiceDB, trackID, action)
+	})
 }

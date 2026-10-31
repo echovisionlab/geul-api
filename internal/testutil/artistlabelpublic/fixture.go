@@ -35,6 +35,7 @@ import (
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -101,7 +102,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	adminID := uuid.NewString()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
 	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := testutil.PostIntegrationContext(adminID)
+	ctx := testutil.NewAuditContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	identityManager := testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en"))
 	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
@@ -129,12 +130,12 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		},
 		labeldomain.WithLabelContentBlockStore(contentBlocks),
 	)
-	manageRelease := releasedomain.NewReleaseService(
-		db, spiceDB, identityManager, releaseadapter.NewTrackFiles(fileDeleter),
-		releaseadapter.NewAssets(artistLabelPublicCDN), releaseadapter.NewOG(artistLabelPublicCDN),
-		releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}), publisher,
-		releasedomain.WithReleaseContentBlockStore(contentBlocks),
-	)
+	manageRelease := releasedomain.NewConnectHandler(releasetest.NewService(t, releasedomain.Deps{
+		DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, ContentSignals: publisher,
+		TrackFiles:   releaseadapter.NewTrackFiles(fileDeleter),
+		WaveformJobs: releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}),
+		Assets:       releaseadapter.NewAssets(artistLabelPublicCDN), OG: releaseadapter.NewOG(artistLabelPublicCDN),
+	}))
 	manageWork := workdomain.NewWorkService(
 		db, workFixtureRuntime(db), spiceDB, identityManager, publisher,
 		workdomain.WithWorkContentBlockStore(contentBlocks),
