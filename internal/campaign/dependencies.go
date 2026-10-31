@@ -15,7 +15,6 @@ import (
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // CollaborationPermissionChecker is the fully consistent authorization read
@@ -79,6 +78,7 @@ func publishCampaignDurableProtoInTransaction(
 func requireCampaignContributors(
 	ctx context.Context,
 	tx *gorm.DB,
+	members ContributorMembers,
 	contributors []string,
 ) error {
 	if len(contributors) == 0 {
@@ -102,18 +102,11 @@ func requireCampaignContributors(
 		}
 	}
 
-	var members []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Select("id::text").
-		Where("id IN ?", contributors).
-		Find(&members).Error; err != nil {
+	locked, err := members.LockMembers(ctx, tx, contributors)
+	if err != nil {
 		return errs.Internal(fmt.Errorf("lock Campaign contributor Members: %w", err))
 	}
-	if len(members) != len(contributors) {
+	if len(locked) != len(contributors) {
 		return errs.InvalidArgument(
 			"contributor_member_ids",
 			"contains a Member that does not exist",

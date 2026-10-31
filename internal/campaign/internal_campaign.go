@@ -27,6 +27,7 @@ type InternalCampaignService struct {
 	spiceDB       CollaborationPermissionChecker
 	checkpoints   persistencecheckpoint.ContributorFence
 	contentBlocks *contentblock.Store
+	contributors  ContributorMembers
 }
 
 type InternalCampaignServiceOption func(*InternalCampaignService)
@@ -43,19 +44,22 @@ func WithInternalCampaignCheckpoints(checkpoints persistencecheckpoint.Contribut
 	return func(service *InternalCampaignService) { service.checkpoints = checkpoints }
 }
 
-func NewInternalCampaignService(db *gorm.DB, options ...InternalCampaignServiceOption) *InternalCampaignService {
-	service := &InternalCampaignService{db: db}
+func NewInternalCampaignService(db *gorm.DB, contributors ContributorMembers, options ...InternalCampaignServiceOption) *InternalCampaignService {
+	if contributors == nil {
+		panic("internal campaign contributor Members are required")
+	}
+	service := &InternalCampaignService{db: db, contributors: contributors}
 	for _, option := range options {
 		option(service)
 	}
 	return service
 }
 
-func NewAuditedInternalCampaignService(db *gorm.DB, auditWriter domainaudit.Appender, options ...InternalCampaignServiceOption) *InternalCampaignService {
+func NewAuditedInternalCampaignService(db *gorm.DB, auditWriter domainaudit.Appender, contributors ContributorMembers, options ...InternalCampaignServiceOption) *InternalCampaignService {
 	if auditWriter == nil {
 		panic("internal campaign audit writer is required")
 	}
-	service := NewInternalCampaignService(db, options...)
+	service := NewInternalCampaignService(db, contributors, options...)
 	service.auditWriter = auditWriter
 	return service
 }
@@ -127,7 +131,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 		originMemberID := contributors[0]
 		var targetRevision string
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := requireCampaignContributors(ctx, tx, contributors); err != nil {
+			if err := requireCampaignContributors(ctx, tx, s.contributors, contributors); err != nil {
 				return err
 			}
 			if err := requireCampaignCollaborationContributors(ctx, tx, s.checkpoints, campaignID, contributors); err != nil {
@@ -167,7 +171,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 		return nil, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := requireCampaignContributors(ctx, tx, req.Msg.GetBatch().GetContributorMemberIds()); err != nil {
+		if err := requireCampaignContributors(ctx, tx, s.contributors, req.Msg.GetBatch().GetContributorMemberIds()); err != nil {
 			return err
 		}
 		if err := requireCampaignCollaborationContributors(ctx, tx, s.checkpoints, campaignID, req.Msg.GetBatch().GetContributorMemberIds()); err != nil {
@@ -267,7 +271,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 		batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
 		var output campaignTargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := requireCampaignContributors(ctx, tx, contributors); err != nil {
+			if err := requireCampaignContributors(ctx, tx, s.contributors, contributors); err != nil {
 				return err
 			}
 			if err := requireCampaignCollaborationContributors(ctx, tx, s.checkpoints, campaignID, contributors); err != nil {
@@ -308,7 +312,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 		return nil, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := requireCampaignContributors(ctx, tx, req.Msg.GetContributorMemberIds()); err != nil {
+		if err := requireCampaignContributors(ctx, tx, s.contributors, req.Msg.GetContributorMemberIds()); err != nil {
 			return err
 		}
 		if err := requireCampaignCollaborationContributors(ctx, tx, s.checkpoints, campaignID, req.Msg.GetContributorMemberIds()); err != nil {

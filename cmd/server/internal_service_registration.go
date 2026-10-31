@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"log/slog"
 	"time"
 
@@ -169,6 +170,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalCampaignService := campaign.NewAuditedInternalCampaignService(
 		db,
 		telemetryWriter,
+		memberadapter.ContributorMembers{},
 		campaign.WithInternalCampaignContentBlockStore(contentBlockStore),
 		campaign.WithInternalCampaignSpiceDB(spicedbClient),
 		campaign.WithInternalCampaignCheckpoints(collaborationRuntime.Checkpoints),

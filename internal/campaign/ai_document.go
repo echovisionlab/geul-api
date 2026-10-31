@@ -186,7 +186,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 			return err
 		}
 		if err := requireCampaignContributors(
-			ctx, tx, []string{memberID.String()},
+			ctx, tx, s.internal.contributors, []string{memberID.String()},
 		); err != nil {
 			return err
 		}

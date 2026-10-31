@@ -195,3 +195,12 @@ type CampaignDeliveryPort interface {
 		int,
 	) (CampaignDeliveryRecipientPage, error)
 }
+
+// ContributorMembers locks the Members a collaboration write credits, so a
+// concurrent Member deletion waits for the write. Member owns those rows
+// (memberadapter.ContributorMembers).
+type ContributorMembers interface {
+	// LockMembers takes a KEY SHARE lock on each existing Member of
+	// memberIDs and returns the IDs it locked.
+	LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error)
+}
