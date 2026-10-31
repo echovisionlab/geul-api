@@ -267,73 +267,14 @@ func applyPostTargetLocaleMutation(
 		DocumentRevision: state.Snapshot.Document.Revision.String(),
 		LocaleCreated:    state.TargetMetadata == nil,
 	}
-	var finalMetadata postLocaleMetadataRow
+	write := &postTargetMetadataWrite{input: input, state: state, now: now}
 	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx,
-		tx,
-		batch,
-		input.Locale,
-		contentblock.LockedFence(postEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
-			current := postLocaleMetadataRow{Locale: input.Locale}
-			if state.TargetMetadata != nil {
-				current = *state.TargetMetadata
-			} else if input.Policy.SeedSource {
-				current = state.SourceMetadata
-			}
-			title := current.Title
-			summary := current.Summary
-			if input.SetTitle {
-				result.TitleChanged = !nullableStringEqual(title, input.Title)
-				title = input.Title
-			}
-			metadataValueChanged := result.TitleChanged
-			if input.SetSummary {
-				metadataValueChanged = metadataValueChanged || !nullableStringEqual(summary, input.Summary)
-				summary = input.Summary
-			}
-			if state.TargetMetadata == nil {
-				finalMetadata = postLocaleMetadataRow{
-					Locale: input.Locale, Title: title, Summary: summary, UpdatedAt: now,
-				}
-				insert := tx.WithContext(ctx).Exec(
-					`INSERT INTO post_translation (
-						entity_id, locale, title, summary, created_at, updated_at
-					 ) VALUES (?::uuid, ?, ?, ?, ?, ?)`,
-					input.PostID, input.Locale, title, summary, now, now,
-				)
-				if insert.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(insert.Error)
-				}
-				if insert.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale could not be created")
-				}
-				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
-			}
-			if !contentChanged && !metadataValueChanged {
-				finalMetadata = current
-				return contentblock.MetadataEffect{}, nil
-			}
-			updatedAt := translation.NextTargetUpdatedAt(now, current.UpdatedAt)
-			update := tx.WithContext(ctx).Table("post_translation").
-				Where("entity_id = ?::uuid AND locale = ?", input.PostID, input.Locale).
-				Updates(map[string]any{"title": title, "summary": summary, "updated_at": updatedAt})
-			if update.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(update.Error)
-			}
-			if update.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale disappeared while saving")
-			}
-			finalMetadata = postLocaleMetadataRow{
-				Locale: input.Locale, Title: title, Summary: summary, UpdatedAt: updatedAt,
-			}
-			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
-		},
+		ctx, tx, batch, input.Locale, contentblock.LockedFence(postEntityName, documentID, domain), write.apply,
 	)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, normalizePostContentBlockError(err)
 	}
-	result.Changed = storeResult.Changed
+	result.Changed, result.TitleChanged = storeResult.Changed, write.titleChanged
 	result.ContentChanged = storeResult.ContentChanged
 	result.MetadataChanged = storeResult.MetadataChanged
 	if result.Changed {
@@ -343,11 +284,77 @@ func applyPostTargetLocaleMutation(
 			return postTargetLocaleMutationResult{}, errs.Internal(err)
 		}
 	}
-	result.TargetRevision, err = derivePostTargetRevision(result.DocumentRevision, finalMetadata)
+	result.TargetRevision, err = derivePostTargetRevision(result.DocumentRevision, write.final)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, err
 	}
 	return result, nil
+}
+
+// postTargetMetadataWrite stores the Post target locale row of one write and
+// keeps the row it leaves behind.
+type postTargetMetadataWrite struct {
+	input        postTargetLocaleMutationInput
+	state        postTargetLocaleState
+	now          time.Time
+	final        postLocaleMetadataRow
+	titleChanged bool
+}
+
+func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+	current := postLocaleMetadataRow{Locale: w.input.Locale}
+	if w.state.TargetMetadata != nil {
+		current = *w.state.TargetMetadata
+	} else if w.input.Policy.SeedSource {
+		current = w.state.SourceMetadata
+	}
+	title := current.Title
+	summary := current.Summary
+	if w.input.SetTitle {
+		w.titleChanged = !nullableStringEqual(title, w.input.Title)
+		title = w.input.Title
+	}
+	metadataValueChanged := w.titleChanged
+	if w.input.SetSummary {
+		metadataValueChanged = metadataValueChanged || !nullableStringEqual(summary, w.input.Summary)
+		summary = w.input.Summary
+	}
+	if w.state.TargetMetadata == nil {
+		w.final = postLocaleMetadataRow{
+			Locale: w.input.Locale, Title: title, Summary: summary, UpdatedAt: w.now,
+		}
+		insert := tx.WithContext(ctx).Exec(
+			`INSERT INTO post_translation (
+				entity_id, locale, title, summary, created_at, updated_at
+			 ) VALUES (?::uuid, ?, ?, ?, ?, ?)`,
+			w.input.PostID, w.input.Locale, title, summary, w.now, w.now,
+		)
+		if insert.Error != nil {
+			return contentblock.MetadataEffect{}, errs.Internal(insert.Error)
+		}
+		if insert.RowsAffected != 1 {
+			return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale could not be created")
+		}
+		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
+	}
+	if !contentChanged && !metadataValueChanged {
+		w.final = current
+		return contentblock.MetadataEffect{}, nil
+	}
+	updatedAt := translation.NextTargetUpdatedAt(w.now, current.UpdatedAt)
+	update := tx.WithContext(ctx).Table("post_translation").
+		Where("entity_id = ?::uuid AND locale = ?", w.input.PostID, w.input.Locale).
+		Updates(map[string]any{"title": title, "summary": summary, "updated_at": updatedAt})
+	if update.Error != nil {
+		return contentblock.MetadataEffect{}, errs.Internal(update.Error)
+	}
+	if update.RowsAffected != 1 {
+		return contentblock.MetadataEffect{}, errs.InternalMsg("Post target locale disappeared while saving")
+	}
+	w.final = postLocaleMetadataRow{
+		Locale: w.input.Locale, Title: title, Summary: summary, UpdatedAt: updatedAt,
+	}
+	return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
 }
 
 func deletePostTargetLocale(

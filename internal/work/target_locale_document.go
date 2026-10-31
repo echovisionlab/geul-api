@@ -253,68 +253,11 @@ func applyWorkTargetLocaleMutation(
 	if patch.DeleteLocale {
 		batch.LocaleGroups = targetlocale.DeleteGroups(state.Snapshot, locale)
 	}
-	var final workLocaleMetadataRow
+	write := &workTargetMetadataWrite{
+		workID: workID, locale: locale, state: state, patch: patch, seedSource: input.Policy.SeedSource, now: now,
+	}
 	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, contentblock.LockedFence(workEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
-			if patch.DeleteLocale {
-				deleted := tx.WithContext(ctx).Exec("DELETE FROM work_translation WHERE entity_id = ?::uuid AND locale = ?", workID, locale)
-				if deleted.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
-				}
-				if deleted.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Work target locale disappeared while deleting")
-				}
-				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
-			}
-			if state.TargetMetadata == nil {
-				title, summary := patch.Title, patch.Summary
-				if input.Policy.SeedSource {
-					title = cloneOptionalString(state.SourceMetadata.Title)
-					summary = cloneOptionalString(state.SourceMetadata.Summary)
-					if patch.UpdateTitle {
-						title = cloneOptionalString(patch.Title)
-					}
-					if patch.UpdateSummary {
-						summary = cloneOptionalString(patch.Summary)
-					}
-				}
-				created := tx.WithContext(ctx).Exec(
-					"INSERT INTO work_translation (entity_id, locale, title, summary, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?, ?)",
-					workID, locale, title, summary, now, now,
-				)
-				if created.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(created.Error)
-				}
-				if created.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Work target locale could not be created")
-				}
-				final = workLocaleMetadataRow{Locale: locale, Title: cloneOptionalString(title), Summary: cloneOptionalString(summary), UpdatedAt: now}
-				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
-			}
-			final = *state.TargetMetadata
-			updates := map[string]any{}
-			metadataChanged := false
-			if patch.UpdateTitle && !nullableStringEqual(final.Title, patch.Title) {
-				final.Title, updates["title"], metadataChanged = cloneOptionalString(patch.Title), patch.Title, true
-			}
-			if patch.UpdateSummary && !nullableStringEqual(final.Summary, patch.Summary) {
-				final.Summary, updates["summary"], metadataChanged = cloneOptionalString(patch.Summary), patch.Summary, true
-			}
-			if !contentChanged && !metadataChanged {
-				return contentblock.MetadataEffect{}, nil
-			}
-			final.UpdatedAt = translation.NextTargetUpdatedAt(now, final.UpdatedAt)
-			updates["updated_at"] = final.UpdatedAt
-			updated := tx.WithContext(ctx).Table("work_translation").Where("entity_id = ?::uuid AND locale = ?", workID, locale).Updates(updates)
-			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
-			}
-			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Work target locale disappeared while saving")
-			}
-			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
-		},
+		ctx, tx, batch, locale, contentblock.LockedFence(workEntityName, documentID, domain), write.apply,
 	)
 	if err != nil {
 		return contentblock.Result{}, nil, normalizeWorkContentBlockError(err)
@@ -328,11 +271,97 @@ func applyWorkTargetLocaleMutation(
 	if patch.DeleteLocale {
 		return result, nil, nil
 	}
-	revision, err := deriveWorkTargetRevision(result.DocumentRevision.String(), final)
+	revision, err := deriveWorkTargetRevision(result.DocumentRevision.String(), write.final)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
 	return result, &revision, nil
+}
+
+// workTargetMetadataWrite stores the Work target locale row of one write and
+// keeps the row it leaves behind.
+type workTargetMetadataWrite struct {
+	workID     string
+	locale     string
+	state      workTargetLocaleState
+	patch      workTargetMetadataPatch
+	seedSource bool
+	now        time.Time
+	final      workLocaleMetadataRow
+}
+
+func (w *workTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+	switch {
+	case w.patch.DeleteLocale:
+		deleted := tx.WithContext(ctx).Exec("DELETE FROM work_translation WHERE entity_id = ?::uuid AND locale = ?", w.workID, w.locale)
+		if deleted.Error != nil {
+			return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+		}
+		if deleted.RowsAffected != 1 {
+			return contentblock.MetadataEffect{}, errs.InternalMsg("Work target locale disappeared while deleting")
+		}
+	case w.state.TargetMetadata == nil:
+		if err := w.create(ctx, tx); err != nil {
+			return contentblock.MetadataEffect{}, err
+		}
+	default:
+		changed, err := w.update(ctx, tx, contentChanged)
+		if err != nil || !changed {
+			return contentblock.MetadataEffect{}, err
+		}
+	}
+	return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.locale}}, nil
+}
+
+func (w *workTargetMetadataWrite) create(ctx context.Context, tx *gorm.DB) error {
+	title, summary := w.patch.Title, w.patch.Summary
+	if w.seedSource {
+		title = cloneOptionalString(w.state.SourceMetadata.Title)
+		summary = cloneOptionalString(w.state.SourceMetadata.Summary)
+		if w.patch.UpdateTitle {
+			title = cloneOptionalString(w.patch.Title)
+		}
+		if w.patch.UpdateSummary {
+			summary = cloneOptionalString(w.patch.Summary)
+		}
+	}
+	created := tx.WithContext(ctx).Exec(
+		"INSERT INTO work_translation (entity_id, locale, title, summary, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?, ?)",
+		w.workID, w.locale, title, summary, w.now, w.now,
+	)
+	if created.Error != nil {
+		return errs.Internal(created.Error)
+	}
+	if created.RowsAffected != 1 {
+		return errs.InternalMsg("Work target locale could not be created")
+	}
+	w.final = workLocaleMetadataRow{Locale: w.locale, Title: cloneOptionalString(title), Summary: cloneOptionalString(summary), UpdatedAt: w.now}
+	return nil
+}
+
+func (w *workTargetMetadataWrite) update(ctx context.Context, tx *gorm.DB, contentChanged bool) (bool, error) {
+	w.final = *w.state.TargetMetadata
+	updates := map[string]any{}
+	metadataChanged := false
+	if w.patch.UpdateTitle && !nullableStringEqual(w.final.Title, w.patch.Title) {
+		w.final.Title, updates["title"], metadataChanged = cloneOptionalString(w.patch.Title), w.patch.Title, true
+	}
+	if w.patch.UpdateSummary && !nullableStringEqual(w.final.Summary, w.patch.Summary) {
+		w.final.Summary, updates["summary"], metadataChanged = cloneOptionalString(w.patch.Summary), w.patch.Summary, true
+	}
+	if !contentChanged && !metadataChanged {
+		return false, nil
+	}
+	w.final.UpdatedAt = translation.NextTargetUpdatedAt(w.now, w.final.UpdatedAt)
+	updates["updated_at"] = w.final.UpdatedAt
+	updated := tx.WithContext(ctx).Table("work_translation").Where("entity_id = ?::uuid AND locale = ?", w.workID, w.locale).Updates(updates)
+	if updated.Error != nil {
+		return false, errs.Internal(updated.Error)
+	}
+	if updated.RowsAffected != 1 {
+		return false, errs.InternalMsg("Work target locale disappeared while saving")
+	}
+	return true, nil
 }
 
 func workContributorUUIDs(values []string) ([]uuid.UUID, error) {

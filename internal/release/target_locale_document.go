@@ -215,91 +215,102 @@ func applyReleaseTargetLocaleMutation(
 	}
 	now := targetlocale.WriteTime(input.Now)
 	result := releaseTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
-	var finalMetadata releaseLocaleMetadataRow
+	write := &releaseTargetMetadataWrite{input: input, state: state, now: now}
 	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, input.Locale, contentblock.LockedFence(releaseEntityName, input.DocumentID, domain),
-		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
-			currentMetadata := state.SourceMetadata
-			currentNotes := maps.Clone(state.SourceNotes)
-			if state.TargetMetadata != nil {
-				currentMetadata = *state.TargetMetadata
-				currentNotes = maps.Clone(state.TargetNotes)
-			}
-			nextTitle := currentMetadata.Title
-			if input.SetTitle {
-				requestedTitle := input.Title
-				if requestedTitle != nil {
-					trimmed := strings.TrimSpace(*requestedTitle)
-					requestedTitle = &trimmed
-				}
-				result.TitleChanged = !releaseOptionalStringsEqual(currentMetadata.Title, requestedTitle)
-				nextTitle = requestedTitle
-			}
-			nextNotes := maps.Clone(currentNotes)
-			if input.ReplaceCreditNotes != nil {
-				nextNotes = maps.Clone(*input.ReplaceCreditNotes)
-			}
-			for creditID, note := range input.CreditNotePatch {
-				nextNotes[creditID] = note
-			}
-			// An empty target note removes the target override, so the credit
-			// shows its source note as LoadReleaseCreditNotesForDisplay merges it.
-			maps.DeleteFunc(nextNotes, func(_ string, note string) bool {
-				return strings.TrimSpace(note) == ""
-			})
-			if err := validateReleaseCreditNoteIdentityMap(ctx, tx, input.ReleaseID, nextNotes); err != nil {
-				return contentblock.MetadataEffect{}, err
-			}
-			metadataChanged := result.TitleChanged || !maps.Equal(currentNotes, nextNotes)
-			if state.TargetMetadata == nil {
-				finalMetadata = releaseLocaleMetadataRow{Locale: input.Locale, Title: nextTitle, UpdatedAt: now}
-				created := tx.WithContext(ctx).Exec(
-					"INSERT INTO release_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?)",
-					input.ReleaseID, input.Locale, nextTitle, now, now,
-				)
-				if created.Error != nil || created.RowsAffected != 1 {
-					if created.Error != nil {
-						return contentblock.MetadataEffect{}, errs.Internal(created.Error)
-					}
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Release target locale could not be created")
-				}
-				if err := replaceReleaseCreditLocaleNotes(ctx, tx, input.ReleaseID, input.Locale, nextNotes, now); err != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(err)
-				}
-				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
-			}
-			if !contentChanged && !metadataChanged {
-				finalMetadata = currentMetadata
-				return contentblock.MetadataEffect{}, nil
-			}
-			updatedAt := translation.NextTargetUpdatedAt(now, currentMetadata.UpdatedAt)
-			updated := tx.WithContext(ctx).Table("release_translation").
-				Where("entity_id = ?::uuid AND locale = ?", input.ReleaseID, input.Locale).
-				Updates(map[string]any{"title": nextTitle, "updated_at": updatedAt})
-			if updated.Error != nil || updated.RowsAffected != 1 {
-				if updated.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
-				}
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Release target locale disappeared while saving")
-			}
-			if !maps.Equal(currentNotes, nextNotes) {
-				if err := replaceReleaseCreditLocaleNotes(ctx, tx, input.ReleaseID, input.Locale, nextNotes, updatedAt); err != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(err)
-				}
-			}
-			finalMetadata = releaseLocaleMetadataRow{Locale: input.Locale, Title: nextTitle, UpdatedAt: updatedAt}
-			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
-		},
+		ctx, tx, batch, input.Locale, contentblock.LockedFence(releaseEntityName, input.DocumentID, domain), write.apply,
 	)
 	if err != nil {
 		return releaseTargetLocaleMutationResult{}, normalizeReleaseContentBlockError(err)
 	}
-	result.Content = storeResult
-	result.TargetRevision, err = deriveReleaseTargetRevision(storeResult.DocumentRevision.String(), finalMetadata)
+	result.Content, result.TitleChanged = storeResult, write.titleChanged
+	result.TargetRevision, err = deriveReleaseTargetRevision(storeResult.DocumentRevision.String(), write.final)
 	if err != nil {
 		return releaseTargetLocaleMutationResult{}, err
 	}
 	return result, nil
+}
+
+// releaseTargetMetadataWrite stores the Release target locale row and its
+// credit notes for one write and keeps the row it leaves behind.
+type releaseTargetMetadataWrite struct {
+	input        releaseTargetLocaleMutationInput
+	state        releaseTargetLocaleState
+	now          time.Time
+	final        releaseLocaleMetadataRow
+	titleChanged bool
+}
+
+func (w *releaseTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+	currentMetadata := w.state.SourceMetadata
+	currentNotes := maps.Clone(w.state.SourceNotes)
+	if w.state.TargetMetadata != nil {
+		currentMetadata = *w.state.TargetMetadata
+		currentNotes = maps.Clone(w.state.TargetNotes)
+	}
+	nextTitle := currentMetadata.Title
+	if w.input.SetTitle {
+		requestedTitle := w.input.Title
+		if requestedTitle != nil {
+			trimmed := strings.TrimSpace(*requestedTitle)
+			requestedTitle = &trimmed
+		}
+		w.titleChanged = !releaseOptionalStringsEqual(currentMetadata.Title, requestedTitle)
+		nextTitle = requestedTitle
+	}
+	nextNotes := maps.Clone(currentNotes)
+	if w.input.ReplaceCreditNotes != nil {
+		nextNotes = maps.Clone(*w.input.ReplaceCreditNotes)
+	}
+	for creditID, note := range w.input.CreditNotePatch {
+		nextNotes[creditID] = note
+	}
+	// An empty target note removes the target override, so the credit
+	// shows its source note as LoadReleaseCreditNotesForDisplay merges it.
+	maps.DeleteFunc(nextNotes, func(_ string, note string) bool {
+		return strings.TrimSpace(note) == ""
+	})
+	if err := validateReleaseCreditNoteIdentityMap(ctx, tx, w.input.ReleaseID, nextNotes); err != nil {
+		return contentblock.MetadataEffect{}, err
+	}
+	metadataChanged := w.titleChanged || !maps.Equal(currentNotes, nextNotes)
+	if w.state.TargetMetadata == nil {
+		w.final = releaseLocaleMetadataRow{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: w.now}
+		created := tx.WithContext(ctx).Exec(
+			"INSERT INTO release_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?)",
+			w.input.ReleaseID, w.input.Locale, nextTitle, w.now, w.now,
+		)
+		if created.Error != nil || created.RowsAffected != 1 {
+			if created.Error != nil {
+				return contentblock.MetadataEffect{}, errs.Internal(created.Error)
+			}
+			return contentblock.MetadataEffect{}, errs.InternalMsg("Release target locale could not be created")
+		}
+		if err := replaceReleaseCreditLocaleNotes(ctx, tx, w.input.ReleaseID, w.input.Locale, nextNotes, w.now); err != nil {
+			return contentblock.MetadataEffect{}, errs.Internal(err)
+		}
+		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
+	}
+	if !contentChanged && !metadataChanged {
+		w.final = currentMetadata
+		return contentblock.MetadataEffect{}, nil
+	}
+	updatedAt := translation.NextTargetUpdatedAt(w.now, currentMetadata.UpdatedAt)
+	updated := tx.WithContext(ctx).Table("release_translation").
+		Where("entity_id = ?::uuid AND locale = ?", w.input.ReleaseID, w.input.Locale).
+		Updates(map[string]any{"title": nextTitle, "updated_at": updatedAt})
+	if updated.Error != nil || updated.RowsAffected != 1 {
+		if updated.Error != nil {
+			return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+		}
+		return contentblock.MetadataEffect{}, errs.InternalMsg("Release target locale disappeared while saving")
+	}
+	if !maps.Equal(currentNotes, nextNotes) {
+		if err := replaceReleaseCreditLocaleNotes(ctx, tx, w.input.ReleaseID, w.input.Locale, nextNotes, updatedAt); err != nil {
+			return contentblock.MetadataEffect{}, errs.Internal(err)
+		}
+	}
+	w.final = releaseLocaleMetadataRow{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: updatedAt}
+	return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
 }
 
 func validateReleaseCreditNoteIdentityMap(
