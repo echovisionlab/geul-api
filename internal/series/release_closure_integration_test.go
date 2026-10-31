@@ -395,6 +395,7 @@ func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T)
 		t.Fatalf("featured image mutation did not wait for the Series lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
+	requireLockWaiters(t, db, 1)
 
 	deleteDone := make(chan error, 1)
 	go func() {
@@ -406,6 +407,7 @@ func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T)
 		t.Fatalf("Series deletion did not wait for the Series lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
+	requireLockWaiters(t, db, 2)
 
 	require.NoError(t, blocker.Commit().Error)
 	require.NoError(t, <-setDone)
@@ -468,6 +470,7 @@ func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T
 		t.Fatalf("Series update did not wait for the Series lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
+	requireLockWaiters(t, db, 1)
 
 	intermediateSlug := "series-slug-intermediate-" + adminID
 	intermediateItems, err := json.Marshal([]model.MenuItem{{
@@ -528,6 +531,7 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 		t.Fatalf("Series update did not wait for the owning Series lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
+	requireLockWaiters(t, db, 1)
 	removeSeriesManagerRelation(t, service, managerID, seriesID)
 	require.NoError(t, blocker.Commit().Error)
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-updateDone))
@@ -555,6 +559,7 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 		t.Fatalf("Series delete did not wait for the owning Series lock: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
+	requireLockWaiters(t, db, 1)
 	adminSubject, err := auth.NewAccountIdentitySubject(auth.IdentityID(adminID))
 	require.NoError(t, err)
 	_, err = service.spiceDB.SyncAccountIdentityGlobalRole(t.Context(), adminSubject, policyv1.Role.User())
