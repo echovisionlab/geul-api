@@ -120,7 +120,7 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 		t.Context(),
 		current,
 		request,
-		menuUpdate{fields: map[string]any{"items": json.RawMessage(labelOnly)}},
+		menuUpdate{items: json.RawMessage(labelOnly)},
 	)
 	labelCan, err := labelAction(current.ID)
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 		t.Context(),
 		current,
 		request,
-		menuUpdate{fields: map[string]any{"items": json.RawMessage(structural)}},
+		menuUpdate{items: json.RawMessage(structural)},
 	)
 	structuralCan, err := structuralAction(current.ID)
 	require.NoError(t, err)

@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -397,13 +396,13 @@ func (s *MenuService) persistAIDocumentSource(
 	next AIDocumentSnapshot,
 	now time.Time,
 ) error {
-	fields := structured.Fields{}
+	change := menuUpdate{now: translation.NextTargetUpdatedAt(now, previous.rootUpdatedAt)}
 	if previous.Name != next.Name {
 		name := next.Name
 		if err := ensureUpdatedMenuNameAvailable(tx, previous.ID, &name); err != nil {
 			return err
 		}
-		fields["name"] = next.Name
+		change.name = &name
 	}
 	itemsChanged := !equalAIDocumentItems(previous.Items, next.Items)
 	if itemsChanged {
@@ -411,17 +410,12 @@ func (s *MenuService) persistAIDocumentSource(
 		if err != nil {
 			return errs.Internal(err)
 		}
-		fields["items"] = itemsJSON
+		change.items = itemsJSON
 	}
-	if len(fields) == 0 {
+	if change.name == nil && change.items == nil {
 		return nil
 	}
-	fields["updated_at"] = translation.NextTargetUpdatedAt(now, previous.rootUpdatedAt)
-	var changedName *string
-	if previous.Name != next.Name {
-		changedName = &next.Name
-	}
-	if err := updateMenuRow(tx.WithContext(ctx), previous.ID, changedName, fields); err != nil {
+	if err := updateMenuRow(tx.WithContext(ctx), previous.ID, change.name, change); err != nil {
 		return err
 	}
 	if itemsChanged {

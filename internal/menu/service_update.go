@@ -22,18 +22,23 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// menuUpdate is a validated Menu update. name and items are nil when the
+// request leaves them alone or, once compared with the locked row, when they
+// are unchanged.
 type menuUpdate struct {
-	fields structured.Fields
-	now    time.Time
+	name  *string
+	items json.RawMessage
+	now   time.Time
 }
 
 func (s *MenuService) prepareMenuUpdate(request *managev1.UpdateMenuRequest, now time.Time) (menuUpdate, error) {
-	update := menuUpdate{fields: structured.Fields{}, now: now}
+	update := menuUpdate{now: now}
 	if request.Name != nil {
 		if err := s.validateMenuName(*request.Name); err != nil {
 			return update, err
 		}
-		update.fields["name"] = strings.TrimSpace(*request.Name)
+		name := strings.TrimSpace(*request.Name)
+		update.name = &name
 	}
 	if request.Items == nil {
 		return update, nil
@@ -45,7 +50,7 @@ func (s *MenuService) prepareMenuUpdate(request *managev1.UpdateMenuRequest, now
 	if err != nil {
 		return update, errs.InvalidArgumentMsg(fmt.Sprintf("failed to convert menu items: %s", err.Error()))
 	}
-	update.fields["items"] = items
+	update.items = items
 	return update, nil
 }
 
@@ -77,22 +82,18 @@ func (s *MenuService) applyMenuUpdate(
 			return targetErr
 		}
 		menu = *locked
+		change := menuUpdate{now: update.now}
 		changedFields := make([]string, 0, 2)
-		if request.Name != nil && update.fields["name"] != menu.Name {
+		if update.name != nil && *update.name != menu.Name {
 			if err := ensureUpdatedMenuNameAvailable(tx, menuID, request.Name); err != nil {
 				return err
 			}
+			change.name = update.name
 			changedFields = append(changedFields, "name")
-		} else {
-			delete(update.fields, "name")
 		}
-		if request.Items != nil {
-			nextItems := []byte(update.fields["items"].(json.RawMessage))
-			if semanticMenuItemsEqual(menu.Items, nextItems) {
-				delete(update.fields, "items")
-			} else {
-				changedFields = append(changedFields, "items")
-			}
+		if update.items != nil && !semanticMenuItemsEqual(menu.Items, update.items) {
+			change.items = update.items
+			changedFields = append(changedFields, "items")
 		}
 		if len(changedFields) == 0 {
 			return nil
@@ -102,14 +103,13 @@ func (s *MenuService) applyMenuUpdate(
 			return err
 		}
 		sort.Strings(changedFields)
-		update.fields["updated_at"] = update.now
-		if err := updateMenuRow(tx, menuID, request.Name, update.fields); err != nil {
+		if err := updateMenuRow(tx, menuID, request.Name, change); err != nil {
 			return err
 		}
 		if err := tx.First(&menu, "id = ?", menuID).Error; err != nil {
 			return errs.Internal(fmt.Errorf("failed to reload menu: %w", err))
 		}
-		if request.Items != nil && update.fields["items"] != nil {
+		if change.items != nil {
 			nextItems, err := decodeSourceItems(menu.Items)
 			if err != nil {
 				return err
@@ -154,8 +154,7 @@ func menuUpdateAction(
 	if request.Items == nil {
 		return policyv1.Menu.Edit
 	}
-	requested, ok := update.fields["items"].(json.RawMessage)
-	if !ok || menuItemTopologyEqual(ctx, current.ID, current.Items, requested) {
+	if update.items == nil || menuItemTopologyEqual(ctx, current.ID, current.Items, update.items) {
 		return policyv1.Menu.Edit
 	}
 	return policyv1.Menu.Manage
@@ -207,8 +206,17 @@ func ensureUpdatedMenuNameAvailable(tx *gorm.DB, menuID string, name *string) er
 	return nil
 }
 
-func updateMenuRow(tx *gorm.DB, menuID string, name *string, fields structured.Fields) error {
-	result := tx.Model(&model.Menu{}).Where("id = ?", menuID).Updates(fields)
+// updateMenuRow writes the changed name and items of change. A unique
+// violation is reported against the requested name.
+func updateMenuRow(tx *gorm.DB, menuID string, name *string, change menuUpdate) error {
+	columns := structured.Fields{"updated_at": change.now}
+	if change.name != nil {
+		columns["name"] = *change.name
+	}
+	if change.items != nil {
+		columns["items"] = change.items
+	}
+	result := tx.Model(&model.Menu{}).Where("id = ?", menuID).Updates(columns)
 	if result.Error != nil {
 		if dberrors.IsUniqueViolation(result.Error) && name != nil {
 			return errs.AlreadyExists("menu", "name", strings.TrimSpace(*name))
