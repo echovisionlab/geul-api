@@ -158,7 +158,9 @@ func stateMetadataSummary(row *pageLocaleMetadataRow) *string {
 type pageAIDocumentApply struct {
 	result         contentblock.Result
 	targetRevision *string
-	layoutChanged  bool
+	// metadataChanged reports a changed source title or summary.
+	metadataChanged bool
+	layoutChanged   bool
 }
 
 func (s *Service) applyAIDocumentMutationInTransaction(
@@ -278,6 +280,7 @@ func (s *Service) applyAIDocumentSourceMutation(
 				ctx, tx, mutation.PageID, mutation.Locale,
 				mutation.ObservedLocaleExists, mutation.Metadata, now,
 			)
+			applied.metadataChanged = effect.Changed
 			if err != nil || !mutation.Metadata.SetDocumentLayout {
 				return effect, err
 			}

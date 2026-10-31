@@ -178,11 +178,13 @@ func (s *Service) executeAIDocumentMutation(
 	return err
 }
 
-// pageAIDocumentAudit records a changed target locale for its contributor
-// and a changed document layout.
+// pageAIDocumentAudit records the changed locale content for its
+// contributor, as a collaboration save does, and a changed document layout.
 func pageAIDocumentAudit(compiled AIDocumentMutation, applied pageAIDocumentApply) mutation.Audit {
 	records := []mutation.Audit{}
-	if applied.result.Changed && compiled.Locale != compiled.ObservedSourceLocale {
+	source := compiled.Locale == compiled.ObservedSourceLocale
+	localeChanged := !source || applied.metadataChanged || hasPageAIDocumentBatchChanges(compiled.Batch)
+	if applied.result.Changed && localeChanged {
 		operation := sharedtelemetry.AuditItemOperationUpdated
 		if compiled.Metadata.EnsureLocale && !compiled.ObservedLocaleExists {
 			operation = sharedtelemetry.AuditItemOperationCreated

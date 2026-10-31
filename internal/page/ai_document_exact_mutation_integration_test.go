@@ -224,6 +224,9 @@ func TestPageAIDocumentLayoutExactMutationIntegration(t *testing.T) {
 	var auditCount int64
 	require.NoError(t, db.Table("public.domain_audit").Where("target_id = ? AND attributes->'changed_fields' @> '[\"document_layout\"]'::jsonb", created.Msg.Id).Count(&auditCount).Error)
 	require.EqualValues(t, 1, auditCount, "Validate rollback and no-op must not append layout audit")
+	// The source body change is recorded like a collaboration source save.
+	require.NoError(t, db.Table("public.domain_audit").Where("target_id = ? AND attributes->'changed_fields' @> '[\"locale_content\"]'::jsonb", created.Msg.Id).Count(&auditCount).Error)
+	require.EqualValues(t, 1, auditCount, "the applied source body change must append one locale content audit")
 }
 
 type countingPageAIDocumentPermissionChecker struct {
