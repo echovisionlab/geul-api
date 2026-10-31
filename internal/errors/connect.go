@@ -393,24 +393,38 @@ func isRequestUUIDRejection(err error) bool {
 
 // classifiedCause is the cause of a Connect error whose client message differs
 // from its server-side context. Error returns the client message; Unwrap keeps
-// the full chain for errors.Is/As; operation is the loggable server context.
+// the full chain for errors.Is/As; operation is the loggable server context,
+// which failurecause.Message renders through OperationContext.
 type classifiedCause struct {
 	message   string
 	operation string
+	rendered  string
 	cause     error
 }
 
 func (c *classifiedCause) Error() string { return c.message }
 func (c *classifiedCause) Unwrap() error { return c.cause }
 
+// OperationContext implements failurecause.OperationContext: the enclosing
+// Connect error's text is replaced by the operation context in logs.
+func (c *classifiedCause) OperationContext() (rendered, operation string) {
+	return c.rendered, c.operation
+}
+
+func newClassifiedError(code connect.Code, cause *classifiedCause) *connect.Error {
+	classified := connect.NewError(code, cause)
+	cause.rendered = classified.Error()
+	return classified
+}
+
 func classifiedError(code connect.Code, message string, cause error) *connect.Error {
-	return connect.NewError(code, &classifiedCause{message: message, operation: cause.Error(), cause: cause})
+	return newClassifiedError(code, &classifiedCause{message: message, operation: cause.Error(), cause: cause})
 }
 
 // withOperationContext copies connectErr so that the outer operation context
 // in err survives classification without reaching the client.
 func withOperationContext(connectErr *connect.Error, err error) *connect.Error {
-	classified := connect.NewError(connectErr.Code(), &classifiedCause{
+	classified := newClassifiedError(connectErr.Code(), &classifiedCause{
 		message: connectErr.Message(), operation: operationCause(err), cause: err,
 	})
 	for _, detail := range connectErr.Details() {

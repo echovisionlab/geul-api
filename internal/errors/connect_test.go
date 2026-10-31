@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -274,5 +275,52 @@ func TestErrorWrappersClassifyOnlyMalformedUUIDDatabaseErrors(t *testing.T) {
 				t.Fatalf("UUID input leaked: %v", got)
 			}
 		}
+	}
+}
+
+// Callers outside the RPC boundary (MCP tools, workers) log classified errors
+// with failurecause.Message; the operation context must survive there while
+// the client message stays the classified one.
+func TestFailureCauseRendersClassifiedOperationContextOutsideConnect(t *testing.T) {
+	for _, tc := range []struct {
+		name, client, logged string
+		err                  *connect.Error
+	}{
+		{
+			name:   "deadline",
+			err:    Internal(fmt.Errorf("load campaign: %w", context.DeadlineExceeded)),
+			client: context.DeadlineExceeded.Error(),
+			logged: "load campaign: context deadline exceeded",
+		},
+		{
+			name:   "classified",
+			err:    Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found"))),
+			client: "page not found",
+			logged: "load page: not_found: page not found",
+		},
+		{
+			name:   "nested",
+			err:    Internal(fmt.Errorf("render share link: %w", Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found"))))),
+			client: "page not found",
+			logged: "render share link: load page: not_found: page not found",
+		},
+		{
+			name:   "uuid input",
+			err:    Wrap(fmt.Errorf("find member: %w", &pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type uuid", Where: "unnamed portal parameter $1"})),
+			client: "request contains an invalid UUID",
+			logged: "find member: : invalid input syntax for type uuid (SQLSTATE 22P02)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.err.Message() != tc.client {
+				t.Fatalf("client message = %q, want %q", tc.err.Message(), tc.client)
+			}
+			if got := failurecause.Message(tc.err); got != tc.logged {
+				t.Fatalf("logged cause = %q, want %q", got, tc.logged)
+			}
+			if got := failurecause.Message(fmt.Errorf("worker: %w", tc.err)); got != "worker: "+tc.logged {
+				t.Fatalf("wrapped logged cause = %q", got)
+			}
+		})
 	}
 }

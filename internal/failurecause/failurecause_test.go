@@ -52,3 +52,60 @@ func TestAttrAndPanic(t *testing.T) {
 		t.Fatalf("Panic = %q %q", cause, stack[:40])
 	}
 }
+
+type operationContextError struct {
+	message, operation string
+	cause              error
+}
+
+func (e *operationContextError) Error() string { return e.message }
+func (e *operationContextError) Unwrap() error { return e.cause }
+func (e *operationContextError) OperationContext() (string, string) {
+	return "classified: " + e.message, e.operation
+}
+
+type classifiedWrapper struct{ cause *operationContextError }
+
+func (w *classifiedWrapper) Error() string { return "classified: " + w.cause.Error() }
+func (w *classifiedWrapper) Unwrap() error { return w.cause }
+
+func TestMessageRendersOperationContextHiddenFromErrorText(t *testing.T) {
+	inner := errors.New("context deadline exceeded")
+	classified := &classifiedWrapper{cause: &operationContextError{
+		message:   "context deadline exceeded",
+		operation: "load campaign for person@example.test: context deadline exceeded",
+		cause:     fmt.Errorf("load campaign: %w", inner),
+	}}
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"direct":  {classified, "load campaign for [redacted-email]: context deadline exceeded"},
+		"wrapped": {fmt.Errorf("worker: %w", classified), "worker: load campaign for [redacted-email]: context deadline exceeded"},
+		"joined":  {errors.Join(errors.New("first"), classified), "first\nload campaign for [redacted-email]: context deadline exceeded"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Message(tc.err); got != tc.want {
+				t.Fatalf("Message() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if classified.Error() != "classified: context deadline exceeded" {
+		t.Fatalf("Error text changed: %q", classified.Error())
+	}
+}
+
+func TestRecorderCarriesLastCauseThroughContext(t *testing.T) {
+	if _, _, ok := RecorderFrom(t.Context()).Recorded(); ok {
+		t.Fatal("empty context reported a recorded cause")
+	}
+	ctx, recorder := WithRecorder(t.Context())
+	if RecorderFrom(ctx) != recorder {
+		t.Fatal("recorder not found in its context")
+	}
+	recorder.Record("first", "")
+	recorder.Record("panic cause", "goroutine 1 [running]")
+	if cause, stack, ok := recorder.Recorded(); !ok || cause != "panic cause" || stack != "goroutine 1 [running]" {
+		t.Fatalf("Recorded() = %q, %q, %v", cause, stack, ok)
+	}
+}

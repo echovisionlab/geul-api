@@ -374,7 +374,7 @@ func TestRPCFailureCauseSurvivesNormalization(t *testing.T) {
 			t.Cleanup(func() { slog.SetDefault(previous) })
 			ctx := ContextWithPropagatedRequestID(t.Context(), "11111111-1111-4111-8111-111111111111", AnonymousActor{})
 			cause := connect.NewError(code, errors.New("resolve provider: connection refused for person@example.test"))
-			emitConnectRequestRecord(ctx, "POST", "test.Service", "Send", time.Now(), cause)
+			emitRecordedConnectRequest(ctx, "POST", "test.Service", "Send", time.Now(), cause, nil)
 			entry := decodeSingleLogEntry(t, output.Bytes())
 			require.Contains(t, entry["failure_cause"], "resolve provider: connection refused")
 			require.NotContains(t, output.String(), "person@example.test")

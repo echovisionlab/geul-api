@@ -122,6 +122,20 @@ func requireOpaqueInternalResponse(t *testing.T, err error) {
 	require.Empty(t, connectErr.Details())
 }
 
+// requireSingleTerminalRecord asserts that a failed RPC produced exactly one
+// Error record: request.completed, carrying the real cause.
+func requireSingleTerminalRecord(t *testing.T, logs *syncBuffer) map[string]any {
+	t.Helper()
+	records := logs.records(t)
+	require.Len(t, records, 1, logs.String())
+	completed := records[0]
+	require.Equal(t, "request.completed", completed["event"], logs.String())
+	require.Equal(t, "ERROR", completed["level"])
+	require.EqualValues(t, http.StatusInternalServerError, completed["status_code"])
+	require.NotEmpty(t, completed["request_id"])
+	return completed
+}
+
 func TestConnectRoutesHideInternalCausesFromClientsAndRequestLog(t *testing.T) {
 	logs := captureServerLogs(t)
 	client := serveConnectThroughProductionChain(t, func(context.Context) error {
@@ -133,20 +147,10 @@ func TestConnectRoutesHideInternalCausesFromClientsAndRequestLog(t *testing.T) {
 
 	requireOpaqueInternalResponse(t, err)
 	require.NotContains(t, err.Error(), "secret_digest")
-	records := logs.records(t)
-	failure := findLogRecord(records, "RPC failed")
-	require.NotNil(t, failure, logs.String())
-	require.Equal(t, "ERROR", failure["level"])
-	require.Equal(t, recoveryTestProcedure, failure["rpc_procedure"])
-	require.Contains(t, failure["failure_cause"], `column "secret_digest" does not exist`)
-	// The boundary logs inside the request scope created at ingress.
-	require.NotEmpty(t, failure["request_id"], "failure log lacks the request context")
-	completed := findLogRecord(records, "request.completed")
-	require.NotNil(t, completed, logs.String())
-	require.Equal(t, "ERROR", completed["level"])
-	require.Equal(t, failure["request_id"], completed["request_id"])
+	completed := requireSingleTerminalRecord(t, logs)
+	require.Equal(t, `internal: load subscription for [redacted]: ERROR: column "secret_digest" does not exist (SQLSTATE 42703)`,
+		completed["failure_cause"])
 	require.NotContains(t, logs.String(), recoveryPrivateToken)
-	require.NotContains(t, fmt.Sprint(completed), "secret_digest")
 }
 
 func TestConnectRoutesRecoverHandlerPanics(t *testing.T) {
@@ -158,15 +162,9 @@ func TestConnectRoutesRecoverHandlerPanics(t *testing.T) {
 	_, err := client.CallUnary(t.Context(), connect.NewRequest(&openv1.UnsubscribeNewsletterRequest{Token: recoveryPrivateToken}))
 
 	requireOpaqueInternalResponse(t, err)
-	records := logs.records(t)
-	panicked := findLogRecord(records, "RPC handler panicked")
-	require.NotNil(t, panicked, logs.String())
-	require.Equal(t, "ERROR", panicked["level"])
-	require.Equal(t, "unsubscribe store is not configured", panicked["failure_cause"])
-	require.Contains(t, panicked["panic_stack"], "TestConnectRoutesRecoverHandlerPanics")
-	completed := findLogRecord(records, "request.completed")
-	require.NotNil(t, completed, logs.String())
-	require.EqualValues(t, http.StatusInternalServerError, completed["status_code"])
+	completed := requireSingleTerminalRecord(t, logs)
+	require.Equal(t, "unsubscribe store is not configured", completed["failure_cause"])
+	require.Contains(t, completed["panic_stack"], "TestConnectRoutesRecoverHandlerPanics")
 }
 
 func TestApplicationHTTPServerRecoversPlainHandlerPanics(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,7 +13,10 @@ import (
 
 	"connectrpc.com/connect"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 type boundaryContextKey struct{}
@@ -228,6 +232,10 @@ func TestRequestPrivateValuesSelectsSensitiveFieldsOnly(t *testing.T) {
 		"token": true, "share_token": true, "share_password": true, "email": true, "new_email": true,
 		"code": true, "verification_code": true, "api_key": true, "recipient": true,
 		"country_code": false, "object_key": false, "slug": false, "title": false, "member_id": false,
+		// Identifiers and pagination cursors stay visible in messages and causes.
+		"email_template_id": false, "email_layout_id": false, "delivery_recipient_id": false,
+		"personal_access_token_id": false, "member_ids": false, "page_token": false, "next_page_token": false,
+		"refresh_token": true, "client_secret": true, "new_password": true,
 	} {
 		if got := isPrivateField(protoreflect.Name(name)); got != want {
 			t.Errorf("isPrivateField(%q) = %v, want %v", name, got, want)
@@ -236,5 +244,98 @@ func TestRequestPrivateValuesSelectsSensitiveFieldsOnly(t *testing.T) {
 	values := requestPrivateValues(&openv1.UnsubscribeNewsletterRequest{Token: boundaryPrivateToken})
 	if len(values) != 1 || values[0] != boundaryPrivateToken {
 		t.Fatalf("private values = %v", values)
+	}
+}
+
+func TestBoundaryRecordsIntoTheTerminalRequestRecordWhenPresent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		handler connect.UnaryFunc
+		cause   string
+		stack   bool
+	}{
+		"internal": {
+			handler: func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
+				return nil, Internal(fmt.Errorf("load subscription %s: %w", boundaryPrivateToken, stderrors.New("relation missing")))
+			},
+			cause: "internal: load subscription [redacted]: relation missing",
+		},
+		"panic": {
+			handler: func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
+				panic("store missing")
+			},
+			cause: "store missing",
+			stack: true,
+		},
+		"classified context": {
+			handler: func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
+				return nil, Wrap(fmt.Errorf("resolve share link %s: %w", boundaryPrivateToken, NotFoundMsg("page not found")))
+			},
+			cause: "resolve share link [redacted]: not_found: page not found",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureBoundaryLogs(t)
+			ctx, recorder := failurecause.WithRecorder(t.Context())
+			request := connect.NewRequest(&openv1.UnsubscribeNewsletterRequest{Token: boundaryPrivateToken})
+			_, err := NewBoundaryInterceptor().WrapUnary(tc.handler)(ctx, request)
+
+			if err == nil {
+				t.Fatal("boundary swallowed the failure")
+			}
+			if len(logs.records) != 0 {
+				t.Fatalf("boundary logged a second record: %+v", logs.records)
+			}
+			cause, stack, ok := recorder.Recorded()
+			if !ok || cause != tc.cause {
+				t.Fatalf("recorded cause = %q (%v), want %q", cause, ok, tc.cause)
+			}
+			if tc.stack != strings.Contains(stack, "TestBoundaryRecordsIntoTheTerminalRequestRecordWhenPresent") {
+				t.Fatalf("recorded stack = %q", stack)
+			}
+		})
+	}
+}
+
+type receivingStreamConn struct {
+	boundaryStreamConn
+	messages []*openv1.UnsubscribeNewsletterRequest
+}
+
+func (c *receivingStreamConn) Receive(message any) error {
+	if len(c.messages) == 0 {
+		return io.EOF
+	}
+	proto.Merge(message.(proto.Message), c.messages[0])
+	c.messages = c.messages[1:]
+	return nil
+}
+
+func TestBoundaryRedactsPrivateValuesReceivedOnStreams(t *testing.T) {
+	logs := captureBoundaryLogs(t)
+	conn := &receivingStreamConn{messages: []*openv1.UnsubscribeNewsletterRequest{{Token: boundaryPrivateToken}}}
+	handler := func(_ context.Context, conn connect.StreamingHandlerConn) error {
+		var message openv1.UnsubscribeNewsletterRequest
+		if err := conn.Receive(&message); err != nil {
+			return err
+		}
+		return Internal(fmt.Errorf("stream subscription %s failed", message.GetToken()))
+	}
+	err := NewBoundaryInterceptor().WrapStreamingHandler(handler)(t.Context(), conn)
+
+	requireOpaqueInternal(t, err)
+	if cause := logs.only(t).attrs["failure_cause"]; cause != "internal: stream subscription [redacted] failed" {
+		t.Fatalf("failure_cause = %q", cause)
+	}
+
+	conn = &receivingStreamConn{messages: []*openv1.UnsubscribeNewsletterRequest{{Token: boundaryPrivateToken}}}
+	err = NewBoundaryInterceptor().WrapStreamingHandler(func(_ context.Context, conn connect.StreamingHandlerConn) error {
+		var message openv1.UnsubscribeNewsletterRequest
+		if err := conn.Receive(&message); err != nil {
+			return err
+		}
+		return NotFoundMsg("subscription " + message.GetToken() + " not found")
+	})(t.Context(), conn)
+	if got := err.(*connect.Error).Message(); got != "subscription [redacted] not found" {
+		t.Fatalf("client message = %q", got)
 	}
 }

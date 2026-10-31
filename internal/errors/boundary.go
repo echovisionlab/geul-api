@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -21,14 +22,18 @@ const MsgInternal = "internal error"
 // BoundaryInterceptor is the server edge for Connect handler failures. Place it
 // inside the request log interceptor so request.completed only sees what the
 // client sees. It
-//   - recovers handler and inner-interceptor panics as CodeInternal and logs
-//     them at Error with the stack;
-//   - replaces Unknown, Internal and DataLoss errors with an opaque message and
-//     logs their full cause at Error with the request context;
-//   - logs operation context that classification kept from the client, at the
-//     level of the classified code;
+//   - recovers handler and inner-interceptor panics as CodeInternal, with the
+//     stack;
+//   - replaces Unknown, Internal and DataLoss errors with an opaque message,
+//     keeping the full cause server-side;
+//   - keeps operation context that classification hid from the client;
 //   - removes private request values (tokens, passwords, codes, addresses)
-//     from client messages and logged causes.
+//     from client messages and causes.
+//
+// When the request log installed a failurecause.Recorder, the cause (and a
+// panic's stack) goes into that one terminal record. Otherwise the boundary
+// logs it with the request context: Error for server faults, the classified
+// code's level for kept operation context.
 type BoundaryInterceptor struct{}
 
 // NewBoundaryInterceptor returns the Connect handler failure boundary.
@@ -64,39 +69,78 @@ func (*BoundaryInterceptor) WrapStreamingClient(next connect.StreamingClientFunc
 func (*BoundaryInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) (err error) {
 		procedure := conn.Spec().Procedure
+		received := &privateReceiveConn{StreamingHandlerConn: conn}
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				if recovered == http.ErrAbortHandler { //nolint:errorlint // sentinel panic value, compared like net/http
 					panic(recovered)
 				}
-				err = handlerPanic(ctx, procedure, recovered, nil)
+				err = handlerPanic(ctx, procedure, recovered, received.privateValues())
 			}
 		}()
-		if err = next(ctx, conn); err != nil {
-			return boundaryError(ctx, procedure, err, nil)
+		if err = next(ctx, received); err != nil {
+			return boundaryError(ctx, procedure, err, received.privateValues())
 		}
 		return nil
 	}
 }
 
+// privateReceiveConn collects private values from every received message, so
+// a streaming failure is redacted like a unary one.
+type privateReceiveConn struct {
+	connect.StreamingHandlerConn
+	mu      sync.Mutex
+	private []string
+}
+
+func (c *privateReceiveConn) Receive(message any) error {
+	if err := c.StreamingHandlerConn.Receive(message); err != nil {
+		return err
+	}
+	values := requestPrivateValues(message)
+	c.mu.Lock()
+	c.private = append(c.private, values...)
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *privateReceiveConn) privateValues() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.private...)
+}
+
 func handlerPanic(ctx context.Context, procedure string, recovered any, private []string) *connect.Error {
 	cause, stack := failurecause.Panic(recovered, private...)
-	slog.ErrorContext(ctx, "RPC handler panicked", "rpc_procedure", procedure, "failure_cause", cause, "panic_stack", stack)
+	if recorder := failurecause.RecorderFrom(ctx); recorder != nil {
+		recorder.Record(cause, stack)
+	} else {
+		slog.ErrorContext(ctx, "RPC handler panicked", "rpc_procedure", procedure, "failure_cause", cause, "panic_stack", stack)
+	}
 	return connect.NewError(connect.CodeInternal, stderrors.New(MsgInternal))
 }
 
 func boundaryError(ctx context.Context, procedure string, err error, private []string) *connect.Error {
 	classified := Wrap(err)
 	code := classified.Code()
+	recorder := failurecause.RecorderFrom(ctx)
 	switch code {
 	case connect.CodeUnknown, connect.CodeInternal, connect.CodeDataLoss:
-		slog.ErrorContext(ctx, "RPC failed", "rpc_procedure", procedure, "error_code", code.String(),
-			"failure_cause", failurecause.Message(stderrors.New(operationCause(classified)), private...))
+		cause := failurecause.Message(classified, private...)
+		if recorder != nil {
+			recorder.Record(cause, "")
+		} else {
+			slog.ErrorContext(ctx, "RPC failed", "rpc_procedure", procedure, "error_code", code.String(), "failure_cause", cause)
+		}
 		return connect.NewError(code, stderrors.New(MsgInternal))
 	}
 	if _, kept := classified.Unwrap().(*classifiedCause); kept {
-		slog.Log(ctx, OperationLogLevel(classified), "Classified RPC error", "rpc_procedure", procedure, "error_code", code.String(),
-			"failure_cause", failurecause.Message(stderrors.New(operationCause(classified)), private...))
+		cause := failurecause.Message(classified, private...)
+		if recorder != nil {
+			recorder.Record(cause, "")
+		} else {
+			slog.Log(ctx, OperationLogLevel(classified), "Classified RPC error", "rpc_procedure", procedure, "error_code", code.String(), "failure_cause", cause)
+		}
 	}
 	return redactClientMessage(classified, private)
 }
@@ -149,6 +193,12 @@ var privateFieldNames = []string{
 
 func isPrivateField(name protoreflect.Name) bool {
 	field := string(name)
+	// Identifiers and pagination cursors name records; they are not secrets,
+	// and NotFound messages and causes need them.
+	if strings.HasSuffix(field, "_id") || strings.HasSuffix(field, "_ids") ||
+		field == "page_token" || strings.HasSuffix(field, "_page_token") {
+		return false
+	}
 	if field == "code" {
 		return true
 	}

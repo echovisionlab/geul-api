@@ -29,10 +29,11 @@ func NewAccessLogInterceptor(securityWriter SecurityAccessAppender) *AccessLogIn
 func (i *AccessLogInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		start := time.Now()
+		ctx, recorder := failurecause.WithRecorder(ctx)
 		resp, err := next(ctx, req)
 		service, method := splitProcedure(req.Spec().Procedure)
 		i.appendAuthorizationDenial(ctx, req.Spec().Procedure, err)
-		emitConnectRequestRecord(ctx, req.HTTPMethod(), service, method, start, err)
+		emitRecordedConnectRequest(ctx, req.HTTPMethod(), service, method, start, err, recorder)
 		markConnectRequestRecorded(ctx)
 		return resp, err
 	}
@@ -45,10 +46,11 @@ func (i *AccessLogInterceptor) WrapStreamingClient(next connect.StreamingClientF
 func (i *AccessLogInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
 		start := time.Now()
+		ctx, recorder := failurecause.WithRecorder(ctx)
 		err := next(ctx, conn)
 		service, method := splitProcedure(conn.Spec().Procedure)
 		i.appendAuthorizationDenial(ctx, conn.Spec().Procedure, err)
-		emitConnectRequestRecord(ctx, "", service, method, start, err)
+		emitRecordedConnectRequest(ctx, "", service, method, start, err, recorder)
 		markConnectRequestRecorded(ctx)
 		return err
 	}
@@ -108,7 +110,16 @@ func slogDefaultHandler() slog.Handler {
 	return slog.Default().Handler()
 }
 
-func emitConnectRequestRecord(ctx context.Context, httpMethod, service, method string, start time.Time, err error) {
+// emitRecordedConnectRequest emits the terminal record. A cause recorded by the
+// failure boundary replaces the returned error's text, which is what the
+// client received and, for server faults, deliberately opaque.
+func emitRecordedConnectRequest(
+	ctx context.Context,
+	httpMethod, service, method string,
+	start time.Time,
+	err error,
+	recorder *failurecause.Recorder,
+) {
 	actor, correlation := requestActorAndCorrelation(ctx)
 	result := sharedtelemetry.RequestResult{
 		StatusCode: connectHTTPStatus(err),
@@ -127,7 +138,11 @@ func emitConnectRequestRecord(ctx context.Context, httpMethod, service, method s
 	}
 	handler := slogDefaultHandler()
 	if err != nil {
-		handler = &requestFailureHandler{Handler: handler, cause: err, status: result.StatusCode}
+		failure := &requestFailureHandler{Handler: handler, cause: failurecause.Message(err), status: result.StatusCode}
+		if cause, stack, recorded := recorder.Recorded(); recorded {
+			failure.cause, failure.stack = cause, stack
+		}
+		handler = failure
 	}
 	if emitErr := sharedtelemetry.EmitRequest(ctx, handler, record); emitErr != nil {
 		slog.ErrorContext(ctx, "Emit RPC request record failed", "rpc_service", service, "rpc_method", method, "failure_cause", failurecause.Message(errors.Join(err, emitErr)))
@@ -185,11 +200,13 @@ func connectHTTPStatus(err error) int {
 	}
 }
 
-// Keep a single terminal request record, including its original cause and an
+// Keep a single terminal request record, including its sanitized cause (the
+// boundary's recorded cause when present, with a panic's stack) and an
 // appropriate severity. Bodies, metadata and client error details are excluded.
 type requestFailureHandler struct {
 	slog.Handler
-	cause  error
+	cause  string
+	stack  string
 	status int
 }
 
@@ -199,6 +216,9 @@ func (h *requestFailureHandler) Handle(ctx context.Context, record slog.Record) 
 	if h.status >= http.StatusInternalServerError {
 		record.Level = slog.LevelError
 	}
-	record.AddAttrs(slog.String("failure_cause", failurecause.Message(h.cause)))
+	record.AddAttrs(slog.String("failure_cause", h.cause))
+	if h.stack != "" {
+		record.AddAttrs(slog.String("panic_stack", h.stack))
+	}
 	return h.Handler.Handle(ctx, record)
 }
