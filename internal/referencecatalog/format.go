@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
@@ -13,14 +12,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -64,7 +61,17 @@ var formatSortConfig = queryutil.SortConfig{
 	DefaultSort: "name ASC, id ASC",
 }
 
-var formatListCRUD = referenceCRUD[model.Format]{filters: formatFilterConfig, sorts: &formatSortConfig}
+var formatCRUD = referenceCRUD[model.Format]{
+	resource: "format",
+	filters:  formatFilterConfig,
+	sorts:    &formatSortConfig,
+	newRecord: func(name, slug string, _ *string) *model.Format {
+		return &model.Format{Name: name, Slug: slug}
+	},
+	values: func(format *model.Format) (string, string) {
+		return format.Name, format.Slug
+	},
+}
 
 // GetFormat retrieves a format by ID
 // GetFormatBySlug retrieves a format by slug
@@ -73,7 +80,7 @@ func (s *FormatService) ListFormats(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFormatsRequest],
 ) (*connect.Response[managev1.ListFormatsResponse], error) {
-	formats, total, page, err := formatListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
+	formats, total, page, err := formatCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +108,7 @@ func (s *FormatService) ListFormatsAdmin(
 		return nil, err
 	}
 
-	formats, total, page, err := formatListCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
+	formats, total, page, err := formatCRUD.list(ctx, s.db, req.Msg.Filters, req.Msg.Sorts, req.Msg.Pagination)
 	if err != nil {
 		return nil, err
 	}
@@ -140,36 +147,15 @@ func (s *FormatService) CreateFormat(
 		return nil, err
 	}
 
-	// Validate required fields
-	name := strings.TrimSpace(req.Msg.Name)
-	if name == "" {
-		return nil, errs.Required("name")
-	}
-
-	// Generate slug from name if not provided
-	slug := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "/", "-"), " ", "-"))
-	if req.Msg.Slug != nil && *req.Msg.Slug != "" {
-		slug = *req.Msg.Slug
-	}
-	if err := validateSlugWithoutSlash(slug); err != nil {
-		return nil, err
-	}
-
-	format := &model.Format{
-		Name: name,
-		Slug: slug,
-	}
-
-	// Rely on database unique constraint for slug uniqueness (prevents TOCTOU race condition)
+	var format *model.Format
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
-		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(format).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) {
-				return errs.WithCause(errs.SlugAlreadyExists("format", slug), err)
-			}
-			return errs.Internal(err)
+		var err error
+		format, err = formatCRUD.create(ctx, tx, req.Msg.Name, req.Msg.Slug, nil)
+		if err != nil {
+			return err
 		}
 		if err := domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditFormatCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewFormatCreatedAuditRecord(metadata, format.ID)
@@ -208,42 +194,20 @@ func (s *FormatService) UpdateFormat(
 		return nil, err
 	}
 
-	var format model.Format
-	updates := structured.Fields{}
-
-	if req.Msg.Slug != nil {
-		if err := validateSlugWithoutSlash(*req.Msg.Slug); err != nil {
-			return nil, err
-		}
-	}
-
+	var format *model.Format
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&format, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("format", req.Msg.Id)
-			}
-			return errs.Internal(err)
+		var err error
+		format, err = formatCRUD.lockForMutation(ctx, tx, req.Msg.Id)
+		if err != nil {
+			return err
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
-		changedFields := make([]string, 0, 2)
-		if req.Msg.Name != nil && *req.Msg.Name != format.Name {
-			updates["name"] = *req.Msg.Name
-			changedFields = append(changedFields, "name")
-		}
-		if req.Msg.Slug != nil && *req.Msg.Slug != format.Slug {
-			updates["slug"] = *req.Msg.Slug
-			changedFields = append(changedFields, "slug")
-		}
-		if len(updates) == 0 {
-			return nil
-		}
-		if err := s.applyFormatUpdates(ctx, tx, &format, updates, req.Msg.Slug); err != nil {
+		var changedFields []string
+		format, changedFields, err = formatCRUD.updateLocked(ctx, tx, req.Msg.Id, format, req.Msg.Name, req.Msg.Slug, nil)
+		if err != nil || len(changedFields) == 0 {
 			return err
-		}
-		if err := tx.First(&format, "id = ?", req.Msg.Id).Error; err != nil {
-			return errs.Internal(err)
 		}
 		return domainaudit.AppendOptionalRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditFormatUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewFormatMetadataUpdatedAuditRecord(metadata, format.ID, changedFields)
@@ -252,33 +216,7 @@ func (s *FormatService) UpdateFormat(
 		return nil, err
 	}
 
-	return connect.NewResponse(toProtoFormat(&format)), nil
-}
-
-func (s *FormatService) applyFormatUpdates(
-	ctx context.Context,
-	db *gorm.DB,
-	format *model.Format,
-	updates structured.Fields,
-	slug *string,
-) error {
-	if len(updates) == 0 {
-		return nil
-	}
-	if err := db.WithContext(ctx).Model(format).Updates(updates).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			return errs.WithCause(errs.SlugAlreadyExists("format", optionalStringValue(slug)), err)
-		}
-		return errs.Internal(err)
-	}
-	return nil
-}
-
-func optionalStringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
+	return connect.NewResponse(toProtoFormat(format)), nil
 }
 
 // DeleteFormat deletes a format (admin only)

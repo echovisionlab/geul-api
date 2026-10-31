@@ -15,7 +15,7 @@ import (
 
 const referenceCatalogValueMaxLength = 100
 
-func TestGenreAndStyleValidationAndUniqueConstraintClassificationIntegration(t *testing.T) {
+func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.PrepareOryIntegrationConcurrentTest(t).DB
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
@@ -45,6 +45,17 @@ func TestGenreAndStyleValidationAndUniqueConstraintClassificationIntegration(t *
 			},
 			update: func(id string, name *string, slug *string) error {
 				_, err := NewStyleService(db, spiceDB).UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{Id: id, Name: name, Slug: slug}))
+				return err
+			},
+		},
+		{
+			name: "format",
+			create: func(name string, slug string) error {
+				_, err := NewFormatService(db, spiceDB).CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{Name: name, Slug: &slug}))
+				return err
+			},
+			update: func(id string, name *string, slug *string) error {
+				_, err := NewFormatService(db, spiceDB).UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{Id: id, Name: name, Slug: slug}))
 				return err
 			},
 		},
