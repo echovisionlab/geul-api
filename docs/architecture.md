@@ -136,6 +136,7 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error)
 type Spec[R any] struct {
 	Access        Access                                       // required
 	Subjects      []string                                     // Identity IDs whose Member state changes
+	Lock          func(context.Context, *gorm.DB) error        // row locks of the target, before Access
 	Change        func(context.Context, *gorm.DB) (R, error)   // required
 	Audit         func(R) Audit                                // required
 	Outbox        func(context.Context, *gorm.DB, R) error
@@ -145,10 +146,13 @@ type Spec[R any] struct {
 func FreshCan(can policyv1.Can, err error) Access      // identitystate.RequireFreshCan
 func FreshAdminCan(can policyv1.Can, err error) Access // identitystate.RequireFreshAdminCan
 func PrincipalFence(principal *auth.UserInfo) Access   // lock the principal's Identity only
+func Checked(check func(context.Context, *gorm.DB) error) Access // authority that is not the principal
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func Unchanged() Audit
+
+func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // one read-only snapshot
 ```
 
 `FreshCan` and `FreshAdminCan` take a generated descriptor's two results
@@ -158,11 +162,12 @@ directly: `mutation.FreshCan(policyv1.Post.Edit(id))`.
 
 1. the global authorization lock, when `Relationships` or `Subjects` is set;
 2. the `Subjects` Identity locks, sorted;
-3. `Access`: the caller's identity fence and fresh authorization;
-4. `Change`;
-5. the audit record `Audit` names;
-6. `Outbox`;
-7. the `Relationships` batch, written through `authzmutation.Execute` and
+3. `Lock`: the row locks of the mutation's target;
+4. `Access`: the caller's identity fence and fresh authorization;
+5. `Change`;
+6. the audit record `Audit` names;
+7. `Outbox`;
+8. the `Relationships` batch, written through `authzmutation.Execute` and
    compensated if the transaction rolls back.
 
 Rules for a spec:
@@ -171,6 +176,14 @@ Rules for a spec:
   for an administrator-only mutation. `PrincipalFence` is for a principal's
   own lifecycle step that `Change` guards by state, such as onboarding, where
   the principal is not yet active.
+- **Lock.** Lock the target's root row here when the domain promises that
+  authority is decided while the target cannot change: a role revoked while
+  the mutation waited on the row is then observed, and a missing target
+  answers not found before authorization as it did before the migration.
+  `Change` reads what `Lock` loaded through the enclosing closure.
+- **Checked.** An internal caller whose authority is not the request
+  principal, such as a collaboration save attributed to its contributors,
+  re-resolves that authority with `Checked` inside the transaction.
 - **Subjects.** List the Identity of each Member whose state the mutation
   changes, resolved before `Run` (`authorizationtarget.RequireLinkedMember`).
   Re-read the target inside `Change`; `recheckTarget` in
@@ -191,7 +204,8 @@ Rules for a spec:
   `profileEdit.failure` does.
 
 Work that must happen after the commit, such as a metric or a confirmation
-log, follows `Run` in the use case.
+log, follows `Run` in the use case. A read that needs one snapshot of several
+rows uses `mutation.Read` instead of opening a transaction.
 
 ## Errors
 
