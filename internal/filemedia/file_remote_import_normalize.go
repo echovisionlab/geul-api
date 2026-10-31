@@ -190,13 +190,14 @@ func nextManagedImageDimension(current int) int {
 }
 
 func (s *FileService) normalizeManagedRemoteImport(ctx context.Context, fileID string, sourceMime string) ([]byte, string, error) {
-	sourceURL, err := BuildSignedMediaFileURL(
+	sourceURL, _, err := mediaauth.SignFileURL(
 		s.mediaDomain,
 		fileID,
 		mediaExtension(&sourceMime),
 		s.mediaSecret,
 		mediaauth.InlineTTL,
 		mediaauth.PurposeInline,
+		"",
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("sign managed image source: %w", err)

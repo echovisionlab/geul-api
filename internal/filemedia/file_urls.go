@@ -409,9 +409,9 @@ func buildExpiringMediaFileRef(
 	}
 	var downloadFilename string
 	if purpose == mediaauth.PurposeDownload {
-		downloadFilename = CanonicalDownloadFilename(fileName, fileID, extension)
+		downloadFilename = mediaauth.CanonicalDownloadFilename(fileName, fileID, extension)
 	}
-	url, expiresAt, err := SignMediaFileURL(
+	url, expiresAt, err := mediaauth.SignFileURL(
 		mediaDomain,
 		fileID,
 		extension,
@@ -498,7 +498,7 @@ func (s *FileService) assetRefForDerivative(row storedDerivativeDeliveryRow) (*c
 	}
 	return &commonv1.AssetRef{
 		AssetId:     *row.AssetID,
-		Url:         joinOriginPath(origin, assetPath),
+		Url:         mediaauth.JoinOrigin(origin, assetPath),
 		Extension:   *row.AssetExtension,
 		MimeType:    *row.AssetMimeType,
 		FileSize:    *row.AssetFileSize,
@@ -517,7 +517,7 @@ func (s *FileService) hlsPlaybackRef(fileID string, row storedDerivativeDelivery
 	if row.MediaGenerationManifest == nil || strings.TrimSpace(*row.MediaGenerationManifest) == "" {
 		return nil, fmt.Errorf("ready media generation %s has no manifest", *row.MediaGenerationID)
 	}
-	url, err := BuildPublicMediaHLSURL(s.mediaDomain, fileID, *row.MediaGenerationID, *row.MediaGenerationManifest)
+	url, err := mediaauth.PublicHLSURL(s.mediaDomain, fileID, *row.MediaGenerationID, *row.MediaGenerationManifest)
 	if err != nil {
 		return nil, err
 	}

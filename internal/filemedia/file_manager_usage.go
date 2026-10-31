@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -70,7 +71,7 @@ func (s *FileService) fileManagerFileFromCatalogRow(
 	if row.Extension == nil || row.MimeType == nil || row.FileSize == nil {
 		return nil, fmt.Errorf("file catalog row %s is incomplete", row.ID)
 	}
-	fullName := CanonicalDownloadFilename(&row.Name, row.ID, *row.Extension)
+	fullName := mediaauth.CanonicalDownloadFilename(&row.Name, row.ID, *row.Extension)
 	deliveryResponse, err := s.fileURLsResponseFromStoredFile(row.ID, *row.Extension, *row.MimeType, *row.FileSize, &fullName)
 	if err != nil {
 		return nil, err

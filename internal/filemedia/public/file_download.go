@@ -547,7 +547,7 @@ func (s *FileService) signReferencedFileDownload(
 	if mediaAccess.directDraft {
 		downloadTTL = directDraftMediaTTL(downloadTTL)
 	}
-	download, err := buildExpiringFileRef(
+	download, err := mediaauth.ExpiringFileRef(
 		s.mediaDomain,
 		s.mediaSecret,
 		source.FileID,

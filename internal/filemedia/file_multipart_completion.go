@@ -214,7 +214,7 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 		return nil, false, completion.publishFailure(err)
 	}
 	completion.verifiedMime = verifiedMime
-	completion.session.FileName = CanonicalDownloadFilename(
+	completion.session.FileName = mediaauth.CanonicalDownloadFilename(
 		&completion.session.FileName,
 		completion.session.FileID,
 		mediaExtension(&verifiedMime),
@@ -361,7 +361,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 	if err != nil {
 		return nil, errs.Internal(fmt.Errorf("sign completed file inline delivery: %w", err))
 	}
-	downloadFileName := CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
+	downloadFileName := mediaauth.CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
 	download, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,

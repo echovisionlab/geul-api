@@ -32,20 +32,6 @@ func TestNormalizeNewDownloadFilenameUnit(t *testing.T) {
 	}
 }
 
-func TestCanonicalDownloadFilenameFallsBackForHistoricalInvalidValuesUnit(t *testing.T) {
-	t.Parallel()
-
-	fileID := uuid.NewString()
-	invalid := "../source.wav"
-	assert.Equal(
-		t,
-		"download-"+fileID+".wav",
-		CanonicalDownloadFilename(&invalid, fileID, "wav"),
-	)
-	valid := " source.wav "
-	assert.Equal(t, "source.wav", CanonicalDownloadFilename(&valid, fileID, "wav"))
-}
-
 func TestCanonicalRemoteImportFilenameNormalizesExtensionAndEscapedSeparatorsUnit(t *testing.T) {
 	t.Parallel()
 
@@ -60,4 +46,14 @@ func TestCanonicalRemoteImportFilenameNormalizesExtensionAndEscapedSeparatorsUni
 		"download-"+fileID+".wav",
 		canonicalRemoteImportFilename("folder/file.aif", fileID, "audio/wav"),
 	)
+}
+
+func TestMediaExtensionFallsBackToBinUnit(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "bin", mediaExtension(nil))
+	empty := ""
+	assert.Equal(t, "bin", mediaExtension(&empty))
+	mp3 := "audio/mpeg"
+	assert.Equal(t, "mp3", mediaExtension(&mp3))
 }
