@@ -229,7 +229,7 @@ func (s *Service) applySegmentUpdate(
 			if err := LoadSegmentConfig(ctx, tx, &segment); err != nil {
 				return segmentUpdate{}, err
 			}
-			if err := ensureSegmentMutableForActiveDelivery(tx, segment.ID); err != nil {
+			if err := s.ensureSegmentMutableForActiveDelivery(ctx, tx, segment.ID); err != nil {
 				return segmentUpdate{}, err
 			}
 			nextType, nextConfig, err := plan.nextState(segment)
@@ -243,7 +243,7 @@ func (s *Service) applySegmentUpdate(
 			if err != nil {
 				return segmentUpdate{}, err
 			}
-			if err := loadSegmentForResponse(ctx, tx, segmentID, &segment); err != nil {
+			if err := s.loadSegmentForResponse(ctx, tx, segmentID, &segment); err != nil {
 				return segmentUpdate{}, err
 			}
 			return segmentUpdate{segment: segment, changedFields: changedFields}, nil

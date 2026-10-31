@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -203,7 +204,7 @@ func (fileTestAudienceMemberReferences) EligibleIDs(_ context.Context, _ *gorm.D
 func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.ConnectHandler {
 	service, err := audience.NewService(audience.Deps{
 		DB: db, SpiceDB: spiceDB, RecipientCounter: fileTestAudienceRecipientCounter{},
-		MemberReferences: fileTestAudienceMemberReferences{}, Audit: &audittest.Recorder{},
+		MemberReferences: fileTestAudienceMemberReferences{}, Campaigns: campaign.SegmentUsage{}, Audit: &audittest.Recorder{},
 	})
 	if err != nil {
 		panic(err)

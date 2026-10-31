@@ -64,7 +64,7 @@ func (s *Service) GetSegment(ctx context.Context, query GetSegmentQuery) (*manag
 	if err := LoadSegmentConfig(ctx, s.db, &segment); err != nil {
 		return nil, err
 	}
-	if err := loadSegmentReferenceCounts(ctx, s.db, []*model.AudienceSegment{&segment}); err != nil {
+	if err := s.loadSegmentReferenceCounts(ctx, s.db, []*model.AudienceSegment{&segment}); err != nil {
 		return nil, err
 	}
 	proto := toProtoSegment(&segment)
@@ -130,7 +130,7 @@ func (s *Service) ListSegments(ctx context.Context, query ListSegmentsQuery) (Se
 	if err := LoadSegmentConfigs(ctx, s.db, pointers); err != nil {
 		return SegmentPage{}, err
 	}
-	if err := loadSegmentReferenceCounts(ctx, s.db, pointers); err != nil {
+	if err := s.loadSegmentReferenceCounts(ctx, s.db, pointers); err != nil {
 		return SegmentPage{}, err
 	}
 	protoSegments := make([]*managev1.Segment, len(segments))
@@ -222,7 +222,7 @@ func (s *Service) estimateCount(ctx context.Context, segment *model.AudienceSegm
 	return int32(count), nil
 }
 
-func loadSegmentForResponse(ctx context.Context, db *gorm.DB, segmentID string, result *model.AudienceSegment) error {
+func (s *Service) loadSegmentForResponse(ctx context.Context, db *gorm.DB, segmentID string, result *model.AudienceSegment) error {
 	*result = model.AudienceSegment{}
 	if err := db.WithContext(ctx).First(result, "id = ?", segmentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -233,7 +233,7 @@ func loadSegmentForResponse(ctx context.Context, db *gorm.DB, segmentID string, 
 	if err := LoadSegmentConfig(ctx, db, result); err != nil {
 		return err
 	}
-	return loadSegmentReferenceCounts(ctx, db, []*model.AudienceSegment{result})
+	return s.loadSegmentReferenceCounts(ctx, db, []*model.AudienceSegment{result})
 }
 
 func toProtoSegment(segment *model.AudienceSegment) *managev1.Segment {

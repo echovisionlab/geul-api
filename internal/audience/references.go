@@ -14,7 +14,7 @@ type referenceCountRow struct {
 	Count int64  `gorm:"column:count"`
 }
 
-func loadSegmentReferenceCounts(ctx context.Context, db *gorm.DB, segments []*model.AudienceSegment) error {
+func (s *Service) loadSegmentReferenceCounts(ctx context.Context, db *gorm.DB, segments []*model.AudienceSegment) error {
 	byID := make(map[string]*model.AudienceSegment, len(segments))
 	ids := make([]string, 0, len(segments))
 	for _, segment := range segments {
@@ -30,25 +30,15 @@ func loadSegmentReferenceCounts(ctx context.Context, db *gorm.DB, segments []*mo
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := applyReferenceCounts(
-		ctx,
-		db,
-		"campaign",
-		"segment_id",
-		ids,
-		func(id string, count int32) { byID[id].CampaignCount = count },
-	); err != nil {
+	campaigns, runs, err := s.campaigns.CountSegmentUsage(ctx, db, ids)
+	if err != nil {
 		return err
 	}
-	if err := applyReferenceCounts(
-		ctx,
-		db,
-		"email_delivery_run",
-		"audience_segment_id",
-		ids,
-		func(id string, count int32) { byID[id].DeliveryRunCount = count },
-	); err != nil {
-		return err
+	for id, count := range campaigns {
+		byID[id].CampaignCount = count
+	}
+	for id, count := range runs {
+		byID[id].DeliveryRunCount = count
 	}
 	return applyDownloadPolicyReferenceCounts(ctx, db, ids, func(id string, count int32) {
 		byID[id].DownloadPolicyReferenceCount = count
@@ -83,45 +73,15 @@ func applyDownloadPolicyReferenceCounts(
 	return nil
 }
 
-func applyReferenceCounts(
-	ctx context.Context,
-	db *gorm.DB,
-	table, column string,
-	ids []string,
-	apply func(string, int32),
-) error {
-	var rows []referenceCountRow
-	if err := db.WithContext(ctx).
-		Table(table).
-		Select(column+" AS id, COUNT(*) AS count").
-		Where(column+" IN ?", ids).
-		Group(column).
-		Scan(&rows).Error; err != nil {
+func (s *Service) ensureSegmentMutableForActiveDelivery(ctx context.Context, tx *gorm.DB, segmentID string) error {
+	campaign, deliveryRun, err := s.campaigns.SegmentInActiveUse(ctx, tx, segmentID)
+	if err != nil {
 		return err
 	}
-	for _, row := range rows {
-		apply(row.ID, int32(row.Count))
-	}
-	return nil
-}
-
-func ensureSegmentMutableForActiveDelivery(tx *gorm.DB, segmentID string) error {
-	var activeCampaignCount int64
-	if err := tx.Model(&model.Campaign{}).Where("segment_id = ? AND status IN ?", segmentID, []string{
-		manageCampaignScheduled, manageCampaignSending,
-	}).Count(&activeCampaignCount).Error; err != nil {
-		return err
-	}
-	if activeCampaignCount > 0 {
+	if campaign {
 		return domainerr.Precondition("audience segment is used by a scheduled or sending campaign")
 	}
-	var activeRunCount int64
-	if err := tx.Model(&model.CampaignDeliveryRun{}).Where("audience_segment_id = ? AND status IN ?", segmentID, []string{
-		deliveryRunScheduled, deliveryRunSending,
-	}).Count(&activeRunCount).Error; err != nil {
-		return err
-	}
-	if activeRunCount > 0 {
+	if deliveryRun {
 		return domainerr.Precondition("audience segment is frozen by an active delivery run")
 	}
 	return nil

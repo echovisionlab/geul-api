@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -12,21 +13,28 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-const (
-	deliveryRunScheduled = "scheduled"
-	deliveryRunSending   = "sending"
-	deliveryRunCancelled = "cancelled"
-)
-
-var (
-	manageCampaignScheduled = managev1.CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String()
-	manageCampaignSending   = managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String()
-	manageCampaignDraft     = managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String()
-)
+// CampaignUsage reads and releases the campaigns and delivery runs that
+// target a segment. Campaign owns those rows (campaign.SegmentUsage).
+type CampaignUsage interface {
+	// CountSegmentUsage counts the campaigns and delivery runs of each
+	// segment; a segment nothing uses is absent from both maps.
+	CountSegmentUsage(ctx context.Context, db *gorm.DB, segmentIDs []string) (campaigns, deliveryRuns map[string]int32, err error)
+	// SegmentInActiveUse reports whether a scheduled or sending campaign,
+	// and whether a scheduled or sending delivery run, targets the segment.
+	SegmentInActiveUse(ctx context.Context, tx *gorm.DB, segmentID string) (campaign, deliveryRun bool, err error)
+	// LockSegmentUsage locks the segment's campaigns, then its active
+	// delivery runs, and returns what it locked.
+	LockSegmentUsage(ctx context.Context, tx *gorm.DB, segmentID string) (campaignIDs, deliveryRunIDs []string, err error)
+	// SegmentUsageChanged reports whether the segment's campaigns or active
+	// delivery runs differ from the locked ones.
+	SegmentUsageChanged(ctx context.Context, tx *gorm.DB, segmentID string, campaignIDs, deliveryRunIDs []string) (bool, error)
+	// ReleaseSegmentForArchive cancels the segment's scheduled delivery runs
+	// and returns its scheduled campaigns to draft, returning their IDs.
+	ReleaseSegmentForArchive(ctx context.Context, tx *gorm.DB, segmentID string, now time.Time) (draftedCampaignIDs []string, err error)
+}
 
 // RecipientCounter supplies the authoritative recipient estimate for an
 // audience segment.
@@ -49,6 +57,7 @@ type Deps struct {
 	RecipientCounter RecipientCounter
 	// MemberReferences validates excluded Members before they are stored.
 	MemberReferences MemberReferences
+	Campaigns        CampaignUsage
 	Audit            domainaudit.Appender
 }
 
@@ -56,7 +65,7 @@ func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "RecipientCounter": d.RecipientCounter == nil,
-		"MemberReferences": d.MemberReferences == nil, "Audit": d.Audit == nil,
+		"MemberReferences": d.MemberReferences == nil, "Campaigns": d.Campaigns == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -76,6 +85,7 @@ type Service struct {
 	spiceDB          *auth.SpiceDBClient
 	recipientCounter RecipientCounter
 	memberReferences MemberReferences
+	campaigns        CampaignUsage
 	mutations        *mutation.Runner
 }
 
@@ -93,6 +103,7 @@ func NewService(deps Deps) (*Service, error) {
 		spiceDB:          deps.SpiceDB,
 		recipientCounter: deps.RecipientCounter,
 		memberReferences: deps.MemberReferences,
+		campaigns:        deps.Campaigns,
 		mutations:        mutations,
 	}, nil
 }

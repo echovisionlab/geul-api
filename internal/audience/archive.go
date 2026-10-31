@@ -41,7 +41,7 @@ func (s *Service) ArchiveSegment(ctx context.Context, command ArchiveSegmentComm
 		return nil, err
 	}
 	for range maxArchiveAttempts {
-		archive := segmentArchive{segmentID: command.ID}
+		archive := segmentArchive{service: s, segmentID: command.ID}
 		archived, err := mutation.Run(ctx, s.mutations, mutation.Spec[segmentArchive]{
 			Lock:   archive.lock,
 			Access: freshAdmin(can),
@@ -63,6 +63,7 @@ func (s *Service) ArchiveSegment(ctx context.Context, command ArchiveSegmentComm
 // run, segment and exact download-policy locks in the order scheduling and
 // policy mutations take them, and apply archives what lock planned.
 type segmentArchive struct {
+	service         *Service
 	segmentID       string
 	alreadyArchived bool
 	policyPlans     []downloadPolicyArchivePlan
@@ -96,15 +97,11 @@ func (a *segmentArchive) lock(ctx context.Context, tx *gorm.DB) error {
 	// by scheduling. Download-policy mutations lock audience segments before the
 	// exact attachment or Track, so policy relations are locked only after the
 	// segment below.
-	lockedCampaignIDs, err := lockAudienceCampaigns(ctx, tx, a.segmentID)
+	lockedCampaignIDs, lockedRunIDs, err := a.service.campaigns.LockSegmentUsage(ctx, tx, a.segmentID)
 	if err != nil {
 		return err
 	}
-	lockedRunIDs, err := lockActiveDeliveryRuns(ctx, tx, a.segmentID)
-	if err != nil {
-		return err
-	}
-	if err := requireArchiveReferencesUnchanged(ctx, tx, a.segmentID, lockedCampaignIDs, lockedRunIDs); err != nil {
+	if err := a.requireUsageUnchanged(ctx, tx, lockedCampaignIDs, lockedRunIDs); err != nil {
 		return err
 	}
 	var segment model.AudienceSegment
@@ -120,25 +117,22 @@ func (a *segmentArchive) lock(ctx context.Context, tx *gorm.DB) error {
 		a.alreadyArchived = true
 		return nil
 	}
-	if err := requireArchiveReferencesUnchanged(ctx, tx, a.segmentID, lockedCampaignIDs, lockedRunIDs); err != nil {
+	if err := a.requireUsageUnchanged(ctx, tx, lockedCampaignIDs, lockedRunIDs); err != nil {
 		return err
 	}
 	a.policyPlans, err = lockDownloadPolicyArchivePlans(ctx, tx, a.segmentID)
 	return err
 }
 
-// requireArchiveReferencesUnchanged retries the archive when a campaign or
-// active delivery run started or stopped using the segment while the locks
-// were taken.
-func requireArchiveReferencesUnchanged(ctx context.Context, tx *gorm.DB, segmentID string, lockedCampaignIDs, lockedRunIDs []string) error {
-	if changed, err := audienceCampaignsChanged(ctx, tx, segmentID, lockedCampaignIDs); err != nil {
+// requireUsageUnchanged retries the archive when a campaign or active
+// delivery run started or stopped using the segment while the locks were
+// taken.
+func (a *segmentArchive) requireUsageUnchanged(ctx context.Context, tx *gorm.DB, lockedCampaignIDs, lockedRunIDs []string) error {
+	changed, err := a.service.campaigns.SegmentUsageChanged(ctx, tx, a.segmentID, lockedCampaignIDs, lockedRunIDs)
+	if err != nil {
 		return err
-	} else if changed {
-		return errArchiveRetry
 	}
-	if changed, err := audienceActiveRunsChanged(ctx, tx, segmentID, lockedRunIDs); err != nil {
-		return err
-	} else if changed {
+	if changed {
 		return errArchiveRetry
 	}
 	return nil
@@ -150,36 +144,16 @@ func (a *segmentArchive) apply(ctx context.Context, tx *gorm.DB) (segmentArchive
 			return segmentArchive{}, err
 		}
 	}
-	if err := loadSegmentForResponse(ctx, tx, a.segmentID, &a.segment); err != nil {
+	if err := a.service.loadSegmentForResponse(ctx, tx, a.segmentID, &a.segment); err != nil {
 		return segmentArchive{}, err
 	}
 	return *a, nil
 }
 
 func (a *segmentArchive) archive(ctx context.Context, tx *gorm.DB) error {
-	scheduledCampaignIDs, err := lockedScheduledCampaignIDs(ctx, tx, a.segmentID)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC()
-	if err := tx.WithContext(ctx).
-		Model(&model.CampaignDeliveryRun{}).
-		Where("audience_segment_id = ? AND status = ?", a.segmentID, deliveryRunScheduled).
-		Updates(structured.Fields{
-			"status":       deliveryRunCancelled,
-			"completed_at": now,
-			"updated_at":   now,
-		}).Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).
-		Model(&model.Campaign{}).
-		Where("segment_id = ? AND status = ?", a.segmentID, manageCampaignScheduled).
-		Updates(structured.Fields{
-			"status":       manageCampaignDraft,
-			"scheduled_at": nil,
-			"updated_at":   now,
-		}).Error; err != nil {
+	draftedCampaignIDs, err := a.service.campaigns.ReleaseSegmentForArchive(ctx, tx, a.segmentID, now)
+	if err != nil {
 		return err
 	}
 	if err := tx.WithContext(ctx).
@@ -205,7 +179,7 @@ func (a *segmentArchive) archive(ctx context.Context, tx *gorm.DB) error {
 	if archived.RowsAffected != 1 {
 		return errArchiveRetry
 	}
-	a.audits, err = archiveAudits(a.segmentID, scheduledCampaignIDs, a.policyPlans)
+	a.audits, err = archiveAudits(a.segmentID, draftedCampaignIDs, a.policyPlans)
 	return err
 }
 
@@ -253,7 +227,7 @@ func (s *Service) RestoreSegment(ctx context.Context, command RestoreSegmentComm
 			if result.RowsAffected != 1 {
 				return segment, domainerr.Precondition("audience segment is not archived")
 			}
-			err := loadSegmentForResponse(ctx, tx, segment.ID, &segment)
+			err := s.loadSegmentForResponse(ctx, tx, segment.ID, &segment)
 			return segment, err
 		},
 		Audit: func(segment model.AudienceSegment) mutation.Audit {
@@ -416,29 +390,6 @@ func lockTrackDownloadPolicyTargets(ctx context.Context, tx *gorm.DB, segmentID 
 	return tracks, nil
 }
 
-func lockedScheduledCampaignIDs(
-	ctx context.Context,
-	tx *gorm.DB,
-	segmentID string,
-) ([]string, error) {
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("campaign").
-		Select("id").
-		Where("segment_id = ? AND status = ?", segmentID, manageCampaignScheduled).
-		Order("id ASC").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	ids := make([]string, len(rows))
-	for i := range rows {
-		ids[i] = rows[i].ID
-	}
-	return ids, nil
-}
-
 func attachmentDownloadPolicySegmentIDs(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -564,98 +515,4 @@ func downloadPolicyArchiveAudit(
 	default:
 		return "", nil, fmt.Errorf("unsupported download policy owner %q", plan.domain)
 	}
-}
-
-func lockActiveDeliveryRuns(
-	ctx context.Context,
-	tx *gorm.DB,
-	segmentID string,
-) ([]string, error) {
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("email_delivery_run").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id").
-		Where("audience_segment_id = ? AND status IN ?", segmentID, []string{deliveryRunScheduled, deliveryRunSending}).
-		Order("id ASC").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	ids := make([]string, len(rows))
-	for i := range rows {
-		ids[i] = rows[i].ID
-	}
-	return ids, nil
-}
-
-func lockAudienceCampaigns(
-	ctx context.Context,
-	tx *gorm.DB,
-	segmentID string,
-) ([]string, error) {
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("campaign").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id").
-		Where("segment_id = ?", segmentID).
-		Order("id ASC").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	ids := make([]string, len(rows))
-	for i := range rows {
-		ids[i] = rows[i].ID
-	}
-	return ids, nil
-}
-
-func audienceCampaignsChanged(ctx context.Context, tx *gorm.DB, segmentID string, lockedIDs []string) (bool, error) {
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("campaign").
-		Select("id").
-		Where("segment_id = ?", segmentID).
-		Order("id ASC").
-		Scan(&rows).Error; err != nil {
-		return false, err
-	}
-	if len(rows) != len(lockedIDs) {
-		return true, nil
-	}
-	for i := range rows {
-		if rows[i].ID != lockedIDs[i] {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func audienceActiveRunsChanged(ctx context.Context, tx *gorm.DB, segmentID string, lockedIDs []string) (bool, error) {
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("email_delivery_run").
-		Select("id").
-		Where("audience_segment_id = ? AND status IN ?", segmentID, []string{deliveryRunScheduled, deliveryRunSending}).
-		Order("id ASC").
-		Scan(&rows).Error; err != nil {
-		return false, err
-	}
-	if len(rows) != len(lockedIDs) {
-		return true, nil
-	}
-	for i := range rows {
-		if rows[i].ID != lockedIDs[i] {
-			return true, nil
-		}
-	}
-	return false, nil
 }

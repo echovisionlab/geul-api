@@ -16,6 +16,7 @@ import (
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -77,6 +78,7 @@ func newAuditedAudienceServiceForTest(
 		SpiceDB:          spiceDB,
 		RecipientCounter: audienceRecipientCounter{},
 		MemberReferences: audienceMemberReferences{},
+		Campaigns:        campaign.SegmentUsage{},
 		Audit:            writer,
 	})
 	if err != nil {

@@ -695,6 +695,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		SpiceDB:          spicedbClient,
 		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
 		MemberReferences: audienceadapter.MemberReferences{},
+		Campaigns:        campaign.SegmentUsage{},
 		Audit:            telemetryWriter,
 	})
 	if err != nil {

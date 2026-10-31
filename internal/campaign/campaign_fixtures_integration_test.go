@@ -91,6 +91,7 @@ func newCampaignAudienceService(
 		SpiceDB:          spiceDB,
 		RecipientCounter: campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
 		MemberReferences: campaignAudienceMemberReferences{},
+		Campaigns:        SegmentUsage{},
 		Audit:            &audittest.Recorder{},
 	})
 	if err != nil {
