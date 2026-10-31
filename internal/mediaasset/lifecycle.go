@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
@@ -455,7 +455,7 @@ func LoadReadyPublicAssetRefsForSourceFiles(
 	if _, ok := publicAssetKinds[expectedKind]; !ok {
 		return nil, errs.InvalidArgument("kind", "unsupported public asset kind")
 	}
-	sourceFileIDs = normalizedUniqueStrings(sourceFileIDs)
+	sourceFileIDs = sliceutil.SortedUniqueTrimmed(sourceFileIDs)
 	refs := make(map[string]*commonv1.AssetRef, len(sourceFileIDs))
 	if len(sourceFileIDs) == 0 {
 		return refs, nil
@@ -602,7 +602,7 @@ func (s *Lifecycle) ReleaseExactPublicAssetBindings(
 ) error {
 	ownerType = strings.TrimSpace(ownerType)
 	ownerID = strings.TrimSpace(ownerID)
-	bindingKeys = normalizedUniqueStrings(bindingKeys)
+	bindingKeys = sliceutil.SortedUniqueTrimmed(bindingKeys)
 	if ownerType == "" || ownerID == "" {
 		return errs.InvalidArgument("binding", "owner type and owner ID are required")
 	}
@@ -715,7 +715,7 @@ func lockPublicAssetsForUpdate(
 	tx *gorm.DB,
 	assetIDs []string,
 ) (map[string]model.PublicAsset, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.SortedUniqueTrimmed(assetIDs)
 	if len(assetIDs) == 0 {
 		return map[string]model.PublicAsset{}, nil
 	}
@@ -740,7 +740,7 @@ func lockPublicAssetBindingsForAssets(
 	tx *gorm.DB,
 	assetIDs []string,
 ) ([]model.PublicAssetBinding, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.SortedUniqueTrimmed(assetIDs)
 	if len(assetIDs) == 0 {
 		return nil, nil
 	}
@@ -760,7 +760,7 @@ func transitionUnboundPublicAssetsToDeletePending(
 	assetIDs []string,
 	now time.Time,
 ) error {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.SortedUniqueTrimmed(assetIDs)
 	if len(assetIDs) == 0 {
 		return nil
 	}
@@ -788,22 +788,6 @@ func samePublicAssetBindings(left []model.PublicAssetBinding, right []model.Publ
 		}
 	}
 	return true
-}
-
-func normalizedUniqueStrings(values []string) []string {
-	unique := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			unique[value] = struct{}{}
-		}
-	}
-	result := make([]string, 0, len(unique))
-	for value := range unique {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
 }
 
 func (s *Lifecycle) CompleteMediaGeneration(

@@ -2,6 +2,8 @@ package translation
 
 import (
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
 
 // SelectResponse projects provider output onto the requested unit ordering.
@@ -12,19 +14,7 @@ func SelectResponse(req ProviderRequest, response ProviderResponse) ProviderResp
 
 // NormalizeProtectedTerms trims and deduplicates exact protected spellings.
 func NormalizeProtectedTerms(terms []string) []string {
-	seen := make(map[string]struct{}, len(terms))
-	normalized := make([]string, 0, len(terms))
-	for _, term := range terms {
-		trimmed := strings.TrimSpace(term)
-		if trimmed == "" {
-			continue
-		}
-		if _, ok := seen[trimmed]; !ok {
-			seen[trimmed] = struct{}{}
-			normalized = append(normalized, trimmed)
-		}
-	}
-	return normalized
+	return sliceutil.UniqueTrimmed(terms)
 }
 
 func extractJSONObject(text string) string {
