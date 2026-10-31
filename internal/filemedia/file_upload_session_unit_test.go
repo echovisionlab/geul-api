@@ -77,7 +77,7 @@ func TestNewStorageCompensationContextDetachesRequestCancellation(t *testing.T) 
 func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *testing.T) {
 	t.Parallel()
 
-	freshResp, err := multipartInitiateResponseFromSession(
+	freshResp := multipartInitiateResponseFromSession(
 		model.UploadSession{
 			UploadID:      "upload-fresh",
 			FileID:        "file-fresh",
@@ -89,7 +89,6 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 		nil,
 		false,
 	)
-	require.NoError(t, err)
 
 	require.Equal(t, "upload-fresh", freshResp.GetUploadId())
 	require.Equal(t, "file-fresh", freshResp.GetFileId())
@@ -106,7 +105,7 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 		{PartNumber: 2, Etag: "etag-2"},
 	}
 
-	resp, err := multipartInitiateResponseFromSession(
+	resp := multipartInitiateResponseFromSession(
 		model.UploadSession{
 			UploadID:      "upload-1",
 			FileID:        "file-1",
@@ -119,7 +118,6 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 		uploadedParts,
 		true,
 	)
-	require.NoError(t, err)
 
 	require.Equal(t, "upload-1", resp.GetUploadId())
 	require.Equal(t, "file-1", resp.GetFileId())

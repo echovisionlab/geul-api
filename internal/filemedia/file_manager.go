@@ -260,7 +260,7 @@ func (s *FileService) listFileManagerItems(
 	req *connect.Request[managev1.ListFileManagerItemsRequest],
 	allowChangedRetry bool,
 ) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
-	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
+	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
 	folderID, err := normalizeFileManagerUUID(req.Msg.GetFolderId(), "folder_id", true)

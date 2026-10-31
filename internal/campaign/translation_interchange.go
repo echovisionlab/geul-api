@@ -62,7 +62,7 @@ func LoadTranslationInterchangeTarget(
 	if tx == nil || store == nil {
 		return TranslationInterchangeTarget{}, errs.Internal(errors.New("campaign translation interchange dependencies are not configured"))
 	}
-	campaignID, err := canonicalCampaignAIDocumentID("campaign_id", campaignID)
+	campaignID, err := canonicalCampaignAIDocumentID(campaignID)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
@@ -127,7 +127,7 @@ func ApplyTranslationInterchange(
 	if tx == nil || store == nil {
 		return TranslationInterchangeMutationResult{}, errs.Internal(errors.New("campaign translation interchange dependencies are not configured"))
 	}
-	campaignID, err := canonicalCampaignAIDocumentID("campaign_id", campaignID)
+	campaignID, err := canonicalCampaignAIDocumentID(campaignID)
 	if err != nil {
 		return TranslationInterchangeMutationResult{}, err
 	}
@@ -180,7 +180,7 @@ func ApplyTranslationInterchange(
 			ExpectedTargetRevision: input.ExpectedTargetRevision,
 			AllowCreate:            true, AllowLocaleDeletes: true,
 			SetSubject: true, Subject: cloneCampaignAIDocumentString(input.Subject), Now: input.Now,
-			Fence: campaignEmailContentFence(campaignContentEntity, campaignID),
+			Fence: campaignEmailContentFence(campaignID),
 		},
 	)
 	if err != nil {

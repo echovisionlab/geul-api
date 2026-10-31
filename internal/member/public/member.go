@@ -96,11 +96,7 @@ func (s *MemberService) GetPublicMember(
 		slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
-	summary, err := projectPublicMemberSummary(member, avatars[member.ID])
-	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
-		return nil, errs.Internal(err)
-	}
+	summary := projectPublicMemberSummary(member, avatars[member.ID])
 
 	profile := &openv1.PublicMemberProfile{
 		Summary:     summary,

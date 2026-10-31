@@ -49,10 +49,7 @@ func (s *MapThemeService) ListMapThemes(
 	defaultIncluded := false
 	for i := range themes {
 		defaultIncluded = defaultIncluded || themes[i].ID == defaultID
-		item, err := s.toProto(&themes[i])
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
+		item := s.toProto(&themes[i])
 		result = append(result, item)
 	}
 	if !defaultIncluded {
@@ -136,10 +133,7 @@ func (s *MapThemeService) GetMapTheme(
 		}
 		return nil, errs.Internal(err)
 	}
-	result, err := s.toProto(theme)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	result := s.toProto(theme)
 	return connect.NewResponse(result), nil
 }
 
@@ -207,10 +201,7 @@ func (s *MapThemeService) CreateMapTheme(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	result, err := s.toProto(theme)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	result := s.toProto(theme)
 	return connect.NewResponse(result), nil
 }
 
@@ -350,10 +341,7 @@ func (s *MapThemeService) CopyMapTheme(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	result, err := s.toProto(copied)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	result := s.toProto(copied)
 	return connect.NewResponse(result), nil
 }
 

@@ -104,7 +104,7 @@ func NewAIDocumentService(internal *InternalCampaignService) (*AIDocumentService
 }
 
 func (s *AIDocumentService) Load(ctx context.Context, campaignID, locale string) (AIDocumentState, error) {
-	campaignID, err := canonicalCampaignAIDocumentID("campaign_id", campaignID)
+	campaignID, err := canonicalCampaignAIDocumentID(campaignID)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -164,7 +164,7 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	if mode != AIDocumentExecutionValidate && mode != AIDocumentExecutionApply {
 		return AIDocumentMutationResult{}, errs.InvalidArgument("mode", "is not supported")
 	}
-	campaignID, err := canonicalCampaignAIDocumentID("campaign_id", campaignID)
+	campaignID, err := canonicalCampaignAIDocumentID(campaignID)
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
@@ -348,7 +348,7 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 				return AIDocumentMutationResult{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 			}
 			if err := projectCampaignEmailMaterializedContent(
-				ctx, tx, campaignContentEntity, mutation.CampaignID,
+				ctx, tx, mutation.CampaignID,
 				snapshot, []string{mutation.Locale}, now,
 			); err != nil {
 				return AIDocumentMutationResult{}, err
@@ -459,7 +459,7 @@ func validateCompiledCampaignAIDocumentMutation(
 func validateCampaignAIDocumentMutation(
 	input AIDocumentMutation,
 ) (AIDocumentMutation, uuid.UUID, error) {
-	id, err := canonicalCampaignAIDocumentID("campaign_id", input.CampaignID)
+	id, err := canonicalCampaignAIDocumentID(input.CampaignID)
 	if err != nil {
 		return AIDocumentMutation{}, uuid.Nil, err
 	}

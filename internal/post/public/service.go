@@ -313,7 +313,7 @@ func (s *PostService) List(
 		Preload("Tags").
 		Preload("FeaturedImage"))
 
-	query, err := s.applyPublicPostFilters(ctx, query, req.Msg.Filters)
+	query, err := s.applyPublicPostFilters(query, req.Msg.Filters)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +374,6 @@ func (s *PostService) List(
 }
 
 func (s *PostService) applyPublicPostFilters(
-	ctx context.Context,
 	query *gorm.DB,
 	filters []*commonv1.FilterSpec,
 ) (*gorm.DB, error) {
@@ -467,7 +466,7 @@ func (s *PostService) ListMapFeatures(
 		query = query.Where("(map_place.lng >= ? OR map_place.lng <= ?)", viewport.West, viewport.East)
 	}
 
-	query, err = s.applyPublicPostFilters(ctx, query, req.Msg.Filters)
+	query, err = s.applyPublicPostFilters(query, req.Msg.Filters)
 	if err != nil {
 		return nil, err
 	}

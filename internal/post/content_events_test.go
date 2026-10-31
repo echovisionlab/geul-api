@@ -16,7 +16,6 @@ func TestBuildPostContentUpdatedEvent(t *testing.T) {
 		[]string{"member-1", "member-2"},
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 		"en",
-		true,
 		nil,
 		true,
 	)
@@ -40,7 +39,7 @@ func TestBuildPostTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T)
 	event := buildPostBlockContentUpdatedEvent(
 		"post-1", []string{"summary"}, "document-revision", []string{"member-1"},
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko", true, &targetRevision, false,
+		"ko", &targetRevision, false,
 	)
 	require.NotNil(t, event)
 	assert.False(t, event.DocumentStateChanged)
@@ -55,12 +54,12 @@ func TestBuildPostContentUpdatedEventRejectsInconsistentLocaleFence(t *testing.T
 	assert.Nil(t, buildPostBlockContentUpdatedEvent(
 		"post-1", []string{"content"}, "document-revision", nil,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko", true, &targetRevision, true,
+		"ko", &targetRevision, true,
 	))
 	assert.Nil(t, buildPostBlockContentUpdatedEvent(
 		"post-1", []string{"content"}, "document-revision", nil,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en", true, nil, false,
+		"en", nil, false,
 	))
 }
 
@@ -87,12 +86,4 @@ func TestPostContentUpdatedFieldSpecs(t *testing.T) {
 		"documentLayout":      {path: "settings.document_layout", kind: configuration},
 		"sourceLocale":        {path: "settings.source_locale", kind: configuration},
 	}, postContentUpdatedFieldSpecs)
-}
-
-func TestBuildManagePostContentUpdatedEventSkipsTranslationIrrelevantRelationClears(t *testing.T) {
-	event := buildManagePostContentUpdatedEvent(&managev1.UpdatePostRequest{
-		Id:         "post-1",
-		MapPlaceId: new(""),
-	})
-	require.Nil(t, event)
 }

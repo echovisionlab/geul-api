@@ -234,7 +234,7 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 		if err := applyProgramEventTimeAndLocationUpdates(update.fields, &current, r); err != nil {
 			return err
 		}
-		if err := validateProgramEventSeriesRelationForUpdate(ctx, tx, current, update.fields); err != nil {
+		if err := validateProgramEventSeriesRelationForUpdate(tx, current, update.fields); err != nil {
 			return err
 		}
 		if r.Slug != nil {
@@ -403,7 +403,7 @@ func sameNullableInt32(left, right *int32) bool {
 	return *left == *right
 }
 
-func validateProgramEventSeriesRelationForUpdate(ctx context.Context, tx *gorm.DB, current model.ProgramEvent, fields structured.Fields) error {
+func validateProgramEventSeriesRelationForUpdate(tx *gorm.DB, current model.ProgramEvent, fields structured.Fields) error {
 	seriesID := current.SeriesID
 	if value, exists := nullableStringField(fields, "series_id"); exists {
 		seriesID = value
@@ -412,10 +412,10 @@ func validateProgramEventSeriesRelationForUpdate(ctx context.Context, tx *gorm.D
 	if value, exists := nullableInt32Field(fields, "series_order"); exists {
 		seriesOrder = value
 	}
-	return validateProgramEventSeriesRelation(ctx, tx, current.ID, seriesID, seriesOrder)
+	return validateProgramEventSeriesRelation(tx, current.ID, seriesID, seriesOrder)
 }
 
-func validateProgramEventSeriesRelation(ctx context.Context, tx *gorm.DB, eventID string, seriesID *string, seriesOrder *int32) error {
+func validateProgramEventSeriesRelation(tx *gorm.DB, eventID string, seriesID *string, seriesOrder *int32) error {
 	if seriesID == nil && seriesOrder == nil {
 		return nil
 	}

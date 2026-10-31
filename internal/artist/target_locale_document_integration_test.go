@@ -79,7 +79,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 		result, nextKOToken, err = applyArtistTargetLocaleBatch(
 			t.Context(), tx, store, artistID, documentID, "ko", batch,
 			&koState.TargetRevision, false, now.Add(3*time.Second),
-			internalCreativeContentFence(artistContentEntity, artistID),
+			internalCreativeContentFence(artistID),
 		)
 		return err
 	}))
@@ -123,7 +123,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 		result, err = deleteArtistTargetLocale(
 			t.Context(), tx, store, artistID, documentID, "ko", result.DocumentRevision,
 			&nextKOToken, []uuid.UUID{contributor},
-			internalCreativeContentFence(artistContentEntity, artistID),
+			internalCreativeContentFence(artistID),
 		)
 		return err
 	}))

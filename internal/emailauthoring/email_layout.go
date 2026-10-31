@@ -245,14 +245,11 @@ func (s *EmailLayoutService) requireEmailLayoutCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
-) (policyv1.Can, error) {
+) error {
 	if canErr != nil {
-		return policyv1.Can{}, errs.InvalidArgument("id", canErr.Error())
+		return errs.InvalidArgument("id", canErr.Error())
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return policyv1.Can{}, err
-	}
-	return can, nil
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
 // GetEmailLayout retrieves an email layout by ID (admin only)
@@ -269,7 +266,7 @@ func (s *EmailLayoutService) GetEmailLayout(
 	}()
 
 	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -309,7 +306,7 @@ func (s *EmailLayoutService) ListEmailLayoutsAdmin(
 	}()
 
 	can, canErr := policyv1.EmailLayout.List()
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -547,7 +544,6 @@ func (s *EmailLayoutService) UpdateEmailLayout(
 
 func buildEmailLayoutUpdates(
 	request *managev1.UpdateEmailLayoutRequest,
-	updatedAt time.Time,
 ) (structured.Fields, error) {
 	updates := structured.Fields{}
 	if request.Name != nil {
@@ -580,7 +576,7 @@ func (s *EmailLayoutService) updateEmailLayoutWithDB(
 	if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, layoutCan); err != nil {
 		return model.EmailLayout{}, err
 	}
-	updates, err := buildEmailLayoutUpdates(request, updatedAt)
+	updates, err := buildEmailLayoutUpdates(request)
 	if err != nil {
 		return model.EmailLayout{}, err
 	}
@@ -778,7 +774,7 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 	}()
 
 	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -835,7 +831,7 @@ func (s *EmailLayoutService) PreviewEmailLayoutContent(
 	}()
 
 	can, canErr := policyv1.EmailLayout.PreviewContent()
-	if _, err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 

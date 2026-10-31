@@ -33,9 +33,8 @@ func (s *AccountService) SetMyCanonicalEmail(
 		return nil, err
 	}
 	if changed {
-		if err := s.appendRequestAudit(
+		if err := s.appendAccountUpdatedAudit(
 			ctx,
-			sharedtelemetry.AuditAccountUpdated,
 			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewAccountCanonicalEmailUpdatedAuditRecord(
 					metadata, p.MemberID.String(), previous, current,
@@ -154,9 +153,8 @@ func (s *AccountService) RevokeMySession(
 		slog.ErrorContext(ctx, "Operation failed", "operation", "RevokeMySession", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
-	if err := s.appendRequestAudit(
+	if err := s.appendAccountUpdatedAudit(
 		ctx,
-		sharedtelemetry.AuditAccountUpdated,
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewAccountSessionRevokedAuditRecord(
 				metadata,
@@ -205,9 +203,8 @@ func (s *AccountService) RevokeMyOtherSessions(
 		return nil, errs.Internal(err)
 	}
 	if len(revokedSessionIDs) > 0 {
-		if err := s.appendRequestAudit(
+		if err := s.appendAccountUpdatedAudit(
 			ctx,
-			sharedtelemetry.AuditAccountUpdated,
 			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewAccountSessionRevokedAuditRecord(
 					metadata,

@@ -92,9 +92,6 @@ func (s *MapThemeService) UpdateMapThemeSnapshot(ctx context.Context, themeID st
 		}
 		return nil, false, errs.Internal(err)
 	}
-	response, err := s.toProto(theme)
-	if err != nil {
-		return nil, false, errs.Internal(err)
-	}
+	response := s.toProto(theme)
 	return response, changed, nil
 }

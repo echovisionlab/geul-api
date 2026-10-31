@@ -287,7 +287,6 @@ func postAIDocumentUpdatedEvent(
 		[]string{mutation.ContributorMemberID.String()},
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
 		mutation.Locale,
-		true,
 		nil,
 		true,
 	)

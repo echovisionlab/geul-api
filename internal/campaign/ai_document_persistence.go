@@ -176,11 +176,11 @@ func applyCampaignAIDocumentSubject(
 	}, nil
 }
 
-func canonicalCampaignAIDocumentID(field, value string) (string, error) {
+func canonicalCampaignAIDocumentID(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	id, err := uuid.Parse(value)
 	if err != nil || id == uuid.Nil || id.String() != value {
-		return "", errs.InvalidArgument(field, "must be a canonical UUID")
+		return "", errs.InvalidArgument("campaign_id", "must be a canonical UUID")
 	}
 	return value, nil
 }

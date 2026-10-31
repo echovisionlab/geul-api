@@ -139,7 +139,7 @@ func (s *AIDocumentService) applyAIDocumentOperation(
 	mutation.loadLocaleValues()
 	switch operation.Kind {
 	case core.OperationSetField:
-		return s.applyAISetField(ctx, tx, service, mutation, command, operation.SetField)
+		return s.applyAISetField(ctx, tx, mutation, command, operation.SetField)
 	case core.OperationUnsetField:
 		return s.applyAIUnsetField(ctx, tx, service, mutation, command, operation.UnsetField)
 	case core.OperationInsertRelationItem:
@@ -176,7 +176,6 @@ func (m *postSeriesAIMutation) loadLocaleValues() {
 func (s *AIDocumentService) applyAISetField(
 	ctx context.Context,
 	tx *gorm.DB,
-	service *SeriesService,
 	mutation *postSeriesAIMutation,
 	command core.ValidatedApply,
 	operation *core.SetField,

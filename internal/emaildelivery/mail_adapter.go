@@ -173,7 +173,7 @@ func (s *MailAdapterService) Create(
 	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_CREATED)
 
 	return connect.NewResponse(&managev1.CreateMailAdapterResponse{
-		Adapter: toProtoMailAdapter(adapter, false),
+		Adapter: toProtoMailAdapter(adapter),
 	}), nil
 }
 
@@ -344,7 +344,7 @@ func (s *MailAdapterService) update(
 		return nil, errs.Internal(err)
 	}
 	if !changed {
-		return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: toProtoMailAdapter(&adapter, false)}), nil
+		return connect.NewResponse(&managev1.UpdateMailAdapterResponse{Adapter: toProtoMailAdapter(&adapter)}), nil
 	}
 
 	// Invalidate local cache
@@ -356,7 +356,7 @@ func (s *MailAdapterService) update(
 	s.publishAdapterChangedEvent(ctx, adapter.ID, managev1.MailAdapterChangeType_MAIL_ADAPTER_CHANGE_TYPE_UPDATED)
 
 	return connect.NewResponse(&managev1.UpdateMailAdapterResponse{
-		Adapter: toProtoMailAdapter(&adapter, false),
+		Adapter: toProtoMailAdapter(&adapter),
 	}), nil
 }
 
@@ -462,7 +462,7 @@ func (s *MailAdapterService) ListMailAdaptersAdmin(
 
 	protoAdapters := make([]*managev1.MailAdapter, len(adapters))
 	for i := range adapters {
-		protoAdapters[i] = toProtoMailAdapter(&adapters[i], false)
+		protoAdapters[i] = toProtoMailAdapter(&adapters[i])
 	}
 
 	return connect.NewResponse(&managev1.ListMailAdaptersAdminResponse{
@@ -801,7 +801,8 @@ func (s *MailAdapterService) buildConfig(
 	}
 }
 
-func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.MailAdapter {
+// toProtoMailAdapter never exposes the SES secret access key or SMTP password.
+func toProtoMailAdapter(a *model.MailAdapter) *managev1.MailAdapter {
 	proto := &managev1.MailAdapter{
 		Id:        a.ID,
 		Name:      a.Name,
@@ -815,7 +816,6 @@ func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.Mai
 		proto.UpdatedAt = a.UpdatedAt.Format(time.RFC3339)
 	}
 
-	// Add type-specific config (masking secrets)
 	switch a.Type {
 	case model.MailAdapterType(managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES.String()):
 		if cfg, err := a.GetSESConfig(); err == nil {
@@ -826,10 +826,6 @@ func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.Mai
 			}
 			if cfg.FromName != "" {
 				sesConfig.FromName = &cfg.FromName
-			}
-			// Never return secret access key
-			if includeSecrets {
-				sesConfig.SecretAccessKey = cfg.SecretAccessKey
 			}
 			proto.Config = &managev1.MailAdapter_SesConfig{SesConfig: sesConfig}
 		} else {
@@ -847,10 +843,6 @@ func toProtoMailAdapter(a *model.MailAdapter, includeSecrets bool) *managev1.Mai
 			}
 			if cfg.FromName != "" {
 				smtpConfig.FromName = &cfg.FromName
-			}
-			// Never return password
-			if includeSecrets {
-				smtpConfig.Password = cfg.Password
 			}
 			proto.Config = &managev1.MailAdapter_SmtpConfig{SmtpConfig: smtpConfig}
 		} else {

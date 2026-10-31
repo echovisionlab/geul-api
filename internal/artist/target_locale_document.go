@@ -64,7 +64,7 @@ func requireArtistSourceRoomLocale(
 }
 
 func artistSourceRoomFence(artistID string, locale string) contentblock.DomainFence {
-	base := internalCreativeContentFence(artistContentEntity, artistID)
+	base := internalCreativeContentFence(artistID)
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		domain, err := base(ctx, tx, documentID)
 		if err != nil {

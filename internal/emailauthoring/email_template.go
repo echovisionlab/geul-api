@@ -172,14 +172,11 @@ func (s *EmailTemplateService) requireEmailTemplateCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
-) (policyv1.Can, error) {
+) error {
 	if canErr != nil {
-		return policyv1.Can{}, errs.InvalidArgument("id", canErr.Error())
+		return errs.InvalidArgument("id", canErr.Error())
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return policyv1.Can{}, err
-	}
-	return can, nil
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
 // ListEmailTemplatesAdmin returns all email templates with pagination (admin)
@@ -196,7 +193,7 @@ func (s *EmailTemplateService) ListEmailTemplatesAdmin(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.List()
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -260,7 +257,7 @@ func (s *EmailTemplateService) GetEmailTemplate(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -284,7 +281,7 @@ func (s *EmailTemplateService) GetEmailTemplate(
 	if err != nil {
 		return nil, err
 	}
-	subject, err := loadCampaignEmailSourceSubject(ctx, s.db, emailTemplateContentEntity, template.ID, sourceContext.SourceLocale)
+	subject, err := loadCampaignEmailSourceSubject(ctx, s.db, template.ID, sourceContext.SourceLocale)
 	if err != nil {
 		return nil, err
 	}

@@ -102,9 +102,9 @@ func advanceMenuContentDocument(
 	documentID uuid.UUID,
 	expectedRevision uuid.UUID,
 	now time.Time,
-) (uuid.UUID, error) {
+) error {
 	if tx == nil || documentID == uuid.Nil || expectedRevision == uuid.Nil {
-		return uuid.Nil, errs.InvalidArgument(
+		return errs.InvalidArgument(
 			"expected_document_revision",
 			"Menu content document identity and revision are required",
 		)
@@ -121,12 +121,12 @@ func advanceMenuContentDocument(
 		nextRevision, now.UTC(), documentID, expectedRevision, menuID, documentID,
 	)
 	if updated.Error != nil {
-		return uuid.Nil, errs.Internal(updated.Error)
+		return errs.Internal(updated.Error)
 	}
 	if updated.RowsAffected != 1 {
-		return uuid.Nil, errs.FailedPrecondition("Menu content document revision changed; reload before saving")
+		return errs.FailedPrecondition("Menu content document revision changed; reload before saving")
 	}
-	return nextRevision, nil
+	return nil
 }
 
 func deleteMenuContentDocument(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) error {

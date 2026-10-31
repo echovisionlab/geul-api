@@ -292,7 +292,7 @@ func multipartInitiateResponseFromSession(
 	session model.UploadSession,
 	uploadedParts []*managev1.UploadPartInfo,
 	resumed bool,
-) (*managev1.InitiateMultipartUploadResponse, error) {
+) *managev1.InitiateMultipartUploadResponse {
 	return &managev1.InitiateMultipartUploadResponse{
 		UploadId:              session.UploadID,
 		FileId:                session.FileID,
@@ -305,7 +305,7 @@ func multipartInitiateResponseFromSession(
 		SlotId:                session.SlotID,
 		IngestAttemptId:       session.AttemptID,
 		ExpectedCurrentFileId: session.ExpectedFileID,
-	}, nil
+	}
 }
 
 func (s *FileService) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*managev1.UploadPartInfo, error) {

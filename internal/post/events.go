@@ -53,7 +53,6 @@ func buildPostBlockContentUpdatedEvent(
 	contributorMemberIDs []string,
 	source managev1.ContentUpdateSource,
 	locale string,
-	localeExists bool,
 	targetRevision *string,
 	documentStateChanged bool,
 ) *managev1.ContentUpdatedEvent {
@@ -65,15 +64,13 @@ func buildPostBlockContentUpdatedEvent(
 	if len(changedFields) == 0 && !documentStateChanged {
 		return nil
 	}
-	if !localeExists && (targetRevision != nil || documentStateChanged) {
-		return nil
-	}
 	if targetRevision != nil && (strings.TrimSpace(*targetRevision) == "" || documentStateChanged) {
 		return nil
 	}
-	if localeExists && targetRevision == nil && !documentStateChanged {
+	if targetRevision == nil && !documentStateChanged {
 		return nil
 	}
+	localeExists := true
 	event := &managev1.ContentUpdatedEvent{
 		EntityType: managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST,
 		EntityId:   postID, Source: source, ChangedFields: changedFields,
@@ -83,7 +80,7 @@ func buildPostBlockContentUpdatedEvent(
 		Locale:               &locale,
 		LocaleExists:         &localeExists,
 	}
-	if localeExists && targetRevision != nil {
+	if targetRevision != nil {
 		event.TargetRevision = targetRevision
 	}
 	event.DocumentRevision = &revision
@@ -95,15 +92,6 @@ func postTargetRevisionSignal(locale, sourceLocale, revision string) *string {
 		return nil
 	}
 	return &revision
-}
-
-func buildManagePostContentUpdatedEvent(request *managev1.UpdatePostRequest) *managev1.ContentUpdatedEvent {
-	if request == nil {
-		return nil
-	}
-	// Manage metadata fields do not alter the typed translation source. Keep
-	// the wake-up empty unless a source-owned field is added to this request.
-	return nil
 }
 
 func buildContentUpdatedFields(keys []string) []*managev1.ContentUpdatedField {

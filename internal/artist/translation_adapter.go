@@ -34,7 +34,7 @@ func LoadTypedTranslationSourceDocument(
 	if err != nil {
 		return nil, err
 	}
-	title, err := loadCreativeSourceTitle(ctx, db, artistContentEntity, artistID, source.SourceLocale)
+	title, err := loadCreativeSourceTitle(ctx, db, artistID, source.SourceLocale)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func applyTypedTranslationCandidateWithDB(
 		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "applyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "artist_id", job.EntityID, "locale", job.TargetLocale)
 		return translation.ErrSourceNoLongerCurrent
 	}
-	domain, err := internalCreativeContentFence(artistContentEntity, job.EntityID)(ctx, tx, documentID)
+	domain, err := internalCreativeContentFence(job.EntityID)(ctx, tx, documentID)
 	if err != nil {
 		return err
 	}

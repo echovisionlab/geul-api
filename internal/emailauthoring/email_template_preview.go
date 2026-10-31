@@ -35,7 +35,7 @@ func (s *EmailTemplateService) PreviewEmailTemplate(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.View(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 

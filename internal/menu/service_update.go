@@ -123,7 +123,7 @@ func (s *MenuService) applyMenuUpdate(
 				return err
 			}
 		}
-		if _, err := advanceMenuContentDocument(
+		if err := advanceMenuContentDocument(
 			ctx, tx, menu.ID, document.ID, document.Revision, update.now,
 		); err != nil {
 			return err

@@ -318,7 +318,6 @@ func findWorkCreditOrderEntry(order []workCreditOrderEntry, kind managev1.WorkCr
 func validateWorkCreditMoveAnchors(
 	ctx context.Context,
 	tx *gorm.DB,
-	workID string,
 	order []workCreditOrderEntry,
 	movingKind managev1.WorkCreditItemKind,
 	movingID string,

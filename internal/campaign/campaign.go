@@ -134,14 +134,11 @@ func (s *CampaignService) requireCampaignCan(
 	ctx context.Context,
 	can policyv1.Can,
 	canErr error,
-) (policyv1.Can, error) {
+) error {
 	if canErr != nil {
-		return policyv1.Can{}, errs.InvalidArgument("id", canErr.Error())
+		return errs.InvalidArgument("id", canErr.Error())
 	}
-	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return policyv1.Can{}, err
-	}
-	return can, nil
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
 // GetCampaign returns a campaign by ID
@@ -158,7 +155,7 @@ func (s *CampaignService) GetCampaign(
 	}()
 
 	can, canErr := policyv1.Campaign.View(req.Msg.Id)
-	if _, err := s.requireCampaignCan(ctx, can, canErr); err != nil {
+	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -208,7 +205,7 @@ func (s *CampaignService) ListCampaignsAdmin(
 	}()
 
 	can, canErr := policyv1.Campaign.List()
-	if _, err := s.requireCampaignCan(ctx, can, canErr); err != nil {
+	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -1171,7 +1168,7 @@ func (s *CampaignService) PreviewCampaign(
 	}()
 
 	can, canErr := policyv1.Campaign.View(req.Msg.Id)
-	if _, err := s.requireCampaignCan(ctx, can, canErr); err != nil {
+	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -1379,7 +1376,7 @@ func (s *CampaignService) GetCampaignStats(
 	}()
 
 	can, canErr := policyv1.Campaign.View(req.Msg.Id)
-	if _, err := s.requireCampaignCan(ctx, can, canErr); err != nil {
+	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 
@@ -1433,7 +1430,7 @@ func (s *CampaignService) GetCampaignRecipients(
 	}()
 
 	can, canErr := policyv1.Campaign.Manage(req.Msg.Id)
-	if _, err := s.requireCampaignCan(ctx, can, canErr); err != nil {
+	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 

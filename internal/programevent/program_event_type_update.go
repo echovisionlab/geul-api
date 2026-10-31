@@ -35,7 +35,7 @@ func (s *ProgramEventTypeService) updateProgramEventType(
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
-		updates, err := prepareProgramEventTypeUpdates(request, now)
+		updates, err := prepareProgramEventTypeUpdates(request)
 		if err != nil {
 			return err
 		}
@@ -74,7 +74,7 @@ func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventTy
 	return eventType, nil
 }
 
-func prepareProgramEventTypeUpdates(request *managev1.UpdateProgramEventTypeRequest, now time.Time) (structured.Fields, error) {
+func prepareProgramEventTypeUpdates(request *managev1.UpdateProgramEventTypeRequest) (structured.Fields, error) {
 	updates := structured.Fields{}
 	if request.Slug != nil {
 		slug, err := validateProgramEventSlug(request.GetSlug())

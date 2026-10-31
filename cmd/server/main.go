@@ -117,7 +117,7 @@ func run() int {
 	if err != nil {
 		return logStartupFailure("initialize MCP private HTTP server", err)
 	}
-	runtime.Start(ctx, server, mcpPrivateServer, registered.authInterceptor, deps, registered, runtimeFailures)
+	runtime.Start(ctx, server, mcpPrivateServer, registered.authInterceptor, registered, runtimeFailures)
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)

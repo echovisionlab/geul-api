@@ -33,7 +33,7 @@ func (s *EmailTemplateService) GetEventMappings(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.List()
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 

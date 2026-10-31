@@ -12,7 +12,7 @@ func TestBuildWorkSourceContentUpdatedEvent(t *testing.T) {
 	event := buildWorkSourceContentUpdatedEvent(
 		"work-1", true, false, true, "document-revision",
 		[]string{"member-1"}, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en", true, nil, true,
+		"en", nil, true,
 	)
 	require.NotNil(t, event)
 	assert.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, event.EntityType)
@@ -30,7 +30,7 @@ func TestBuildWorkSourceContentUpdatedEventForSummaryOnly(t *testing.T) {
 	event := buildWorkSourceContentUpdatedEvent(
 		"work-1", false, true, false, "document-revision", nil,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en", true, nil, true,
+		"en", nil, true,
 	)
 	require.NotNil(t, event)
 	assert.True(t, event.DocumentStateChanged)
@@ -42,7 +42,7 @@ func TestBuildWorkTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T)
 	event := buildWorkSourceContentUpdatedEvent(
 		"work-1", false, true, false, "document-revision", []string{"member-1"},
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko", true, &targetRevision, false,
+		"ko", &targetRevision, false,
 	)
 	require.NotNil(t, event)
 	assert.False(t, event.DocumentStateChanged)

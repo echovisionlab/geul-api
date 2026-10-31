@@ -172,9 +172,8 @@ func (s *AccountService) SetAccountCanonicalEmail(
 		return nil, err
 	}
 	if changed {
-		if err := s.appendRequestAudit(
+		if err := s.appendAccountUpdatedAudit(
 			ctx,
-			sharedtelemetry.AuditAccountUpdated,
 			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewAccountCanonicalEmailUpdatedAuditRecord(
 					metadata, req.Msg.MemberId, previous, current,
@@ -237,9 +236,8 @@ func (s *AccountService) RemoveAccountSsoProvider(
 		return nil, err
 	}
 	if hadCredential {
-		if err := s.appendRequestAudit(
+		if err := s.appendAccountUpdatedAudit(
 			ctx,
-			sharedtelemetry.AuditAccountUpdated,
 			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewAccountSocialLoginRemovedAuditRecord(
 					metadata, req.Msg.MemberId, provider, providerSubject,

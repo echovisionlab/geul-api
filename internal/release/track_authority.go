@@ -39,7 +39,7 @@ func (*PolicyAuthority) RequireLockedView(
 	checker *auth.SpiceDBClient,
 	releaseID string,
 ) error {
-	_, err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionView)
+	err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionView)
 	return err
 }
 
@@ -49,7 +49,7 @@ func (*PolicyAuthority) RequireLockedEdit(
 	checker *auth.SpiceDBClient,
 	releaseID string,
 ) error {
-	_, err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionEdit)
+	err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionEdit)
 	return err
 }
 

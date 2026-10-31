@@ -27,6 +27,6 @@ func MigrateSiteVariableURLs(ctx context.Context, tx *gorm.DB, menuID string, re
 	if err := tx.WithContext(ctx).Table("menu").Where("id = ?", menuID).UpdateColumn("updated_at", now).Error; err != nil {
 		return err
 	}
-	_, err = advanceMenuContentDocument(ctx, tx, menuID, document.ID, document.Revision, now)
+	err = advanceMenuContentDocument(ctx, tx, menuID, document.ID, document.Revision, now)
 	return err
 }

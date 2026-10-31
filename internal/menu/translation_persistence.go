@@ -97,7 +97,7 @@ func ApplyProviderTranslationCandidateWithDB(
 		if err != nil {
 			return err
 		}
-		if _, err := advanceMenuContentDocument(ctx, tx, current.ID, current.contentDocumentID, expected, now); err != nil {
+		if err := advanceMenuContentDocument(ctx, tx, current.ID, current.contentDocumentID, expected, now); err != nil {
 			return err
 		}
 	} else {

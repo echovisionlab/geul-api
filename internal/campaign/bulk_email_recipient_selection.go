@@ -199,11 +199,7 @@ func buildAccountRecipientCandidates(options accountRecipientCandidateOptions) (
 		args = append(args, options.MemberTagIDs)
 	}
 	if options.Filters != nil {
-		var err error
-		where, args, err = appendBulkEmailFilterConditions(where, args, options.Filters)
-		if err != nil {
-			return bulkEmailRecipientCandidateQuery{}, err
-		}
+		where, args = appendBulkEmailFilterConditions(where, args, options.Filters)
 	}
 
 	return bulkEmailRecipientCandidateQuery{
@@ -231,7 +227,7 @@ func appendBulkEmailFilterConditions(
 	where []string,
 	args structured.Values,
 	filters *bulkEmailRecipientFilters,
-) ([]string, structured.Values, error) {
+) ([]string, structured.Values) {
 	if len(filters.AccountRoles) > 0 {
 		if len(filters.AccountIdentityIDs) == 0 {
 			// A valid platform permission with no current subjects matches no
@@ -254,7 +250,7 @@ func appendBulkEmailFilterConditions(
 		where = append(where, "m.id NOT IN ?")
 		args = append(args, filters.ExcludedMemberIDs)
 	}
-	return where, args, nil
+	return where, args
 }
 
 func normalizeBulkEmailSubjectLookups(values []string) ([]policyv1.SubjectLookup, error) {

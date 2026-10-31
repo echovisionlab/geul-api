@@ -43,7 +43,6 @@ type translationDocumentAuthority struct {
 }
 
 func parseExpectedTranslationDocumentRevision(
-	entityType string,
 	value string,
 ) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)

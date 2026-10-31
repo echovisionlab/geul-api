@@ -28,7 +28,7 @@ func TestSiteVariableMigrationInvalidatesStaleMenuEditor(t *testing.T) {
 	require.NotEqual(t, revision, current.Revision.String())
 	require.True(t, root.UpdatedAt.After(now))
 	// Normal saves reject the editor's pre-migration CAS revision.
-	_, err = advanceMenuContentDocument(t.Context(), db, "menu-1", current.ID, uuid.MustParse(revision), time.Now())
+	err = advanceMenuContentDocument(t.Context(), db, "menu-1", current.ID, uuid.MustParse(revision), time.Now())
 	require.ErrorContains(t, err, "revision changed")
 	require.JSONEq(t, `[{"id":"home","url":"/path"}]`, string(root.Items))
 }

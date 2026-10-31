@@ -31,8 +31,7 @@ func (s *AIDocumentService) LoadTranslationInterchangeAIDocumentWithDB(
 	if err := validateAIDocumentIdentity(entityType, entityID, locale); err != nil {
 		return AIDocument{}, err
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, false)
-	if err != nil {
+	if _, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, false); err != nil {
 		return AIDocument{}, err
 	}
 	principal := auth.GetUser(ctx)
@@ -40,7 +39,7 @@ func (s *AIDocumentService) LoadTranslationInterchangeAIDocumentWithDB(
 		return AIDocument{}, errs.AuthenticationRequired()
 	}
 	document, _, err := s.loadAIDocumentAfterAuthorization(
-		ctx, tx, root, entityType, entityID, locale, principal.MemberID.String(),
+		ctx, tx, entityType, entityID, locale, principal.MemberID.String(),
 	)
 	return document, err
 }
@@ -138,7 +137,7 @@ func (s *AIDocumentService) compileAndApplyAIDocumentMutationWithDB(
 	allowAuthoritativeTargetReplacement bool,
 ) (legalAIDocumentApplyResult, error) {
 	state, sourceLocale, err := s.loadAIDocumentAfterAuthorization(
-		ctx, tx, root, entityType, entityID, locale, memberID,
+		ctx, tx, entityType, entityID, locale, memberID,
 	)
 	if err != nil {
 		return legalAIDocumentApplyResult{}, err

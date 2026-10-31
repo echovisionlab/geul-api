@@ -51,17 +51,17 @@ func newDBTranslationGeneratorResolver(db *gorm.DB) TranslationGeneratorResolver
 }
 
 func (r dbTranslationGeneratorResolver) Resolve(ctx context.Context) (translation.Generator, error) {
-	generator, _, err := loadActiveTranslationGenerator(ctx, r.db)
+	generator, err := loadActiveTranslationGenerator(ctx, r.db)
 	return generator, err
 }
 
 func (r dbTranslationGeneratorResolver) ResolveAll(ctx context.Context) ([]translation.Generator, error) {
-	generators, _, err := loadActiveTranslationGenerators(ctx, r.db)
+	generators, err := loadActiveTranslationGenerators(ctx, r.db)
 	return generators, err
 }
 
 func (r dbTranslationGeneratorResolver) HasAvailableProvider(ctx context.Context) (bool, error) {
-	generators, _, err := loadActiveTranslationGenerators(ctx, r.db)
+	generators, err := loadActiveTranslationGenerators(ctx, r.db)
 	if err == nil {
 		return len(generators) > 0, nil
 	}
@@ -418,24 +418,24 @@ func (s *TranslationService) requireTranslationPlatformCan(
 func loadActiveTranslationGenerator(
 	ctx context.Context,
 	db *gorm.DB,
-) (translation.Generator, *model.TranslationProviderConfig, error) {
-	generators, providers, err := loadActiveTranslationGenerators(ctx, db)
+) (translation.Generator, error) {
+	generators, err := loadActiveTranslationGenerators(ctx, db)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return generators[0], providers[0], nil
+	return generators[0], nil
 }
 
 func loadActiveTranslationGenerators(
 	ctx context.Context,
 	db *gorm.DB,
-) ([]translation.Generator, []*model.TranslationProviderConfig, error) {
+) ([]translation.Generator, error) {
 	var providers []model.TranslationProviderConfig
 	if err := db.WithContext(ctx).
 		Where("is_active = ?", true).
 		Order("priority ASC, created_at ASC").
 		Find(&providers).Error; err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for i := range providers {
 		generator, err := newTranslationGeneratorFromProvider(&providers[i])
@@ -450,7 +450,6 @@ func loadActiveTranslationGenerators(
 			continue
 		}
 		generators := []translation.Generator{generator}
-		configs := []*model.TranslationProviderConfig{&providers[i]}
 		for index := i + 1; index < len(providers); index++ {
 			nextGenerator, err := newTranslationGeneratorFromProvider(&providers[index])
 			if err != nil {
@@ -464,15 +463,14 @@ func loadActiveTranslationGenerators(
 				continue
 			}
 			generators = append(generators, nextGenerator)
-			configs = append(configs, &providers[index])
 		}
-		return generators, configs, nil
+		return generators, nil
 	}
-	return nil, nil, errTranslationProviderUnavailable
+	return nil, errTranslationProviderUnavailable
 }
 
 func hasAvailableTranslationProvider(ctx context.Context, db *gorm.DB) (bool, error) {
-	_, _, err := loadActiveTranslationGenerator(ctx, db)
+	_, err := loadActiveTranslationGenerator(ctx, db)
 	if err == nil {
 		return true, nil
 	}

@@ -53,7 +53,6 @@ func BuildEmailRenderData(
 ) map[string]string {
 	settings, logos := loadEmailRenderDefaults(ctx, db, cdnDomain)
 	return buildEmailRenderDataWithDefaults(
-		cdnDomain,
 		siteOrigin,
 		requestedLocale,
 		input,
@@ -89,7 +88,6 @@ func loadEmailRenderDefaults(
 }
 
 func buildEmailRenderDataWithDefaults(
-	cdnDomain string,
 	siteOrigin string,
 	requestedLocale string,
 	input map[string]string,

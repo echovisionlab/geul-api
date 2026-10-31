@@ -112,10 +112,7 @@ func loadCampaignEmailSourceContext(ctx context.Context, db *gorm.DB, entityType
 	return contentblock.DomainContext{SourceLocale: state.SourceLocale}, nil
 }
 
-func loadCampaignEmailSourceSubject(ctx context.Context, db *gorm.DB, entityType, entityID, sourceLocale string) (string, error) {
-	if entityType != emailTemplateContentEntity {
-		return "", errs.Internal(fmt.Errorf("unsupported Email Template content entity %q", entityType))
-	}
+func loadCampaignEmailSourceSubject(ctx context.Context, db *gorm.DB, entityID, sourceLocale string) (string, error) {
 	var row struct{ Subject sql.NullString }
 	result := db.WithContext(ctx).Table("email_template_translation").Select("subject").Where("entity_id = ? AND locale = ?", entityID, sourceLocale).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {

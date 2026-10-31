@@ -191,10 +191,7 @@ func (r *LocalizedRequests) translations(
 	entityID string,
 ) ([]localizedTranslation, error) {
 	var rows []localizedTranslation
-	query, err := r.targetTranslationsQuery(ctx, db, entityID)
-	if err != nil {
-		return nil, err
-	}
+	query := r.targetTranslationsQuery(ctx, db, entityID)
 	if err := query.
 		Order("locale").Scan(&rows).Error; err != nil {
 		return nil, err
@@ -218,11 +215,8 @@ func (r *LocalizedRequests) translation(
 	locale string,
 ) (*localizedTranslation, error) {
 	var row localizedTranslation
-	query, err := r.targetTranslationsQuery(ctx, db, entityID)
-	if err != nil {
-		return nil, err
-	}
-	err = query.Where("translation.locale = ?", locale).Take(&row).Error
+	query := r.targetTranslationsQuery(ctx, db, entityID)
+	err := query.Where("translation.locale = ?", locale).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -236,12 +230,12 @@ func (r *LocalizedRequests) targetTranslationsQuery(
 	ctx context.Context,
 	db *gorm.DB,
 	entityID string,
-) (*gorm.DB, error) {
+) *gorm.DB {
 	return db.WithContext(ctx).Table(r.spec.TranslationTable+" AS translation").
 		Select("translation.locale, translation.title").
 		Joins("JOIN "+r.spec.Table+" AS source_root ON source_root.id = translation.entity_id").
 		Where(`translation.entity_id = ?
-			AND translation.locale <> source_root.source_locale`, entityID), nil
+			AND translation.locale <> source_root.source_locale`, entityID)
 }
 
 func (r *LocalizedRequests) request(entityID, locale string, snapshot localizedSnapshot) Request {

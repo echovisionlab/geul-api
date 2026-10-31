@@ -49,7 +49,7 @@ func normalizePageDocumentLocale(locale string) (string, error) {
 	return *normalized, nil
 }
 
-func pageSourceRoomFence(pageID, locale string, base contentblock.DomainFence) contentblock.DomainFence {
+func pageSourceRoomFence(locale string, base contentblock.DomainFence) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		domain, err := base(ctx, tx, documentID)
 		if err != nil {

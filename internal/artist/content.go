@@ -65,7 +65,7 @@ func loadCreativeManageContentProjection(
 		if err != nil {
 			return normalizeCreativeContentBlockError(entityType, err)
 		}
-		title, err := loadCreativeSourceTitle(ctx, tx, entityType, entityID, source.SourceLocale)
+		title, err := loadCreativeSourceTitle(ctx, tx, entityID, source.SourceLocale)
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,6 @@ func loadCreativeManageContentProjection(
 func loadCreativeSourceTitle(
 	ctx context.Context,
 	db *gorm.DB,
-	entityType string,
 	entityID string,
 	locale string,
 ) (string, error) {
@@ -120,7 +119,6 @@ func loadCreativeSourceTitle(
 func saveCreativeSourceLocaleMetadata(
 	ctx context.Context,
 	db *gorm.DB,
-	entityType string,
 	entityID string,
 	locale string,
 	input translationLocaleDocumentSaveInput,
@@ -161,7 +159,6 @@ type creativeLocaleMetadataState struct {
 func loadCreativeLocaleMetadataState(
 	ctx context.Context,
 	db *gorm.DB,
-	entityType string,
 	entityID string,
 	locale string,
 ) (*creativeLocaleMetadataState, error) {
@@ -243,7 +240,7 @@ func updateCreativeLocaleTitle(
 				if sourceAuthority.SourceLocale != locale {
 					return contentblock.MetadataEffect{}, errs.FailedPrecondition("only source locale metadata is editable")
 				}
-				current, err := loadCreativeLocaleMetadataState(ctx, tx, entityType, entityID, locale)
+				current, err := loadCreativeLocaleMetadataState(ctx, tx, entityID, locale)
 				if err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
@@ -444,7 +441,6 @@ func loadCreativeContentBlockBootstrap(
 	spiceDB *auth.SpiceDBClient,
 	entityType string,
 	entityID string,
-	resourceType intrav1.CollaborationResourceType,
 	principalMessage *intrav1.CollaborationPrincipal,
 	loadMetadata func(context.Context, *gorm.DB) error,
 ) (creativeContentBootstrapSnapshot, error) {
@@ -535,18 +531,18 @@ type creativeContentDocumentRoot struct {
 	ContentDocumentID sql.NullString `gorm:"column:content_document_id"`
 }
 
-func internalCreativeContentFence(entityType string, entityID string) contentblock.DomainFence {
+func internalCreativeContentFence(entityID string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if err := lockCreativeContentDocumentRoot(
 			ctx,
 			tx,
-			entityType,
+			artistContentEntity,
 			entityID,
 			documentID,
 		); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		domain, err := lockCreativeTranslationSourceContext(ctx, tx, entityType, entityID)
+		domain, err := lockCreativeTranslationSourceContext(ctx, tx, artistContentEntity, entityID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}

@@ -136,7 +136,7 @@ func (s *InternalPrivacyService) UpdatePrivacyLocaleMetadata(
 	if req.Msg.Title == nil {
 		return nil, errs.InvalidArgument("title", "must be provided")
 	}
-	result, _, err := s.legal.updateDocumentMetadata(ctx, legalDocumentMetadataInput{
+	result, err := s.legal.updateDocumentMetadata(ctx, legalDocumentMetadataInput{
 		EntityID: req.Msg.PrivacyId, Locale: req.Msg.Locale,
 		ExpectedRevision: req.Msg.ExpectedRevision, Title: req.Msg.Title,
 		ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,

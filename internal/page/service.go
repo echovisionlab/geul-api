@@ -366,7 +366,7 @@ func (s *PageService) CreatePage(
 			}
 		}
 		now := time.Now().UTC()
-		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, nil, req.Msg.SourceLocale, req.Header().Get("Accept-Language"))
+		sourceLocale, err := resolveCreateSourceLocale(ctx, tx, req.Msg.SourceLocale, req.Header().Get("Accept-Language"))
 		if err != nil {
 			return err
 		}
@@ -680,7 +680,6 @@ func (s *PageService) PublishPage(
 			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
 				page.ID,
 				[]string{"state.status", "state.published_at"},
 			),
@@ -749,7 +748,6 @@ func (s *PageService) UnpublishPage(
 			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
 				page.ID,
 				[]string{"state.status"},
 			),

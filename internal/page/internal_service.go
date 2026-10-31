@@ -258,7 +258,7 @@ func (s *InternalPageService) ApplyPageBlockBatch(
 			if err := validatePageSourceLocaleMutations(req.Msg.PageId, domain.SourceLocale, batch.LocaleGroups); err != nil {
 				return err
 			}
-			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(req.Msg.PageId, locale, pageLockedTargetFence(documentID, domain)))
+			result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(locale, pageLockedTargetFence(documentID, domain)))
 		} else {
 			result, targetRevision, err = applyPageTargetLocaleBatch(
 				ctx, tx, s.contentBlocks, req.Msg.PageId, documentID, locale, batch,
@@ -488,7 +488,7 @@ func (s *InternalPageService) UpdatePageLocaleMetadata(
 				DocumentID:       documentID,
 				ExpectedRevision: expectedRevision,
 			},
-			pageSourceRoomFence(req.Msg.PageId, locale, pageLockedTargetFence(documentID, domain)),
+			pageSourceRoomFence(locale, pageLockedTargetFence(documentID, domain)),
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 				var mutationErr error
 				mutation, mutationErr = applyPageLocaleMetadataMutation(
@@ -711,7 +711,7 @@ func (s *InternalPageService) UpdatePageDocumentMetadata(
 				DocumentID:       documentID,
 				ExpectedRevision: expectedRevision,
 			},
-			pageSourceRoomFence(req.Msg.PageId, locale, pageCollaborationDocumentFence(
+			pageSourceRoomFence(locale, pageCollaborationDocumentFence(
 				s.spiceDB, req.Msg.PageId, policyv1.Page.Manage, req.Msg.ContributorMemberIds,
 			)),
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
@@ -778,7 +778,7 @@ func (s *InternalPageService) CreatePageVersionCheckpoint(
 	var created *model.PageVersion
 	var revision string
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		domain, fenceErr := pageSourceRoomFence(req.Msg.PageId, locale, pageCollaborationDocumentFence(
+		domain, fenceErr := pageSourceRoomFence(locale, pageCollaborationDocumentFence(
 			s.spiceDB, req.Msg.PageId, policyv1.Page.Edit, req.Msg.ContributorMemberIds,
 		))(ctx, tx, documentID)
 		if fenceErr != nil {

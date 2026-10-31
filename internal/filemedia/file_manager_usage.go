@@ -354,7 +354,7 @@ func (s *FileService) ListFileUsages(
 			slog.Log(ctx, level, "Media RPC failed", failurecause.Attr(resultErr), "operation", "ListFileUsages", "code", connect.CodeOf(resultErr).String())
 		}
 	}()
-	if _, err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
+	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
 	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)

@@ -7,7 +7,6 @@ import (
 
 func TestBuildEmailRenderDataUsesCanonicalSiteTitleAndRuntimeOrigin(t *testing.T) {
 	data := buildEmailRenderDataWithDefaults(
-		"https://cdn.example.com",
 		"https://runtime.example.com",
 		"ko",
 		map[string]string{"site_origin": "https://input.example.com"},
@@ -52,7 +51,7 @@ func TestBuildEmailRenderDataResolvesLightAndDarkEmailLogos(t *testing.T) {
 			if input == nil {
 				input = map[string]string{}
 			}
-			data := buildEmailRenderDataWithDefaults("https://cdn.example.com", "https://studio.example.com", "ko", input, &emailSiteSettings{}, tc.logos)
+			data := buildEmailRenderDataWithDefaults("https://studio.example.com", "ko", input, &emailSiteSettings{}, tc.logos)
 			if got := data["logo_email_url"]; got != tc.wantLight {
 				t.Errorf("logo_email_url = %q, want %q", got, tc.wantLight)
 			}
@@ -145,7 +144,7 @@ func TestNormalizeEmailRenderLocaleUsesCanonicalRegistry(t *testing.T) {
 
 func TestReservedSiteVariablesOverrideCallerCaseAliases(t *testing.T) {
 	input := map[string]string{"site.title": "attacker", "SITE.TITLE": "attacker", "contact.legalemail": "attacker", "CONTACT.SUPPORTEMAIL": "attacker", "contact.supportEmail": "attacker", "contact.privacyEmail": "attacker", "CONTACT.EMAIL": "attacker", "contact.email": "attacker", "site.url": "https://evil.test"}
-	data := buildEmailRenderDataWithDefaults("", "https://www.rawsector.com/", "en", input, &emailSiteSettings{SiteTitle: "rawsector", CompanyName: "Company", LegalEmail: "legal@example.test", ContactEmail: "contact@example.test"}, emailLogoURLs{})
+	data := buildEmailRenderDataWithDefaults("https://www.rawsector.com/", "en", input, &emailSiteSettings{SiteTitle: "rawsector", CompanyName: "Company", LegalEmail: "legal@example.test", ContactEmail: "contact@example.test"}, emailLogoURLs{})
 	for key, want := range map[string]string{"site.title": "rawsector", "site.url": "https://www.rawsector.com", "site.companyName": "Company", "contact.legalEmail": "legal@example.test", "contact.email": "contact@example.test"} {
 		if data[key] != want {
 			t.Fatalf("%s = %q, want %q", key, data[key], want)

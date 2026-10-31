@@ -201,7 +201,7 @@ func decodeXLIFFUnit(encoded xliffXMLUnit) (XLIFFUnit, error) {
 	if err != nil {
 		return XLIFFUnit{}, fmt.Errorf("invalid source inline content: %w", err)
 	}
-	unit.Source, _, err = projectAndValidateXLIFFInline(unit.SourceInline, data, "")
+	unit.Source, _, err = projectAndValidateXLIFFInline(unit.SourceInline, data)
 	if err != nil {
 		return XLIFFUnit{}, fmt.Errorf("invalid source inline content: %w", err)
 	}
@@ -210,7 +210,7 @@ func decodeXLIFFUnit(encoded xliffXMLUnit) (XLIFFUnit, error) {
 		if err != nil {
 			return XLIFFUnit{}, fmt.Errorf("invalid target inline content: %w", err)
 		}
-		target, _, projectErr := projectAndValidateXLIFFInline(unit.TargetInline, data, "")
+		target, _, projectErr := projectAndValidateXLIFFInline(unit.TargetInline, data)
 		if projectErr != nil {
 			return XLIFFUnit{}, fmt.Errorf("invalid target inline content: %w", projectErr)
 		}

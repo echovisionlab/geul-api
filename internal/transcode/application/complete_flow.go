@@ -171,8 +171,7 @@ func (h *Handlers) completeAllocatedTranscodeOutputs(
 	if err == nil {
 		return trackStateApplied, true, nil
 	}
-	continueCompletion, handledErr := h.handleAllocatedTranscodeOutputError(ctx, event, err)
-	return false, continueCompletion, handledErr
+	return false, false, h.handleAllocatedTranscodeOutputError(ctx, event, err)
 }
 
 func (h *Handlers) requireAcceptingTranscodeAllocation(
@@ -236,20 +235,20 @@ func (h *Handlers) handleAllocatedTranscodeOutputError(
 	ctx context.Context,
 	event *managev1.TranscodeCompleteEvent,
 	err error,
-) (bool, error) {
+) error {
 	if errors.Is(err, errProcessingSourceUnavailable) {
 		if cleanupErr := h.finishDeletedFileTranscodeJob(ctx, event); cleanupErr != nil {
-			return false, fmt.Errorf("cleanup transcode jobs rejected by file deletion: %w", cleanupErr)
+			return fmt.Errorf("cleanup transcode jobs rejected by file deletion: %w", cleanupErr)
 		}
-		return false, nil
+		return nil
 	}
 	if errors.Is(err, errTranscodeAllocationUnavailable) {
 		if retireErr := h.retireStaleTranscodeOutputs(ctx, event); retireErr != nil {
-			return false, fmt.Errorf("retire outputs rejected by transcode allocation: %w", retireErr)
+			return fmt.Errorf("retire outputs rejected by transcode allocation: %w", retireErr)
 		}
-		return false, h.finishTranscodeJob(ctx, event)
+		return h.finishTranscodeJob(ctx, event)
 	}
-	return false, fmt.Errorf("complete allocated transcode outputs: %w", err)
+	return fmt.Errorf("complete allocated transcode outputs: %w", err)
 }
 
 func (h *Handlers) publishSuccessfulTranscodeComplete(

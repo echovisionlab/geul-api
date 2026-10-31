@@ -426,7 +426,7 @@ func (s *ProgramEventService) createProgramEventWithDB(
 	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", event.Slug); err != nil {
 		return err
 	}
-	if err := validateProgramEventSeriesRelation(ctx, tx, event.ID, event.SeriesID, event.SeriesOrder); err != nil {
+	if err := validateProgramEventSeriesRelation(tx, event.ID, event.SeriesID, event.SeriesOrder); err != nil {
 		return err
 	}
 	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{

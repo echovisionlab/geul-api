@@ -219,10 +219,10 @@ func (s *ProgramEventSeriesService) loadProgramEventSeries(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	return s.toProtoProgramEventSeries(ctx, series)
+	return s.toProtoProgramEventSeries(series)
 }
 
-func (s *ProgramEventSeriesService) toProtoProgramEventSeries(ctx context.Context, series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
+func (s *ProgramEventSeriesService) toProtoProgramEventSeries(series *model.ProgramEventSeries) (*managev1.ProgramEventSeries, error) {
 	return &managev1.ProgramEventSeries{
 		Id:           series.ID,
 		Status:       manageProgramEventSeriesStatus(series.Status),

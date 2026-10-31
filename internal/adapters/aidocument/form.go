@@ -373,7 +373,7 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 			return nil, err
 		}
 	}
-	root := core.Node{ID: formRootID, Kind: formRootKind, Shared: []core.FieldValue{{ID: formSchemaIDField, Value: core.Text(formString(source, "id"))}}}
+	root := core.Node{ID: formRootID, Kind: formRootKind, Shared: []core.FieldValue{{ID: formSchemaIDField, Value: core.Text(formObjectID(source))}}}
 	title := state.LocaleTitle
 	if state.Locale == state.SourceLocale {
 		title = state.SourceTitle
@@ -382,9 +382,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 		root.Localized = []core.FieldValue{{ID: formRootTitleField, Value: core.Text(*title)}}
 	}
 	nodes := []core.Node{root}
-	targetSteps := indexFormObjects(formArray(localized, "steps"), "id")
+	targetSteps := indexFormObjectsByID(formArray(localized, "steps"))
 	for stepIndex, sourceStep := range formArray(source, "steps") {
-		stableID := formString(sourceStep, "id")
+		stableID := formObjectID(sourceStep)
 		handle, err := formintrav1.FormStepBlockHandle(stableID)
 		if err != nil {
 			return nil, fmt.Errorf("form step %q: %w", stableID, err)
@@ -394,9 +394,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 		step := core.Node{ID: stepID, Kind: formStepKind, Parent: formRootID, Order: stepIndex, Shared: []core.FieldValue{{ID: formRawField, Value: core.Text(formRaw(sourceStep, "fields", "title", "description"))}}}
 		step.Localized = formLocalizedFields(targetOrSource(targetStep, sourceStep, state.Locale == state.SourceLocale), map[core.FieldID]string{formStepTitleField: "title", formStepDescriptionField: "description"})
 		nodes = append(nodes, step)
-		targetFields := indexFormObjects(formArray(targetStep, "fields"), "id")
+		targetFields := indexFormObjectsByID(formArray(targetStep, "fields"))
 		for fieldIndex, sourceField := range formArray(sourceStep, "fields") {
-			stableID := formString(sourceField, "id")
+			stableID := formObjectID(sourceField)
 			handle, err := formintrav1.FormFieldBlockHandle(stableID)
 			if err != nil {
 				return nil, fmt.Errorf("form field %q: %w", stableID, err)
@@ -406,9 +406,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 			field := core.Node{ID: fieldID, Kind: formFieldKind, Parent: stepID, Order: fieldIndex, Shared: []core.FieldValue{{ID: formRawField, Value: core.Text(formFieldSourceRaw(sourceField))}}}
 			field.Localized = formLocalizedFields(targetOrSource(targetField, sourceField, state.Locale == state.SourceLocale), map[core.FieldID]string{formFieldLabelField: "label", formFieldDescriptionField: "description", formFieldPlaceholderField: "placeholder", formFieldCheckboxLabelField: "checkboxLabel"})
 			nodes = append(nodes, field)
-			targetOptions := indexFormObjects(formArray(targetField, "options"), "id")
+			targetOptions := indexFormObjectsByID(formArray(targetField, "options"))
 			for optionIndex, sourceOption := range formArray(sourceField, "options") {
-				stableID := formString(sourceOption, "id")
+				stableID := formObjectID(sourceOption)
 				handle, err := formintrav1.FormOptionBlockHandle(stableID)
 				if err != nil {
 					return nil, fmt.Errorf("form option %q: %w", stableID, err)
@@ -419,9 +419,9 @@ func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
 			}
 			sourceValidation := formObject(sourceField, "validation")
 			targetValidation := formObject(targetField, "validation")
-			targetValidators := indexFormObjects(formArray(targetValidation, "validators"), "id")
+			targetValidators := indexFormObjectsByID(formArray(targetValidation, "validators"))
 			for validatorIndex, sourceValidator := range formArray(sourceValidation, "validators") {
-				stableID := formString(sourceValidator, "id")
+				stableID := formObjectID(sourceValidator)
 				handle, err := formintrav1.FormValidatorBlockHandle(stableID)
 				if err != nil {
 					return nil, fmt.Errorf("form validator %q: %w", stableID, err)
@@ -573,11 +573,11 @@ func decodeFormSchema(body []byte) (map[string]any, error) {
 	}
 	return value, nil
 }
-func formString(value map[string]any, key string) string {
+func formObjectID(value map[string]any) string {
 	if value == nil {
 		return ""
 	}
-	text, _ := value[key].(string)
+	text, _ := value["id"].(string)
 	return text
 }
 func formArray(value map[string]any, key string) []map[string]any {
@@ -665,8 +665,8 @@ func formLocalizedFields(value map[string]any, fields map[core.FieldID]string) [
 	}
 	return out
 }
-func indexFormObjects(values []map[string]any, key string) map[string]map[string]any {
-	return indexFormObjectsByIdentity(values, func(value map[string]any) string { return formString(value, key) })
+func indexFormObjectsByID(values []map[string]any) map[string]map[string]any {
+	return indexFormObjectsByIdentity(values, formObjectID)
 }
 func indexFormObjectsByIdentity(values []map[string]any, identity func(map[string]any) string) map[string]map[string]any {
 	out := make(map[string]map[string]any, len(values))
@@ -727,7 +727,7 @@ func formObjectFromNode(node core.Node) (map[string]any, error) {
 	if err := json.Unmarshal([]byte(raw.Text), &object); err != nil {
 		return nil, fmt.Errorf("form %s source payload: %w", node.ID, err)
 	}
-	stableID := formString(object, "id")
+	stableID := formObjectID(object)
 	var handle string
 	var err error
 	switch node.Kind {

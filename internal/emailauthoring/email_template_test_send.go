@@ -47,7 +47,7 @@ func (s *EmailTemplateService) SendTestEmail(
 	}()
 
 	can, canErr := policyv1.EmailTemplate.Manage(req.Msg.Id)
-	if _, err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
+	if err := s.requireEmailTemplateCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
 

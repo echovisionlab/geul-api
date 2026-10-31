@@ -361,7 +361,6 @@ func (s *PostService) RestorePostVersion(
 			restoreContributors,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 			finalSnapshot.SourceLocale,
-			true,
 			nil,
 			true,
 		))

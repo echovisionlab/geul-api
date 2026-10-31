@@ -15,6 +15,6 @@ func RequireLockedSourceLocaleEdit(
 	spiceDB *auth.SpiceDBClient,
 	releaseID string,
 ) error {
-	_, err := requireLockedReleaseAction(ctx, tx, spiceDB, releaseID, releaseActionEdit)
+	err := requireLockedReleaseAction(ctx, tx, spiceDB, releaseID, releaseActionEdit)
 	return err
 }

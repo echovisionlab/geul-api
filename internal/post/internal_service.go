@@ -369,7 +369,6 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 			req.Msg.Batch.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			locale,
-			true,
 			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
 			locale == sourceLocale,
 		))
@@ -568,7 +567,6 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 			req.Msg.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			locale,
-			true,
 			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
 			locale == sourceLocale,
 		))
@@ -929,7 +927,7 @@ func updatePostLocaleMetadataRow(
 	if locale != sourceLocale {
 		return false, false, errs.FailedPrecondition("target Post locale metadata is read-only")
 	}
-	if err := ensurePostLocaleMetadataRow(ctx, tx, postID, locale, sourceLocale, now); err != nil {
+	if err := ensurePostLocaleMetadataRow(ctx, tx, postID, locale, sourceLocale); err != nil {
 		return false, false, err
 	}
 	current, err := loadPostLocaleMetadataRow(
@@ -986,7 +984,6 @@ func ensurePostLocaleMetadataRow(
 	postID string,
 	locale string,
 	sourceLocale string,
-	now time.Time,
 ) error {
 	if locale != sourceLocale {
 		return errs.FailedPrecondition("target Post locale metadata is read-only")

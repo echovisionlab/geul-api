@@ -41,7 +41,7 @@ func (s *Lifecycle) CancelEntityWithDB(
 		Order("COALESCE(locale, ''), id").Find(&targets).Error; err != nil {
 		return err
 	}
-	return cancelOgGenerationTargetsWithDB(ctx, tx, targets, now)
+	return cancelOgGenerationTargetsWithDB(tx, targets, now)
 }
 
 func (s *Lifecycle) CancelEntity(ctx context.Context, entityType managev1.OgEntityType, entityID string) error {
@@ -81,11 +81,10 @@ func (s *Lifecycle) CancelTargetWithDB(
 		Order("id").Find(&targets).Error; err != nil {
 		return err
 	}
-	return cancelOgGenerationTargetsWithDB(ctx, tx, targets, s.now().UTC())
+	return cancelOgGenerationTargetsWithDB(tx, targets, s.now().UTC())
 }
 
 func cancelOgGenerationTargetsWithDB(
-	ctx context.Context,
 	tx *gorm.DB,
 	targets []model.OgGenerationTarget,
 	now time.Time,

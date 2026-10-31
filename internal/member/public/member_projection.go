@@ -38,10 +38,7 @@ func LoadPublicMemberSummaries(
 	}
 
 	for _, member := range members {
-		summary, err := projectPublicMemberSummary(member, avatars[member.ID])
-		if err != nil {
-			return nil, err
-		}
+		summary := projectPublicMemberSummary(member, avatars[member.ID])
 		result[member.ID] = summary
 	}
 
@@ -85,7 +82,7 @@ func loadPublicMemberAvatars(
 	return result, nil
 }
 
-func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) (*commonv1.MemberSummary, error) {
+func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) *commonv1.MemberSummary {
 	deleted := member.DeletedAt != nil || member.AccountIdentityID == nil
 	if deleted {
 		avatar = nil
@@ -95,5 +92,5 @@ func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) 
 		Nickname:    member.Nickname,
 		AvatarAsset: avatar,
 		Deleted:     deleted,
-	}, nil
+	}
 }

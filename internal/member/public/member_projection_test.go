@@ -13,14 +13,11 @@ import (
 func TestProjectPublicDeletedMemberAlwaysScrubsPIIAndAvatar(t *testing.T) {
 	nickname := "FormerNickname"
 	deletedAt := time.Now().UTC()
-	summary, err := projectPublicMemberSummary(model.Member{
+	summary := projectPublicMemberSummary(model.Member{
 		ID:        uuid.NewString(),
 		Nickname:  nickname,
 		DeletedAt: &deletedAt,
 	}, &commonv1.AssetRef{AssetId: uuid.NewString()})
-	if err != nil {
-		t.Fatalf("project deleted Member: %v", err)
-	}
 	if !summary.Deleted {
 		t.Fatal("deleted marker was not projected")
 	}
@@ -34,13 +31,10 @@ func TestProjectPublicDeletedMemberAlwaysScrubsPIIAndAvatar(t *testing.T) {
 
 func TestProjectPublicUnlinkedMemberIsImmediatelyTombstoned(t *testing.T) {
 	nickname := "UnlinkedNickname"
-	summary, err := projectPublicMemberSummary(model.Member{
+	summary := projectPublicMemberSummary(model.Member{
 		ID:       uuid.NewString(),
 		Nickname: nickname,
 	}, &commonv1.AssetRef{AssetId: uuid.NewString()})
-	if err != nil {
-		t.Fatalf("project unlinked Member: %v", err)
-	}
 	if !summary.Deleted {
 		t.Fatal("unlinked Member was not projected as deleted")
 	}
@@ -56,14 +50,11 @@ func TestProjectUnonboardedMemberShapeKeepsUUIDNickname(t *testing.T) {
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	avatar := &commonv1.AssetRef{AssetId: uuid.NewString()}
-	summary, err := projectPublicMemberSummary(model.Member{
+	summary := projectPublicMemberSummary(model.Member{
 		ID:                memberID,
 		AccountIdentityID: &identityID,
 		Nickname:          memberID,
 	}, avatar)
-	if err != nil {
-		t.Fatalf("project active Member awaiting onboarding: %v", err)
-	}
 	if summary.Deleted {
 		t.Fatal("active linked Member was projected as deleted")
 	}

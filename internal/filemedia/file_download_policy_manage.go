@@ -652,33 +652,33 @@ func appendRelationFileDownloadPolicyAudit(
 	return domainaudit.AppendOptionalRequest(ctx, tx, writer, action, build)
 }
 
-func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) (*auth.UserInfo, error) {
+func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return nil, errs.AuthenticationRequired()
+		return errs.AuthenticationRequired()
 	}
 	if user.Banned {
-		return nil, errs.AccountBanned()
+		return errs.AccountBanned()
 	}
 	can, err := policyv1.File.List()
 	if err != nil {
 		slog.WarnContext(ctx, "requireFileDownloadAuthor: AuthorRequired", failurecause.Attr(err))
-		return nil, errs.AuthorRequired()
+		return errs.AuthorRequired()
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
 		slog.WarnContext(ctx, "requireFileDownloadAuthor: AuthenticationRequired", failurecause.Attr(err))
-		return nil, errs.AuthenticationRequired()
+		return errs.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
 		slog.ErrorContext(ctx, "requireFileDownloadAuthor: DependencyUnavailable", failurecause.Attr(err))
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return errs.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
-		return nil, errs.AuthorRequired()
+		return errs.AuthorRequired()
 	}
-	return user, nil
+	return nil
 }
 
 func uniqueUUIDs(values []string, field string) ([]string, error) {

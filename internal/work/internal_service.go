@@ -337,7 +337,6 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 			req.Msg.Batch.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			locale,
-			true,
 			output.TargetRevision,
 			locale == sourceLocale,
 		))
@@ -522,7 +521,6 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 			req.Msg.ContributorMemberIds,
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
 			plan.Locale,
-			true,
 			output.TargetRevision,
 			plan.Locale == sourceLocale,
 		))

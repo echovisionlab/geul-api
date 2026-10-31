@@ -125,7 +125,7 @@ func (s *WorkService) MoveWorkCreditItem(
 				return errs.NotFound("credit_group", req.Msg.ItemId)
 			}
 			if err := validateWorkCreditMoveAnchors(
-				ctx, tx, req.Msg.WorkId, currentOrder, req.Msg.Kind, req.Msg.ItemId, nil, req.Msg.After, req.Msg.Before,
+				ctx, tx, currentOrder, req.Msg.Kind, req.Msg.ItemId, nil, req.Msg.After, req.Msg.Before,
 			); err != nil {
 				return err
 			}
@@ -148,7 +148,7 @@ func (s *WorkService) MoveWorkCreditItem(
 				targetGroupID = &requestedGroupID
 			}
 			if err := validateWorkCreditMoveAnchors(
-				ctx, tx, req.Msg.WorkId, currentOrder, req.Msg.Kind, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before,
+				ctx, tx, currentOrder, req.Msg.Kind, req.Msg.ItemId, targetGroupID, req.Msg.After, req.Msg.Before,
 			); err != nil {
 				return err
 			}

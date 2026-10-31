@@ -428,11 +428,10 @@ func (s *PostService) UpdatePost(
 	changed := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
+		// Manage metadata fields do not alter the typed translation source, so
+		// an update publishes no content wake-up.
 		changed, err = s.updatePostWithDB(ctx, tx, &post, update)
-		if err != nil || !changed {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
+		return err
 	}); err != nil {
 		return nil, errs.Internal(err)
 	}
@@ -749,7 +748,7 @@ func (s *PostService) PublishPost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -804,7 +803,7 @@ func (s *PostService) UnpublishPost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +853,7 @@ func (s *PostService) ArchivePost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +863,6 @@ func (s *PostService) ArchivePost(
 func (s *PostService) postLifecycleMutationResponse(
 	ctx context.Context,
 	post *model.Post,
-	changed bool,
 ) (*managev1.PostLifecycleMutationResponse, error) {
 	authorities, err := s.loadCurrentPostAuthorities(ctx, []string{post.ID})
 	if err != nil {
@@ -873,7 +871,7 @@ func (s *PostService) postLifecycleMutationResponse(
 	authority := authorities[post.ID]
 	response := &managev1.PostLifecycleMutationResponse{
 		Id:                post.ID,
-		Changed:           changed,
+		Changed:           true,
 		Status:            managev1.PostStatus(managev1.PostStatus_value[string(post.Status)]),
 		ScheduledTimeZone: post.ScheduledTimeZone,
 		UpdatedAt:         timestamppb.New(post.UpdatedAt),

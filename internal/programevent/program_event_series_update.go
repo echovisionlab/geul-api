@@ -66,7 +66,6 @@ func (s *ProgramEventSeriesService) loadProgramEventSeriesForUpdate(
 func (s *ProgramEventSeriesService) prepareProgramEventSeriesUpdate(
 	ctx context.Context,
 	request *managev1.UpdateProgramEventSeriesRequest,
-	now time.Time,
 ) (programEventSeriesUpdate, error) {
 	update := programEventSeriesUpdate{fields: structured.Fields{}}
 	if request.Title != nil {

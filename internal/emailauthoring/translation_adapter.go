@@ -34,7 +34,7 @@ func LoadTemplateTranslationSourceDocument(
 	if err != nil {
 		return nil, err
 	}
-	subject, err := loadCampaignEmailSourceSubject(ctx, db, emailTemplateContentEntity, templateID, domain.SourceLocale)
+	subject, err := loadCampaignEmailSourceSubject(ctx, db, templateID, domain.SourceLocale)
 	if err != nil {
 		return nil, err
 	}

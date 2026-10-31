@@ -280,11 +280,7 @@ func (s *FileService) createMultipartUploadSession(
 	if err := s.publishMultipartUploadStarted(ctx, session); err != nil {
 		return nil, err
 	}
-	response, err := multipartInitiateResponseFromSession(session, nil, false)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return response, nil
+	return multipartInitiateResponseFromSession(session, nil, false), nil
 }
 
 func multipartFileKeyError(err error) error {

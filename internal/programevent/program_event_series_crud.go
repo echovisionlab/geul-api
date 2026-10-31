@@ -138,7 +138,7 @@ func (s *ProgramEventSeriesService) GetProgramEventSeries(
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return nil, err
 	}
-	proto, err := s.toProtoProgramEventSeries(ctx, series)
+	proto, err := s.toProtoProgramEventSeries(series)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (s *ProgramEventSeriesService) ListProgramEventSeriesAdmin(
 	}
 	result := make([]*managev1.ProgramEventSeries, 0, len(rows))
 	for i := range rows {
-		item, err := s.toProtoProgramEventSeries(ctx, &rows[i])
+		item, err := s.toProtoProgramEventSeries(&rows[i])
 		if err != nil {
 			return nil, err
 		}
@@ -218,7 +218,7 @@ func (s *ProgramEventSeriesService) UpdateProgramEventSeries(
 	if err != nil {
 		return nil, err
 	}
-	update, err := s.prepareProgramEventSeriesUpdate(ctx, req.Msg, time.Now().UTC())
+	update, err := s.prepareProgramEventSeriesUpdate(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}

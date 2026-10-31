@@ -825,7 +825,6 @@ func (s *WorkService) PublishWork(
 			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
 				work.ID,
 				changedFields,
 			),
@@ -898,7 +897,6 @@ func (s *WorkService) UnpublishWork(
 			tx,
 			s.asyncPublisher,
 			buildManageStateTransitionContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
 				work.ID,
 				[]string{"state.status"},
 			),

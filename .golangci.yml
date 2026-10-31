@@ -18,6 +18,7 @@ linters:
     - rowserrcheck
     - sqlclosecheck
     - staticcheck
+    - unparam
     - unused
     - wastedassign
   settings:
@@ -44,12 +45,14 @@ linters:
   exclusions:
     rules:
       # Tests build throwaway requests and fixtures; context plumbing and
-      # cleanup error checks there add noise without catching defects.
+      # cleanup error checks there add noise without catching defects, and
+      # fixture helpers take constant arguments on purpose.
       - path: _test\.go
         linters:
           - bodyclose
           - errcheck
           - noctx
+          - unparam
 
 issues:
   max-issues-per-linter: 0

@@ -124,7 +124,7 @@ func (l TargetLifecycle) rewriteMenusForTarget(
 		if err := ReconcileTranslationRowsWithSourceItems(ctx, tx, menus[index].ID, nextItems, now); err != nil {
 			return err
 		}
-		if _, err := advanceMenuContentDocument(
+		if err := advanceMenuContentDocument(
 			ctx, tx, menus[index].ID, document.ID, document.Revision, now,
 		); err != nil {
 			return err

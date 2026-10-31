@@ -36,7 +36,7 @@ func saveArtistSourceLocaleDocumentState(
 	locale string,
 	input translationLocaleDocumentSaveInput,
 ) error {
-	return saveCreativeSourceLocaleMetadata(ctx, db, "artist", artistID, locale, input)
+	return saveCreativeSourceLocaleMetadata(ctx, db, artistID, locale, input)
 }
 
 func touchArtistRootUpdatedAt(

@@ -117,12 +117,7 @@ func (h *UnifiedAuthHandler) serveFlow(w http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	_, response, err := h.resolveFlow(request, flowID)
-	if err != nil {
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
-		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
-		return
-	}
+	_, response := h.resolveFlow(request, flowID)
 	h.copyResponse(request.Context(), w, response)
 }
 
@@ -139,12 +134,7 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 		return
 	}
 
-	kind, flowResponse, err := h.resolveFlow(request, flowID)
-	if err != nil {
-		slog.ErrorContext(request.Context(), "Operation failed", "reason", "resolve_flow", "status_code", http.StatusServiceUnavailable, failurecause.Attr(err))
-		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
-		return
-	}
+	kind, flowResponse := h.resolveFlow(request, flowID)
 	if flowResponse.StatusCode != http.StatusOK {
 		h.copyResponse(request.Context(), w, flowResponse)
 		return
@@ -191,7 +181,7 @@ func (h *UnifiedAuthHandler) submitFlow(w http.ResponseWriter, request *http.Req
 func (h *UnifiedAuthHandler) resolveFlow(
 	request *http.Request,
 	flowID string,
-) (unifiedAuthFlowKind, bufferedKratosResponse, error) {
+) (unifiedAuthFlowKind, bufferedKratosResponse) {
 	var first bufferedKratosResponse
 	for index, kind := range []unifiedAuthFlowKind{unifiedAuthLoginFlow, unifiedAuthRegistrationFlow} {
 		response := h.transport.capture(
@@ -206,10 +196,10 @@ func (h *UnifiedAuthHandler) resolveFlow(
 			first = response
 		}
 		if response.StatusCode == http.StatusOK {
-			return kind, response, nil
+			return kind, response
 		}
 	}
-	return unifiedAuthLoginFlow, first, nil
+	return unifiedAuthLoginFlow, first
 }
 
 func decodeUnifiedAuthFlow(body []byte) (unifiedAuthFlow, error) {

@@ -21,7 +21,7 @@ func LoadCreativeContentDocumentForPublicInTransaction(ctx context.Context, tx *
 	if err != nil {
 		return PublicCreativeContentDocument{}, err
 	}
-	title, err := loadCreativeSourceTitle(ctx, tx, artistContentEntity, artistID, source.SourceLocale)
+	title, err := loadCreativeSourceTitle(ctx, tx, artistID, source.SourceLocale)
 	if err != nil {
 		return PublicCreativeContentDocument{}, err
 	}

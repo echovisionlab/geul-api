@@ -553,7 +553,7 @@ func (s *ReleaseService) DeleteRelease(
 		return nil, errs.InternalMsg("Release content Block store is not configured")
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, err := requireLockedReleaseAction(ctx, tx, s.spiceDB, req.Msg.Id, releaseActionDelete)
+		err := requireLockedReleaseAction(ctx, tx, s.spiceDB, req.Msg.Id, releaseActionDelete)
 		return err
 	}); err != nil {
 		return nil, err

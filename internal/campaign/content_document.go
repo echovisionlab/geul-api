@@ -93,12 +93,9 @@ func loadCampaignEmailContentDocumentRoot(
 	return documentID, nil
 }
 
-func campaignEmailContentFence(entityType, entityID string) contentblock.DomainFence {
+func campaignEmailContentFence(entityID string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := requireCampaignContentEntity(entityType); err != nil {
-			return contentblock.DomainContext{}, errs.Internal(err)
-		}
-		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, entityType, entityID, true)
+		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, campaignContentEntity, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
@@ -114,7 +111,7 @@ func campaignEmailContentFence(entityType, entityID string) contentblock.DomainF
 		if !campaignStatusAllowsEdit(row.Status) {
 			return contentblock.DomainContext{}, errs.FailedPrecondition(errs.MsgCampaignCannotUpdateSent)
 		}
-		return lockCampaignEmailTranslationSource(ctx, tx, entityType, entityID)
+		return lockCampaignEmailTranslationSource(ctx, tx, campaignContentEntity, entityID)
 	}
 }
 
@@ -462,19 +459,15 @@ func asCampaignEmailConnectError(err error) error {
 func projectCampaignEmailMaterializedContent(
 	ctx context.Context,
 	tx *gorm.DB,
-	entityType string,
 	entityID string,
 	snapshot contentblock.Snapshot,
 	changedLocales []string,
 	now time.Time,
 ) error {
-	if err := requireCampaignContentEntity(entityType); err != nil {
-		return errs.Internal(err)
-	}
 	if snapshot.Document.Profile != emailContentProfile {
 		return errs.FailedPrecondition("Campaign content document profile changed")
 	}
-	domain, err := loadCampaignEmailSourceContext(ctx, tx, entityType, entityID)
+	domain, err := loadCampaignEmailSourceContext(ctx, tx, campaignContentEntity, entityID)
 	if err != nil {
 		return err
 	}
@@ -498,11 +491,11 @@ func projectCampaignEmailMaterializedContent(
 	for _, locale := range locales {
 		document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, locale)
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(entityType, err)
+			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 		}
 		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(entityType, err)
+			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
 		}
 		updates := map[string]any{
 			"content_html": projection.HTML,

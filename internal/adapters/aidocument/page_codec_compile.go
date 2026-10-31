@@ -735,7 +735,7 @@ func (c *PageCodec) insertPageSection(document *contentv1.LocalizedPageDocument,
 		return fmt.Errorf("unsupported Page section kind %q", operation.Kind)
 	}
 	section := &contentv1.PageSection{Id: string(operation.Block), Settings: &contentv1.PageSectionSettings{}}
-	if err := initializeOneofMessage(section.ProtoReflect(), "value", c.baseCases[operation.Kind].JSONName()); err != nil {
+	if err := initializeOneofMessage(section.ProtoReflect(), c.baseCases[operation.Kind].JSONName()); err != nil {
 		return err
 	}
 	locale, err := c.newPageLocaleSection(string(operation.Block), operation.Kind)
@@ -759,7 +759,7 @@ func (c *PageCodec) newPageLocaleSection(sectionID string, kind core.BlockKind) 
 		return nil, fmt.Errorf("page section kind %q has no locale shape", kind)
 	}
 	section := &contentv1.PageSectionLocale{SectionId: sectionID}
-	if err := initializeOneofMessage(section.ProtoReflect(), "value", field.JSONName()); err != nil {
+	if err := initializeOneofMessage(section.ProtoReflect(), field.JSONName()); err != nil {
 		return nil, err
 	}
 	if kind == "rich-text" {
@@ -837,7 +837,7 @@ func (c *PageCodec) replacePageSection(document *contentv1.LocalizedPageDocument
 		}
 	}
 	section := &contentv1.PageSection{Id: string(operation.Block), Settings: proto.Clone(old.GetSection().GetSettings()).(*contentv1.PageSectionSettings)}
-	if err := initializeOneofMessage(section.ProtoReflect(), "value", field.JSONName()); err != nil {
+	if err := initializeOneofMessage(section.ProtoReflect(), field.JSONName()); err != nil {
 		return err
 	}
 	document.Base.Nodes[index] = &contentv1.PageSectionNode{Section: section, Placement: proto.Clone(old.GetPlacement()).(*contentv1.PageSectionPlacement)}

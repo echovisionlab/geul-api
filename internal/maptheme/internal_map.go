@@ -139,7 +139,7 @@ func internalVariantProto(input model.MapThemeVariant) *intrav1.MapThemeDocument
 	}
 }
 
-func internalSnapshotProto(theme *model.MapTheme) (*intrav1.MapThemeDocumentSnapshot, error) {
+func internalSnapshotProto(theme *model.MapTheme) *intrav1.MapThemeDocumentSnapshot {
 	return &intrav1.MapThemeDocumentSnapshot{
 		Name: theme.Name,
 		Settings: &intrav1.MapThemeDocumentSettings{
@@ -150,7 +150,7 @@ func internalSnapshotProto(theme *model.MapTheme) (*intrav1.MapThemeDocumentSnap
 		},
 		LightVariant: internalVariantProto(theme.LightVariant),
 		DarkVariant:  internalVariantProto(theme.DarkVariant),
-	}, nil
+	}
 }
 
 func mapThemeVariantUpdates(prefix string, input mapThemeVariantSnapshot) structured.Fields {
@@ -346,9 +346,6 @@ func (s *InternalMapService) LoadMapThemeSnapshot(
 		}
 		return nil, errs.Internal(err)
 	}
-	snapshot, err := internalSnapshotProto(theme)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+	snapshot := internalSnapshotProto(theme)
 	return connect.NewResponse(&intrav1.LoadMapThemeSnapshotResponse{Snapshot: snapshot, Revision: theme.EditVersion, Locale: "und"}), nil
 }

@@ -776,7 +776,7 @@ func (s *FileService) checkEntityPermission(ctx context.Context, uploadType mana
 	if handled, err := checkUploadPrincipalPolicy(ctx, target, entityID, userID, user, s.spiceDB); handled {
 		return err
 	}
-	return s.checkSpiceDBUploadPermission(ctx, target, entityID, userID)
+	return s.checkSpiceDBUploadPermission(ctx, target, entityID)
 }
 
 func (s *FileService) resolveUploadPermissionEntityID(
@@ -861,12 +861,11 @@ func (s *FileService) checkSpiceDBUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
-	userID string,
 ) error {
 	if !target.requiresSpiceDBCheck || target.resourceType == "" || entityID == "" {
 		return nil
 	}
-	if _, err := uploadPermissionIdentityID(ctx, userID); err != nil {
+	if err := requireUploadIdentity(ctx); err != nil {
 		return err
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, entityID)

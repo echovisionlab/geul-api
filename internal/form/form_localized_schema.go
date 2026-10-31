@@ -131,7 +131,7 @@ func walkFormSchemaTranslationText(
 		if !ok {
 			continue
 		}
-		stepID := formNodeID(step, "id", fmt.Sprintf("step:%d", stepIndex))
+		stepID := formNodeID(step, fmt.Sprintf("step:%d", stepIndex))
 		visit(formSchemaTranslationText{
 			object: step, field: "title", unitID: fmt.Sprintf("step:%s:title", stepID),
 			path:          fmt.Sprintf("schema:step:%s:title", stepID),
@@ -151,7 +151,7 @@ func walkFormSchemaTranslationText(
 			if !ok {
 				continue
 			}
-			fieldID := formNodeID(field, "id", fmt.Sprintf("%s:field:%d", stepID, fieldIndex))
+			fieldID := formNodeID(field, fmt.Sprintf("%s:field:%d", stepID, fieldIndex))
 			context := strings.TrimSpace(formStringField(field, "type"))
 			var contextPointer *string
 			if context != "" {
@@ -186,7 +186,7 @@ func walkFormSchemaTranslationText(
 				if !ok {
 					continue
 				}
-				optionID := formNodeID(option, "id", "")
+				optionID := formNodeID(option, "")
 				if optionID == "" {
 					if valueKey, ok := NormalizeFormOptionValueKey(option["value"]); ok && valueKey != "" {
 						optionID = valueKey
@@ -210,7 +210,7 @@ func walkFormSchemaTranslationText(
 				if !ok {
 					continue
 				}
-				validatorID := formNodeID(validator, "id", fmt.Sprintf("%d", validatorIndex))
+				validatorID := formNodeID(validator, fmt.Sprintf("%d", validatorIndex))
 				visit(formSchemaTranslationText{
 					object: validator, field: "message",
 					unitID:        fmt.Sprintf("field:%s:validator:%s:message", fieldID, validatorID),
@@ -259,8 +259,8 @@ func formStringField(value formDocumentObject, key string) string {
 	return fmt.Sprintf("%v", raw)
 }
 
-func formNodeID(value formDocumentObject, key, fallback string) string {
-	if id := strings.TrimSpace(formStringField(value, key)); id != "" {
+func formNodeID(value formDocumentObject, fallback string) string {
+	if id := strings.TrimSpace(formStringField(value, "id")); id != "" {
 		return id
 	}
 	return fallback

@@ -92,7 +92,7 @@ func (s *PostService) SchedulePost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (s *PostService) CancelPostSchedule(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (s *PostService) RepublishPost(
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.postLifecycleMutationResponse(ctx, &post, true)
+	response, err := s.postLifecycleMutationResponse(ctx, &post)
 	if err != nil {
 		return nil, err
 	}
