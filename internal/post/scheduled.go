@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const defaultScheduledPostBatchSize = 100
@@ -26,7 +25,7 @@ func ProcessDueScheduledPosts(ctx context.Context, db *gorm.DB, limit int) ([]st
 		var due []model.Post
 		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Options: clause.LockingOptionsSkipLocked}).
 			Select("id", "status", "scheduled_at", "published_at").
-			Where("status = ? AND scheduled_at <= CURRENT_TIMESTAMP", managev1.PostStatus_POST_STATUS_SCHEDULED.String()).
+			Where("status = ? AND scheduled_at <= CURRENT_TIMESTAMP", string(model.PostStatusScheduled)).
 			Order("scheduled_at ASC, id ASC").
 			Limit(limit).
 			Find(&due).Error; err != nil {
@@ -35,7 +34,7 @@ func ProcessDueScheduledPosts(ctx context.Context, db *gorm.DB, limit int) ([]st
 		for i := range due {
 			now := time.Now().UTC()
 			updates := structured.Fields{
-				"status":              managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
+				"status":              string(model.PostStatusPublished),
 				"scheduled_at":        nil,
 				"scheduled_time_zone": nil,
 				"updated_at":          now,
@@ -44,7 +43,7 @@ func ProcessDueScheduledPosts(ctx context.Context, db *gorm.DB, limit int) ([]st
 				updates["published_at"] = now
 			}
 			result := tx.Model(&model.Post{}).
-				Where("id = ? AND status = ? AND scheduled_at <= CURRENT_TIMESTAMP", due[i].ID, managev1.PostStatus_POST_STATUS_SCHEDULED.String()).
+				Where("id = ? AND status = ? AND scheduled_at <= CURRENT_TIMESTAMP", due[i].ID, string(model.PostStatusScheduled)).
 				Updates(updates)
 			if result.Error != nil {
 				return result.Error

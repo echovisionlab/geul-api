@@ -214,7 +214,7 @@ func requirePostContributorsPermission(
 }
 
 func postContributorPermissionDenied(status model.PostStatus) *domainerr.Error {
-	if status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if status == model.PostStatusArchived {
 		return domainerr.Precondition(archivedPostAdminEditMessage)
 	}
 	return domainerr.NoPermission("edit", "post contributor")
@@ -225,7 +225,7 @@ func postActionForStatus(
 	ordinary postAction,
 	archived postAction,
 ) postAction {
-	if status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if status == model.PostStatusArchived {
 		return archived
 	}
 	return ordinary
@@ -432,7 +432,7 @@ func RequireLockedSourceLocaleEdit(
 
 func postAllowedActions(postID string, status model.PostStatus, authority PostAuthority) []managev1.PostAction {
 	actions := make([]managev1.PostAction, 0, 15)
-	archived := status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String())
+	archived := status == model.PostStatusArchived
 	viewAction := policyv1.Post.View
 	if archived {
 		viewAction = policyv1.Post.ViewArchived
@@ -483,11 +483,11 @@ func postAllowedActions(postID string, status model.PostStatus, authority PostAu
 	}
 	if authority.allowsAction(postID, policyv1.Post.Publish) {
 		switch status {
-		case model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()):
+		case model.PostStatusDraft:
 			actions = append(actions, managev1.PostAction_POST_ACTION_PUBLISH_NOW, managev1.PostAction_POST_ACTION_SCHEDULE)
-		case model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()):
+		case model.PostStatusScheduled:
 			actions = append(actions, managev1.PostAction_POST_ACTION_PUBLISH_NOW, managev1.PostAction_POST_ACTION_SCHEDULE, managev1.PostAction_POST_ACTION_CANCEL_SCHEDULE)
-		case model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()):
+		case model.PostStatusPublished:
 			actions = append(actions, managev1.PostAction_POST_ACTION_UNPUBLISH, managev1.PostAction_POST_ACTION_ARCHIVE)
 		}
 	}

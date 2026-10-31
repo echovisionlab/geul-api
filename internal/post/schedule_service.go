@@ -65,20 +65,20 @@ func (s *Service) SchedulePost(ctx context.Context, command SchedulePostCommand)
 		if err := tx.First(&post, "id = ?", command.ID).Error; err != nil {
 			return post, err
 		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()) &&
-			post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()) {
+		if post.Status != model.PostStatusDraft &&
+			post.Status != model.PostStatusScheduled {
 			return post, domainerr.Precondition("only draft or scheduled posts can be scheduled")
 		}
 		previousStatus := post.Status
 		if err := tx.Model(&post).Updates(structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_SCHEDULED.String(),
+			"status":              string(model.PostStatusScheduled),
 			"scheduled_at":        scheduledAt,
 			"scheduled_time_zone": timeZone,
 			"updated_at":          databaseNow.UTC(),
 		}).Error; err != nil {
 			return post, err
 		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String())
+		post.Status = model.PostStatusScheduled
 		post.ScheduledAt = &scheduledAt
 		post.ScheduledTimeZone = &timeZone
 		post.UpdatedAt = databaseNow.UTC()
@@ -101,7 +101,7 @@ func (s *Service) CancelPostSchedule(ctx context.Context, command PostLifecycleC
 		if err := tx.First(&post, "id = ?", command.ID).Error; err != nil {
 			return post, err
 		}
-		if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()) {
+		if post.Status != model.PostStatusScheduled {
 			return post, domainerr.Precondition("only scheduled posts can have their schedule cancelled")
 		}
 		previousScheduledAt := post.ScheduledAt
@@ -109,7 +109,7 @@ func (s *Service) CancelPostSchedule(ctx context.Context, command PostLifecycleC
 		previousStatus := post.Status
 		now := dbtime.Now()
 		if err := tx.Model(&post).Updates(structured.Fields{
-			"status":              managev1.PostStatus_POST_STATUS_DRAFT.String(),
+			"status":              string(model.PostStatusDraft),
 			"scheduled_at":        nil,
 			"scheduled_time_zone": nil,
 			"updated_at":          now,
@@ -119,7 +119,7 @@ func (s *Service) CancelPostSchedule(ctx context.Context, command PostLifecycleC
 		if previousScheduledAt == nil || previousTimeZone == nil {
 			return post, errors.New("scheduled post is missing schedule details")
 		}
-		post.Status = model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String())
+		post.Status = model.PostStatusDraft
 		post.ScheduledAt = nil
 		post.ScheduledTimeZone = nil
 		post.UpdatedAt = now

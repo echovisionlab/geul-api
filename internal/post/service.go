@@ -213,13 +213,13 @@ func postScheduleAudit(effects *postEffects, postID string, previous, next model
 
 func postAuditState(status model.PostStatus) sharedtelemetry.AuditState {
 	switch status {
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()):
+	case model.PostStatusDraft:
 		return sharedtelemetry.AuditStateDraft
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()):
+	case model.PostStatusScheduled:
 		return sharedtelemetry.AuditStateScheduled
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()):
+	case model.PostStatusPublished:
 		return sharedtelemetry.AuditStatePublished
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()):
+	case model.PostStatusArchived:
 		return sharedtelemetry.AuditStateArchived
 	default:
 		return sharedtelemetry.AuditState(status)
@@ -680,7 +680,7 @@ func (s *Service) DeletePost(ctx context.Context, command DeletePostCommand) (re
 			return remove, restore, nil
 		},
 	}, func(ctx context.Context, tx *gorm.DB, effects *postEffects) ([]policyv1.RelationshipMutation, error) {
-		if status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+		if status == model.PostStatusArchived {
 			return nil, domainerr.Precondition("archived posts must be republished before deletion")
 		}
 		remove, compensate, err := s.postDeletionRelationships(ctx, command.ID)
@@ -802,17 +802,17 @@ func (s *Service) PublishPost(ctx context.Context, command PostLifecycleCommand)
 	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
 		action: policyv1.Post.Publish,
 		allowed: func(status model.PostStatus) error {
-			if status == model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
+			if status == model.PostStatusPublished {
 				return domainerr.Precondition(msgPostAlreadyPublished)
 			}
-			if status != model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()) &&
-				status != model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()) {
+			if status != model.PostStatusDraft &&
+				status != model.PostStatusScheduled {
 				return domainerr.Precondition("only draft or scheduled posts can be published")
 			}
 			return nil
 		},
 		apply: publishPostAt,
-		next:  model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()),
+		next:  model.PostStatusPublished,
 	})
 }
 
@@ -821,14 +821,14 @@ func (s *Service) UnpublishPost(ctx context.Context, command PostLifecycleComman
 	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
 		action: policyv1.Post.Publish,
 		allowed: func(status model.PostStatus) error {
-			if status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) &&
-				status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+			if status != model.PostStatusPublished &&
+				status != model.PostStatusArchived {
 				return domainerr.Precondition("only published or archived posts can be unpublished")
 			}
 			return nil
 		},
 		apply: func(post *model.Post, updates structured.Fields, _ time.Time) { clearPostSchedule(post, updates) },
-		next:  model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		next:  model.PostStatusDraft,
 	})
 }
 
@@ -837,13 +837,13 @@ func (s *Service) ArchivePost(ctx context.Context, command PostLifecycleCommand)
 	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
 		action: policyv1.Post.Publish,
 		allowed: func(status model.PostStatus) error {
-			if status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
+			if status != model.PostStatusPublished {
 				return domainerr.Precondition("only published posts can be archived")
 			}
 			return nil
 		},
 		apply: func(*model.Post, structured.Fields, time.Time) {},
-		next:  model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()),
+		next:  model.PostStatusArchived,
 	})
 }
 
@@ -852,13 +852,13 @@ func (s *Service) RepublishPost(ctx context.Context, command PostLifecycleComman
 	return s.movePostLifecycle(ctx, command.ID, postLifecycleMove{
 		action: policyv1.Post.Publish,
 		allowed: func(status model.PostStatus) error {
-			if status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+			if status != model.PostStatusArchived {
 				return domainerr.Precondition("only archived posts can be republished")
 			}
 			return nil
 		},
 		apply: publishPostAt,
-		next:  model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()),
+		next:  model.PostStatusPublished,
 	})
 }
 
@@ -874,7 +874,7 @@ func (s *Service) postLifecycleMutationResponse(
 	response := &managev1.PostLifecycleMutationResponse{
 		Id:                post.ID,
 		Changed:           true,
-		Status:            managev1.PostStatus(managev1.PostStatus_value[string(post.Status)]),
+		Status:            postStatusToProto(post.Status),
 		ScheduledTimeZone: post.ScheduledTimeZone,
 		UpdatedAt:         timestamppb.New(post.UpdatedAt),
 		AllowedActions:    postAllowedActions(post.ID, post.Status, authority),

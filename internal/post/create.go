@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -36,7 +35,7 @@ func (s *Service) preparePostCreate(command CreatePostCommand) (*model.Post, str
 		Slug:            normalizedSlug,
 		DocumentLayout:  model.DefaultDocumentLayout(),
 		CommentsEnabled: command.CommentsEnabled,
-		Status:          model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		Status:          model.PostStatusDraft,
 		CreatedAt:       time.Now(),
 	}, title, nil
 }

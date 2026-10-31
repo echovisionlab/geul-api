@@ -405,7 +405,7 @@ func (s *Service) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*manag
 		Revision:              p.ContentRevision,
 		ConfigurationRevision: p.ConfigurationRevision,
 		BlockMedia:            p.BlockMedia,
-		Status:                managev1.PostStatus(managev1.PostStatus_value[string(p.Status)]),
+		Status:                postStatusToProto(p.Status),
 		CommentsEnabled:       p.CommentsEnabled,
 		DocumentLayout:        documentLayout,
 		CreatedAt:             timestamppb.New(p.CreatedAt),

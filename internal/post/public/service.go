@@ -160,14 +160,14 @@ type postMapPlaceGroup struct {
 }
 
 func isPublicPostStatus(status model.PostStatus) bool {
-	return status == model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) ||
-		status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String())
+	return status == model.PostStatusPublished ||
+		status == model.PostStatusArchived
 }
 
 func publicPostStatusValues() []string {
 	return []string{
-		managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-		managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+		string(model.PostStatusPublished),
+		string(model.PostStatusArchived),
 	}
 }
 
@@ -796,7 +796,7 @@ func (s *Service) buildPostResponse(
 	protoPost := &openv1.Post{
 		Id:              post.ID,
 		Title:           post.Title,
-		Status:          s.toProtoStatus(post.Status),
+		Status:          postStatusToProto(post.Status),
 		CommentsEnabled: post.CommentsEnabled,
 		DocumentLayout:  documentLayout,
 		CreatedAt:       timestamppb.New(post.CreatedAt),
@@ -1047,20 +1047,4 @@ func (s *Service) loadPostAuthorMembers(ctx context.Context, postIDs []string) (
 		}
 	}
 	return result, nil
-}
-
-// toProtoStatus converts model status to proto status
-func (s *Service) toProtoStatus(status model.PostStatus) openv1.PostStatus {
-	switch status {
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()):
-		return openv1.PostStatus_POST_STATUS_DRAFT
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()):
-		return openv1.PostStatus_POST_STATUS_PUBLISHED
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_SCHEDULED.String()):
-		return openv1.PostStatus_POST_STATUS_SCHEDULED
-	case model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()):
-		return openv1.PostStatus_POST_STATUS_ARCHIVED
-	default:
-		return openv1.PostStatus_POST_STATUS_UNSPECIFIED
-	}
 }

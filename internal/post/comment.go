@@ -508,7 +508,7 @@ func lockCommentablePost(ctx context.Context, tx *gorm.DB, postID string) error 
 	if !post.CommentsEnabled {
 		return domainerr.Precondition(msgCommentsDisabled)
 	}
-	if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) {
+	if post.Status != model.PostStatusPublished {
 		return domainerr.Precondition(msgCannotCommentUnpublished)
 	}
 	return nil
@@ -699,8 +699,8 @@ func (s *CommentService) withReadablePost(ctx context.Context, postID string, re
 }
 
 func (s *CommentService) requireCommentPostView(ctx context.Context, post model.Post) error {
-	if post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_PUBLISHED.String()) &&
-		post.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if post.Status != model.PostStatusPublished &&
+		post.Status != model.PostStatusArchived {
 		if _, err := requirePostViewForStatus(ctx, s.spiceDB, post.ID, post.Status); err != nil {
 			return err
 		}

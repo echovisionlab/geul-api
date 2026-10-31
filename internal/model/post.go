@@ -8,8 +8,16 @@ import (
 	"github.com/lib/pq"
 )
 
-// PostStatus represents the status of a post
+// PostStatus is the stored lifecycle state of a Post. The values are the
+// strings post.status already holds.
 type PostStatus string
+
+const (
+	PostStatusDraft     PostStatus = "POST_STATUS_DRAFT"
+	PostStatusScheduled PostStatus = "POST_STATUS_SCHEDULED"
+	PostStatusPublished PostStatus = "POST_STATUS_PUBLISHED"
+	PostStatusArchived  PostStatus = "POST_STATUS_ARCHIVED"
+)
 
 // Post represents a blog post (Domain Object)
 // Maps to: schema migrations - post table

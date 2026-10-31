@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -159,7 +158,7 @@ func (s *Service) authorizedPostListQuery(ctx context.Context) (*gorm.DB, error)
 	}
 
 	query := s.db.WithContext(ctx).Model(&model.Post{})
-	archivedStatus := managev1.PostStatus_POST_STATUS_ARCHIVED.String()
+	archivedStatus := string(model.PostStatusArchived)
 	switch {
 	case len(viewPostIDs) > 0 && len(archivedPostIDs) > 0:
 		return query.Where(

@@ -64,7 +64,7 @@ func (s *Service) postEditable(ctx context.Context, tx *gorm.DB, postID string) 
 	if err := tx.Table("post").Select("status").Where("id = ?", postID).Take(&row).Error; err != nil {
 		return false, err
 	}
-	if row.Status != model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if row.Status != model.PostStatusArchived {
 		return true, nil
 	}
 	_, err := requirePostActionForStatus(ctx, s.spiceDB, postID, row.Status, policyv1.Post.Edit)

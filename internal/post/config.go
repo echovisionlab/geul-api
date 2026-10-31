@@ -1,9 +1,9 @@
 package post
 
 import (
+	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var PostAdminFilterConfig = &queryutil.FilterConfig{
@@ -18,10 +18,10 @@ var PostAdminFilterConfig = &queryutil.FilterConfig{
 			Type:       queryutil.TypeEnum,
 			AllowedOps: queryutil.EnumOps,
 			EnumValues: []string{
-				managev1.PostStatus_POST_STATUS_DRAFT.String(),
-				managev1.PostStatus_POST_STATUS_SCHEDULED.String(),
-				managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-				managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+				string(model.PostStatusDraft),
+				string(model.PostStatusScheduled),
+				string(model.PostStatusPublished),
+				string(model.PostStatusArchived),
 			},
 		},
 		"series_id": {

@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -74,7 +73,7 @@ func lockPostContentDocumentRoot(
 	if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
 		return postContentDocumentRoot{}, domainerr.Precondition("Post content document changed; reload before saving")
 	}
-	if !allowArchived && root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if !allowArchived && root.Status == model.PostStatusArchived {
 		return postContentDocumentRoot{}, domainerr.Precondition("archived posts are read-only")
 	}
 	return root, nil
@@ -143,7 +142,7 @@ func authorizePostBlockBootstrap(
 		return nil, domainerr.NoPermission("edit", "post")
 	}
 	principalContext := auth.WithUser(ctx, principal)
-	if root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
+	if root.Status == model.PostStatusArchived {
 		can, canErr := policyv1.Post.ViewArchived(postID)
 		if canErr != nil {
 			return nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(canErr)
