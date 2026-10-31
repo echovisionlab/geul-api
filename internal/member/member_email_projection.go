@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/lib/pq"
@@ -25,7 +26,7 @@ func PrimaryEmail(ctx context.Context, db *gorm.DB, memberID, identityID string)
 	}
 	result := db.WithContext(ctx).
 		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text").
+		Joins(identityread.JoinLinked("member", "identity")).
 		Select("member.primary_email").
 		Where("member.id = ?::uuid AND identity.id = ?::uuid AND member.deleted_at IS NULL AND member.primary_email IS NOT NULL", memberID, identityID).
 		Take(&row)
@@ -73,7 +74,7 @@ func SyncEmailProjection(
 	}
 	result := tx.WithContext(ctx).
 		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text").
+		Joins(identityread.JoinLinked("member", "identity")).
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "member"}}).
 		Select("member.id").
 		Where("member.id = ?::uuid AND identity.id = ?::uuid AND member.deleted_at IS NULL", memberID, identityID).

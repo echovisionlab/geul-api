@@ -8,6 +8,7 @@ import (
 	"time"
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -55,8 +56,8 @@ func (DeletionLifecycle) PrepareTombstone(ctx context.Context, db *gorm.DB, memb
 
 func (DeletionLifecycle) FinalizeTombstone(ctx context.Context, db *gorm.DB, request DeletionSnapshot, deletedAt time.Time, appendAudit DeletionAudit) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var identityExists bool
-		if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid)`, request.IdentityID).Scan(&identityExists).Error; err != nil {
+		identityExists, err := identityread.Exists(ctx, tx, request.IdentityID)
+		if err != nil {
 			return err
 		}
 		if identityExists {
