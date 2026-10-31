@@ -136,7 +136,7 @@ func TestHookProxyUnavailableAndControlProtection(t *testing.T) {
 }
 
 func TestHookProxyURLsAndDirectLifecycle(t *testing.T) {
-	proxy, err := StartHookProxy("http://host.testcontainers.internal")
+	proxy, err := StartHookProxy(t.Context(), "http://host.testcontainers.internal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestHookProxyRejectsInvalidOrigins(t *testing.T) {
 		"http://user@host.testcontainers.internal",
 		"http://host.testcontainers.internal/path",
 	} {
-		if proxy, err := StartHookProxy(raw); err == nil {
+		if proxy, err := StartHookProxy(t.Context(), raw); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = proxy.Close(ctx)
 			cancel()
@@ -216,7 +216,7 @@ func TestHookProxyRejectsInvalidOrigins(t *testing.T) {
 
 func startTestHookProxy(t *testing.T) *HookProxy {
 	t.Helper()
-	proxy, err := StartHookProxy("http://host.testcontainers.internal")
+	proxy, err := StartHookProxy(t.Context(), "http://host.testcontainers.internal")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,6 +67,7 @@ func TestParseOptionsAcceptsFullAndNamedBands(t *testing.T) {
 		{"--cdn-image", ""},
 		{"--minio-image", ""},
 		{"--go-work", "../go.work"},
+		{"--list", "--list-images"},
 	} {
 		if _, err := parseOptions(args); err == nil {
 			t.Fatalf("parseOptions(%q) succeeded, want error", args)

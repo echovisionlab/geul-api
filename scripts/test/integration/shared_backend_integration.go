@@ -31,7 +31,7 @@ func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, er
 	if err := flag.Set("geul-integration-lease-file", leasePath); err != nil {
 		return nil, fmt.Errorf("select suite integration lease: %w", err)
 	}
-	hookProxy, err := StartHookProxy("http://" + testcontainers.HostInternal)
+	hookProxy, err := StartHookProxy(ctx, "http://"+testcontainers.HostInternal)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -155,9 +156,9 @@ func catalogPackagePaths() []string {
 	return packages
 }
 
-func discoverIntegrationPackages(repoRoot, goWork string) ([]string, error) {
+func discoverIntegrationPackages(ctx context.Context, repoRoot, goWork string) ([]string, error) {
 	format := `{{.Dir}}|{{join .TestGoFiles ","}}|{{join .XTestGoFiles ","}}`
-	command := exec.Command("go", "list", "-tags=integration", "-f", format, "./...")
+	command := exec.CommandContext(ctx, "go", "list", "-tags=integration", "-f", format, "./...")
 	command.Dir = repoRoot
 	command.Env = integrationCommandEnvironment(goWork)
 	output, err := command.Output()

@@ -67,7 +67,7 @@ func TestRepositoryIntegrationPackagesExactlyMatchCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repository root: %v", err)
 	}
-	discoveredPackages, err := discoverIntegrationPackages(repoRoot, integrationGoWorkOff)
+	discoveredPackages, err := discoverIntegrationPackages(t.Context(), repoRoot, integrationGoWorkOff)
 	if err != nil {
 		t.Fatalf("discover integration packages: %v", err)
 	}

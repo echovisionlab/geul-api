@@ -321,8 +321,10 @@ shared deliberately through `internal/testutil`.
 ## Tests
 
 CI runs unit and package tests with `go test ./...`, media-tool tests, `go vet`,
-and the server build. Go checks restore the module/build cache and run alongside
-media-tool checks; the required `Validate` check waits for both to pass.
+golangci-lint (`.golangci.yml`, on both the default and `integration` builds),
+the server build, and integration tests. The required `Validate` check waits for
+all of them. Run the linter locally with `golangci-lint run ./...` and
+`golangci-lint run --build-tags=integration ./...`.
 Input validation, authorization decisions, state
 transitions, and adapter mappings belong in unit tests. Reuse the owning
 service's tests when an adapter only delegates to it.
@@ -336,10 +338,18 @@ reviewed schema checkout and the pinned PostgreSQL image:
 make test-integration-db
 ```
 
-For a CI-only check of the changed PostgreSQL fixtures, dispatch `CI` with
-`integration_smoke=true`. It uses the pinned schema and test image, verifies
-clone/cleanup isolation, and runs MQ, durable telemetry, and transcode application
-contracts with two test workers. Pull requests keep the ordinary fast gates.
+Pull requests run the cataloged integration packages whose test binaries import
+a package the pull request changed (`--changed-from <base>`). Changes the import
+graph cannot attribute, such as `go.mod`, the runner itself, or assets outside a
+package, run the whole catalog; documentation and workflow changes run none. The
+nightly schedule and a manual `CI` dispatch run the whole catalog. CI pins the
+schema, PostgreSQL image, and the sibling Identity, editor-collab, Common,
+Contracts and Telemetry revisions in `.github/workflows/ci.yml`. To preview a
+selection locally:
+
+```sh
+GOWORK=off go run -tags=integration ./scripts/test/integration --changed-from origin/main --list
+```
 
 Set `INTEGRATION_SCHEMA_ROOT` and `INTEGRATION_POSTGRES_IMAGE` to select exact
 local inputs. The runner starts its own PostgreSQL container and creates

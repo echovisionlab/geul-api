@@ -33,7 +33,7 @@ func startSuitePostgres(ctx context.Context, options suiteOptions) (*suitePostgr
 	if err != nil {
 		return nil, err
 	}
-	port, err := reserveSuitePostgresPort()
+	port, err := reserveSuitePostgresPort(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reserve loopback port for suite PostgreSQL: %w", err)
 	}
@@ -101,8 +101,8 @@ func suitePostgresDockerArguments(options suiteOptions, templateName, port strin
 	return append(arguments, options.PostgresImage)
 }
 
-func reserveSuitePostgresPort() (string, error) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+func reserveSuitePostgresPort(ctx context.Context) (string, error) {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", "127.0.0.1:0")
 	if err != nil {
 		return "", err
 	}

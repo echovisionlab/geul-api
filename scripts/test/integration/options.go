@@ -16,8 +16,10 @@ type suiteOptions struct {
 	Band          string
 	Package       string
 	Run           string
+	ChangedFrom   string
 	Jobs          int
 	List          bool
+	ListImages    bool
 	GoWork        string
 	SchemaRoot    string
 	PostgresImage string
@@ -35,8 +37,10 @@ func parseOptions(args []string) (suiteOptions, error) {
 	flags.StringVar(&options.Band, "band", "", "resource band to run")
 	flags.StringVar(&options.Package, "package", "", "cataloged integration package to run")
 	flags.StringVar(&options.Run, "run", "", "test name regexp (requires --package)")
+	flags.StringVar(&options.ChangedFrom, "changed-from", "", "run only packages affected by changes since this Git revision")
 	flags.IntVar(&options.Jobs, "jobs", jobs, "maximum concurrent packages and opted-in tests per package")
 	flags.BoolVar(&options.List, "list", false, "list the verified catalog")
+	flags.BoolVar(&options.ListImages, "list-images", false, "list the Docker images the selected packages require")
 	flags.StringVar(&options.GoWork, "go-work", integrationGoWorkOff, "Go workspace: off or an absolute go.work path")
 	flags.StringVar(&options.SchemaRoot, "schema-root", "../geul-schema", "reviewed schema asset root")
 	flags.StringVar(&options.PostgresImage, "postgres-image", testutil.AppIntegrationPostgresImage, "local PostgreSQL image")
@@ -60,6 +64,10 @@ func parseOptions(args []string) (suiteOptions, error) {
 	if options.Band != "" && options.Package != "" {
 		return suiteOptions{}, fmt.Errorf("integration band and package are mutually exclusive")
 	}
+	options.ChangedFrom = strings.TrimSpace(options.ChangedFrom)
+	if options.ChangedFrom != "" && (options.Band != "" || options.Package != "") {
+		return suiteOptions{}, fmt.Errorf("integration changed-from selection excludes band and package")
+	}
 	if options.Package != "" {
 		if _, ok := bandByPackage(options.Package); !ok {
 			return suiteOptions{}, fmt.Errorf("unknown integration package %q", options.Package)
@@ -81,6 +89,9 @@ func parseOptions(args []string) (suiteOptions, error) {
 		if _, err := regexp.Compile(options.Run); err != nil {
 			return suiteOptions{}, fmt.Errorf("invalid integration test name regexp: %w", err)
 		}
+	}
+	if options.List && options.ListImages {
+		return suiteOptions{}, fmt.Errorf("integration list and list-images are mutually exclusive")
 	}
 	if options.List {
 		return options, nil
