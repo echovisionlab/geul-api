@@ -75,6 +75,6 @@ func TestContentBlockRejectionKeepsWrappedCauseOnStatusMapping(t *testing.T) {
 func TestContentBlockRevisionConflictDoesNotMatchRawStaleRevision(t *testing.T) {
 	cause := &contentblock.StaleRevisionError{}
 	err := normalizeCreativeContentBlockError(artistContentEntity, cause)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.NotErrorIs(t, err, contentblock.ErrStaleRevision)
 }

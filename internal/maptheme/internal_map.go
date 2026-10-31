@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -182,7 +181,7 @@ func (s *Service) SaveCollaborationSnapshot(ctx context.Context, command SaveCol
 				return err
 			}
 			if current.EditVersion != command.ExpectedRevision {
-				return collaborationconflict.DocumentRevisionChanged(mapThemeChangedMessage, fmt.Sprint(current.EditVersion))
+				return mapThemeChanged(fmt.Sprint(current.EditVersion))
 			}
 			return nil
 		},

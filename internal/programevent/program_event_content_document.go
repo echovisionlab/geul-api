@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -188,9 +187,9 @@ func normalizeProgramEventContentBlockError(err error) error {
 	// translation source no longer current) as one found by the pre-check.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		return errors.Join(collaborationconflict.Conflict(
+		return errors.Join(domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			targetConflict.Error(), conflictState(err),
+			targetConflict.Error(), domainerr.CollaborationRevisionsOf(err),
 		), err)
 	}
 
@@ -198,9 +197,9 @@ func normalizeProgramEventContentBlockError(err error) error {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return domainerr.New(domainerr.NotFound, "", "Program Event content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errors.Join(collaborationconflict.Conflict(
+		return errors.Join(domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Program Event content revision changed; reload before saving", conflictState(err),
+			"Program Event content revision changed; reload before saving", domainerr.CollaborationRevisionsOf(err),
 		), err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
@@ -211,16 +210,4 @@ func normalizeProgramEventContentBlockError(err error) error {
 	default:
 		return fmt.Errorf("program Event content document: %w", err)
 	}
-}
-
-// conflictState is the current revision state a store conflict reports.
-func conflictState(err error) collaborationconflict.State {
-	var revisions interface {
-		CollaborationRevisions() (string, string, *bool)
-	}
-	if !errors.As(err, &revisions) {
-		return collaborationconflict.State{}
-	}
-	document, target, exists := revisions.CollaborationRevisions()
-	return collaborationconflict.State{Document: document, Target: target, TargetExists: exists}
 }

@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -278,11 +277,11 @@ type releaseBlockBatch struct {
 
 func (s *Service) applyTargetBlockBatch(ctx context.Context, tx *gorm.DB, input releaseBlockBatch) (collaborationSave, error) {
 	if len(input.storage.BaseUpserts) != 0 || len(input.storage.Deletes) != 0 || len(input.storage.Moves) != 0 {
-		return collaborationSave{}, collaborationconflict.MutationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN, "Release target locale cannot mutate the shared Block graph")
+		return collaborationSave{}, domainerr.CollaborationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN, "Release target locale cannot mutate the shared Block graph")
 	}
 	for _, group := range input.storage.LocaleGroups {
 		if group.Locale != input.locale {
-			return collaborationSave{}, collaborationconflict.MutationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH, "Release target locale mutation must match the authenticated room locale")
+			return collaborationSave{}, domainerr.CollaborationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH, "Release target locale mutation must match the authenticated room locale")
 		}
 	}
 	batch, err := contentblock.BatchFromRichTextStorage(input.documentID, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, input.storage)
@@ -306,7 +305,7 @@ func (s *Service) applySourceBlockBatch(ctx context.Context, tx *gorm.DB, input 
 	}
 	for _, group := range input.storage.LocaleGroups {
 		if group.Locale != source.SourceLocale {
-			return collaborationSave{}, collaborationconflict.MutationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH, "Release source mutation must match the current source locale")
+			return collaborationSave{}, domainerr.CollaborationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH, "Release source mutation must match the current source locale")
 		}
 	}
 	batch, err := contentblock.BatchFromRichTextProto(input.documentID, input.command.Batch)

@@ -6,17 +6,24 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
 
-const mapThemeChangedMessage = "map theme changed; reload before saving"
+// mapThemeChanged answers a save whose expected revision is no longer the
+// current one, reporting current as the revision to reload.
+func mapThemeChanged(current string) error {
+	return domainerr.CollaborationConflict(
+		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
+		"map theme changed; reload before saving", domainerr.CollaborationRevisions{Document: current},
+	)
+}
 
 // UpdateMapThemeSnapshotCommand replaces the snapshot of a theme read at
 // ExpectedRevision.
@@ -66,7 +73,7 @@ func (s *Service) UpdateMapThemeSnapshot(ctx context.Context, command UpdateMapT
 		Access: mutation.FreshAdminCan(can, nil),
 		Change: func(_ context.Context, tx *gorm.DB) (updated, error) {
 			if current.EditVersion != command.ExpectedRevision {
-				return updated{}, collaborationconflict.DocumentRevisionChanged(mapThemeChangedMessage, fmt.Sprint(current.EditVersion))
+				return updated{}, mapThemeChanged(fmt.Sprint(current.EditVersion))
 			}
 			// Compare the persisted float32 scale, rather than the caller's
 			// float64 spelling, so an identical roundtrip is a genuine no-op.
@@ -110,7 +117,7 @@ func writeSnapshot(tx *gorm.DB, id string, expectedRevision int64, snapshot *Sna
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return collaborationconflict.DocumentRevisionChanged(mapThemeChangedMessage, fmt.Sprint(observed))
+		return mapThemeChanged(fmt.Sprint(observed))
 	}
 	return nil
 }

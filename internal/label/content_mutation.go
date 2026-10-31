@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -177,7 +176,7 @@ func (s *Service) applyLabelSourceRoomBatch(ctx context.Context, tx *gorm.DB, b 
 	}
 	for _, group := range batch.LocaleGroups {
 		if group.Locale != b.domain.SourceLocale {
-			return BlockBatchResult{}, collaborationconflict.MutationRejection(
+			return BlockBatchResult{}, domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Label source room mutation must match the current source locale",
 			)
@@ -202,7 +201,7 @@ func validateLabelTargetProtoMutation(
 ) error {
 	for _, group := range input.GetLocaleMutationGroups() {
 		if group.GetLocale() != locale {
-			return collaborationconflict.MutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Label target locale mutation must match the authenticated room locale",
 			)
@@ -218,26 +217,26 @@ func validateLabelTargetProtoMutation(
 	}
 	upsert := baseMutations[0].GetUpsert()
 	if upsert == nil || upsert.GetNode().GetBlock() == nil {
-		return collaborationconflict.MutationRejection(
+		return domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
 			"Label target locale cannot mutate the shared Block graph",
 		)
 	}
 	block := upsert.GetNode().GetBlock()
 	if block.GetFile() != nil {
-		return collaborationconflict.MutationRejection(
+		return domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_FILE_RELATION_FORBIDDEN,
 			"Label target locale cannot attach a File Block",
 		)
 	}
 	currentKind, exists := currentKinds[block.GetId()]
 	if !exists || currentKind != labelProtoBlockKind(block) {
-		return collaborationconflict.MutationRejection(
+		return domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
 			"Label target locale cannot insert or replace a shared Block",
 		)
 	}
-	return collaborationconflict.MutationRejection(
+	return domainerr.CollaborationRejection(
 		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_SHARED_FIELD_FORBIDDEN,
 		"Label target locale cannot change source-owned Block fields",
 	)
@@ -339,7 +338,7 @@ func (s *Service) UpdateLabelLocaleMetadata(ctx context.Context, command UpdateL
 				return TitleUpdate{}, err
 			}
 			if locale != domain.SourceLocale {
-				return TitleUpdate{}, collaborationconflict.MutationRejection(
+				return TitleUpdate{}, domainerr.CollaborationRejection(
 					intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_DOCUMENT_METADATA_FORBIDDEN,
 					"Label title is source-owned and cannot be changed from a target locale room",
 				)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
@@ -140,16 +139,16 @@ func normalizeLabelContentBlockError(err error) error {
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		return collaborationconflict.Conflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Label target locale changed since it was loaded; reload before saving", collaborationState(err),
+			"Label target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return domainerr.New(domainerr.NotFound, "", "label content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return collaborationconflict.Conflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Label document changed since it was loaded; reload before saving", collaborationState(err),
+			"Label document changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
@@ -160,16 +159,4 @@ func normalizeLabelContentBlockError(err error) error {
 	default:
 		return fmt.Errorf("label content document: %w", err)
 	}
-}
-
-// collaborationState is the revision state a conflict cause reports.
-func collaborationState(err error) collaborationconflict.State {
-	var revisions interface {
-		CollaborationRevisions() (string, string, *bool)
-	}
-	if !errors.As(err, &revisions) {
-		return collaborationconflict.State{}
-	}
-	document, target, exists := revisions.CollaborationRevisions()
-	return collaborationconflict.State{Document: document, Target: target, TargetExists: exists}
 }

@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -465,14 +464,7 @@ func normalizeReleaseContentBlockError(err error) error {
 // releaseConflict is the collaboration conflict answer for cause: it reports
 // the current revisions cause carries and keeps cause in the chain.
 func releaseConflict(reason intrav1.CollaborationConflictReason, message string, cause error) error {
-	var state collaborationconflict.State
-	var revisions interface {
-		CollaborationRevisions() (string, string, *bool)
-	}
-	if errors.As(cause, &revisions) {
-		state.Document, state.Target, state.TargetExists = revisions.CollaborationRevisions()
-	}
-	return fmt.Errorf("%w: %w", collaborationconflict.Conflict(reason, message, state), cause)
+	return fmt.Errorf("%w: %w", domainerr.CollaborationConflict(reason, message, domainerr.CollaborationRevisionsOf(cause)), cause)
 }
 
 func loadReleaseContentDocumentID(

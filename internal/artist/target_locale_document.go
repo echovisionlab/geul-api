@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
@@ -67,7 +66,7 @@ func requireArtistSourceRoomLocale(
 		return "", err
 	}
 	if normalized != source.SourceLocale {
-		return "", collaborationconflict.MutationRejection(
+		return "", domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_DOCUMENT_METADATA_FORBIDDEN,
 			"Artist document metadata and audit checkpoints are source-locale only",
 		)
@@ -204,7 +203,7 @@ func validateArtistSourceStorage(
 ) error {
 	for _, group := range storage.LocaleGroups {
 		if group.Locale != sourceLocale {
-			return collaborationconflict.MutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Artist source room mutation must match the current source locale",
 			)

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/collaborationconflict"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -475,16 +474,16 @@ func normalizeCreativeContentBlockError(entityType string, err error) error {
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		return collaborationconflict.Conflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			entityType+" target locale changed since it was loaded; reload before saving", collaborationconflict.State{},
+			entityType+" target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisions{},
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return domainerr.New(domainerr.NotFound, "", entityType+" content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return collaborationconflict.Conflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			entityType+" content revision changed; reload before saving", collaborationconflict.State{},
+			entityType+" content revision changed; reload before saving", domainerr.CollaborationRevisions{},
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
