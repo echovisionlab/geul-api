@@ -90,18 +90,33 @@ func (r *applicationRuntime) startRequiredConsumers(
 	ctx context.Context,
 	runtimeFailures chan<- error,
 ) error {
-	ready := make(chan error, 1)
-	r.wg.Go(func() {
-		slog.InfoContext(ctx, "Consumer manager starting")
-		if err := r.consumerManager.StartWithReady(ctx, ready); err != nil {
-			reportRuntimeFailure(runtimeFailures, fmt.Errorf("consumer manager: %w", err))
-		}
-	})
-	if err := <-ready; err != nil {
+	slog.InfoContext(ctx, "Consumer manager starting")
+	if err := startUntilReady(ctx, &r.wg, r.consumerManager.StartWithReady, runtimeFailures); err != nil {
 		return fmt.Errorf("PGMQ consumer readiness: %w", err)
 	}
 	slog.InfoContext(ctx, "Required PGMQ queues ready", "queues", r.consumerManager.QueueNames())
 	return nil
+}
+
+// startUntilReady runs start in wg and waits for its readiness report. A
+// failure before readiness is returned to startup, which logs it; only a
+// failure after readiness is a runtime failure.
+func startUntilReady(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	start func(context.Context, chan<- error) error,
+	runtimeFailures chan<- error,
+) error {
+	ready := make(chan error, 1)
+	readinessFailed := make(chan bool, 1)
+	wg.Go(func() {
+		if err := start(ctx, ready); err != nil && !<-readinessFailed {
+			reportRuntimeFailure(runtimeFailures, fmt.Errorf("consumer manager: %w", err))
+		}
+	})
+	err := <-ready
+	readinessFailed <- err != nil
+	return err
 }
 
 func (r *applicationRuntime) initializeSubscribers(deps *applicationDependencies) error {
