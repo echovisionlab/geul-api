@@ -52,14 +52,14 @@ func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) 
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			err := db.Transaction(func(tx *gorm.DB) error {
-				return validateLabelParentTransition(ctx, tx, testCase.labelID, testCase.parentID)
+				return labelEntity.ValidateParentTransition(ctx, tx, testCase.labelID, testCase.parentID)
 			})
 			require.Error(t, err)
 		})
 	}
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return validateLabelParentTransition(ctx, tx, grandchildID, rootID)
+		return labelEntity.ValidateParentTransition(ctx, tx, grandchildID, rootID)
 	}))
 
 	service := NewInternalLabelService(

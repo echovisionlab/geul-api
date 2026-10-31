@@ -215,10 +215,10 @@ func applyTypedTranslationCandidateWithTargetRevision(
 }
 
 func RequireLockedSourceLocaleEdit(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, labelID string) error {
-	if err := lockLabelParticipantRoot(ctx, tx, labelID); err != nil {
+	if err := labelEntity.LockRoot(ctx, tx, labelID); err != nil {
 		return err
 	}
-	return requireLockedLabelPermission(ctx, tx, spiceDB, labelID, policyv1.Label.Edit)
+	return labelEntity.RequireLockedPermission(ctx, tx, spiceDB, labelID, policyv1.Label.Edit)
 }
 
 func loadTypedLabelTranslationSource(ctx context.Context, db *gorm.DB, labelID string) (*labelSourceAuthority, string, uuid.UUID, error) {

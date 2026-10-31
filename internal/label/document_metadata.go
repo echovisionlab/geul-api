@@ -2,15 +2,14 @@ package label
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"maps"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -20,53 +19,11 @@ import (
 	"gorm.io/gorm"
 )
 
-type nullableDocumentStringUpdate struct {
-	present bool
-	value   *string
-}
-
-func parseNullableDocumentStringUpdate(field string, input *intrav1.NullableStringMutation) (nullableDocumentStringUpdate, error) {
-	if input == nil {
-		return nullableDocumentStringUpdate{}, nil
-	}
-	switch operation := input.Operation.(type) {
-	case *intrav1.NullableStringMutation_Set:
-		value := strings.TrimSpace(operation.Set)
-		if value == "" {
-			return nullableDocumentStringUpdate{}, errs.InvalidArgument(field, "set value must not be empty; use clear instead")
-		}
-		return nullableDocumentStringUpdate{present: true, value: &value}, nil
-	case *intrav1.NullableStringMutation_Clear:
-		if !operation.Clear {
-			return nullableDocumentStringUpdate{}, errs.InvalidArgument(field, "clear must be true")
-		}
-		return nullableDocumentStringUpdate{present: true}, nil
-	default:
-		return nullableDocumentStringUpdate{}, errs.InvalidArgument(field, "set or clear is required")
-	}
-}
-
-func nullableDocumentStringChanged(current *string, update nullableDocumentStringUpdate) bool {
-	return update.present && !sameOptionalString(current, update.value)
-}
-
-func assignNullableDocumentString(fields structured.Fields, column string, current *string, update nullableDocumentStringUpdate) bool {
-	if !nullableDocumentStringChanged(current, update) {
-		return false
-	}
-	if update.value == nil {
-		fields[column] = nil
-	} else {
-		fields[column] = *update.value
-	}
-	return true
-}
-
 type labelDocumentMetadataPlan struct {
-	slug           nullableDocumentStringUpdate
-	countryCode    nullableDocumentStringUpdate
-	website        nullableDocumentStringUpdate
-	parentLabelID  nullableDocumentStringUpdate
+	slug           entityparticipant.NullableStringUpdate
+	countryCode    entityparticipant.NullableStringUpdate
+	website        entityparticipant.NullableStringUpdate
+	parentLabelID  entityparticipant.NullableStringUpdate
 	socialLinks    map[string]string
 	setSocialLinks bool
 }
@@ -77,30 +34,30 @@ func buildLabelDocumentMetadataPlan(input *intrav1.LabelDocumentMetadataUpdate) 
 	}
 	var plan labelDocumentMetadataPlan
 	var err error
-	if plan.slug, err = parseNullableDocumentStringUpdate("slug", input.Slug); err != nil {
+	if plan.slug, err = entityparticipant.ParseNullableStringUpdate("slug", input.Slug); err != nil {
 		return labelDocumentMetadataPlan{}, err
 	}
-	if plan.countryCode, err = parseNullableDocumentStringUpdate("country_code", input.CountryCode); err != nil {
+	if plan.countryCode, err = entityparticipant.ParseNullableStringUpdate("country_code", input.CountryCode); err != nil {
 		return labelDocumentMetadataPlan{}, err
 	}
-	if plan.website, err = parseNullableDocumentStringUpdate("website", input.Website); err != nil {
+	if plan.website, err = entityparticipant.ParseNullableStringUpdate("website", input.Website); err != nil {
 		return labelDocumentMetadataPlan{}, err
 	}
-	if plan.parentLabelID, err = parseNullableDocumentStringUpdate("parent_label_id", input.ParentLabelId); err != nil {
+	if plan.parentLabelID, err = entityparticipant.ParseNullableStringUpdate("parent_label_id", input.ParentLabelId); err != nil {
 		return labelDocumentMetadataPlan{}, err
 	}
-	if plan.slug.value != nil {
-		if err := validateSlugWithoutSlash(*plan.slug.value); err != nil {
+	if plan.slug.Value != nil {
+		if err := validateSlugWithoutSlash(*plan.slug.Value); err != nil {
 			return labelDocumentMetadataPlan{}, err
 		}
 	}
-	if plan.parentLabelID.value != nil {
-		parsed, err := uuid.Parse(*plan.parentLabelID.value)
+	if plan.parentLabelID.Value != nil {
+		parsed, err := uuid.Parse(*plan.parentLabelID.Value)
 		if err != nil {
 			return labelDocumentMetadataPlan{}, errs.InvalidArgument("parent_label_id", "must be a valid Label ID")
 		}
 		canonical := parsed.String()
-		plan.parentLabelID.value = &canonical
+		plan.parentLabelID.Value = &canonical
 	}
 	if input.SocialLinks != nil {
 		plan.socialLinks = maps.Clone(input.SocialLinks.Values)
@@ -109,7 +66,7 @@ func buildLabelDocumentMetadataPlan(input *intrav1.LabelDocumentMetadataUpdate) 
 		}
 		plan.setSocialLinks = true
 	}
-	if !plan.slug.present && !plan.countryCode.present && !plan.website.present && !plan.parentLabelID.present && !plan.setSocialLinks {
+	if !plan.slug.Present && !plan.countryCode.Present && !plan.website.Present && !plan.parentLabelID.Present && !plan.setSocialLinks {
 		return labelDocumentMetadataPlan{}, errs.InvalidArgument("update", "at least one metadata value is required")
 	}
 	return plan, nil
@@ -133,11 +90,10 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	previousParent, err := loadLabelDocumentParent(ctx, s.db, req.Msg.LabelId)
+	parent, err := labelEntity.PlanParentUpdate(ctx, s.db, req.Msg.LabelId, plan.parentLabelID)
 	if err != nil {
 		return nil, err
 	}
-	requiresParentWrite := plan.parentLabelID.present && !sameOptionalString(previousParent, plan.parentLabelID.value)
 	var advanced contentblock.AdvanceResult
 	mutate := func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 		if err := s.translation.RequireDocumentContributors(ctx, tx, req.Msg.ContributorMemberIds); err != nil {
@@ -149,28 +105,16 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 			if err := tx.WithContext(ctx).Select("id", "slug", "country_code", "website", "social_links", "parent_label_id").Where("id = ?", req.Msg.LabelId).Take(&current).Error; err != nil {
 				return contentblock.MetadataEffect{}, err
 			}
-			parentChanged := nullableDocumentStringChanged(current.ParentLabelID, plan.parentLabelID)
-			if plan.parentLabelID.present && (!sameOptionalString(current.ParentLabelID, previousParent) || parentChanged != requiresParentWrite) {
-				return contentblock.MetadataEffect{}, errs.FailedPrecondition("Label parent changed concurrently; reload before saving")
-			}
-			if parentChanged {
-				if write == nil {
-					return contentblock.MetadataEffect{}, errs.FailedPrecondition("Label parent changed concurrently; reload before saving")
-				}
-				parentID := ""
-				if plan.parentLabelID.value != nil {
-					parentID = *plan.parentLabelID.value
-				}
-				if err := validateLabelParentTransition(ctx, tx, req.Msg.LabelId, parentID); err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
+			parentChanged, err := labelEntity.CheckParentUpdate(ctx, tx, req.Msg.LabelId, parent, current.ParentLabelID, write)
+			if err != nil {
+				return contentblock.MetadataEffect{}, err
 			}
 			fields := structured.Fields{}
-			slugChanged := assignNullableDocumentString(fields, "slug", current.Slug, plan.slug)
+			slugChanged := plan.slug.Assign(fields, "slug", current.Slug)
 			changed := slugChanged
-			changed = assignNullableDocumentString(fields, "country_code", current.CountryCode, plan.countryCode) || changed
-			changed = assignNullableDocumentString(fields, "website", current.Website, plan.website) || changed
-			changed = assignNullableDocumentString(fields, "parent_label_id", current.ParentLabelID, plan.parentLabelID) || changed
+			changed = plan.countryCode.Assign(fields, "country_code", current.CountryCode) || changed
+			changed = plan.website.Assign(fields, "website", current.Website) || changed
+			changed = plan.parentLabelID.Assign(fields, "parent_label_id", current.ParentLabelID) || changed
 			if plan.setSocialLinks && !maps.Equal(current.SocialLinks, plan.socialLinks) {
 				fields["social_links"] = plan.socialLinks
 				changed = true
@@ -178,11 +122,11 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 			if !changed {
 				return contentblock.MetadataEffect{}, nil
 			}
-			if slugChanged && plan.slug.value != nil {
-				if err := ensureSlugAvailable(ctx, tx, &model.Label{}, "label", *plan.slug.value, req.Msg.LabelId); err != nil {
+			if slugChanged && plan.slug.Value != nil {
+				if err := ensureSlugAvailable(ctx, tx, &model.Label{}, "label", *plan.slug.Value, req.Msg.LabelId); err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
-				if err := requireLabelRouteAvailableWithDB(ctx, tx, plan.slug.value); err != nil {
+				if err := requireLabelRouteAvailableWithDB(ctx, tx, plan.slug.Value); err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
 			}
@@ -191,11 +135,7 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 				return contentblock.MetadataEffect{}, err
 			}
 			if parentChanged {
-				apply, compensate, err := replaceLabelParentRelationshipMutations(req.Msg.LabelId, current.ParentLabelID, plan.parentLabelID.value)
-				if err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				if err := write(apply, compensate); err != nil {
+				if err := labelEntity.WriteParentRelationships(req.Msg.LabelId, parent, current.ParentLabelID, write); err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
 			}
@@ -206,27 +146,8 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 		}
 		return nil
 	}
-	if requiresParentWrite {
-		_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, mutate)
-	} else {
-		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return mutate(tx, nil) })
-	}
-	if err != nil {
+	if err := entityparticipant.ExecuteMetadataMutation(ctx, s.db, s.spiceDB, parent, mutate); err != nil {
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&intrav1.UpdateLabelDocumentMetadataResponse{DocumentRevision: advanced.DocumentRevision.String(), Changed: advanced.Changed, SourceChanged: advanced.TranslationSourceChanged}), nil
-}
-
-func loadLabelDocumentParent(ctx context.Context, db *gorm.DB, labelID string) (*string, error) {
-	var row struct {
-		ParentID *string `gorm:"column:parent_id"`
-	}
-	result := db.WithContext(ctx).Table("label").Select("parent_label_id AS parent_id").Where("id = ?", labelID).Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, errs.NotFound("label", labelID)
-	}
-	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
-	}
-	return row.ParentID, nil
 }

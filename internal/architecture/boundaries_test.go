@@ -55,6 +55,7 @@ var guardedPackageRoots = []string{
 	"internal/email",
 	"internal/emailauthoring",
 	"internal/emaildelivery",
+	"internal/entityparticipant",
 	"internal/form",
 	"internal/favicon",
 	"internal/filemedia",

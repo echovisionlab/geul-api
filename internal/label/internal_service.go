@@ -75,47 +75,6 @@ func NewInternalLabelService(db *gorm.DB, asyncPublisher AsyncPublisher, spiceDB
 	return service
 }
 
-func validateLabelParentTransition(ctx context.Context, tx *gorm.DB, labelID, parentID string) error {
-	if err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext('label_parent_graph'))").Error; err != nil {
-		return err
-	}
-	if parentID == "" {
-		return nil
-	}
-	if parentID == labelID {
-		return errs.InvalidArgument("parent_label_id", "cannot reference the same label")
-	}
-	if !IsValidUUID(parentID) {
-		return errs.InvalidArgument("parent_label_id", "must be a valid Label ID")
-	}
-	var parentExists bool
-	if err := tx.WithContext(ctx).
-		Raw(`SELECT EXISTS(SELECT 1 FROM label WHERE id = ?::uuid)`, parentID).
-		Scan(&parentExists).Error; err != nil {
-		return err
-	}
-	if !parentExists {
-		return errs.InvalidArgument("parent_label_id", "label does not exist")
-	}
-	var cycle bool
-	if err := tx.WithContext(ctx).Raw(`
-		WITH RECURSIVE descendants(id) AS (
-			SELECT id FROM label WHERE parent_label_id = ?
-			UNION
-			SELECT child.id
-			FROM label child
-			JOIN descendants parent ON child.parent_label_id = parent.id
-		)
-		SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?)
-	`, labelID, parentID).Scan(&cycle).Error; err != nil {
-		return err
-	}
-	if cycle {
-		return errs.InvalidArgument("parent_label_id", "would create a label hierarchy cycle")
-	}
-	return nil
-}
-
 func (s *InternalLabelService) LoadLabelBlockDocument(
 	ctx context.Context,
 	req *connect.Request[intrav1.LoadLabelBlockDocumentRequest],

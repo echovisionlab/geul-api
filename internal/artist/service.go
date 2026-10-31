@@ -253,7 +253,7 @@ func (s *ArtistService) ListArtistsAdmin(
 	req *connect.Request[managev1.ListArtistsAdminRequest],
 ) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
 	// Check admin permission
-	if err := requireArtistList(ctx, s.spiceDB); err != nil {
+	if err := artistEntity.RequireList(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
 	var artists []model.Artist
@@ -463,7 +463,7 @@ func (s *ArtistService) createArtistWithDB(
 		return err
 	}
 	if artist.ParentArtistID != nil {
-		if err := validateArtistParentTransition(ctx, tx, artist.ID, *artist.ParentArtistID); err != nil {
+		if err := artistEntity.ValidateParentTransition(ctx, tx, artist.ID, *artist.ParentArtistID); err != nil {
 			return err
 		}
 	}
@@ -508,7 +508,7 @@ func (s *ArtistService) createArtistWithDB(
 	if err := s.appendArtistCreatedAudit(ctx, tx, artist.ID); err != nil {
 		return err
 	}
-	apply, compensate, err := createArtistRelationships(artist.ID, owner.IdentityID, artist.ParentArtistID)
+	apply, compensate, err := artistEntity.CreateRelationships(artist.ID, owner.IdentityID, artist.ParentArtistID)
 	if err != nil {
 		return errs.Internal(err)
 	}
@@ -562,16 +562,16 @@ func (s *ArtistService) DeleteArtist(
 		return nil, errs.InvalidArgument("id", "must identify an Artist")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := lockArtistParticipantRoot(ctx, tx, req.Msg.Id); err != nil {
+		if err := artistEntity.LockRoot(ctx, tx, req.Msg.Id); err != nil {
 			return err
 		}
 		// Serialize the SpiceDB relationship snapshot with every Artist
 		// reparent. The root lock is acquired first everywhere to avoid a
 		// delete/reparent lock-order inversion for the same Artist.
-		if err := lockArtistParentGraph(ctx, tx); err != nil {
+		if err := artistEntity.LockParentGraph(ctx, tx); err != nil {
 			return err
 		}
-		if err := requireLockedArtistPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Artist.Delete); err != nil {
+		if err := artistEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Artist.Delete); err != nil {
 			return err
 		}
 		impacts, err := loadArtistDeletionImpacts(ctx, tx, req.Msg.Id)
@@ -585,7 +585,7 @@ func (s *ArtistService) DeleteArtist(
 		if err != nil {
 			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
-		deleteRelationships, restoreRelationships, err := artistDeletionRelationshipMutations(req.Msg.Id, snapshots)
+		deleteRelationships, restoreRelationships, err := artistEntity.DeletionRelationshipMutations(req.Msg.Id, snapshots)
 		if err != nil {
 			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
@@ -653,10 +653,10 @@ func (s *ArtistService) PublishArtist(
 		"updated_at":   now,
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockArtistParticipantRoot(ctx, tx, req.Msg.Id); err != nil {
+		if err := artistEntity.LockRoot(ctx, tx, req.Msg.Id); err != nil {
 			return err
 		}
-		if err := requireLockedArtistPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Artist.Publish); err != nil {
+		if err := artistEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Artist.Publish); err != nil {
 			return err
 		}
 		if err := tx.First(&artist, "id = ?", req.Msg.Id).Error; err != nil {
@@ -702,10 +702,10 @@ func (s *ArtistService) UnpublishArtist(
 		"updated_at": now,
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockArtistParticipantRoot(ctx, tx, req.Msg.Id); err != nil {
+		if err := artistEntity.LockRoot(ctx, tx, req.Msg.Id); err != nil {
 			return err
 		}
-		if err := requireLockedArtistPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Artist.Publish); err != nil {
+		if err := artistEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Artist.Publish); err != nil {
 			return err
 		}
 		if err := tx.First(&artist, "id = ?", req.Msg.Id).Error; err != nil {

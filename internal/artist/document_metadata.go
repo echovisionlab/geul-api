@@ -2,7 +2,6 @@ package artist
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -20,62 +20,12 @@ import (
 	"gorm.io/gorm"
 )
 
-type nullableDocumentStringUpdate struct {
-	present bool
-	value   *string
-}
-
-func parseNullableDocumentStringUpdate(
-	field string,
-	input *intrav1.NullableStringMutation,
-) (nullableDocumentStringUpdate, error) {
-	if input == nil {
-		return nullableDocumentStringUpdate{}, nil
-	}
-	switch operation := input.Operation.(type) {
-	case *intrav1.NullableStringMutation_Set:
-		value := strings.TrimSpace(operation.Set)
-		if value == "" {
-			return nullableDocumentStringUpdate{}, errs.InvalidArgument(field, "set value must not be empty; use clear instead")
-		}
-		return nullableDocumentStringUpdate{present: true, value: &value}, nil
-	case *intrav1.NullableStringMutation_Clear:
-		if !operation.Clear {
-			return nullableDocumentStringUpdate{}, errs.InvalidArgument(field, "clear must be true")
-		}
-		return nullableDocumentStringUpdate{present: true}, nil
-	default:
-		return nullableDocumentStringUpdate{}, errs.InvalidArgument(field, "set or clear is required")
-	}
-}
-
-func nullableDocumentStringChanged(current *string, update nullableDocumentStringUpdate) bool {
-	return update.present && !sameOptionalString(current, update.value)
-}
-
-func assignNullableDocumentString(
-	fields structured.Fields,
-	column string,
-	current *string,
-	update nullableDocumentStringUpdate,
-) bool {
-	if !nullableDocumentStringChanged(current, update) {
-		return false
-	}
-	if update.value == nil {
-		fields[column] = nil
-	} else {
-		fields[column] = *update.value
-	}
-	return true
-}
-
 type artistDocumentMetadataPlan struct {
-	realName       nullableDocumentStringUpdate
-	countryCode    nullableDocumentStringUpdate
-	website        nullableDocumentStringUpdate
-	slug           nullableDocumentStringUpdate
-	parentArtistID nullableDocumentStringUpdate
+	realName       entityparticipant.NullableStringUpdate
+	countryCode    entityparticipant.NullableStringUpdate
+	website        entityparticipant.NullableStringUpdate
+	slug           entityparticipant.NullableStringUpdate
+	parentArtistID entityparticipant.NullableStringUpdate
 	socialLinks    map[string]string
 	setSocialLinks bool
 	labelIDs       []string
@@ -90,33 +40,33 @@ func buildArtistDocumentMetadataPlan(
 	}
 	var plan artistDocumentMetadataPlan
 	var err error
-	if plan.realName, err = parseNullableDocumentStringUpdate("real_name", input.RealName); err != nil {
+	if plan.realName, err = entityparticipant.ParseNullableStringUpdate("real_name", input.RealName); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.countryCode, err = parseNullableDocumentStringUpdate("country_code", input.CountryCode); err != nil {
+	if plan.countryCode, err = entityparticipant.ParseNullableStringUpdate("country_code", input.CountryCode); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.website, err = parseNullableDocumentStringUpdate("website", input.Website); err != nil {
+	if plan.website, err = entityparticipant.ParseNullableStringUpdate("website", input.Website); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.slug, err = parseNullableDocumentStringUpdate("slug", input.Slug); err != nil {
+	if plan.slug, err = entityparticipant.ParseNullableStringUpdate("slug", input.Slug); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.parentArtistID, err = parseNullableDocumentStringUpdate("parent_artist_id", input.ParentArtistId); err != nil {
+	if plan.parentArtistID, err = entityparticipant.ParseNullableStringUpdate("parent_artist_id", input.ParentArtistId); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.slug.value != nil {
-		if err := validateSlugWithoutSlash(*plan.slug.value); err != nil {
+	if plan.slug.Value != nil {
+		if err := validateSlugWithoutSlash(*plan.slug.Value); err != nil {
 			return artistDocumentMetadataPlan{}, err
 		}
 	}
-	if plan.parentArtistID.value != nil {
-		parsed, err := uuid.Parse(*plan.parentArtistID.value)
+	if plan.parentArtistID.Value != nil {
+		parsed, err := uuid.Parse(*plan.parentArtistID.Value)
 		if err != nil {
 			return artistDocumentMetadataPlan{}, errs.InvalidArgument("parent_artist_id", "must be a valid Artist ID")
 		}
 		canonical := parsed.String()
-		plan.parentArtistID.value = &canonical
+		plan.parentArtistID.Value = &canonical
 	}
 	if input.SocialLinks != nil {
 		plan.socialLinks = maps.Clone(input.SocialLinks.Values)
@@ -132,8 +82,8 @@ func buildArtistDocumentMetadataPlan(
 		}
 		plan.setLabelIDs = true
 	}
-	if !plan.realName.present && !plan.countryCode.present && !plan.website.present &&
-		!plan.slug.present && !plan.parentArtistID.present && !plan.setSocialLinks && !plan.setLabelIDs {
+	if !plan.realName.Present && !plan.countryCode.Present && !plan.website.Present &&
+		!plan.slug.Present && !plan.parentArtistID.Present && !plan.setSocialLinks && !plan.setLabelIDs {
 		return artistDocumentMetadataPlan{}, errs.InvalidArgument("update", "at least one metadata value is required")
 	}
 	return plan, nil
@@ -241,12 +191,10 @@ func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 	if err != nil {
 		return nil, err
 	}
-	previousParent, err := loadCreativeDocumentParent(ctx, s.db, artistContentEntity, req.Msg.ArtistId)
+	parent, err := artistEntity.PlanParentUpdate(ctx, s.db, req.Msg.ArtistId, plan.parentArtistID)
 	if err != nil {
 		return nil, err
 	}
-	requiresParentWrite := plan.parentArtistID.present &&
-		!sameOptionalString(previousParent, plan.parentArtistID.value)
 
 	var advanced contentblock.AdvanceResult
 	mutate := func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
@@ -270,38 +218,26 @@ func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 					Take(&current).Error; err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
-				parentChanged := nullableDocumentStringChanged(current.ParentArtistID, plan.parentArtistID)
-				if plan.parentArtistID.present && (!sameOptionalString(current.ParentArtistID, previousParent) || parentChanged != requiresParentWrite) {
-					return contentblock.MetadataEffect{}, errs.FailedPrecondition("Artist parent changed concurrently; reload before saving")
-				}
-				if parentChanged {
-					if write == nil {
-						return contentblock.MetadataEffect{}, errs.FailedPrecondition("Artist parent changed concurrently; reload before saving")
-					}
-					parentID := ""
-					if plan.parentArtistID.value != nil {
-						parentID = *plan.parentArtistID.value
-					}
-					if err := validateArtistParentTransition(ctx, tx, req.Msg.ArtistId, parentID); err != nil {
-						return contentblock.MetadataEffect{}, err
-					}
+				parentChanged, err := artistEntity.CheckParentUpdate(ctx, tx, req.Msg.ArtistId, parent, current.ParentArtistID, write)
+				if err != nil {
+					return contentblock.MetadataEffect{}, err
 				}
 				fields := structured.Fields{}
-				changed := assignNullableDocumentString(fields, "real_name", current.RealName, plan.realName)
-				changed = assignNullableDocumentString(fields, "country_code", current.CountryCode, plan.countryCode) || changed
-				changed = assignNullableDocumentString(fields, "website", current.Website, plan.website) || changed
-				slugChanged := assignNullableDocumentString(fields, "slug", current.Slug, plan.slug)
+				changed := plan.realName.Assign(fields, "real_name", current.RealName)
+				changed = plan.countryCode.Assign(fields, "country_code", current.CountryCode) || changed
+				changed = plan.website.Assign(fields, "website", current.Website) || changed
+				slugChanged := plan.slug.Assign(fields, "slug", current.Slug)
 				changed = slugChanged || changed
-				changed = assignNullableDocumentString(fields, "parent_artist_id", current.ParentArtistID, plan.parentArtistID) || changed
+				changed = plan.parentArtistID.Assign(fields, "parent_artist_id", current.ParentArtistID) || changed
 				if plan.setSocialLinks && !maps.Equal(current.SocialLinks, plan.socialLinks) {
 					fields["social_links"] = plan.socialLinks
 					changed = true
 				}
-				if slugChanged && plan.slug.value != nil {
-					if err := ensureSlugAvailable(ctx, tx, &model.Artist{}, "artist", *plan.slug.value, req.Msg.ArtistId); err != nil {
+				if slugChanged && plan.slug.Value != nil {
+					if err := ensureSlugAvailable(ctx, tx, &model.Artist{}, "artist", *plan.slug.Value, req.Msg.ArtistId); err != nil {
 						return contentblock.MetadataEffect{}, err
 					}
-					if err := requireArtistRouteAvailableWithDB(ctx, s.runtime, tx, plan.slug.value); err != nil {
+					if err := requireArtistRouteAvailableWithDB(ctx, s.runtime, tx, plan.slug.Value); err != nil {
 						return contentblock.MetadataEffect{}, err
 					}
 				}
@@ -331,11 +267,7 @@ func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 					}
 				}
 				if parentChanged {
-					apply, compensate, err := replaceArtistParentRelationships(req.Msg.ArtistId, current.ParentArtistID, plan.parentArtistID.value)
-					if err != nil {
-						return contentblock.MetadataEffect{}, err
-					}
-					if err := write(apply, compensate); err != nil {
+					if err := artistEntity.WriteParentRelationships(req.Msg.ArtistId, parent, current.ParentArtistID, write); err != nil {
 						return contentblock.MetadataEffect{}, err
 					}
 				}
@@ -347,12 +279,7 @@ func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 		}
 		return nil
 	}
-	if requiresParentWrite {
-		_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, mutate)
-	} else {
-		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return mutate(tx, nil) })
-	}
-	if err != nil {
+	if err := entityparticipant.ExecuteMetadataMutation(ctx, s.db, s.spiceDB, parent, mutate); err != nil {
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&intrav1.UpdateArtistDocumentMetadataResponse{
@@ -360,27 +287,4 @@ func (s *InternalArtistService) UpdateArtistDocumentMetadata(
 		Changed:          advanced.Changed, SourceChanged: advanced.TranslationSourceChanged,
 		Locale: locale,
 	}), nil
-}
-func loadCreativeDocumentParent(
-	ctx context.Context,
-	db *gorm.DB,
-	entityType string,
-	entityID string,
-) (*string, error) {
-	column := "parent_" + entityType + "_id"
-	var row struct {
-		ParentID *string `gorm:"column:parent_id"`
-	}
-	result := db.WithContext(ctx).
-		Table(entityType).
-		Select(column+" AS parent_id").
-		Where("id = ?", entityID).
-		Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, errs.NotFound(entityType, entityID)
-	}
-	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
-	}
-	return row.ParentID, nil
 }

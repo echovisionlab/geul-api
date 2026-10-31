@@ -316,7 +316,7 @@ func (s *LabelService) ListLabelsAdmin(
 	req *connect.Request[managev1.ListLabelsAdminRequest],
 ) (*connect.Response[managev1.ListLabelsAdminResponse], error) {
 	// Check admin role
-	if err := requireLabelList(ctx, s.spiceDB); err != nil {
+	if err := labelEntity.RequireList(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
 
@@ -546,7 +546,7 @@ func (s *LabelService) createLabelWithDB(
 		return err
 	}
 	if label.ParentLabelID != nil {
-		if err := validateLabelParentTransition(ctx, tx, label.ID, *label.ParentLabelID); err != nil {
+		if err := labelEntity.ValidateParentTransition(ctx, tx, label.ID, *label.ParentLabelID); err != nil {
 			return err
 		}
 	}
@@ -583,7 +583,7 @@ func (s *LabelService) createLabelWithDB(
 	if err := s.appendLabelCreatedAudit(ctx, tx, label.ID); err != nil {
 		return err
 	}
-	apply, compensate, err := createLabelRelationshipMutations(label.ID, owner.IdentityID, label.ParentLabelID)
+	apply, compensate, err := labelEntity.CreateRelationships(label.ID, owner.IdentityID, label.ParentLabelID)
 	if err != nil {
 		return errs.Internal(err)
 	}
@@ -634,7 +634,7 @@ func (s *LabelService) PreviewDeleteLabel(
 		}
 		return nil, errs.Internal(err)
 	}
-	if err := requireLabelPermission(ctx, s.spiceDB, req.Msg.Id, policyv1.Label.Delete); err != nil {
+	if err := labelEntity.RequirePermission(ctx, s.spiceDB, req.Msg.Id, policyv1.Label.Delete); err != nil {
 		return nil, err
 	}
 	rows, err := loadLabelDeletionImpacts(ctx, s.db, req.Msg.Id)
@@ -687,7 +687,7 @@ func (s *LabelService) DeleteLabel(
 			First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Delete); err != nil {
+		if err := labelEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Delete); err != nil {
 			return err
 		}
 		impacts, err := loadLabelDeletionImpacts(ctx, tx, req.Msg.Id)
@@ -701,7 +701,7 @@ func (s *LabelService) DeleteLabel(
 		if err != nil {
 			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
-		deleteRelationships, restoreRelationships, err := labelDeletionRelationshipMutations(req.Msg.Id, snapshots)
+		deleteRelationships, restoreRelationships, err := labelEntity.DeletionRelationshipMutations(req.Msg.Id, snapshots)
 		if err != nil {
 			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
@@ -771,7 +771,7 @@ func (s *LabelService) PublishLabel(
 		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {
+		if err := labelEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {
 			return err
 		}
 		if label.Status == managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String() {
@@ -821,7 +821,7 @@ func (s *LabelService) UnpublishLabel(
 		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", req.Msg.Id).Error; err != nil {
 			return err
 		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {
+		if err := labelEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.Id, policyv1.Label.Publish); err != nil {
 			return err
 		}
 		if label.Status == managev1.LabelStatus_LABEL_STATUS_DRAFT.String() {

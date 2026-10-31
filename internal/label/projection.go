@@ -31,12 +31,12 @@ func (s *LabelService) CheckLabelSlugAvailable(
 
 	if req.Msg.ExcludeLabelId != nil {
 		// Editing existing label - check edit permission (admin or manager)
-		if err := requireLabelPermission(ctx, s.spiceDB, *req.Msg.ExcludeLabelId, policyv1.Label.Edit); err != nil {
+		if err := labelEntity.RequirePermission(ctx, s.spiceDB, *req.Msg.ExcludeLabelId, policyv1.Label.Edit); err != nil {
 			return nil, err
 		}
 	} else {
 		// Creating new label - only admins can create labels
-		if err := requireLabelCreate(ctx, s.spiceDB); err != nil {
+		if err := labelEntity.RequireCreate(ctx, s.spiceDB); err != nil {
 			return nil, err
 		}
 	}
