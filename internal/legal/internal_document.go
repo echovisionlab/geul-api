@@ -530,3 +530,14 @@ func (s internalLegalDocumentService) updateLocaleTitle(
 	}
 	return false, errs.FailedPrecondition("target legal locale metadata is read-only")
 }
+
+func snapshotHasSiteVariables(snapshot contentblock.Snapshot) bool {
+	for _, overlay := range snapshot.LocaleOverlays {
+		for _, block := range overlay.Blocks {
+			if strings.Contains(string(block.LocalizedData), `"siteVariable"`) || strings.Contains(string(block.LocalizedData), "{{site.") || strings.Contains(string(block.LocalizedData), "{{contact.") {
+				return true
+			}
+		}
+	}
+	return false
+}
