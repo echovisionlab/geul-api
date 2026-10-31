@@ -8,12 +8,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
-	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/model"
-	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -28,9 +24,7 @@ func TestCommentReadsFollowPostVisibilityAndSettingIntegration(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
 	db := stack.Postgres.DB
-	service := postpublic.NewPostService(db, "", stack.SpiceDBClient, referenceSearchFileService{},
-		postadapter.NewLocalization(), referencecatalogadapter.PublicMapPlaces{},
-		postadapter.NewMemberSummaries(db, ""), postruntime.ShareLinks{})
+	service := newPublicPostHandler(t, db, stack.SpiceDBClient, testutil.NewPostContentBlockStore(t))
 
 	identityID := uuid.NewString()
 	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Comment preview author")

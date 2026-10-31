@@ -12,7 +12,6 @@ import (
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
-	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
@@ -22,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/page"
-	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
@@ -38,7 +36,6 @@ type internalContentServiceRegistration struct {
 	collaborationRuntime        *collaborationadapter.Runtime
 	pageRuntime                 *pageadapter.Runtime
 	fileService                 *filemedia.FileService
-	postMedia                   postruntime.ContentBlockMedia
 	programEventFiles           *programeventadapter.Files
 	emailAuthoringReferences    *emailauthoringadapter.CampaignDeliveryReferences
 	legalRuntime                *legaladapter.Runtime
@@ -74,13 +71,11 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	collaborationRuntime := r.collaborationRuntime
 	pageRuntime := r.pageRuntime
 	fileService := r.fileService
-	postMedia := r.postMedia
 	programEventFiles := r.programEventFiles
 	emailAuthoringReferences := r.emailAuthoringReferences
 	legalRuntime := r.legalRuntime
 	legalDependencies := r.legalDependencies
 	formDependencies := r.formDependencies
-	ogDeps := deps.og
 	// Internal API services are not browser/session authenticated and must not
 	// be exposed via Oathkeeper. Every handler is protected below by the exact
 	// caller-scoped service credential; private-network placement is additional
@@ -113,21 +108,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalPagePath, internalPageHandler := intrav1connect.NewInternalPageServiceHandler(internalPageService, internalHandlerOpts...)
 	mux.Handle(internalPagePath, internalRPCTrust.collab(internalPageHandler))
 	slog.Info("Registered internal service", "path", internalPagePath)
-
-	internalPostService := post.NewInternalPostService(
-		db,
-		spicedbClient,
-		servicePublisher,
-		cfg.CDNURL,
-		ogDeps.refresher,
-		postMedia,
-		post.WithInternalPostDomainAuditWriter(telemetryWriter),
-		post.WithInternalPostContentBlockStore(contentBlockStore),
-		post.WithInternalPostContentBlockMediaHydrator(fileService),
-	)
-	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(internalPostService, internalHandlerOpts...)
-	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
-	slog.Info("Registered internal service", "path", internalPostPath)
 
 	internalProgramEventService := programevent.NewAuditedInternalProgramEventService(
 		db,

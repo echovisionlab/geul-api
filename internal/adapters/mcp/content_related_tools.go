@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/work"
 
 	"connectrpc.com/connect"
@@ -56,16 +57,16 @@ var contentRelatedTools = []mcpserver.Tool{
 }
 
 type PostRelatedApplication interface {
-	SetPostFeaturedImage(context.Context, *connect.Request[managev1.SetPostFeaturedImageRequest]) (*connect.Response[managev1.SetPostFeaturedImageResponse], error)
-	DeletePostFeaturedImage(context.Context, *connect.Request[managev1.DeletePostFeaturedImageRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error)
-	ListPostParticipants(context.Context, *connect.Request[managev1.ListPostParticipantsRequest]) (*connect.Response[managev1.ListPostParticipantsResponse], error)
-	AddPostAuthor(context.Context, *connect.Request[managev1.AddPostAuthorRequest]) (*connect.Response[managev1.PostParticipant], error)
-	RemovePostAuthor(context.Context, *connect.Request[managev1.RemovePostAuthorRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	AddPostCollaborator(context.Context, *connect.Request[managev1.AddPostCollaboratorRequest]) (*connect.Response[managev1.PostParticipant], error)
-	RemovePostCollaborator(context.Context, *connect.Request[managev1.RemovePostCollaboratorRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	ListPostVersions(context.Context, *connect.Request[managev1.ListPostVersionsRequest]) (*connect.Response[managev1.ListPostVersionsResponse], error)
-	RestorePostVersion(context.Context, *connect.Request[managev1.RestorePostVersionRequest]) (*connect.Response[managev1.Post], error)
-	CheckSlugAvailable(context.Context, *connect.Request[managev1.CheckSlugAvailableRequest]) (*connect.Response[managev1.CheckSlugAvailableResponse], error)
+	SetPostFeaturedImage(context.Context, postdomain.SetPostFeaturedImageCommand) (*managev1.SetPostFeaturedImageResponse, error)
+	DeletePostFeaturedImage(context.Context, postdomain.DeletePostFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error)
+	ListPostParticipants(context.Context, postdomain.PostParticipantsQuery) (*managev1.ListPostParticipantsResponse, error)
+	AddPostAuthor(context.Context, postdomain.PostParticipantCommand) (*managev1.PostParticipant, error)
+	RemovePostAuthor(context.Context, postdomain.PostParticipantCommand) error
+	AddPostCollaborator(context.Context, postdomain.PostParticipantCommand) (*managev1.PostParticipant, error)
+	RemovePostCollaborator(context.Context, postdomain.PostParticipantCommand) error
+	ListPostVersions(context.Context, postdomain.ListPostVersionsQuery) (*managev1.ListPostVersionsResponse, error)
+	RestorePostVersion(context.Context, postdomain.RestorePostVersionCommand) (*managev1.Post, error)
+	CheckSlugAvailable(context.Context, postdomain.CheckSlugAvailableQuery) (*managev1.CheckSlugAvailableResponse, error)
 }
 
 type WorkRelatedApplication interface {
@@ -154,11 +155,11 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 		var runID *string
 		switch input.DocumentType {
 		case "post":
-			response, err := tools.posts.SetPostFeaturedImage(ctx, connect.NewRequest(&managev1.SetPostFeaturedImageRequest{PostId: input.DocumentID, FileId: input.FileID}))
+			response, err := tools.posts.SetPostFeaturedImage(ctx, postdomain.SetPostFeaturedImageCommand{PostID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.Msg.OgGenerationRunId
+			runID = response.OgGenerationRunId
 		case "work":
 			response, err := tools.works.SetWorkFeaturedImage(ctx, work.SetWorkFeaturedImageCommand{WorkID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
@@ -180,7 +181,11 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 	var err error
 	switch input.DocumentType {
 	case "post":
-		response, err = tools.posts.DeletePostFeaturedImage(ctx, connect.NewRequest(&managev1.DeletePostFeaturedImageRequest{PostId: input.DocumentID}))
+		deleted, err := tools.posts.DeletePostFeaturedImage(ctx, postdomain.DeletePostFeaturedImageCommand{PostID: input.DocumentID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return featuredImageDeleted(input, deleted)
 	case "work":
 		deleted, err := tools.works.DeleteWorkFeaturedImage(ctx, work.DeleteWorkFeaturedImageCommand{WorkID: input.DocumentID})
 		if err != nil {
@@ -207,12 +212,12 @@ func (tools *ContentRelatedTools) listPostParticipants(ctx context.Context, argu
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.posts.ListPostParticipants(ctx, connect.NewRequest(&managev1.ListPostParticipantsRequest{PostId: input.DocumentID}))
+	response, err := tools.posts.ListPostParticipants(ctx, postdomain.PostParticipantsQuery{PostID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	participants := make([]map[string]any, 0, len(response.Msg.Participants))
-	for _, participant := range response.Msg.Participants {
+	participants := make([]map[string]any, 0, len(response.Participants))
+	for _, participant := range response.Participants {
 		if participant == nil || participant.Member == nil {
 			continue
 		}
@@ -240,32 +245,22 @@ func (tools *ContentRelatedTools) mutatePostParticipant(ctx context.Context, nam
 	if name == ToolPostCollaboratorAdd || name == ToolPostCollaboratorRemove {
 		role = "collaborator"
 	}
-	changed := true
+	command := postdomain.PostParticipantCommand{PostID: input.DocumentID, MemberID: input.MemberID}
+	var err error
 	switch name {
 	case ToolPostAuthorAdd:
-		_, err := tools.posts.AddPostAuthor(ctx, connect.NewRequest(&managev1.AddPostAuthorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
+		_, err = tools.posts.AddPostAuthor(ctx, command)
 	case ToolPostAuthorRemove:
-		response, err := tools.posts.RemovePostAuthor(ctx, connect.NewRequest(&managev1.RemovePostAuthorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		changed = response.Msg.Success
+		err = tools.posts.RemovePostAuthor(ctx, command)
 	case ToolPostCollaboratorAdd:
-		_, err := tools.posts.AddPostCollaborator(ctx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
+		_, err = tools.posts.AddPostCollaborator(ctx, command)
 	case ToolPostCollaboratorRemove:
-		response, err := tools.posts.RemovePostCollaborator(ctx, connect.NewRequest(&managev1.RemovePostCollaboratorRequest{PostId: input.DocumentID, MemberId: input.MemberID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		changed = response.Msg.Success
+		err = tools.posts.RemovePostCollaborator(ctx, command)
 	}
-	return contentResult(map[string]any{"resource_type": "post_participant", "resource_id": input.MemberID, "document_type": "post", "document_id": input.DocumentID, "member_id": input.MemberID, "role": role, "changed": changed, "deleted": name == ToolPostAuthorRemove || name == ToolPostCollaboratorRemove})
+	if err != nil {
+		return expectedToolError(err)
+	}
+	return contentResult(map[string]any{"resource_type": "post_participant", "resource_id": input.MemberID, "document_type": "post", "document_id": input.DocumentID, "member_id": input.MemberID, "role": role, "changed": true, "deleted": name == ToolPostAuthorRemove || name == ToolPostCollaboratorRemove})
 }
 
 func (tools *ContentRelatedTools) getWorkCredits(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -469,12 +464,12 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, argu
 	var page *commonv1.PaginationResponse
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.ListPostVersions(ctx, connect.NewRequest(&managev1.ListPostVersionsRequest{PostId: input.DocumentID, Pagination: pagination}))
+		response, err := tools.posts.ListPostVersions(ctx, postdomain.ListPostVersionsQuery{PostID: input.DocumentID, Page: postdomain.Page{Limit: input.Limit, Offset: input.Offset}})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		page = response.Msg.Pagination
-		for _, version := range response.Msg.Versions {
+		page = response.Pagination
+		for _, version := range response.Versions {
 			if version != nil {
 				versions = append(versions, versionOutput(version.Id, version.Version, version.Title, version.Summary, version.CanonicalHash, version.SourceLocale, version.CreatedAt, version.Contributors))
 			}
@@ -549,11 +544,11 @@ func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, ar
 	output := map[string]any{"resource_type": "document", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": true}
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.RestorePostVersion(ctx, connect.NewRequest(&managev1.RestorePostVersionRequest{PostId: input.DocumentID, VersionId: input.VersionID}))
+		response, err := tools.posts.RestorePostVersion(ctx, postdomain.RestorePostVersionCommand{PostID: input.DocumentID, VersionID: input.VersionID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		output["title"], output["document_revision"], output["status"] = response.Msg.Title, response.Msg.Revision, contentStatus(response.Msg.Status.String(), "POST_STATUS_")
+		output["title"], output["document_revision"], output["status"] = response.Title, response.Revision, contentStatus(response.Status.String(), "POST_STATUS_")
 	case "work":
 		response, err := tools.works.RestoreWorkVersion(ctx, work.RestoreWorkVersionCommand{WorkID: input.DocumentID, VersionID: input.VersionID})
 		if err != nil {
@@ -586,11 +581,11 @@ func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, argumen
 	var available bool
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.CheckSlugAvailable(ctx, connect.NewRequest(&managev1.CheckSlugAvailableRequest{Slug: input.Slug, ExcludePostId: input.ExcludeDocumentID}))
+		response, err := tools.posts.CheckSlugAvailable(ctx, postdomain.CheckSlugAvailableQuery{Slug: input.Slug, ExcludePostID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Msg.Available
+		available = response.Available
 	case "work":
 		response, err := tools.works.CheckWorkSlugAvailable(ctx, work.CheckWorkSlugAvailableQuery{Slug: input.Slug, ExcludeWorkID: input.ExcludeDocumentID})
 		if err != nil {

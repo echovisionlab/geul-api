@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/work"
 
 	"connectrpc.com/connect"
@@ -62,8 +63,8 @@ func TestContentRelatedToolsRouteFeaturedImageParticipantsAndCredits(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.collaborator.Msg.PostId != managementPostID || participant.StructuredContent["role"] != "collaborator" {
-		t.Fatalf("participant = %#v %#v", posts.collaborator.Msg, participant.StructuredContent)
+	if posts.collaborator.PostID != managementPostID || participant.StructuredContent["role"] != "collaborator" {
+		t.Fatalf("participant = %#v %#v", posts.collaborator, participant.StructuredContent)
 	}
 
 	credit, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolWorkCreditAdd, toolArguments(t, `{"document_id":"`+managementWorkID+`","name":"Sound designer","credit_role":"sound"}`))
@@ -86,16 +87,16 @@ func TestContentRelatedToolsRouteVersionsAndSlugCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.versions.Msg.Pagination.Limit != 10 || posts.versions.Msg.Pagination.Offset != 5 || versions.StructuredContent["total"] != float64(6) {
-		t.Fatalf("versions = %#v %#v", posts.versions.Msg, versions.StructuredContent)
+	if posts.versions.Page.Limit != 10 || posts.versions.Page.Offset != 5 || versions.StructuredContent["total"] != float64(6) {
+		t.Fatalf("versions = %#v %#v", posts.versions, versions.StructuredContent)
 	}
 
 	slug, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentSlugCheck, toolArguments(t, `{"document_type":"post","slug":"available-slug","exclude_document_id":"`+managementPostID+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts.slug.Msg.ExcludePostId == nil || *posts.slug.Msg.ExcludePostId != managementPostID || slug.StructuredContent["available"] != true {
-		t.Fatalf("slug = %#v %#v", posts.slug.Msg, slug.StructuredContent)
+	if posts.slug.ExcludePostID == nil || *posts.slug.ExcludePostID != managementPostID || slug.StructuredContent["available"] != true {
+		t.Fatalf("slug = %#v %#v", posts.slug, slug.StructuredContent)
 	}
 }
 
@@ -237,7 +238,7 @@ func TestDocumentVersionsListEnforcesPaginationBeforeCallingApplication(t *testi
 				var pagination *commonv1.PaginationRequest
 				switch documentType {
 				case "post":
-					pagination = posts.versions.Msg.Pagination
+					pagination = &commonv1.PaginationRequest{Limit: posts.versions.Page.Limit, Offset: posts.versions.Page.Offset}
 				case "work":
 					pagination = &commonv1.PaginationRequest{Limit: works.versions.Page.Limit, Offset: works.versions.Page.Offset}
 				case "page":
@@ -252,28 +253,28 @@ func TestDocumentVersionsListEnforcesPaginationBeforeCallingApplication(t *testi
 }
 
 type recordingPostRelated struct {
-	managev1connect.UnimplementedPostServiceHandler
-	collaborator *connect.Request[managev1.AddPostCollaboratorRequest]
-	versions     *connect.Request[managev1.ListPostVersionsRequest]
-	slug         *connect.Request[managev1.CheckSlugAvailableRequest]
+	PostRelatedApplication
+	collaborator *postdomain.PostParticipantCommand
+	versions     *postdomain.ListPostVersionsQuery
+	slug         *postdomain.CheckSlugAvailableQuery
 }
 
-func (r *recordingPostRelated) AddPostCollaborator(_ context.Context, request *connect.Request[managev1.AddPostCollaboratorRequest]) (*connect.Response[managev1.PostParticipant], error) {
-	r.collaborator = request
-	return connect.NewResponse(&managev1.PostParticipant{Member: &commonv1.MemberSummary{Id: request.Msg.MemberId, Nickname: "Member"}, Role: managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR, CreatedAt: timestamppb.Now()}), nil
+func (r *recordingPostRelated) AddPostCollaborator(_ context.Context, command postdomain.PostParticipantCommand) (*managev1.PostParticipant, error) {
+	r.collaborator = &command
+	return &managev1.PostParticipant{Member: &commonv1.MemberSummary{Id: command.MemberID, Nickname: "Member"}, Role: managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR, CreatedAt: timestamppb.Now()}, nil
 }
 
-func (r *recordingPostRelated) ListPostVersions(_ context.Context, request *connect.Request[managev1.ListPostVersionsRequest]) (*connect.Response[managev1.ListPostVersionsResponse], error) {
-	r.versions = request
-	return connect.NewResponse(&managev1.ListPostVersionsResponse{
+func (r *recordingPostRelated) ListPostVersions(_ context.Context, query postdomain.ListPostVersionsQuery) (*managev1.ListPostVersionsResponse, error) {
+	r.versions = &query
+	return &managev1.ListPostVersionsResponse{
 		Versions:   []*managev1.PostVersion{{Id: "66666666-6666-4666-8666-666666666666", Version: 1, Title: "Version", CanonicalHash: "hash", SourceLocale: "ko", CreatedAt: timestamppb.Now()}},
-		Pagination: (queryutil.Pagination{Limit: request.Msg.Pagination.Limit, Offset: request.Msg.Pagination.Offset}).BuildResponse(6),
-	}), nil
+		Pagination: (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6),
+	}, nil
 }
 
-func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, request *connect.Request[managev1.CheckSlugAvailableRequest]) (*connect.Response[managev1.CheckSlugAvailableResponse], error) {
-	r.slug = request
-	return connect.NewResponse(&managev1.CheckSlugAvailableResponse{Available: true}), nil
+func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, query postdomain.CheckSlugAvailableQuery) (*managev1.CheckSlugAvailableResponse, error) {
+	r.slug = &query
+	return &managev1.CheckSlugAvailableResponse{Available: true}, nil
 }
 
 func TestWorkCreditSchemasHaveNoRootCombinators(t *testing.T) {

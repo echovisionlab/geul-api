@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -23,12 +25,12 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		invoke func(context.Context, *postdomain.PostService, string, string) error
+		invoke func(context.Context, postintegration.Posts, string, string) error
 		assert func(*testing.T, *gorm.DB, string)
 	}{
 		{
 			name: "update",
-			invoke: func(ctx context.Context, service *postdomain.PostService, postID string, revision string) error {
+			invoke: func(ctx context.Context, service postintegration.Posts, postID string, revision string) error {
 				commentsEnabled := false
 				_, err := service.UpdatePost(ctx, connect.NewRequest(&managev1.UpdatePostRequest{
 					Id: postID, ExpectedConfigurationRevision: revision, CommentsEnabled: &commentsEnabled,
@@ -43,7 +45,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "publish",
-			invoke: func(ctx context.Context, service *postdomain.PostService, postID string, _ string) error {
+			invoke: func(ctx context.Context, service postintegration.Posts, postID string, _ string) error {
 				_, err := service.PublishPost(ctx, connect.NewRequest(&managev1.PublishPostRequest{Id: postID}))
 				return err
 			},
@@ -55,7 +57,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "delete",
-			invoke: func(ctx context.Context, service *postdomain.PostService, postID string, _ string) error {
+			invoke: func(ctx context.Context, service postintegration.Posts, postID string, _ string) error {
 				_, err := service.DeletePost(ctx, connect.NewRequest(&managev1.DeletePostRequest{Id: postID}))
 				return err
 			},
@@ -72,7 +74,6 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 			db, spiceDB, actorID, actorMemberID, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 			service := postintegration.NewPostDomainService(
 				t, db, "", spiceDB,
-				testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 				testutil.NewPostContentBlockStore(t),
 			)
 			revision := requirePostConfigurationRevision(t, db, postID)
@@ -111,7 +112,6 @@ func TestPostUpdateRechecksExistenceAfterRootLockIntegration(t *testing.T) {
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 		testutil.NewPostContentBlockStore(t),
 	)
 	revision := requirePostConfigurationRevision(t, db, postID)
@@ -170,7 +170,7 @@ func TestExportedLockedPostAccessChecksAuthorityAfterRootLockIntegration(t *test
 
 			removePostAuthorRelation(t, spiceDB, actorID, postID)
 			require.NoError(t, rootTx.Commit().Error)
-			require.Equal(t, test.wantCode, connect.CodeOf(<-result))
+			require.Equal(t, test.wantCode, errs.CodeOf(<-result))
 		})
 	}
 }
@@ -180,7 +180,6 @@ func TestPostMutationRejectsMemberTombstonedBeforePrincipalLockIntegration(t *te
 	db, spiceDB, actorID, actorMemberID, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 		testutil.NewPostContentBlockStore(t),
 	)
 
@@ -227,7 +226,6 @@ func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T)
 
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 		testutil.NewPostContentBlockStore(t),
 	)
 	demoteTx := db.Begin()
@@ -273,7 +271,6 @@ func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *t
 	go func() {
 		_, err := postintegration.NewPostDomainService(
 			t, db, "", spiceDB,
-			testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 			testutil.NewPostContentBlockStore(t),
 		).AddPostAuthor(postAuthorRaceContext(actorID), connect.NewRequest(&managev1.AddPostAuthorRequest{
 			PostId: postID, MemberId: targetMemberID,
@@ -347,10 +344,7 @@ func removePostAuthorRelation(t *testing.T, spiceDB *auth.SpiceDBClient, identit
 }
 
 func postAuthorRaceContext(identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
-		SessionID: auth.SessionID(testutil.PostIntegrationUUID()), Authenticated: true,
-	})
+	return testutil.PostIntegrationContext(identityID)
 }
 
 func requirePostMutationStillWaiting(t *testing.T, result <-chan error) {

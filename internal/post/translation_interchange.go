@@ -7,7 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -29,14 +29,16 @@ type TranslationInterchangeMutationResult struct {
 // TranslationInterchange closes Post's locale-content mutation and Audit
 // dependencies behind one owning-domain seam.
 type TranslationInterchange struct {
-	auditWriter domainaudit.Appender
+	audit domainaudit.Appender
 }
 
-func NewTranslationInterchange(auditWriter domainaudit.Appender) *TranslationInterchange {
-	if auditWriter == nil {
-		panic("Post translation interchange audit writer is required")
+// NewTranslationInterchange returns the Post XLIFF seam appending its
+// locale-content records to audit.
+func NewTranslationInterchange(audit domainaudit.Appender) (*TranslationInterchange, error) {
+	if audit == nil {
+		return nil, errors.New("post translation interchange dependencies are required: Audit")
 	}
-	return &TranslationInterchange{auditWriter: auditWriter}
+	return &TranslationInterchange{audit: audit}, nil
 }
 
 // ApplyCandidateWithDB keeps XLIFF target replacement
@@ -52,7 +54,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	entry translation.EntryWrite,
 	expectedRevision *string,
 ) (TranslationInterchangeMutationResult, error) {
-	if i == nil || i.auditWriter == nil || tx == nil || store == nil || job == nil || candidate == nil {
+	if i == nil || tx == nil || store == nil || job == nil || candidate == nil {
 		return TranslationInterchangeMutationResult{}, errors.New("post translation interchange dependencies are required")
 	}
 	if job.EntityType != "post" || strings.TrimSpace(job.EntityID) == "" ||
@@ -61,12 +63,12 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	}
 	if localization.NormalizeExactSupportedLocale(job.SourceLocale) == nil ||
 		localization.NormalizeExactSupportedLocale(job.TargetLocale) == nil {
-		return TranslationInterchangeMutationResult{}, errs.InvalidArgument(
+		return TranslationInterchangeMutationResult{}, domainerr.InvalidField(
 			"locale", "source and target must be exact canonical locales",
 		)
 	}
 	if strings.TrimSpace(job.RequestedByMemberID) == "" {
-		return TranslationInterchangeMutationResult{}, errs.FailedPrecondition("Post translation interchange requires requester Member attribution")
+		return TranslationInterchangeMutationResult{}, domainerr.Precondition("Post translation interchange requires requester Member attribution")
 	}
 	documentID, err := loadPostContentDocumentID(ctx, tx, job.EntityID)
 	if err != nil {
@@ -80,7 +82,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	if err := tx.WithContext(ctx).Table("post_translation").
 		Where("entity_id = ? AND locale = ?", job.EntityID, job.TargetLocale).
 		Count(&targetCount).Error; err != nil {
-		return TranslationInterchangeMutationResult{}, errs.Internal(err)
+		return TranslationInterchangeMutationResult{}, err
 	}
 	targetPreviouslyExists := targetCount == 1
 	if err := validatePostTranslationCandidate(
@@ -89,7 +91,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 		return TranslationInterchangeMutationResult{}, err
 	}
 	if candidate.ContentDocumentRevision != before.Document.Revision.String() {
-		return TranslationInterchangeMutationResult{}, errs.FailedPrecondition(
+		return TranslationInterchangeMutationResult{}, domainerr.Precondition(
 			"Post shared document changed while importing the target locale",
 		)
 	}
@@ -113,7 +115,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	if err != nil {
 		var conflict *translation.TargetRevisionConflict
 		if errors.As(err, &conflict) {
-			return TranslationInterchangeMutationResult{}, errs.FailedPrecondition(err.Error())
+			return TranslationInterchangeMutationResult{}, domainerr.Precondition(err.Error())
 		}
 		return TranslationInterchangeMutationResult{}, err
 	}
@@ -127,7 +129,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	if err := appendPostTranslationInterchangeAudit(
 		ctx,
 		tx,
-		i.auditWriter,
+		i.audit,
 		strings.TrimSpace(job.RequestedByMemberID),
 		job.EntityID,
 		job.TargetLocale,
@@ -143,7 +145,7 @@ func postInterchangeTargetStorage(
 	documentRevision string,
 ) (*contentv1.ContentStorageMutationBatch, error) {
 	if candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
-		return nil, errs.InvalidArgument("file_id", "Post target locale document is required")
+		return nil, domainerr.InvalidField("file_id", "Post target locale document is required")
 	}
 	mutations := candidate.RichTextLocaleMutations()
 	if len(mutations) == 0 {
@@ -161,7 +163,7 @@ func postInterchangeTargetStorage(
 		contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_WRITE,
 	)
 	if err != nil {
-		return nil, errs.InvalidArgument("file_id", err.Error())
+		return nil, domainerr.InvalidField("file_id", err.Error())
 	}
 	return &storage, nil
 }

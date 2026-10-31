@@ -98,18 +98,15 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicPagePath, publicPageHandler)
 	slog.Info("Registered public service", "path", publicPagePath)
 
-	publicPostService := postpublic.NewPostService(
-		db,
-		cfg.CDNURL,
-		spicedbClient,
-		postadapter.NewPublicFiles(db, publicFileService),
-		postadapter.NewLocalization(),
-		referencecatalogadapter.PublicMapPlaces{},
-		postMembers,
-		postShareLinks,
-		postpublic.WithPostContentBlockStore(contentBlockStore),
-	)
-	publicPostPath, publicPostHandler := openv1connect.NewPostServiceHandler(publicPostService, publicHandlerOpts...)
+	publicPostService, err := postpublic.NewService(postpublic.Deps{
+		DB: db, CDNDomain: cfg.CDNURL, SpiceDB: spicedbClient, Files: postadapter.NewPublicFiles(db, publicFileService),
+		ContentBlocks: contentBlockStore, Localizer: postadapter.NewLocalization(),
+		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, Members: postMembers, ShareLinks: postShareLinks,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public Post service: %w", err)
+	}
+	publicPostPath, publicPostHandler := openv1connect.NewPostServiceHandler(postpublic.NewConnectHandler(publicPostService), publicHandlerOpts...)
 	mux.Handle(publicPostPath, publicPostHandler)
 	slog.Info("Registered public service", "path", publicPostPath)
 

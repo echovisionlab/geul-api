@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -51,17 +51,17 @@ type AIDocumentListResult struct {
 // ListAIDocuments applies the same Post view authority as ListMyPosts while
 // returning only bounded discovery metadata. The returned ID is the exact
 // document reference accepted by DCDP; a slug is display metadata only.
-func (s *PostService) ListAIDocuments(
+func (s *Service) ListAIDocuments(
 	ctx context.Context,
 	input AIDocumentListInput,
 ) (AIDocumentListResult, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil {
-		return AIDocumentListResult{}, errs.DependencyUnavailable("Post AI document discovery")
+		return AIDocumentListResult{}, domainerr.DependencyUnavailable("Post AI document discovery")
 	}
 
 	queryText := strings.TrimSpace(input.Query)
 	if len(queryText) > maximumAIDocumentQuerySize {
-		return AIDocumentListResult{}, errs.InvalidArgument(
+		return AIDocumentListResult{}, domainerr.InvalidField(
 			"query",
 			"must contain at most 200 characters",
 		)
@@ -71,10 +71,10 @@ func (s *PostService) ListAIDocuments(
 		limit = defaultAIDocumentListLimit
 	}
 	if limit < 1 || limit > maximumAIDocumentListLimit {
-		return AIDocumentListResult{}, errs.InvalidArgument("limit", "must be between 1 and 50")
+		return AIDocumentListResult{}, domainerr.InvalidField("limit", "must be between 1 and 50")
 	}
 	if input.Offset < 0 {
-		return AIDocumentListResult{}, errs.InvalidArgument("offset", "must be non-negative")
+		return AIDocumentListResult{}, domainerr.InvalidField("offset", "must be non-negative")
 	}
 
 	query, err := s.authorizedPostListQuery(ctx)
@@ -90,7 +90,7 @@ func (s *PostService) ListAIDocuments(
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
-		return AIDocumentListResult{}, errs.Internal(err)
+		return AIDocumentListResult{}, err
 	}
 
 	type row struct {
@@ -117,7 +117,7 @@ func (s *PostService) ListAIDocuments(
 		Limit(limit).
 		Offset(input.Offset).
 		Find(&rows).Error; err != nil {
-		return AIDocumentListResult{}, errs.Internal(err)
+		return AIDocumentListResult{}, err
 	}
 
 	items := make([]AIDocumentListItem, len(rows))
@@ -133,21 +133,21 @@ func (s *PostService) ListAIDocuments(
 	}, nil
 }
 
-func (s *PostService) authorizedPostListQuery(ctx context.Context) (*gorm.DB, error) {
+func (s *Service) authorizedPostListQuery(ctx context.Context) (*gorm.DB, error) {
 	if s == nil || s.db == nil || s.spiceDB == nil {
-		return nil, errs.DependencyUnavailable("Post list")
+		return nil, domainerr.DependencyUnavailable("Post list")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
 	if err != nil {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	viewPostIDs, err := lookupPostResources(ctx, s.spiceDB, actor, policyv1.Post.LookupView())
 	if err != nil {

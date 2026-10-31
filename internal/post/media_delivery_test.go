@@ -21,7 +21,7 @@ func TestPostSummaryFeaturedImagesUsePublicDisplayOnly(t *testing.T) {
 			},
 		},
 	}
-	service := &PostService{fileService: files}
+	service := &Service{fileService: files}
 
 	got, err := service.loadPostPublicFeaturedImageDeliveries(t.Context(), []model.Post{{
 		ID:                  "22222222-2222-4222-8222-222222222222",
@@ -38,7 +38,7 @@ func TestPostSummaryFeaturedImagesUsePublicDisplayOnly(t *testing.T) {
 
 func TestPostSingularFeaturedImageAlwaysUsesExactOwnerBoundary(t *testing.T) {
 	files := &recordingPostFeaturedFiles{}
-	service := &PostService{fileService: files}
+	service := &Service{fileService: files}
 
 	delivery, err := service.resolveAuthorizedPostFeaturedImage(t.Context(), &model.Post{
 		ID: "22222222-2222-4222-8222-222222222222",

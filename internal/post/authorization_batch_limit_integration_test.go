@@ -25,7 +25,6 @@ func TestDeletePostRejectsOversizedAuthorizationSnapshotBeforeMutationIntegratio
 	ctx := testutil.PostIntegrationContext(adminID)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
 		testutil.NewPostContentBlockStore(t),
 	)
 

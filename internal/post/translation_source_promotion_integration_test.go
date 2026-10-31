@@ -31,7 +31,6 @@ func TestPostLateProviderTranslationCannotOverwritePromotedSourceIntegration(t *
 	store := testutil.NewPostContentBlockStore(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminIdentityID, "en")),
 		store,
 	)
 

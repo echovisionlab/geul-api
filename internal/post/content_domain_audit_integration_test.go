@@ -10,7 +10,6 @@ import (
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -45,33 +44,13 @@ func TestPostDomainAuditClosesLifecycleVersionAndDeleteBoundariesIntegration(t *
 	files := postAuditFiles{}
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
-	postService := postdomain.NewAuditedPostService(
-		db,
-		"",
-		postintegration.NewPostOGRefresher(db, ""),
-		spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminIdentityID, "en")),
-		files,
-		postAuditAsyncPublisher{},
-		postruntime.ShareLinks{},
-		postruntime.ContentBlockMedia{},
-		postadapter.NewMemberSummaries(db, ""),
-		postruntime.VersionRestore{},
-		writer,
-		postdomain.WithPostContentBlockStore(contentBlocks),
-		postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
-	)
-	internalService := postdomain.NewInternalPostService(
-		db,
-		spiceDB,
-		postAuditAsyncPublisher{},
-		"",
-		postintegration.NewPostOGRefresher(db, ""),
-		postruntime.ContentBlockMedia{},
-		postdomain.WithInternalPostDomainAuditWriter(writer),
-		postdomain.WithInternalPostContentBlockStore(contentBlocks),
-		postdomain.WithInternalPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
-	)
+	service := postintegration.NewService(t, postdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Files: files, Signals: postAuditAsyncPublisher{},
+		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		VersionRestore: postruntime.VersionRestore{}, ContentBlocks: contentBlocks, Audit: writer,
+	})
+	postService := postdomain.NewConnectHandler(service)
+	internalService := postdomain.NewInternalConnectHandler(service)
 
 	created, err := postService.CreatePost(memberCtx, connect.NewRequest(&managev1.CreatePostRequest{
 		Title:    "Audited post",

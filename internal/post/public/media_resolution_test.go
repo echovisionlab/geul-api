@@ -32,7 +32,7 @@ func (publicDisplayPostFiles) ResolveAuthorizedContentBlockMedia(
 func TestLoadPostFeaturedImageDeliveriesKeepsOnlyPublicDisplayProjection(t *testing.T) {
 	fileID := uuid.NewString()
 	asset := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example.test/asset.webp"}
-	service := &PostService{files: publicDisplayPostFiles{deliveries: map[string]*commonv1.MediaDelivery{
+	service := &Service{files: publicDisplayPostFiles{deliveries: map[string]*commonv1.MediaDelivery{
 		fileID: {
 			FileId: fileID, Asset: asset, Thumbnail: asset,
 			Inline:   &commonv1.ExpiringMediaRef{Url: "private-inline"},

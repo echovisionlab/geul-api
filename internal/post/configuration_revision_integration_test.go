@@ -11,12 +11,10 @@ import (
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -161,7 +159,7 @@ func TestPostConfigurationRevisionContractIntegration(t *testing.T) {
 	got, err = service.GetPost(ctx, connect.NewRequest(&managev1.GetPostRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
 	require.Equal(t, "Updated source title", got.Msg.Title)
-	discovered, err := service.ListAIDocuments(ctx, postdomain.AIDocumentListInput{Query: "Updated source title"})
+	discovered, err := service.Service.ListAIDocuments(ctx, postdomain.AIDocumentListInput{Query: "Updated source title"})
 	require.NoError(t, err)
 	require.Len(t, discovered.Items, 1)
 	require.Equal(t, beforeLifecycle, discovered.Items[0].ConfigurationRevision)
@@ -172,7 +170,6 @@ func TestPostConfigurationRevisionSerializesConcurrentUpdatesIntegration(t *test
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(actorID, "en")),
 		testutil.NewPostContentBlockStore(t),
 	)
 	revision := requirePostConfigurationRevision(t, db, postID)
@@ -246,24 +243,14 @@ func newAuditedPostConfigurationService(
 	adminIdentityID string,
 	store *contentblock.Store,
 	events *postConfigurationEventCapture,
-) *postdomain.PostService {
+) postintegration.Posts {
 	t.Helper()
-	return postdomain.NewAuditedPostService(
-		db,
-		"",
-		postintegration.NewPostOGRefresher(db, ""),
-		spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminIdentityID, "en")),
-		postAuditFiles{},
-		events,
-		postruntime.ShareLinks{},
-		postruntime.ContentBlockMedia{},
-		postadapter.NewMemberSummaries(db, ""),
-		postruntime.VersionRestore{},
-		apitelemetry.NewDurableWriter(db),
-		postdomain.WithPostContentBlockStore(store),
-		postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
-	)
+	service := postintegration.NewService(t, postdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: events,
+		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		VersionRestore: postruntime.VersionRestore{}, ContentBlocks: store,
+	})
+	return postintegration.Posts{ConnectHandler: postdomain.NewConnectHandler(service), Service: service}
 }
 
 func requirePostConfigurationRevision(t *testing.T, db *gorm.DB, postID string) string {

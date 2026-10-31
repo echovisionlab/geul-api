@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -35,7 +34,7 @@ func loadReadyManageOgAssetRefs(
 	if err := db.WithContext(ctx).
 		Where("id IN ? AND status = ?", assetIDs, model.PublicAssetStatusReady).
 		Find(&assets).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	lifecycle := mediaasset.NewLifecycle(db, cdnDomain)
 	for _, asset := range assets {

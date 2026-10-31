@@ -8,11 +8,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -31,15 +29,11 @@ func TestArchivedPostUnpublishStoresDirectDraftTransitionIntegration(t *testing.
 	testutil.GrantPostIntegrationRole(t, spiceDB, authorID, policyv1.Role.Author())
 	adminCtx := withPostAuditedRequestContext(t, testutil.PostIntegrationContext(adminID))
 	authorCtx := withPostAuditedRequestContext(t, testutil.PostIntegrationContext(authorID))
-	service := postdomain.NewAuditedPostService(
-		db, "", postintegration.NewPostOGRefresher(db, ""), spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
-		postAuditFiles{}, postAuditAsyncPublisher{}, postruntime.ShareLinks{},
-		postruntime.ContentBlockMedia{}, postadapter.NewMemberSummaries(db, ""),
-		postruntime.VersionRestore{}, apitelemetry.NewDurableWriter(db),
-		postdomain.WithPostContentBlockStore(testutil.NewPostContentBlockStore(t)),
-		postdomain.WithPostContentBlockMediaHydrator(postintegration.MediaHydrator{}),
-	)
+	service := postdomain.NewConnectHandler(postintegration.NewService(t, postdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: postAuditAsyncPublisher{},
+		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		VersionRestore: postruntime.VersionRestore{},
+	}))
 	created, err := service.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
 		Title: "Archived Post withdrawn directly", Document: testutil.EmptyPostDocument("en"),
 	}))

@@ -7,15 +7,15 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -65,26 +65,26 @@ const archivedPostAdminEditMessage = "archived posts may only be edited by a sit
 
 func requirePostList(ctx context.Context, checker CollaborationPermissionChecker) error {
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.NotAuthenticated()
+		return domainerr.New(domainerr.Unauthenticated, "", "not authenticated")
 	}
 	can, err := policyv1.Post.List()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.AdminRequired()
+		return domainerr.AdminRequired()
 	}
 	return nil
 }
@@ -112,19 +112,19 @@ func checkPostPermissionForPrincipal(
 
 func requirePostContributorsExist(ctx context.Context, db *gorm.DB, memberIDs []string) error {
 	if len(memberIDs) == 0 {
-		return errs.InvalidArgument("contributor_member_ids", "must contain at least one Member UUID")
+		return domainerr.InvalidField("contributor_member_ids", "must contain at least one Member UUID")
 	}
 	unique := make([]string, 0, len(memberIDs))
 	for _, memberID := range memberIDs {
 		memberID = strings.TrimSpace(memberID)
 		if memberID == "" {
-			return errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "must contain canonical Member UUIDs")
 		}
 		if _, err := uuidutil.ParseCanonical(memberID, "contributor_member_ids"); err != nil {
-			return errs.WithCause(errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs"), err)
+			return domainerr.InvalidField("contributor_member_ids", "must contain canonical Member UUIDs").WithCause(err)
 		}
 		if len(unique) > 0 && unique[len(unique)-1] >= memberID {
-			return errs.InvalidArgument(
+			return domainerr.InvalidField(
 				"contributor_member_ids",
 				"must be sorted and contain unique canonical Member UUIDs",
 			)
@@ -144,10 +144,10 @@ func requirePostContributorsExist(ctx context.Context, db *gorm.DB, memberIDs []
 		Select("id::text").
 		Where("id IN ?", unique).
 		Find(&lockedMembers).Error; err != nil {
-		return errs.Internal(fmt.Errorf("lock Post save contributor Members: %w", err))
+		return fmt.Errorf("lock Post save contributor Members: %w", err)
 	}
 	if len(lockedMembers) != len(unique) {
-		return errs.InvalidArgument("contributor_member_ids", "contains a Member that does not exist")
+		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil
 }
@@ -170,7 +170,7 @@ func requirePostContributorsPermission(
 		return err
 	}
 	if spiceDB == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	type contributorRow struct {
 		MemberID   string `gorm:"column:member_id"`
@@ -183,7 +183,7 @@ func requirePostContributorsPermission(
 		Select("member.id::text AS member_id, member.account_identity_id::text AS identity_id").
 		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = TRUE AND member.account_identity_id IS NOT NULL AND COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) = FALSE", memberIDs).
 		Find(&rows).Error; err != nil {
-		return errs.Internal(fmt.Errorf("load Post collaboration contributors: %w", err))
+		return fmt.Errorf("load Post collaboration contributors: %w", err)
 	}
 	identities := make(map[string]string, len(rows))
 	for _, row := range rows {
@@ -195,16 +195,16 @@ func requirePostContributorsPermission(
 	action := postActionForStatus(status, policyv1.Post.Edit, policyv1.Post.EditArchived)
 	can, err := action(postID)
 	if err != nil {
-		return errs.WithCause(postContributorPermissionDenied(status), err)
+		return postContributorPermissionDenied(status).WithCause(err)
 	}
 	for _, memberID := range memberIDs {
 		actor, err := policyv1.NewAccountIdentityActor(identities[memberID])
 		if err != nil {
-			return errs.WithCause(postContributorPermissionDenied(status), err)
+			return postContributorPermissionDenied(status).WithCause(err)
 		}
 		allowed, err := spiceDB.CheckActorCan(ctx, actor, can)
 		if err != nil {
-			return failurecause.WithAttrs(errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err), slog.String("post_id", postID))
+			return failurecause.WithAttrs(domainerr.DependencyUnavailable("SpiceDB").WithCause(err), slog.String("post_id", postID))
 		}
 		if !allowed {
 			return postContributorPermissionDenied(status)
@@ -213,11 +213,11 @@ func requirePostContributorsPermission(
 	return nil
 }
 
-func postContributorPermissionDenied(status model.PostStatus) *connect.Error {
+func postContributorPermissionDenied(status model.PostStatus) *domainerr.Error {
 	if status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-		return errs.FailedPrecondition(archivedPostAdminEditMessage)
+		return domainerr.Precondition(archivedPostAdminEditMessage)
 	}
-	return errs.NoPermission("edit", "post contributor")
+	return domainerr.NoPermission("edit", "post contributor")
 }
 
 func postActionForStatus(
@@ -241,23 +241,23 @@ func requirePostPermissionForPrincipal(
 ) (PostAuthority, error) {
 	if principal == nil {
 		if maskNotFound {
-			return PostAuthority{}, errs.NotFound("post", postID)
+			return PostAuthority{}, domainerr.ResourceNotFound("post", postID)
 		}
-		return PostAuthority{}, errs.AuthenticationRequired()
+		return PostAuthority{}, domainerr.AuthenticationRequired()
 	}
 	can, canErr := action(postID)
 	if canErr != nil {
-		return PostAuthority{}, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), canErr)
+		return PostAuthority{}, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(canErr)
 	}
 	allowed, err := checkPostPermissionForPrincipal(ctx, spiceDB, postID, principal, action)
 	if err != nil {
-		return PostAuthority{}, failurecause.WithAttrs(errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err), slog.String("post_id", postID))
+		return PostAuthority{}, failurecause.WithAttrs(domainerr.DependencyUnavailable("SpiceDB").WithCause(err), slog.String("post_id", postID))
 	}
 	if !allowed {
 		if maskNotFound {
-			return PostAuthority{}, errs.NotFound("post", postID)
+			return PostAuthority{}, domainerr.ResourceNotFound("post", postID)
 		}
-		return PostAuthority{}, errs.NoPermission(can.Action().Name(), "post")
+		return PostAuthority{}, domainerr.NoPermission(can.Action().Name(), "post")
 	}
 	return postAuthority(can), nil
 }
@@ -305,34 +305,42 @@ func requirePostActionPermissionForPrincipal(
 	return requirePostPermissionForPrincipal(ctx, spiceDB, postID, principal, action, maskNotFound)
 }
 
-func requireLockedPostCreator(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
-	can, err := policyv1.Post.Create()
-	if err != nil {
-		return errs.Internal(err)
-	}
-	if err := identitystate.RequireFreshCan(ctx, tx, spiceDB, can); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return errs.AuthorRequired()
+// postCreatorAccess requires the fresh create permission; a caller without
+// it is not an author.
+func postCreatorAccess() mutation.Access {
+	return mutation.Locked(func(_ context.Context, _ *gorm.DB, require mutation.Require) error {
+		can, err := policyv1.Post.Create()
+		if err != nil {
+			return err
 		}
-		return err
+		if err := require(can); err != nil {
+			if mutation.IsDenied(err) {
+				return domainerr.AuthorRequired().WithCause(err)
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func freshRequire(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) mutation.Require {
+	return func(can policyv1.Can) error {
+		return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
 	}
-	return nil
 }
 
 func requireLockedPostPermission(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	require mutation.Require,
 	postID string,
 	action postAction,
 ) (PostAuthority, error) {
 	can, err := action(postID)
 	if err != nil {
-		return PostAuthority{}, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), err)
+		return PostAuthority{}, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
-	if err := identitystate.RequireFreshCan(ctx, tx, spiceDB, can); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return PostAuthority{}, errs.NoPermission(can.Action().Name(), "post")
+	if err := require(can); err != nil {
+		if mutation.IsDenied(err) {
+			return PostAuthority{}, domainerr.NoPermission(can.Action().Name(), "post").WithCause(err)
 		}
 		return PostAuthority{}, err
 	}
@@ -340,28 +348,30 @@ func requireLockedPostPermission(
 }
 
 func requireLockedPostActionForStatus(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	require mutation.Require,
 	postID string,
 	status model.PostStatus,
 	ordinary postAction,
 ) (PostAuthority, error) {
 	action := postActionForStatus(status, ordinary, policyv1.Post.EditArchived)
-	return requireLockedPostPermission(ctx, tx, spiceDB, postID, action)
+	return requireLockedPostPermission(require, postID, action)
 }
 
-// requireLockedPostRemoveAuthor is the direct-check compatibility for the
-// typed Post.RemoveAuthor action. Its ordinary SpiceDB grant is platform_admin;
-// archived mutations use the aggregate-wide edit_archived action exclusively.
-func requireLockedPostRemoveAuthor(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	postID string,
-	status model.PostStatus,
-) (PostAuthority, error) {
-	return requireLockedPostActionForStatus(ctx, tx, spiceDB, postID, status, policyv1.Post.RemoveAuthor)
+// lockedPost is the access of a Post mutation: the root is locked before
+// the one action its lifecycle selects from ordinary is checked. status,
+// when set, receives the locked lifecycle.
+func lockedPost(postID string, ordinary postAction, status *model.PostStatus) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+		locked, err := lockPostAuthorizationRoot(ctx, tx, postID)
+		if err != nil {
+			return err
+		}
+		if status != nil {
+			*status = locked
+		}
+		_, err = requireLockedPostActionForStatus(require, postID, locked, ordinary)
+		return err
+	})
 }
 
 func lockPostAuthorizationRoot(ctx context.Context, tx *gorm.DB, postID string) (model.PostStatus, error) {
@@ -375,9 +385,9 @@ func lockPostAuthorizationRoot(ctx context.Context, tx *gorm.DB, postID string) 
 		Where("id = ?::uuid", postID).
 		Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errs.NotFound("post", postID)
+			return "", domainerr.ResourceNotFound("post", postID)
 		}
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return row.Status, nil
 }
@@ -397,13 +407,11 @@ func RequireLockedView(
 		return err
 	}
 	action := postActionForStatus(status, policyv1.Post.View, policyv1.Post.ViewArchived)
-	if _, err := requireLockedPostPermission(ctx, tx, spiceDB, postID, action); err != nil {
-		switch connect.CodeOf(err) {
-		case connect.CodeUnauthenticated, connect.CodePermissionDenied:
-			return errs.WithCause(errs.NotFound("post", postID), err)
-		default:
-			return err
+	if _, err := requireLockedPostPermission(freshRequire(ctx, tx, spiceDB), postID, action); err != nil {
+		if mutation.IsUnauthenticated(err) || mutation.IsDenied(err) {
+			return domainerr.ResourceNotFound("post", postID).WithCause(err)
 		}
+		return err
 	}
 	return nil
 }
@@ -418,7 +426,7 @@ func RequireLockedSourceLocaleEdit(
 	if err != nil {
 		return err
 	}
-	_, err = requireLockedPostActionForStatus(ctx, tx, spiceDB, postID, status, policyv1.Post.Edit)
+	_, err = requireLockedPostActionForStatus(freshRequire(ctx, tx, spiceDB), postID, status, policyv1.Post.Edit)
 	return err
 }
 
@@ -510,14 +518,14 @@ func mapPostParticipantMutationError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if connect.CodeOf(err) != connect.CodeUnknown {
+	if mutation.IsClassified(err) {
 		return err
 	}
 	if isPostLastAuthorConstraint(err) {
-		return errs.WithCause(errs.FailedPrecondition("a post must retain at least one durable author"), err)
+		return domainerr.Precondition("a post must retain at least one durable author").WithCause(err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFoundMsg("post participant not found")
+		return domainerr.New(domainerr.NotFound, "", "post participant not found")
 	}
-	return errs.Internal(err)
+	return err
 }

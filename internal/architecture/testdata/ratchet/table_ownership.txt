@@ -245,7 +245,6 @@
 3 internal/post -> kratos.identities
 1 internal/post -> map_place
 5 internal/post -> member
-1 internal/post -> share_link
 1 internal/post/public -> map_place
 1 internal/programevent -> artist
 1 internal/programevent -> artist_file

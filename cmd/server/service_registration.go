@@ -480,25 +480,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	postMedia := postruntime.ContentBlockMedia{}
 	postFiles := postadapter.NewFiles(fileService, publicFileService)
 	postVersionRestore := postruntime.VersionRestore{}
-	postService := post.NewAuditedPostService(
-		db,
-		cfg.CDNURL,
-		ogDeps.refresher,
-		spicedbClient,
-		kratosClient,
-		postFiles,
-		servicePublisher,
-		postShareLinks,
-		postMedia,
-		postMembers,
-		postVersionRestore,
-		telemetryWriter,
-		post.WithPostContentBlockStore(contentBlockStore),
-		post.WithPostContentBlockMediaHydrator(fileService),
-	)
-	postPath, postHandler := managev1connect.NewPostServiceHandler(postService, handlerOpts...)
+	postService, err := post.NewService(post.Deps{
+		DB: db, SpiceDB: spicedbClient, CDNDomain: cfg.CDNURL, OG: ogDeps.refresher, Files: postFiles,
+		Signals: servicePublisher, ShareLinks: postShareLinks,
+		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
+		MediaLoader:      postMedia, Media: fileService, Members: postMembers, VersionRestore: postVersionRestore,
+		ContentBlocks: contentBlockStore, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post service: %w", err)
+	}
+	postPath, postHandler := managev1connect.NewPostServiceHandler(post.NewConnectHandler(postService), handlerOpts...)
 	mux.Handle(postPath, postHandler)
 	slog.Info("Registered service", "path", postPath)
+	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(post.NewInternalConnectHandler(postService), internalHandlerOpts...)
+	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
+	slog.Info("Registered internal service", "path", internalPostPath)
 
 	referenceCatalogMenuTargets := referencecatalogmenuadapter.NewTargets(telemetryWriter)
 	categoryService := referencecatalog.NewAuditedCategoryService(db, telemetryWriter, referenceCatalogMenuTargets, spicedbClient)
@@ -670,8 +667,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
 	slog.Info("Registered service", "path", emailSuppressionPath)
 
-	commentService := post.NewCommentService(db, spicedbClient, postMembers)
-	commentPath, commentHandler := managev1connect.NewCommentServiceHandler(commentService, handlerOpts...)
+	commentService, err := post.NewCommentService(post.CommentDeps{DB: db, SpiceDB: spicedbClient, Members: postMembers, Audit: telemetryWriter})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post comment service: %w", err)
+	}
+	commentPath, commentHandler := managev1connect.NewCommentServiceHandler(post.NewCommentConnectHandler(commentService), handlerOpts...)
 	mux.Handle(commentPath, commentHandler)
 	slog.Info("Registered service", "path", commentPath)
 
@@ -744,7 +744,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		collaborationRuntime:        collaborationRuntime,
 		pageRuntime:                 pageRuntime,
 		fileService:                 fileService,
-		postMedia:                   postMedia,
 		programEventFiles:           programEventFiles,
 		emailAuthoringReferences:    emailAuthoringReferences,
 		legalRuntime:                legalRuntime,

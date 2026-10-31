@@ -3,6 +3,8 @@ package post
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -50,7 +52,7 @@ func TestValidateCompiledPostAIDocumentMutationKeepsLockedStateAuthoritative(t *
 			mutation := valid
 			test.mutate(&mutation)
 			_, err := validateCompiledPostAIDocumentMutation(state, mutation)
-			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			if errs.CodeOf(err) != connect.CodeInvalidArgument {
 				t.Fatalf("mismatched compiled mutation error = %v", err)
 			}
 		})

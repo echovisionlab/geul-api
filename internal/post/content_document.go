@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -33,7 +33,7 @@ type postContentDocumentRoot struct {
 
 func loadPostContentDocumentID(ctx context.Context, db *gorm.DB, postID string) (uuid.UUID, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
-		return uuid.Nil, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), err)
+		return uuid.Nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
 	var root postContentDocumentRoot
 	if err := db.WithContext(ctx).
@@ -42,12 +42,12 @@ func loadPostContentDocumentID(ctx context.Context, db *gorm.DB, postID string) 
 		Where("id = ?::uuid", postID).
 		Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound("post", postID)
+			return uuid.Nil, domainerr.ResourceNotFound("post", postID)
 		}
-		return uuid.Nil, errs.Internal(fmt.Errorf("load Post content document: %w", err))
+		return uuid.Nil, fmt.Errorf("load Post content document: %w", err)
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-		return uuid.Nil, errs.FailedPrecondition("Post content document has not been populated")
+		return uuid.Nil, domainerr.Precondition("Post content document has not been populated")
 	}
 	return *root.ContentDocumentID, nil
 }
@@ -67,15 +67,15 @@ func lockPostContentDocumentRoot(
 		Where("id = ?::uuid", postID).
 		Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return postContentDocumentRoot{}, errs.NotFound("post", postID)
+			return postContentDocumentRoot{}, domainerr.ResourceNotFound("post", postID)
 		}
-		return postContentDocumentRoot{}, errs.Internal(err)
+		return postContentDocumentRoot{}, err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-		return postContentDocumentRoot{}, errs.FailedPrecondition("Post content document changed; reload before saving")
+		return postContentDocumentRoot{}, domainerr.Precondition("Post content document changed; reload before saving")
 	}
 	if !allowArchived && root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
-		return postContentDocumentRoot{}, errs.FailedPrecondition("archived posts are read-only")
+		return postContentDocumentRoot{}, domainerr.Precondition("archived posts are read-only")
 	}
 	return root, nil
 }
@@ -107,7 +107,7 @@ func postCreationDocumentFence(
 			return contentblock.DomainContext{}, err
 		}
 		if strings.TrimSpace(sourceLocale) == "" {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post source locale is invalid")
+			return contentblock.DomainContext{}, domainerr.Precondition("Post source locale is invalid")
 		}
 		return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 	}
@@ -119,10 +119,10 @@ func authorizePostBlockBootstrap(
 	spiceDB CollaborationPermissionChecker,
 	postID string,
 	documentID uuid.UUID,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID *string,
 ) (*auth.UserInfo, error) {
-	if principalMessage == nil {
-		return nil, errs.InvalidArgument("principal", "is required")
+	if sessionID == nil {
+		return nil, domainerr.InvalidField("principal", "is required")
 	}
 	root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
 	if err != nil {
@@ -131,50 +131,50 @@ func authorizePostBlockBootstrap(
 	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
 		ctx,
 		tx,
-		principalMessage.GetSessionId(),
+		*sessionID,
 	)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("resolve Post collaboration principal: %w", err))
+		return nil, fmt.Errorf("resolve Post collaboration principal: %w", err)
 	}
 	if principal == nil || principal.Banned || !principal.Onboarded {
-		return nil, errs.NoPermission("edit", "post")
+		return nil, domainerr.NoPermission("edit", "post")
 	}
 	principalContext := auth.WithUser(ctx, principal)
 	if root.Status == model.PostStatus(managev1.PostStatus_POST_STATUS_ARCHIVED.String()) {
 		can, canErr := policyv1.Post.ViewArchived(postID)
 		if canErr != nil {
-			return nil, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), canErr)
+			return nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(canErr)
 		}
 		decision, decisionErr := auth.AuthorizationDecision(principalContext, can)
 		if decisionErr != nil {
-			return nil, errs.WithCause(errs.AuthenticationRequired(), decisionErr)
+			return nil, domainerr.AuthenticationRequired().WithCause(decisionErr)
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
 		if !allowed {
-			return nil, errs.NoPermission("view", "post")
+			return nil, domainerr.NoPermission("view", "post")
 		}
 		return principal, nil
 	}
 	can, err := policyv1.Post.Edit(postID)
 	if err != nil {
-		return nil, errs.WithCause(errs.InvalidArgument("post_id", "must be a canonical UUID"), err)
+		return nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(principalContext, can)
 	if err != nil {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return nil, errs.NoPermission("edit", "post")
+		return nil, domainerr.NoPermission("edit", "post")
 	}
 	return principal, nil
 }
@@ -217,12 +217,12 @@ func loadPostContentDomainContext(
 		Where("id = ?::uuid", postID).
 		Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Post source locale has not been initialized")
+			return contentblock.DomainContext{}, domainerr.Precondition("Post source locale has not been initialized")
 		}
-		return contentblock.DomainContext{}, errs.Internal(err)
+		return contentblock.DomainContext{}, err
 	}
 	if strings.TrimSpace(row.SourceLocale) == "" {
-		return contentblock.DomainContext{}, errs.FailedPrecondition("Post source locale is invalid")
+		return contentblock.DomainContext{}, domainerr.Precondition("Post source locale is invalid")
 	}
 	return contentblock.DomainContext{SourceLocale: row.SourceLocale}, nil
 }
@@ -230,36 +230,36 @@ func loadPostContentDomainContext(
 func parsePostContentUUID(field, value string) (uuid.UUID, error) {
 	parsed, err := uuidutil.ParseCanonical(value, field)
 	if err != nil {
-		return uuid.Nil, errs.WithCause(errs.InvalidArgument(field, "must be a canonical UUID"), err)
+		return uuid.Nil, domainerr.InvalidField(field, "must be a canonical UUID").WithCause(err)
 	}
 	return parsed, nil
 }
 
 func normalizePostContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil || mutation.IsClassified(err) {
 		return err
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		return errs.WithCause(errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Post target locale changed since it was loaded; reload before saving", err,
-		), err)
+			"Post target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg("Post content document not found"), err)
+		return domainerr.New(domainerr.NotFound, "", "Post content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.WithCause(errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Post document changed since it was loaded; reload before saving", err,
-		), err)
+			"Post document changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.FailedPrecondition("a Post Block File reference is not attachable"), err)
+		return domainerr.Precondition("a Post Block File reference is not attachable").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("post content document: %w", err))
+		return fmt.Errorf("post content document: %w", err)
 	}
 }

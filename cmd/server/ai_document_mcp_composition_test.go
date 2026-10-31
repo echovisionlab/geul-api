@@ -444,8 +444,11 @@ type compositionFileRuntime struct {
 
 type compositionSignalPublisher struct{}
 
+// compositionPostApplication lists no AI documents and leaves the Post use
+// cases unimplemented; no composition test reaches one.
 type compositionPostApplication struct {
-	managev1connect.UnimplementedPostServiceHandler
+	mcpadapter.PostManagementApplication
+	mcpadapter.PostRelatedApplication
 }
 
 func (*compositionPostApplication) ListAIDocuments(

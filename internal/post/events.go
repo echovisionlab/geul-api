@@ -1,14 +1,12 @@
 package post
 
 import (
-	"context"
 	"sort"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/lib/pq"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 )
@@ -37,15 +35,6 @@ var postContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
 
 // publishContentUpdatedEvent schedules content.updated in the caller's
 // mutation transaction so the signal commits or rolls back with the data.
-func publishContentUpdatedEvent(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
-
 func buildPostLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
 	postID, fields, revision, targetRevision := change.EntityID, change.Fields, change.DocumentRevision, change.TargetRevision
 	documentStateChanged := change.DocumentStateChanged

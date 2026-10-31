@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
@@ -62,11 +64,11 @@ func TestPostSystemTranslationDocumentFenceAllowsArchivedRootAndRejectsDeletedRo
 	require.Equal(t, "en", domain.SourceLocale)
 
 	_, err = postCreationDocumentFence(postID, "en")(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err),
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err),
 		"ordinary archived Post mutations remain fenced")
 
 	rootExists = false
 	_, err = postSystemTranslationDocumentFence(postID)(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err),
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err),
 		"a deleted Post root must reject an existing translation job")
 }

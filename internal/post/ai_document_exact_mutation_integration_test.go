@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	authzedv1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"google.golang.org/grpc"
@@ -33,7 +35,6 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 	store := testutil.NewPostContentBlockStore(t)
 	creator := postintegration.NewPostDomainService(
 		t, db, "", realSpiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")),
 		store,
 	)
 	slug := "ai-document-exact-mutation-" + testutil.PostIntegrationUUID()
@@ -49,12 +50,11 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 		spiceDB, recorder := newCountingPostPermissionServer(t, true)
 		service := postintegration.NewPostDomainService(
 			t, db, "", spiceDB,
-			testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")),
 			store,
 		)
 		compilerFailure := errors.New("stop after authorized compiler")
 		compilerCalls := 0
-		_, err = service.ExecuteAIDocumentMutation(
+		_, err = service.Service.ExecuteAIDocumentMutation(
 			ctx,
 			created.Msg.Id,
 			"en",
@@ -84,11 +84,10 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 	denyingSpiceDB, recorder := newCountingPostPermissionServer(t, false)
 	deniedService := postintegration.NewPostDomainService(
 		t, db, "", denyingSpiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(identityID, "en")),
 		store,
 	)
 	compilerCalls := 0
-	_, err = deniedService.ExecuteAIDocumentMutation(
+	_, err = deniedService.Service.ExecuteAIDocumentMutation(
 		ctx,
 		created.Msg.Id,
 		"en",
@@ -98,7 +97,7 @@ func TestPostAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *
 			return postdomain.AIDocumentMutation{}, nil
 		},
 	)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Zero(t, compilerCalls, "authorization denial must precede document projection and compilation")
 	requests := recorder.snapshot()
 	require.Len(t, requests, 1)

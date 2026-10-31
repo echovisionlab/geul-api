@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -294,7 +296,7 @@ func TestPostAccessRequireLockedEditMasksPrivateDenialAndMissing(t *testing.T) {
 			newPostAccessTestSpiceDB(t, server),
 			uuid.NewString(),
 		)
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+		require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 		require.Empty(t, server.requestSnapshot())
 	})
 
