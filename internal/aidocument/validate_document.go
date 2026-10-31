@@ -165,114 +165,118 @@ func validateNodes(nodes []Node) error {
 }
 
 func validateProjectedNodes(nodes []Node) error {
-	ids := make(map[BlockID]struct{}, len(nodes))
 	parents := make(map[BlockID]BlockID, len(nodes))
 	for _, node := range nodes {
 		if err := validateStableID("block ID", string(node.ID), maxHandleLength); err != nil {
 			return err
 		}
-		if _, duplicate := ids[node.ID]; duplicate {
+		if _, duplicate := parents[node.ID]; duplicate {
 			return fmt.Errorf("duplicate block ID %q", node.ID)
 		}
-		ids[node.ID] = struct{}{}
 		parents[node.ID] = node.Parent
-		if node.Parent != "" {
-			if err := validateStableID("parent block ID", string(node.Parent), maxHandleLength); err != nil {
+		if err := validateProjectedNode(node); err != nil {
+			return err
+		}
+	}
+	return detectParentCycles(nodes, parents)
+}
+
+func validateProjectedNode(node Node) error {
+	if node.Parent != "" {
+		if err := validateStableID("parent block ID", string(node.Parent), maxHandleLength); err != nil {
+			return err
+		}
+	}
+	if node.Order < 0 {
+		return fmt.Errorf("block %q has negative order", node.ID)
+	}
+	if err := validateProjectedFieldSet(fmt.Sprintf("block %q", node.ID), node.Shared, node.Localized, node.Files); err != nil {
+		return err
+	}
+	return validateProjectedRelations(node)
+}
+
+func validateProjectedRelations(node Node) error {
+	relations := make(map[RelationID]struct{}, len(node.Relations))
+	items := make(map[RelationItemID]struct{})
+	for _, relation := range node.Relations {
+		if err := validateStableID("relation ID", string(relation.ID), maxCatalogIDLength); err != nil {
+			return err
+		}
+		if _, duplicate := relations[relation.ID]; duplicate {
+			return fmt.Errorf("block %q has duplicate relation %q", node.ID, relation.ID)
+		}
+		relations[relation.ID] = struct{}{}
+		for _, item := range relation.Items {
+			if err := validateStableID("relation item ID", string(item.ID), maxHandleLength); err != nil {
 				return err
 			}
-		}
-		if node.Order < 0 {
-			return fmt.Errorf("block %q has negative order", node.ID)
-		}
-		if err := validateFieldValues(node.Shared); err != nil {
-			return fmt.Errorf("block %q shared fields: %w", node.ID, err)
-		}
-		if err := validateFieldValues(node.Localized); err != nil {
-			return fmt.Errorf("block %q localized fields: %w", node.ID, err)
-		}
-		files := make(map[string]struct{}, len(node.Files))
-		for _, binding := range node.Files {
-			key := nestedFieldKey(binding.Field, binding.Path)
-			if _, duplicate := files[key]; duplicate {
-				return fmt.Errorf("block %q has duplicate file target %q", node.ID, key)
-			}
-			files[key] = struct{}{}
-			if err := validateStableID("file field ID", string(binding.Field), maxCatalogIDLength); err != nil {
+			if err := validateStableID("relation item kind", string(item.Kind), maxKindLength); err != nil {
 				return err
 			}
-			for _, segment := range binding.Path {
-				if err := segment.validate(); err != nil {
-					return err
-				}
+			if _, duplicate := items[item.ID]; duplicate {
+				return fmt.Errorf("block %q has duplicate relation item ID %q", node.ID, item.ID)
 			}
-			if err := validateFileReference(binding.File); err != nil {
+			items[item.ID] = struct{}{}
+			if item.Order < 0 {
+				return fmt.Errorf("relation item %q has negative order", item.ID)
+			}
+			if err := validateProjectedFieldSet(fmt.Sprintf("relation item %q", item.ID), item.Shared, item.Localized, item.Files); err != nil {
 				return err
-			}
-		}
-		relations := make(map[RelationID]struct{}, len(node.Relations))
-		items := make(map[RelationItemID]struct{})
-		for _, relation := range node.Relations {
-			if err := validateStableID("relation ID", string(relation.ID), maxCatalogIDLength); err != nil {
-				return err
-			}
-			if _, duplicate := relations[relation.ID]; duplicate {
-				return fmt.Errorf("block %q has duplicate relation %q", node.ID, relation.ID)
-			}
-			relations[relation.ID] = struct{}{}
-			for _, item := range relation.Items {
-				if err := validateStableID("relation item ID", string(item.ID), maxHandleLength); err != nil {
-					return err
-				}
-				if err := validateStableID("relation item kind", string(item.Kind), maxKindLength); err != nil {
-					return err
-				}
-				if _, duplicate := items[item.ID]; duplicate {
-					return fmt.Errorf("block %q has duplicate relation item ID %q", node.ID, item.ID)
-				}
-				items[item.ID] = struct{}{}
-				if item.Order < 0 {
-					return fmt.Errorf("relation item %q has negative order", item.ID)
-				}
-				if err := validateFieldValues(item.Shared); err != nil {
-					return fmt.Errorf("relation item %q shared fields: %w", item.ID, err)
-				}
-				if err := validateFieldValues(item.Localized); err != nil {
-					return fmt.Errorf("relation item %q localized fields: %w", item.ID, err)
-				}
-				itemFiles := make(map[string]struct{}, len(item.Files))
-				for _, binding := range item.Files {
-					key := nestedFieldKey(binding.Field, binding.Path)
-					if _, duplicate := itemFiles[key]; duplicate {
-						return fmt.Errorf("relation item %q has duplicate file target %q", item.ID, key)
-					}
-					itemFiles[key] = struct{}{}
-					if err := validateStableID("file field ID", string(binding.Field), maxCatalogIDLength); err != nil {
-						return err
-					}
-					for _, segment := range binding.Path {
-						if err := segment.validate(); err != nil {
-							return err
-						}
-					}
-					if err := validateFileReference(binding.File); err != nil {
-						return err
-					}
-				}
 			}
 		}
 	}
+	return nil
+}
+
+// validateProjectedFieldSet checks the catalog-independent shape of one
+// block's or relation item's values and file bindings.
+func validateProjectedFieldSet(owner string, shared, localized []FieldValue, files []FileBinding) error {
+	if err := validateFieldValues(shared); err != nil {
+		return fmt.Errorf("%s shared fields: %w", owner, err)
+	}
+	if err := validateFieldValues(localized); err != nil {
+		return fmt.Errorf("%s localized fields: %w", owner, err)
+	}
+	return validateFileBindings(owner, files)
+}
+
+func validateFileBindings(owner string, files []FileBinding) error {
+	targets := make(map[string]struct{}, len(files))
+	for _, binding := range files {
+		key := nestedFieldKey(binding.Field, binding.Path)
+		if _, duplicate := targets[key]; duplicate {
+			return fmt.Errorf("%s has duplicate file target %q", owner, key)
+		}
+		targets[key] = struct{}{}
+		if err := validateStableID("file field ID", string(binding.Field), maxCatalogIDLength); err != nil {
+			return err
+		}
+		for _, segment := range binding.Path {
+			if err := segment.validate(); err != nil {
+				return err
+			}
+		}
+		if err := validateFileReference(binding.File); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// detectParentCycles follows parent links among the given nodes only. A
+// projection may omit ancestors, so a parent outside it ends the walk.
+func detectParentCycles(nodes []Node, parents map[BlockID]BlockID) error {
 	for _, node := range nodes {
 		visited := map[BlockID]struct{}{node.ID: {}}
-		parent := node.Parent
-		for parent != "" {
-			if _, included := ids[parent]; !included {
+		for parent := node.Parent; parent != ""; parent = parents[parent] {
+			if _, included := parents[parent]; !included {
 				break
 			}
 			if _, cycle := visited[parent]; cycle {
 				return fmt.Errorf("block %q is part of a parent cycle", node.ID)
 			}
 			visited[parent] = struct{}{}
-			parent = parents[parent]
 		}
 	}
 	return nil
