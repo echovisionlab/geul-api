@@ -195,9 +195,6 @@ func validateOperation(
 			}
 			return resolved, nil
 		}
-		if target.Relation == "" || target.Item == "" {
-			return resolvedFieldRule{}, issue(IssueInvalidOperation, fieldHandle(target), "relation-item field target requires both relation and item IDs")
-		}
 		items, ok := block.relations[target.Relation]
 		if !ok {
 			return resolvedFieldRule{}, issue(IssueUnknownRelation, relationHandle(target.Block, target.Relation), "relation does not exist")
@@ -412,7 +409,8 @@ func validateOperation(
 			return issue(IssueTranslationAlreadyExists, "translation", "translation locale already exists")
 		}
 		return nil
-	case OperationDeleteTranslation:
+	default:
+		// validateShape admits only known kinds, so this is OperationDeleteTranslation.
 		if role == LocaleRoleSource {
 			return issue(IssueTranslationIsSource, "translation", "the current source locale cannot be deleted as a translation")
 		}
@@ -423,8 +421,6 @@ func validateOperation(
 			return issue(IssueTranslationMissing, "translation", "translation locale does not exist")
 		}
 		return nil
-	default:
-		return issue(IssueInvalidOperation, "", "unsupported operation kind")
 	}
 }
 
