@@ -136,6 +136,7 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error)
 type Spec[R any] struct {
 	Access        Access                                       // required
 	Subjects      []string                                     // Identity IDs whose Member state changes
+	Lock          func(context.Context, *gorm.DB) error        // domain root locks taken before Access
 	Change        func(context.Context, *gorm.DB) (R, error)   // required
 	Audit         func(R) Audit                                // required
 	Outbox        func(context.Context, *gorm.DB, R) error
@@ -148,6 +149,7 @@ func PrincipalFence(principal *auth.UserInfo) Access   // lock the principal's I
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
+func All(records ...Audit) Audit
 func Unchanged() Audit
 ```
 
@@ -158,11 +160,12 @@ directly: `mutation.FreshCan(policyv1.Post.Edit(id))`.
 
 1. the global authorization lock, when `Relationships` or `Subjects` is set;
 2. the `Subjects` Identity locks, sorted;
-3. `Access`: the caller's identity fence and fresh authorization;
-4. `Change`;
-5. the audit record `Audit` names;
-6. `Outbox`;
-7. the `Relationships` batch, written through `authzmutation.Execute` and
+3. `Lock`: the domain root row locks;
+4. `Access`: the caller's identity fence and fresh authorization;
+5. `Change`;
+6. the audit records `Audit` names;
+7. `Outbox`;
+8. the `Relationships` batch, written through `authzmutation.Execute` and
    compensated if the transaction rolls back.
 
 Rules for a spec:
@@ -177,9 +180,13 @@ Rules for a spec:
   `internal/member/member_self_profile.go` shows the shape. Subjects take the
   global authorization lock first, which keeps two concurrent mutations that
   lock the same pair of Identities from deadlocking.
+- **Lock.** A mutation whose root row serializes its writers locks it in
+  `Lock`, so a request that waited on a concurrent writer authorizes as of
+  when it proceeds, and a missing root answers NotFound before
+  authorization. `Change` reads the locked row through the closure.
 - **Audit.** Every mutation names a record or returns `Unchanged()` because
-  nothing changed. A zero `Audit` fails the mutation. There is no optional
-  writer.
+  nothing changed; `All` names several records of one change, in order. A
+  zero `Audit` fails the mutation. There is no optional writer.
 - **Outbox.** Enqueue PGMQ commands and schedule `content.updated` in the
   transaction. Get the executor with `contentsignal.TransactionExecutor(tx)`,
   which refuses a pool that is not a live transaction; publish signals with
@@ -214,6 +221,7 @@ func Duplicate(resource, field, value string) *Error   // "resource with field '
 func Precondition(message string) *Error
 func Denied(message string) *Error
 func InvalidSession() *Error
+func Retry(message string) *Error
 func DependencyUnavailable(dependency string) *Error   // "dependency unavailable"
 ```
 
@@ -231,6 +239,7 @@ Connect lives in one place, `internal/errors/domain.go`:
 | `PermissionDenied` | `PermissionDenied` |
 | `Unauthenticated` | `Unauthenticated` |
 | `Unavailable` | `Unavailable` |
+| `Aborted` | `Aborted` |
 
 `errs.Classified(err)` returns the Connect form of a Connect error or a
 use-case error in the chain. `errs.Wrap`, `errs.BoundaryInterceptor`,

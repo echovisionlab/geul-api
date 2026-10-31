@@ -27,6 +27,7 @@ func TestDomainErrorsMapToTheirConnectCounterparts(t *testing.T) {
 		{"denied", domainerr.Denied("avatar source does not belong to this member"), PermissionDenied("avatar source does not belong to this member")},
 		{"invalid session", domainerr.InvalidSession(), InvalidSession()},
 		{"unavailable", domainerr.DependencyUnavailable("account email"), DependencyUnavailable("account email")},
+		{"retry", domainerr.Retry("audience segment changed while it was being archived; retry"), connect.NewError(connect.CodeAborted, stderrors.New("audience segment changed while it was being archived; retry"))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

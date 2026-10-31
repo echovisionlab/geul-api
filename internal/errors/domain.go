@@ -17,6 +17,7 @@ var domainCodes = map[domainerr.Kind]connect.Code{
 	domainerr.PermissionDenied:   connect.CodePermissionDenied,
 	domainerr.Unauthenticated:    connect.CodeUnauthenticated,
 	domainerr.Unavailable:        connect.CodeUnavailable,
+	domainerr.Aborted:            connect.CodeAborted,
 }
 
 // Classified returns the Connect form of err when err carries a client

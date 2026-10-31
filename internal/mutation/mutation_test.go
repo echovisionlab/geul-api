@@ -194,3 +194,49 @@ func TestLockOrderSortsAndDeduplicatesSubjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b"}, ordered)
 }
+
+func TestRunTakesDomainLocksBeforeAccess(t *testing.T) {
+	runner, db := newTestRunner(t, &audittest.Recorder{})
+	var steps []string
+	spec := noteSpec(&steps, "locked first")
+	spec.Lock = func(context.Context, *gorm.DB) error {
+		steps = append(steps, "lock")
+		return nil
+	}
+
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Equal(t, []string{"lock", "access", "change", "audit", "outbox"}, steps)
+
+	missing := errors.New("root not found")
+	steps = nil
+	spec.Lock = func(context.Context, *gorm.DB) error {
+		steps = append(steps, "lock")
+		return missing
+	}
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorIs(t, err, missing)
+	require.Equal(t, []string{"lock"}, steps)
+	require.EqualValues(t, 1, noteCount(t, db))
+}
+
+func TestAllAppendsEveryRecordInOrder(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "several")
+	record := func(name string) Audit {
+		return RequestAudit(sharedtelemetry.AuditMemberTagCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), name)
+		})
+	}
+	spec.Audit = func(note) Audit { return All(record("first"), Unchanged(), record("second")) }
+
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 2)
+
+	spec.Audit = func(note) Audit { return All() }
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorContains(t, err, "return Unchanged")
+}
