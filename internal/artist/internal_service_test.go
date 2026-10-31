@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -46,13 +45,11 @@ func TestInternalArtistParentRelationRejectsCyclesAndCanBeClearedIntegration(t *
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
 	requireInternalResourceAdmin(t, stack.SpiceDBClient, identityID)
-	service := NewAuditedInternalArtistService(
-		db, noopArtistAsyncPublisher{}, stack.SpiceDBClient, apitelemetry.NewDurableWriter(db),
-		Dependencies{Translation: artistIntegrationTranslation{}, Runtime: newArtistIntegrationRuntime(db, "")},
-		WithInternalArtistContentBlockStore(testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)),
-		WithInternalArtistCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	)
-	contentBlocks := service.contentBlocks
+	service := NewInternalConnectHandler(newTestService(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(db),
+		ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient),
+	}))
+	contentBlocks := service.artists.contentBlocks
 	rootID := seedInternalArtist(t, db, contentBlocks)
 	childID := seedInternalArtist(t, db, contentBlocks)
 	grandchildID := seedInternalArtist(t, db, contentBlocks)

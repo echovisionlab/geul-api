@@ -9,7 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -37,7 +37,7 @@ func LoadTypedTranslationSourceDocument(
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := loadCreativeContentDocumentID(ctx, db, artistContentEntity, artistID)
+	documentID, err := loadCreativeContentDocumentID(ctx, db, artistID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,9 +129,9 @@ func applyTypedTranslationCandidateWithDB(
 	}
 	if metadata.Summary != nil || len(metadata.ContentJSON) != 0 || metadata.ContentHTML != nil ||
 		metadata.ContentText != nil {
-		return errs.FailedPrecondition("Artist translation body is stored as typed Content Blocks")
+		return domainerr.Precondition("Artist translation body is stored as typed Content Blocks")
 	}
-	documentID, err := loadCreativeContentDocumentID(ctx, tx, artistContentEntity, job.EntityID)
+	documentID, err := loadCreativeContentDocumentID(ctx, tx, job.EntityID)
 	if err != nil {
 		return err
 	}
@@ -144,44 +144,7 @@ func applyTypedTranslationCandidateWithDB(
 		return err
 	}
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == domain.SourceLocale {
-		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
-		if auditWriter == nil || parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-			return errors.New("artist translation provider delivery requires its Audit writer and requesting Member")
-		}
-		snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
-		if loadErr != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, loadErr)
-		}
-		batch, buildErr := translation.BuildProviderTargetRichTextBatch(
-			snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, domain.SourceLocale, candidate,
-		)
-		if buildErr != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, buildErr)
-		}
-		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
-		result, applyErr := store.ApplyBatch(
-			ctx, tx, batch, contentblock.LockedFence(artistEntityName, documentID, domain),
-		)
-		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
-			return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
-		}
-		if applyErr != nil {
-			return normalizeCreativeContentBlockError(artistContentEntity, applyErr)
-		}
-		if !result.Changed {
-			return nil
-		}
-		if !result.TranslationSourceChanged {
-			return errs.InternalMsg("provider source Artist translation did not advance source state")
-		}
-		return domainaudit.AppendMember(
-			ctx, tx, auditWriter, job.RequestedByMemberID, sharedtelemetry.AuditArtistUpdated,
-			func(auditMetadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewArtistLocaleContentAuditRecord(
-					auditMetadata, job.EntityID, domain.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
-				)
-			},
-		)
+		return applyProviderSourceArtistTranslation(ctx, tx, store, job, candidate, auditWriter, documentID, domain)
 	}
 	state, err := loadArtistTargetLocaleState(
 		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, true,
@@ -235,7 +198,7 @@ func applyTypedTranslationCandidateWithDB(
 	if !appendProviderAudit || !changed {
 		return nil
 	}
-	if auditWriter == nil || strings.TrimSpace(job.RequestedByMemberID) == "" {
+	if strings.TrimSpace(job.RequestedByMemberID) == "" {
 		return errors.New("artist translation provider delivery requires its Audit writer and requesting Member")
 	}
 	operation := sharedtelemetry.AuditItemOperationUpdated
@@ -248,6 +211,58 @@ func applyTypedTranslationCandidateWithDB(
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewArtistLocaleContentAuditRecord(
 				metadata, job.EntityID, job.TargetLocale, operation,
+			)
+		},
+	)
+}
+
+// applyProviderSourceArtistTranslation applies a provider's unit patch of
+// the source locale as its requesting Member.
+func applyProviderSourceArtistTranslation(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *contentblock.Store,
+	job *model.TranslationJob,
+	candidate *translation.Candidate,
+	auditWriter domainaudit.Appender,
+	documentID uuid.UUID,
+	domain contentblock.DomainContext,
+) error {
+	requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
+	if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		return errors.New("artist translation provider delivery requires its Audit writer and requesting Member")
+	}
+	snapshot, loadErr := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	if loadErr != nil {
+		return normalizeCreativeContentBlockError(artistContentEntity, loadErr)
+	}
+	batch, buildErr := translation.BuildProviderTargetRichTextBatch(
+		snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, domain.SourceLocale, candidate,
+	)
+	if buildErr != nil {
+		return normalizeCreativeContentBlockError(artistContentEntity, buildErr)
+	}
+	batch.ContributorMemberIDs = []uuid.UUID{requesterID}
+	result, applyErr := store.ApplyBatch(
+		ctx, tx, batch, contentblock.LockedFence(artistEntityName, documentID, domain),
+	)
+	if errors.Is(applyErr, contentblock.ErrStaleRevision) {
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
+	}
+	if applyErr != nil {
+		return normalizeCreativeContentBlockError(artistContentEntity, applyErr)
+	}
+	if !result.Changed {
+		return nil
+	}
+	if !result.TranslationSourceChanged {
+		return errors.New("provider source Artist translation did not advance source state")
+	}
+	return domainaudit.AppendMember(
+		ctx, tx, auditWriter, job.RequestedByMemberID, sharedtelemetry.AuditArtistUpdated,
+		func(auditMetadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewArtistLocaleContentAuditRecord(
+				auditMetadata, job.EntityID, domain.SourceLocale, sharedtelemetry.AuditItemOperationUpdated,
 			)
 		},
 	)

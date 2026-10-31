@@ -437,8 +437,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		manageOptions: handlerOpts, internalOptions: internalHandlerOpts, publicOptions: publicHandlerOpts,
 		internalTrust: internalRPCTrust, downloadTTL: downloadTTL,
 	}
-	artistService, internalArtistService := music.registerArtist()
-	labelService := music.registerLabel()
+	artistService, err := music.registerArtist()
+	if err != nil {
+		return registeredServices{}, err
+	}
+	labelService, err := music.registerLabel()
+	if err != nil {
+		return registeredServices{}, err
+	}
 	releaseService, internalReleaseService, trackService := music.registerRelease()
 	referenceCatalog, err := referencecatalog.NewService(referencecatalog.Deps{
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter,
@@ -798,7 +804,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.release, err = aidocumentadapter.NewReleaseRegistration(internalReleaseService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Release AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.artist, err = aidocumentadapter.NewArtistRegistration(internalArtistService); err != nil {
+	if aiDocumentRegistrations.artist, err = aidocumentadapter.NewArtistRegistration(artistService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Artist AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.label, err = aidocumentadapter.NewLabelRegistration(labelService); err != nil {

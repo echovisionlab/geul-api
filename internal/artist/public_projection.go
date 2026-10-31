@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"gorm.io/gorm"
 )
@@ -46,14 +46,14 @@ func LoadCreativeSourceTitlesForPublic(ctx context.Context, db *gorm.DB, artistI
 		Title    string `gorm:"column:title"`
 	}
 	if err := db.WithContext(ctx).Table("artist_translation AS localized").Select("localized.entity_id, localized.title").Joins(`JOIN artist ON artist.id = localized.entity_id AND artist.source_locale = localized.locale`).Where("localized.entity_id IN ?", artistIDs).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		result[row.EntityID] = row.Title
 	}
 	for _, id := range artistIDs {
 		if _, ok := result[id]; !ok {
-			return nil, errs.NotFound("artist_translation", id)
+			return nil, domainerr.ResourceNotFound("artist_translation", id)
 		}
 	}
 	return result, nil
@@ -69,7 +69,7 @@ func LoadCreativeSourceOgAssetIDsForPublic(ctx context.Context, db *gorm.DB, art
 		OgAssetID *string `gorm:"column:og_asset_id"`
 	}
 	if err := db.WithContext(ctx).Table("artist_translation AS localized").Select("localized.entity_id, localized.og_asset_id").Joins(`JOIN artist ON artist.id = localized.entity_id AND artist.source_locale = localized.locale`).Where("localized.entity_id IN ?", artistIDs).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		result[row.EntityID] = row.OgAssetID

@@ -4,7 +4,9 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -22,9 +24,9 @@ func requireLabelView(ctx context.Context, checker entityparticipant.PermissionC
 	return labelEntity.RequirePrincipalPermission(ctx, checker, labelID, policyv1.Label.View, auth.GetUser(ctx))
 }
 
-func labelAllowedActions(ctx context.Context, checker entityparticipant.PermissionChecker, labelID, status string) ([]managev1.LabelAction, error) {
+func labelAllowedActions(ctx context.Context, checker entityparticipant.PermissionChecker, labelID string, status model.LabelStatus) ([]managev1.LabelAction, error) {
 	publishAction := managev1.LabelAction_LABEL_ACTION_PUBLISH
-	if status == managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String() {
+	if status == model.LabelStatusPublished {
 		publishAction = managev1.LabelAction_LABEL_ACTION_UNPUBLISH
 	}
 	return entityparticipant.AllowedActions(ctx, labelEntity, checker, labelID, []entityparticipant.ActionCheck[managev1.LabelAction]{
@@ -36,3 +38,7 @@ func labelAllowedActions(ctx context.Context, checker entityparticipant.Permissi
 		{Can: policyv1.Label.RemoveOwner, Action: managev1.LabelAction_LABEL_ACTION_REMOVE_OWNER},
 	})
 }
+
+// errAuthenticationRequired answers a caller without an authenticated
+// principal.
+var errAuthenticationRequired = domainerr.New(domainerr.Unauthenticated, "", "authentication required")

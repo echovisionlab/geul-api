@@ -6,6 +6,8 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
@@ -55,7 +57,7 @@ func TestValidateCompiledLabelAIDocumentMutationKeepsLockedStateAuthoritative(t 
 			mutation.Batch = &batch
 			test.mutate(&mutation)
 			_, err := validateCompiledLabelAIDocumentMutation(state, mutation, contributor)
-			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			if errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 				t.Fatalf("mismatched compiled mutation error = %v", err)
 			}
 		})
@@ -94,7 +96,7 @@ func TestLabelAIDocumentLifecycleUsesExactGeneratedStatus(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.status, func(t *testing.T) {
-			if got := labelAIDocumentLifecycleValid(test.status); got != test.valid {
+			if got := labelAIDocumentLifecycleValid(model.LabelStatus(test.status)); got != test.valid {
 				t.Fatalf("labelAIDocumentLifecycleValid(%q) = %t, want %t", test.status, got, test.valid)
 			}
 		})

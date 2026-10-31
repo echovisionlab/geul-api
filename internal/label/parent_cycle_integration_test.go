@@ -7,13 +7,11 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -25,7 +23,7 @@ func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) 
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label hierarchy admin")
-	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
+	ctx := auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(adminID),
 		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
 		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
@@ -62,12 +60,7 @@ func TestLabelParentTransitionRejectsSelfAndDescendantIntegration(t *testing.T) 
 		return labelEntity.ValidateParentTransition(ctx, tx, grandchildID, rootID)
 	}))
 
-	service := NewInternalLabelService(
-		db, noopArtistAsyncPublisher{}, stack.SpiceDBClient,
-		Dependencies{Translation: labeladapter.NewTranslation(), Runtime: newLabelRuntimeForTest(db, "")},
-		WithInternalLabelContentBlockStore(contentBlocks),
-		WithInternalLabelCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	)
+	service := NewInternalConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks}))
 	var revision string
 	require.NoError(t, db.Raw(`
 		SELECT document.revision::text
@@ -113,19 +106,7 @@ func createLabelParentIntegrationFixture(
 	adminID, name, slug string,
 ) string {
 	t.Helper()
-	service := NewLabelService(
-		db,
-		spiceDB,
-		&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")},
-		&recordingArtistFileDeleter{},
-		noopArtistAsyncPublisher{},
-		Dependencies{
-			Translation: labeladapter.NewTranslation(),
-			Members:     labeladapter.NewMemberProjection(db, ""),
-			Runtime:     newLabelRuntimeForTest(db, ""),
-		},
-		WithLabelContentBlockStore(contentBlocks),
-	)
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks}))
 	response, err := service.CreateLabel(ctx, connect.NewRequest(&managev1.CreateLabelRequest{
 		Name:     name,
 		Slug:     &slug,

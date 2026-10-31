@@ -3,6 +3,7 @@ package entityparticipant
 import (
 	"context"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/member"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
@@ -36,4 +37,11 @@ func (p *MemberProjection) LoadAuthorizationEligibleMemberSummary(
 	memberID string,
 ) (*commonv1.MemberSummary, error) {
 	return member.LoadAuthorizationEligibleSummary(ctx, p.db, p.cdnDomain, memberID)
+}
+
+func (p *MemberProjection) LoadAuthorizationEligibleIdentities(
+	ctx context.Context,
+	memberIDs []string,
+) (map[string]string, error) {
+	return memberadapter.NewParticipantIdentities(p.db).LoadAuthorizationEligibleIdentities(ctx, memberIDs)
 }

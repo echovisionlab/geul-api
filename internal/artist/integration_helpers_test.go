@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -152,6 +154,10 @@ func (p artistIntegrationMemberProjection) LoadAuthorizationEligibleMemberSummar
 	return summary, nil
 }
 
+func (p artistIntegrationMemberProjection) LoadAuthorizationEligibleIdentities(ctx context.Context, memberIDs []string) (map[string]string, error) {
+	return memberadapter.NewParticipantIdentities(p.db).LoadAuthorizationEligibleIdentities(ctx, memberIDs)
+}
+
 func (m artistIdentityManager) GetIdentity(_ context.Context, id string) (*auth.Identity, error) {
 	if m.identity == nil || m.identity.ID != id {
 		return nil, errors.New("Artist integration identity not found")
@@ -185,10 +191,7 @@ func (artistIdentityManager) DeleteIdentity(context.Context, string) error      
 
 type artistIntegrationTranslation struct{}
 
-func (artistIntegrationTranslation) ResolveInitialSourceLocale(context.Context, *gorm.DB, auth.IdentityManager, string) string {
-	return "en"
-}
-func (artistIntegrationTranslation) NormalizeInitialSourceLocale(context.Context, *gorm.DB, string) string {
+func (artistIntegrationTranslation) ResolveInitialSourceLocale(context.Context, *gorm.DB, string) string {
 	return "en"
 }
 func (artistIntegrationTranslation) RequireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors []string) error {

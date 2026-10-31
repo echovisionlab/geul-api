@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -40,14 +40,6 @@ func LabelSourceTitleSQL(tableAlias string) string {
 	return fmt.Sprintf("COALESCE(NULLIF(%s, ''), '')", labelSourceLocaleColumnSQL(tableAlias, "title"))
 }
 
-func ArtistSourceTitleSQL(alias string) string {
-	return fmt.Sprintf("COALESCE(NULLIF((SELECT at.title FROM artist_translation AS at JOIN artist AS source ON source.id = at.entity_id AND source.source_locale = at.locale WHERE at.entity_id = %s.id LIMIT 1), ''), '')", alias)
-}
-
-func ReleaseSourceTitleSQL(alias string) string {
-	return fmt.Sprintf("COALESCE(NULLIF((SELECT rt.title FROM release_translation AS rt JOIN release AS source ON source.id = rt.entity_id AND source.source_locale = rt.locale WHERE rt.entity_id = %s.id LIMIT 1), ''), '')", alias)
-}
-
 func saveLabelSourceLocaleDocumentState(
 	ctx context.Context,
 	db *gorm.DB,
@@ -56,10 +48,10 @@ func saveLabelSourceLocaleDocumentState(
 	input translationLocaleDocumentSaveInput,
 ) error {
 	if len(input.ContentJSON) != 0 || input.ContentHTML != nil || input.ContentText != nil || input.Summary != nil || input.StructureHash != nil || input.MaterializationHash != nil {
-		return errs.FailedPrecondition("label source body is stored as typed Content Blocks")
+		return domainerr.Precondition("label source body is stored as typed Content Blocks")
 	}
 	if input.Title == nil || strings.TrimSpace(*input.Title) == "" {
-		return errs.InvalidArgument("title", "must not be empty")
+		return domainerr.InvalidField("title", "must not be empty")
 	}
 	now := input.Now
 	if now.IsZero() {
@@ -87,10 +79,10 @@ func touchLabelRootUpdatedAt(
 		Where("id = ?", labelID).
 		Updates(structured.Fields{"updated_at": now})
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return errs.NotFound("label", labelID)
+		return domainerr.ResourceNotFound("label", labelID)
 	}
 	return nil
 }

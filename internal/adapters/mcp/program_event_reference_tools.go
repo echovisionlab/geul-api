@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/label"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -33,7 +34,7 @@ type ProgramEventSeriesReferenceDiscovery interface {
 }
 
 type LabelReferenceDiscovery interface {
-	ListLabelsAdmin(context.Context, *connect.Request[managev1.ListLabelsAdminRequest]) (*connect.Response[managev1.ListLabelsAdminResponse], error)
+	ListLabelsAdmin(context.Context, label.ListLabelsQuery) (label.AdminLabelPage, error)
 }
 
 type ProgramEventReferenceTools struct {
@@ -157,17 +158,17 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 			}
 		}
 	case ToolLabelList:
-		response, err := tools.labels.ListLabelsAdmin(ctx, connect.NewRequest(&managev1.ListLabelsAdminRequest{Pagination: pagination, Filters: filters}))
+		page, err := tools.labels.ListLabelsAdmin(ctx, label.ListLabelsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Labels {
+		responsePagination = page.Pagination
+		for _, item := range page.Labels {
 			if item != nil && item.Label != nil {
-				label := item.Label
-				projected := map[string]any{"id": label.Id, "name": label.Name, "status": label.Status, "source_locale": label.SourceLocale}
-				if label.Slug != nil {
-					projected["slug"] = *label.Slug
+				listed := item.Label
+				projected := map[string]any{"id": listed.Id, "name": listed.Name, "status": listed.Status, "source_locale": listed.SourceLocale}
+				if listed.Slug != nil {
+					projected["slug"] = *listed.Slug
 				}
 				items = append(items, projected)
 			}

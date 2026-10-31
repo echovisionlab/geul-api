@@ -14,6 +14,6 @@ func TestBuildLabelDocumentMetadataPlanUsesTypedClear(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.True(t, plan.parentLabelID.Present)
-	require.Nil(t, plan.parentLabelID.Value)
+	require.True(t, plan.Parent.Present)
+	require.Nil(t, plan.Parent.Value)
 }

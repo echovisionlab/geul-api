@@ -21,28 +21,15 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-func newArtistIntegrationSpiceDBService(
-	t *testing.T,
-	db *gorm.DB,
-	adminID string,
-	fileDeleter *recordingArtistFileDeleter,
-) *ArtistService {
+// newArtistIntegrationSpiceDBService returns the manage Connect adapter of
+// an Artist service whose administrator is adminID.
+func newArtistIntegrationSpiceDBService(t *testing.T, db *gorm.DB, adminID string) *ConnectHandler {
 	t.Helper()
 	stack := testutil.SetupOryStack(t)
 	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
-	return NewArtistService(
-		db,
-		stack.SpiceDBClient,
-		artistIdentityManager{identity: artistIdentity(adminID)},
-		fileDeleter,
-		noopArtistAsyncPublisher{},
-		Dependencies{
-			Translation: artistIntegrationTranslation{},
-			Members:     artistIntegrationMemberProjection{db: db},
-			Runtime:     newArtistIntegrationRuntime(db, ""),
-		},
-		WithArtistContentBlockStore(testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)),
-	)
+	return NewConnectHandler(newTestService(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient, ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient),
+	}))
 }
 
 func syncArtistIntegrationGlobalRole(
@@ -59,11 +46,12 @@ func syncArtistIntegrationGlobalRole(
 }
 
 func artistIntegrationAdminCtx(id string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(id),
 		MemberID:      auth.MemberID(artistMemberID(id)),
 		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
+		Onboarded:     true,
 	})
 }
 
@@ -72,9 +60,9 @@ func TestArtistCreateRechecksCurrentSiteAdminInTransactionIntegration(t *testing
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Demoted Admin")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
+	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 
-	syncArtistIntegrationGlobalRole(t, service.spiceDB, adminID, policyv1.Role.User())
+	syncArtistIntegrationGlobalRole(t, service.artists.spiceDB, adminID, policyv1.Role.User())
 
 	_, err := service.CreateArtist(
 		artistIntegrationAdminCtx(adminID),
@@ -94,8 +82,8 @@ func TestListMyArtistsGivesCurrentSiteAdminAllArtistsIntegration(t *testing.T) {
 	otherAdminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Listing Admin")
 	seedArtistIdentity(t, db, otherAdminID, "Other Artist Admin")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
-	syncArtistIntegrationGlobalRole(t, service.spiceDB, otherAdminID, policyv1.Role.Admin())
+	service := newArtistIntegrationSpiceDBService(t, db, adminID)
+	syncArtistIntegrationGlobalRole(t, service.artists.spiceDB, otherAdminID, policyv1.Role.Admin())
 
 	created, err := service.CreateArtist(
 		artistIntegrationAdminCtx(otherAdminID),
@@ -154,7 +142,7 @@ func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Gallery Admin")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
+	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 	ctx := artistIntegrationAdminCtx(adminID)
 
 	created, err := service.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
@@ -257,7 +245,7 @@ func TestArtistDeletePreviewRejectsChangedRelationsAndPreservesTargetsIntegratio
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Delete Admin")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
+	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 	ctx := artistIntegrationAdminCtx(adminID)
 
 	parent, err := service.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
@@ -273,7 +261,7 @@ func TestArtistDeletePreviewRejectsChangedRelationsAndPreservesTargetsIntegratio
 	require.NoError(t, err)
 	labelID := testutil.IntegrationUUID()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		document, createErr := service.contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
+		document, createErr := service.artists.contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
 			Profile: "compact", SourceLocale: "en",
 		})
 		if createErr != nil {
@@ -328,7 +316,7 @@ func TestArtistDeleteSerializesRelationshipSnapshotWithReparentIntegration(t *te
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist delete lock admin")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
+	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 	ctx := artistIntegrationAdminCtx(adminID)
 
 	parent, err := service.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
@@ -398,13 +386,14 @@ func TestArtistOwnerManagerTransitionsIntegration(t *testing.T) {
 	participantID := testutil.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Owner Admin")
 	seedArtistIdentity(t, db, participantID, "Artist Participant")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
+	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 	adminCtx := artistIntegrationAdminCtx(adminID)
-	participantCtx := auth.WithUser(context.Background(), &auth.UserInfo{
+	participantCtx := auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(participantID),
 		MemberID:      auth.MemberID(artistMemberID(participantID)),
 		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
+		Onboarded:     true,
 	})
 
 	created, err := service.CreateArtist(adminCtx, connect.NewRequest(&managev1.CreateArtistRequest{
@@ -483,7 +472,7 @@ func TestArtistOwnerManagerTransitionsIntegration(t *testing.T) {
 
 func requireArtistCapabilities(
 	t *testing.T,
-	service *ArtistService,
+	service *ConnectHandler,
 	accountIdentityID string,
 	artistID string,
 	actorLabel string,
@@ -496,7 +485,7 @@ func requireArtistCapabilities(
 	for _, capability := range capabilities {
 		can, canErr := capability(artistID)
 		require.NoError(t, canErr)
-		allowed, checkErr := service.spiceDB.CheckActorCan(t.Context(), actor, can)
+		allowed, checkErr := service.artists.spiceDB.CheckActorCan(t.Context(), actor, can)
 		require.NoError(t, checkErr)
 		require.Equal(
 			t,

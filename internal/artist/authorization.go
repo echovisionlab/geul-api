@@ -3,7 +3,9 @@ package artist
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -15,9 +17,9 @@ var artistEntity = entityparticipant.Spec{
 	Policy: policyv1.Artist,
 }
 
-func artistAllowedActions(ctx context.Context, checker entityparticipant.PermissionChecker, artistID, status string) ([]managev1.ArtistAction, error) {
+func artistAllowedActions(ctx context.Context, checker entityparticipant.PermissionChecker, artistID string, status model.ArtistStatus) ([]managev1.ArtistAction, error) {
 	publishAction := managev1.ArtistAction_ARTIST_ACTION_PUBLISH
-	if status == managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String() {
+	if status == model.ArtistStatusPublished {
 		publishAction = managev1.ArtistAction_ARTIST_ACTION_UNPUBLISH
 	}
 	return entityparticipant.AllowedActions(ctx, artistEntity, checker, artistID, []entityparticipant.ActionCheck[managev1.ArtistAction]{
@@ -38,3 +40,7 @@ func hasArtistAction(actions []managev1.ArtistAction, expected managev1.ArtistAc
 	}
 	return false
 }
+
+// errAuthenticationRequired answers a caller without an authenticated
+// principal.
+var errAuthenticationRequired = domainerr.New(domainerr.Unauthenticated, "", "authentication required")

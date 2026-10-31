@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -57,7 +57,7 @@ func validateResourceDeletionAuthorizationBatchSize(resourceName string, deleted
 	if len(deleted) <= maxMutations && len(restored) <= maxMutations {
 		return nil
 	}
-	return errs.FailedPrecondition(fmt.Sprintf("%s has too many authorization relationships to delete atomically; remove participant relationships or reparent dependent resources first", resourceName))
+	return domainerr.Precondition(fmt.Sprintf("%s has too many authorization relationships to delete atomically; remove participant relationships or reparent dependent resources first", resourceName))
 }
 
 func timestampProtoPtr(value *time.Time) *timestamppb.Timestamp {

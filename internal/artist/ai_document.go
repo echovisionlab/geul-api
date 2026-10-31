@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -81,14 +81,14 @@ func (e *AIDocumentRevisionConflictError) Error() string {
 func validateArtistAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
 	artistID, err := canonicalArtistUUID(input.ArtistID)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("artist_id", "must be a canonical UUID")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("artist_id", "must be a canonical UUID")
 	}
 	expected, err := canonicalArtistUUID(input.ExpectedRevision)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("expected_revision", "must be a canonical UUID")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("expected_revision", "must be a canonical UUID")
 	}
 	if strings.TrimSpace(input.Locale) == "" || strings.TrimSpace(input.ExpectedSource) == "" {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "requested and source locales are required")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("locale", "requested and source locales are required")
 	}
 	modes := 0
 	if input.Batch != nil {
@@ -101,13 +101,13 @@ func validateArtistAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid
 		modes++
 	}
 	if modes != 1 {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("operation", "exactly one Artist AI document mutation mode is required")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("operation", "exactly one Artist AI document mutation mode is required")
 	}
 	if input.CreateTranslation && (input.Locale == input.ExpectedSource || input.ExpectedPresence) {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "only a missing non-source Artist translation can be created")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("locale", "only a missing non-source Artist translation can be created")
 	}
 	if input.DeleteTranslation && (input.Locale == input.ExpectedSource || !input.ExpectedPresence) {
-		return uuid.Nil, uuid.Nil, errs.InvalidArgument("locale", "only an existing non-source Artist translation can be deleted")
+		return uuid.Nil, uuid.Nil, domainerr.InvalidField("locale", "only an existing non-source Artist translation can be deleted")
 	}
 	return artistID, expected, nil
 }

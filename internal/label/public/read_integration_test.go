@@ -131,14 +131,9 @@ func TestLabelPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *tes
 		db, "https://cdn.example.com", fixture.SpiceDB,
 		testutil.NewCreativeContentStore(t, fixture.SpiceDB),
 	)
-	managerLabelSvc := labelpublic.NewLabelService(
-		db,
-		labelpublic.Dependencies{
-			Content: managerRuntime,
-			Draft:   managerRuntime,
-			Media:   managerRuntime,
-		},
-	)
+	managerLabelService, err := labelpublic.NewService(labelpublic.Deps{DB: db, Content: managerRuntime, Draft: managerRuntime, Media: managerRuntime})
+	require.NoError(t, err)
+	managerLabelSvc := labelpublic.NewConnectHandler(managerLabelService)
 	managerReq := connect.NewRequest(&openv1.GetLabelRequest{Slug: draftLabel.GetSlug()})
 	managerCtx := testutil.PostIntegrationContext(adminID)
 	managerDraftLabel, err := managerLabelSvc.Get(managerCtx, managerReq)

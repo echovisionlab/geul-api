@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
 // LockParentGraph serializes every change to the entity hierarchy for the
@@ -30,17 +30,17 @@ func (s Spec) ValidateParentTransition(ctx context.Context, tx *gorm.DB, entityI
 		return nil
 	}
 	if parentID == entityID {
-		return errs.InvalidArgument(s.ParentColumn, "cannot reference the same "+s.Name)
+		return domainerr.InvalidField(s.ParentColumn, "cannot reference the same "+s.Name)
 	}
 	if _, err := uuid.Parse(parentID); err != nil {
-		return errs.InvalidArgument(s.ParentColumn, "must be a valid "+s.Title+" ID")
+		return domainerr.InvalidField(s.ParentColumn, "must be a valid "+s.Title+" ID")
 	}
 	var parentExists bool
 	if err := tx.WithContext(ctx).Raw(fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE id = ?::uuid)`, s.Table), parentID).Scan(&parentExists).Error; err != nil {
 		return err
 	}
 	if !parentExists {
-		return errs.InvalidArgument(s.ParentColumn, s.Name+" does not exist")
+		return domainerr.InvalidField(s.ParentColumn, s.Name+" does not exist")
 	}
 	var cycle bool
 	if err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
@@ -56,7 +56,7 @@ func (s Spec) ValidateParentTransition(ctx context.Context, tx *gorm.DB, entityI
 		return err
 	}
 	if cycle {
-		return errs.InvalidArgument(s.ParentColumn, "would create "+strings.ToLower(s.Article)+" hierarchy cycle")
+		return domainerr.InvalidField(s.ParentColumn, "would create "+strings.ToLower(s.Article)+" hierarchy cycle")
 	}
 	return nil
 }
@@ -72,10 +72,10 @@ func (s Spec) LoadParent(ctx context.Context, db *gorm.DB, entityID string) (*st
 		Where("id = ?", entityID).
 		Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, errs.NotFound(s.Name, entityID)
+		return nil, domainerr.ResourceNotFound(s.Name, entityID)
 	}
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 	return row.ParentID, nil
 }

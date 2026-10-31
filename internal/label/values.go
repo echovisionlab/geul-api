@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -28,10 +28,10 @@ func ensureSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Valu
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if count != 0 {
-		return errs.SlugAlreadyExists(entity, slug)
+		return domainerr.Duplicate(entity, "slug", slug)
 	}
 	return nil
 }

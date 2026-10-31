@@ -5,102 +5,44 @@ import (
 	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
-type InternalLabelService struct {
-	db             *gorm.DB
-	asyncPublisher AsyncPublisher
-	spiceDB        *auth.SpiceDBClient
-	checkpoints    persistencecheckpoint.ContributorFence
-	auditWriter    domainaudit.Appender
-	contentBlocks  *contentblock.Store
-	runtime        Runtime
-	translation    Translation
+// LoadLabelBlockDocumentQuery opens the Label document of a collaboration
+// room in Locale for the session SessionID.
+type LoadLabelBlockDocumentQuery struct {
+	LabelID   string
+	Locale    string
+	SessionID string
 }
 
-type InternalLabelServiceOption func(*InternalLabelService)
-
-func WithInternalLabelContentBlockStore(store *contentblock.Store) InternalLabelServiceOption {
-	return func(service *InternalLabelService) { service.contentBlocks = store }
-}
-
-func WithInternalLabelCheckpoints(checkpoints persistencecheckpoint.ContributorFence) InternalLabelServiceOption {
-	return func(service *InternalLabelService) { service.checkpoints = checkpoints }
-}
-
-func NewAuditedInternalLabelService(db *gorm.DB, asyncPublisher AsyncPublisher, spiceDB *auth.SpiceDBClient, auditWriter domainaudit.Appender, dependencies Dependencies, options ...InternalLabelServiceOption) *InternalLabelService {
-	if auditWriter == nil {
-		panic("internal label audit writer is required")
+// LoadLabelBlockDocument returns the room's document: the current source
+// graph with the room locale's values overlaid, its locale metadata and the
+// Label's document metadata.
+func (s *Service) LoadLabelBlockDocument(ctx context.Context, query LoadLabelBlockDocumentQuery) (*intrav1.LoadLabelBlockDocumentResponse, error) {
+	if strings.TrimSpace(query.Locale) == "" {
+		return nil, domainerr.Required("locale")
 	}
-	service := NewInternalLabelService(db, asyncPublisher, spiceDB, dependencies, options...)
-	service.auditWriter = auditWriter
-	return service
-}
-
-func NewInternalLabelService(db *gorm.DB, asyncPublisher AsyncPublisher, spiceDB *auth.SpiceDBClient, dependencies Dependencies, options ...InternalLabelServiceOption) *InternalLabelService {
-	if db == nil {
-		panic("InternalLabelService: db is required")
-	}
-	if asyncPublisher == nil {
-		panic("InternalLabelService: asyncPublisher is required")
-	}
-	if spiceDB == nil {
-		panic("InternalLabelService: spiceDB is required")
-	}
-	if dependencies.Translation == nil {
-		panic("InternalLabelService: translation is required")
-	}
-	if dependencies.Runtime == nil {
-		panic("InternalLabelService: media and OG runtime is required")
-	}
-	service := &InternalLabelService{
-		db: db, asyncPublisher: asyncPublisher, spiceDB: spiceDB,
-		runtime: dependencies.Runtime, translation: dependencies.Translation,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
-}
-
-func (s *InternalLabelService) LoadLabelBlockDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.LoadLabelBlockDocumentRequest],
-) (*connect.Response[intrav1.LoadLabelBlockDocumentResponse], error) {
-	if req == nil || req.Msg == nil || strings.TrimSpace(req.Msg.GetLocale()) == "" {
-		return nil, errs.Required("locale")
-	}
-	requestedLocale, err := normalizeLabelDocumentLocale(req.Msg.GetLocale())
+	requestedLocale, err := normalizeLabelDocumentLocale(query.Locale)
 	if err != nil {
 		return nil, err
 	}
 	var locales []labelLocaleTitle
 	var metadata *intrav1.LabelDocumentMetadata
 	bootstrap, err := loadLabelContentBlockBootstrap(
-		ctx, s.db, s.contentBlocks, s.spiceDB, req.Msg.LabelId,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_LABEL,
-		req.Msg.Principal,
+		ctx, s.db, s.contentBlocks, s.spiceDB, query.LabelID, query.SessionID,
 		func(ctx context.Context, tx *gorm.DB) error {
 			var err error
-			locales, err = loadLabelLocaleTitles(ctx, tx, req.Msg.LabelId)
+			locales, err = loadLabelLocaleTitles(ctx, tx, query.LabelID)
 			if err != nil {
 				return err
 			}
-			metadata, err = loadLabelDocumentMetadata(ctx, tx, req.Msg.LabelId)
+			metadata, err = loadLabelDocumentMetadata(ctx, tx, query.LabelID)
 			return err
 		},
 	)
@@ -115,123 +57,48 @@ func (s *InternalLabelService) LoadLabelBlockDocument(
 	if err != nil {
 		return nil, normalizeLabelContentBlockError(err)
 	}
-	sourceMetadata := &intrav1.LabelLocaleMetadata{Locale: bootstrap.Source.SourceLocale}
-	var localeMetadata *intrav1.LabelLocaleMetadata
-	localeExists := false
-	var targetRevision *string
-	for _, locale := range locales {
-		if locale.Locale == bootstrap.Source.SourceLocale {
-			sourceMetadata.Title = locale.Title
-		}
-		if locale.Locale == requestedLocale {
-			localeExists = true
-			localeMetadata = &intrav1.LabelLocaleMetadata{Locale: requestedLocale}
-			localeMetadata.Title = locale.Title
-			if requestedLocale != bootstrap.Source.SourceLocale {
-				revision, revisionErr := deriveLabelTargetRevision(bootstrap.Snapshot.Document.Revision.String(), locale.UpdatedAt)
-				if revisionErr != nil {
-					return nil, revisionErr
-				}
-				targetRevision = &revision
-			}
-		}
-	}
-	if requestedLocale == bootstrap.Source.SourceLocale && !localeExists {
-		return nil, errs.InternalMsg("Label source locale metadata is missing")
-	}
-	if !localeExists && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, requestedLocale) {
-		return nil, errs.FailedPrecondition("Label target locale Blocks exist without owning metadata")
-	}
-	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, requestedLocale)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&intrav1.LoadLabelBlockDocumentResponse{
+	response := &intrav1.LoadLabelBlockDocumentResponse{
 		Document: document, DocumentRevision: bootstrap.Snapshot.Document.Revision.String(),
-		SourceMetadata: sourceMetadata, Metadata: metadata,
-		Locale: requestedLocale, LocaleExists: localeExists, LocaleMetadata: localeMetadata,
-		TargetRevision: targetRevision, PresentLocaleValues: presentLocaleValues,
-	}), nil
+		SourceMetadata: &intrav1.LabelLocaleMetadata{Locale: bootstrap.Source.SourceLocale},
+		Metadata:       metadata, Locale: requestedLocale,
+	}
+	if err := overlayLabelRoomLocales(response, locales, bootstrap); err != nil {
+		return nil, err
+	}
+	if !response.LocaleExists && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, requestedLocale) {
+		return nil, domainerr.Precondition("Label target locale Blocks exist without owning metadata")
+	}
+	if response.PresentLocaleValues, err = contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, requestedLocale); err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
-func (s *InternalLabelService) ApplyLabelBlockBatch(
-	ctx context.Context,
-	req *connect.Request[intrav1.ApplyLabelBlockBatchRequest],
-) (*connect.Response[intrav1.ApplyLabelBlockBatchResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	locale, err := normalizeLabelDocumentLocale(req.Msg.Locale)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.applyLabelBlockBatch(
-		ctx, req.Msg.LabelId, locale, req.Msg.ExpectedTargetRevision, req.Msg.Batch, req.Msg.AffectedLocaleValues,
-		func(tx *gorm.DB, result labelBlockApplyResult) error {
-			if !result.Content.Changed {
-				return nil
+// overlayLabelRoomLocales fills the source title and, when the room locale
+// has metadata, its title and target revision.
+func overlayLabelRoomLocales(response *intrav1.LoadLabelBlockDocumentResponse, locales []labelLocaleTitle, bootstrap labelContentBootstrap) error {
+	sourceLocale := bootstrap.Source.SourceLocale
+	for _, locale := range locales {
+		if locale.Locale == sourceLocale {
+			response.SourceMetadata.Title = locale.Title
+		}
+		if locale.Locale != response.Locale {
+			continue
+		}
+		response.LocaleExists = true
+		response.LocaleMetadata = &intrav1.LabelLocaleMetadata{Locale: response.Locale, Title: locale.Title}
+		if response.Locale != sourceLocale {
+			revision, err := deriveLabelTargetRevision(bootstrap.Snapshot.Document.Revision.String(), locale.UpdatedAt)
+			if err != nil {
+				return err
 			}
-			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             req.Msg.LabelId,
-				Fields:               []string{"content"},
-				DocumentRevision:     result.Content.DocumentRevision.String(),
-				Contributors:         req.Msg.Batch.GetContributorMemberIds(),
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				Locale:               locale,
-				LocaleDeleted:        !result.LocaleExists,
-				TargetRevision:       result.TargetRevision,
-				DocumentStateChanged: locale == result.SourceLocale,
-			}))
-		},
-	)
-	if err != nil {
-		return nil, err
+			response.TargetRevision = &revision
+		}
 	}
-	return connect.NewResponse(&intrav1.ApplyLabelBlockBatchResponse{
-		DocumentRevision: result.Content.DocumentRevision.String(), Changed: result.Content.Changed,
-		SourceChanged:  result.Content.TranslationSourceChanged,
-		ChangedLocales: result.Content.ChangedLocales,
-		Locale:         locale, TargetRevision: result.TargetRevision,
-	}), nil
-}
-
-func (s *InternalLabelService) UpdateLabelLocaleMetadata(
-	ctx context.Context,
-	req *connect.Request[intrav1.UpdateLabelLocaleMetadataRequest],
-) (*connect.Response[intrav1.UpdateLabelLocaleMetadataResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.Required("request")
+	if response.Locale == sourceLocale && !response.LocaleExists {
+		return errors.New("Label source locale metadata is missing")
 	}
-	locale, err := normalizeLabelDocumentLocale(req.Msg.Locale)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.updateLabelLocaleTitle(
-		ctx, req.Msg.LabelId, locale, req.Msg.Title, req.Msg.ExpectedRevision, req.Msg.ExpectedTargetRevision, req.Msg.ContributorMemberIds,
-		func(tx *gorm.DB, result labelTitleUpdateResult) error {
-			if !result.Advance.Changed {
-				return nil
-			}
-			return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             req.Msg.LabelId,
-				Fields:               []string{"title"},
-				DocumentRevision:     result.Advance.DocumentRevision.String(),
-				Contributors:         req.Msg.ContributorMemberIds,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				Locale:               locale,
-				DocumentStateChanged: true,
-			}))
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&intrav1.UpdateLabelLocaleMetadataResponse{
-		DocumentRevision: result.Advance.DocumentRevision.String(), Changed: result.Advance.Changed,
-		SourceChanged:  result.Advance.TranslationSourceChanged,
-		ChangedLocales: result.ChangedLocales,
-		Locale:         locale,
-	}), nil
+	return nil
 }
 
 func loadLabelDocumentMetadata(
@@ -245,9 +112,9 @@ func loadLabelDocumentMetadata(
 		Where("id = ?", labelID).
 		Take(&label).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("label", labelID)
+			return nil, domainerr.ResourceNotFound("label", labelID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &intrav1.LabelDocumentMetadata{
 		Slug:          label.Slug,

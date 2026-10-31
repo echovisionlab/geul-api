@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -53,7 +54,7 @@ type ReleaseDocumentDiscovery interface {
 }
 
 type ArtistDocumentDiscovery interface {
-	ListArtistsAdmin(context.Context, *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error)
+	ListArtistsAdmin(context.Context, artist.ListArtistsQuery) (artist.AdminArtistPage, error)
 }
 
 // DocumentDiscoveryTools owns only document selection metadata. DCDP reads
@@ -268,27 +269,25 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
 	case "artist":
-		request := connect.NewRequest(&managev1.ListArtistsAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.artists.ListArtistsAdmin(ctx, artist.ListArtistsQuery{
+			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
+			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.artists.ListArtistsAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Artists))
-		for _, item := range listed.Msg.Artists {
+		documents := make([]map[string]any, 0, len(listed.Artists))
+		for _, item := range listed.Artists {
 			if item == nil || item.Artist == nil || item.Artist.UpdatedAt == nil {
 				continue
 			}
-			artist := item.Artist
+			listedArtist := item.Artist
 			documents = append(documents, discoveryDocument(
-				"artist", artist.Id, artist.Name, artist.Slug, artist.SourceLocale,
-				artist.Status, artist.UpdatedAt.AsTime(),
+				"artist", listedArtist.Id, listedArtist.Name, listedArtist.Slug, listedArtist.SourceLocale,
+				listedArtist.Status, listedArtist.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
 	default:
 		return nil, 0, 0, fmt.Errorf("p must be post, work, page, program_event, release, or artist")
 	}

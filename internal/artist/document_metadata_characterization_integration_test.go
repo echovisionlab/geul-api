@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -38,7 +37,7 @@ const (
 )
 
 type documentMetadataCharacterizationService struct {
-	service *InternalArtistService
+	service *InternalConnectHandler
 }
 
 func newDocumentMetadataCharacterizationService(
@@ -49,12 +48,9 @@ func newDocumentMetadataCharacterizationService(
 	publisher *participantCharacterizationPublisher,
 ) documentMetadataCharacterizationService {
 	t.Helper()
-	return documentMetadataCharacterizationService{service: NewAuditedInternalArtistService(
-		db, publisher, spiceDB, apitelemetry.NewDurableWriter(db),
-		Dependencies{Translation: artistIntegrationTranslation{}, Runtime: newArtistIntegrationRuntime(db, "")},
-		WithInternalArtistContentBlockStore(store),
-		WithInternalArtistCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-	)}
+	return documentMetadataCharacterizationService{service: NewInternalConnectHandler(newTestService(t, Deps{
+		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), Publisher: publisher, ContentBlocks: store,
+	}))}
 }
 
 func saveDocumentMetadataCharacterizationTitle(t *testing.T, db *gorm.DB, entityID, title string, now time.Time) {

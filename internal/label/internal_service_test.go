@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
@@ -117,12 +115,10 @@ func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
 	jobsBefore := loadJobs()
 	require.Len(t, jobsBefore, 1)
 	require.Equal(t, jobID, jobsBefore[0].ID)
-	service := NewAuditedInternalLabelService(
-		db, &capturingAsyncPublisher{}, stack.SpiceDBClient, apitelemetry.NewDurableWriter(db),
-		Dependencies{Translation: labeladapter.NewTranslation(), Runtime: newLabelRuntimeForTest(db, "")},
-		WithInternalLabelContentBlockStore(contentBlocks),
-		WithInternalLabelCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	)
+	service := NewInternalConnectHandler(newTestService(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(db), Publisher: &capturingAsyncPublisher{},
+		ContentBlocks: contentBlocks,
+	}))
 	name := "Renamed Label"
 	var contributorID string
 	require.NoError(t, db.Table("label_owner").Select("member_id::text").Where("label_id = ?", labelID).Scan(&contributorID).Error)
