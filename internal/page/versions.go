@@ -12,17 +12,19 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -112,12 +114,10 @@ func (s *PageService) RestorePageVersion(
 		}
 		return nil, errs.Internal(err)
 	}
-
-	// Validate version belongs to the specified page
 	if req.Msg.PageId != "" && version.PageID != req.Msg.PageId {
 		return nil, errs.NotFound("page_version", req.Msg.VersionId)
 	}
-	versionSnapshot, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
+	snapshot, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
 		return nil, failurecause.WithAttrs(
 			errs.WithCause(errs.FailedPrecondition("Page version typed snapshot is invalid"), failurecause.ServerFault(err)),
@@ -125,202 +125,114 @@ func (s *PageService) RestorePageVersion(
 		)
 	}
 
-	var contributorMemberIDs []string
-	if user := auth.GetUser(ctx); user != nil {
-		contributorMemberIDs = append(contributorMemberIDs, user.MemberID.String())
-	}
 	now := time.Now().UTC()
-	var restoredRevision string
-	var blocksChanged bool
-	var titleChanged bool
-	var summaryChanged bool
-	var sourceLocaleSwitched bool
-	restoredChanged := false
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, documentID, err := loadPageAIDocumentRoot(ctx, tx, version.PageID, clause.LockingStrengthUpdate)
+		restore, err := s.lockPageVersionRestore(ctx, tx, version.PageID, snapshot, now)
 		if err != nil {
 			return err
 		}
-		if err := requireLockedPagePermission(ctx, tx, s.spiceDB, version.PageID, policyv1.Page.Edit); err != nil {
+		outcome, err := restore.Apply(ctx, tx)
+		if err != nil || !outcome.Changed() {
 			return err
 		}
-		currentSource, err := loadRequiredPageSourceLocaleMetadata(ctx, tx, version.PageID)
-		if err != nil {
-			return err
-		}
-		titleChanged = !nullableStringEqual(currentSource.Title, versionSnapshot.Title)
-		summaryChanged = !nullableStringEqual(currentSource.Summary, versionSnapshot.Summary)
-
-		currentSnapshot, err := s.contentBlocks.LoadSnapshotInTransaction(
-			ctx,
-			tx,
-			documentID,
-			root.SourceLocale,
-		)
-		if err != nil {
-			return normalizePageContentBlockError(err)
-		}
-		if root.SourceLocale != versionSnapshot.SourceLocale {
-			switchErr := switchBlockVersionRestoreSourceLocale(
-				ctx, tx, s.contentBlocks, "page", version.PageID, versionSnapshot.SourceLocale,
-				currentSnapshot.Document.Revision, root.SourceLocale, now,
-			)
-			if switchErr != nil {
-				return switchErr
-			}
-			sourceLocaleSwitched = true
-			root.SourceLocale = versionSnapshot.SourceLocale
-			currentSource, err = loadRequiredPageSourceLocaleMetadata(ctx, tx, version.PageID)
-			if err != nil {
-				return err
-			}
-			titleChanged = !nullableStringEqual(currentSource.Title, versionSnapshot.Title)
-			summaryChanged = !nullableStringEqual(currentSource.Summary, versionSnapshot.Summary)
-			currentSnapshot, err = s.contentBlocks.LoadSnapshotInTransaction(
-				ctx, tx, documentID, versionSnapshot.SourceLocale,
-			)
-			if err != nil {
-				return normalizePageContentBlockError(err)
-			}
-		}
-		unavailable, err := s.runtime.LoadUnavailableVersionAttachmentKinds(ctx, tx, versionSnapshot.Document)
-		if err != nil {
-			return normalizePageContentBlockError(err)
-		}
-		replaceInput, err := contentblock.ReplaceFromLocalizedPageProtoWithUnavailableAttachments(
-			documentID,
-			currentSnapshot.Document.Revision,
-			versionSnapshot.Document,
-			unavailable,
-		)
-		if err != nil {
-			return normalizePageContentBlockError(err)
-		}
-		replaceResult, err := s.contentBlocks.ReplaceSnapshot(
-			ctx,
-			tx,
-			replaceInput,
-			lockedPageContentFence(version.PageID),
-		)
-		if err != nil {
-			return normalizePageContentBlockError(err)
-		}
-		blocksChanged = replaceResult.Changed
-		finalRevision := replaceResult.DocumentRevision
-
-		metadataChanged := titleChanged || summaryChanged
-		if metadataChanged && !replaceResult.Changed {
-			advanceResult, err := s.contentBlocks.AdvanceRevision(
-				ctx,
-				tx,
-				contentblock.AdvanceInput{
-					DocumentID:       documentID,
-					ExpectedRevision: finalRevision,
-				},
-				lockedPageContentFence(version.PageID),
-				func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-					if err := updatePageVersionSourceMetadata(
-						ctx,
-						tx,
-						version.PageID,
-						versionSnapshot.SourceLocale,
-						versionSnapshot.Title,
-						versionSnapshot.Summary,
-						now,
-					); err != nil {
-						return contentblock.MetadataEffect{}, err
-					}
-					return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
-				},
-			)
-			if err != nil {
-				return normalizePageContentBlockError(err)
-			}
-			finalRevision = advanceResult.DocumentRevision
-		} else if metadataChanged {
-			if err := updatePageVersionSourceMetadata(
-				ctx,
-				tx,
-				version.PageID,
-				versionSnapshot.SourceLocale,
-				versionSnapshot.Title,
-				versionSnapshot.Summary,
-				now,
-			); err != nil {
-				return err
-			}
-		}
-		restoredChanged = sourceLocaleSwitched || blocksChanged || metadataChanged
-		restoredRevision = finalRevision.String()
-		if !restoredChanged {
-			return nil
-		}
-
-		if err := tx.WithContext(ctx).Model(&model.Page{}).
-			Where("id = ?", version.PageID).
-			Updates(structured.Fields{
-				"updated_at": now,
-			}).Error; err != nil {
-			return err
-		}
-
-		_, err = s.runtime.RequestCurrentWithDB(
-			ctx,
-			tx,
-			managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
-			version.PageID,
-			versionSnapshot.SourceLocale,
-			false,
-			"page_version_restored",
-		)
-		if err != nil {
-			return err
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditPageUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewPageVersionRestoreAuditRecord(metadata, version.PageID, version.ID)
-				},
-			); err != nil {
-				return err
-			}
-		}
-		changedFields := make([]string, 0, 3)
-		if titleChanged {
-			changedFields = append(changedFields, "title")
-		}
-		if summaryChanged {
-			changedFields = append(changedFields, "summary")
-		}
-		if blocksChanged {
-			changedFields = append(changedFields, "content")
-		}
-		if sourceLocaleSwitched {
-			changedFields = append(changedFields, "sourceLocale")
-		}
-		event := buildContentUpdatedEvent(
-			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-			version.PageID,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
-			buildContentUpdatedFields(changedFields, pageContentUpdatedFieldSpecs),
-			true,
-			restoredRevision,
-			contributorMemberIDs,
-			&contentUpdatedLocaleState{locale: versionSnapshot.SourceLocale, exists: true},
-		)
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, event)
+		return s.publishPageVersionRestore(ctx, tx, version, snapshot.SourceLocale, outcome, now)
 	}); err != nil {
-		return nil, errs.Internal(err)
+		return nil, normalizePageContentBlockError(err)
 	}
 	var page model.Page
 	if err := s.db.WithContext(ctx).First(&page, "id = ?", version.PageID).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
 	return s.pageResponseWithReadyOg(ctx, &page)
+}
+
+// lockPageVersionRestore locks the Page root, authorizes the caller and
+// returns the restore of snapshot.
+func (s *PageService) lockPageVersionRestore(
+	ctx context.Context,
+	tx *gorm.DB,
+	pageID string,
+	snapshot VersionContentSnapshot,
+	now time.Time,
+) (versionrestore.Restore, error) {
+	_, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, clause.LockingStrengthUpdate)
+	if err != nil {
+		return versionrestore.Restore{}, err
+	}
+	if err := requireLockedPagePermission(ctx, tx, s.spiceDB, pageID, policyv1.Page.Edit); err != nil {
+		return versionrestore.Restore{}, err
+	}
+	return versionrestore.Restore{
+		Store: s.contentBlocks, DocumentID: documentID,
+		Version: versionrestore.Source{Locale: snapshot.SourceLocale, Title: snapshot.Title, Summary: snapshot.Summary},
+		Fence:   lockedPageContentFence(pageID),
+		LoadSource: func(ctx context.Context, tx *gorm.DB) (versionrestore.Source, error) {
+			source, err := loadRequiredPageSourceLocaleMetadata(ctx, tx, pageID)
+			if err != nil {
+				return versionrestore.Source{}, err
+			}
+			return versionrestore.Source{Locale: source.Locale, Title: source.Title, Summary: source.Summary}, nil
+		},
+		SwitchSourceLocale: func(ctx context.Context, tx *gorm.DB, from string, revision uuid.UUID) error {
+			return switchBlockVersionRestoreSourceLocale(
+				ctx, tx, s.contentBlocks, "page", pageID, snapshot.SourceLocale, revision, from, now,
+			)
+		},
+		Replacement: func(ctx context.Context, tx *gorm.DB, revision uuid.UUID) (contentblock.ReplaceInput, error) {
+			unavailable, err := s.runtime.LoadUnavailableVersionAttachmentKinds(ctx, tx, snapshot.Document)
+			if err != nil {
+				return contentblock.ReplaceInput{}, err
+			}
+			return contentblock.ReplaceFromLocalizedPageProtoWithUnavailableAttachments(
+				documentID, revision, snapshot.Document, unavailable,
+			)
+		},
+		UpdateMetadata: func(ctx context.Context, tx *gorm.DB) error {
+			return updatePageVersionSourceMetadata(
+				ctx, tx, pageID, snapshot.SourceLocale, snapshot.Title, snapshot.Summary, now,
+			)
+		},
+	}, nil
+}
+
+// publishPageVersionRestore records a restore that changed the Page.
+func (s *PageService) publishPageVersionRestore(
+	ctx context.Context,
+	tx *gorm.DB,
+	version model.PageVersion,
+	sourceLocale string,
+	outcome versionrestore.Outcome,
+	now time.Time,
+) error {
+	if err := tx.WithContext(ctx).Model(&model.Page{}).
+		Where("id = ?", version.PageID).
+		UpdateColumn("updated_at", now).Error; err != nil {
+		return err
+	}
+	if outcome.RefreshesOG() {
+		if _, err := s.runtime.RequestCurrentWithDB(
+			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
+			version.PageID, sourceLocale, false, "page_version_restored",
+		); err != nil {
+			return err
+		}
+	}
+	if s.auditWriter != nil {
+		if err := domainaudit.AppendRequest(
+			ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated,
+			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageVersionRestoreAuditRecord(metadata, version.PageID, version.ID)
+			},
+		); err != nil {
+			return err
+		}
+	}
+	return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID: version.PageID, Fields: outcome.Fields(),
+		DocumentRevision: outcome.DocumentRevision.String(), Contributors: versionrestore.Contributors(ctx),
+		Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, Locale: sourceLocale,
+		DocumentStateChanged: true,
+	}))
 }
 
 func updatePageVersionSourceMetadata(

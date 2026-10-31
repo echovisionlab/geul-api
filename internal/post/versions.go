@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -21,7 +20,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/versionrestore"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -164,7 +165,7 @@ func (s *PostService) RestorePostVersion(
 	if req.Msg.PostId != "" && version.PostID != req.Msg.PostId {
 		return nil, errs.NotFound("post_version", req.Msg.VersionId)
 	}
-	versionEnvelope, versionDocument, err := unmarshalPostVersionContentSnapshot(version.ContentSnapshot)
+	envelope, document, err := unmarshalPostVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
 		return nil, failurecause.WithAttrs(
 			errs.WithCause(errs.FailedPrecondition("Post Version typed snapshot is invalid"), failurecause.ServerFault(err)),
@@ -173,189 +174,16 @@ func (s *PostService) RestorePostVersion(
 	}
 
 	now := time.Now().UTC()
-	var finalSnapshot contentblock.Snapshot
-	var changed bool
-	var sourceLocaleSwitched bool
-	var titleChanged bool
-	var summaryChanged bool
-	var blocksChanged bool
-	var restoreContributors []string
-	if user := auth.GetUser(ctx); user != nil {
-		restoreContributors = []string{user.MemberID.String()}
-	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		documentID, loadErr := loadPostContentDocumentID(ctx, tx, version.PostID)
-		if loadErr != nil {
-			return loadErr
-		}
-		root, lockErr := lockPostContentDocumentRoot(ctx, tx, version.PostID, documentID, true)
+		restore, lockErr := s.lockPostVersionRestore(ctx, tx, version.PostID, envelope, document, now)
 		if lockErr != nil {
 			return lockErr
 		}
-		if _, permissionErr := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, version.PostID, root.Status, policyv1.Post.Manage); permissionErr != nil {
-			return permissionErr
+		outcome, restoreErr := restore.Apply(ctx, tx)
+		if restoreErr != nil || !outcome.Changed() {
+			return restoreErr
 		}
-		domain, domainErr := loadPostContentDomainContext(ctx, tx, version.PostID)
-		if domainErr != nil {
-			return domainErr
-		}
-		if domain.SourceLocale != versionEnvelope.SourceLocale {
-			currentSnapshot, snapshotErr := s.contentBlocks.LoadSnapshotInTransaction(
-				ctx, tx, documentID, domain.SourceLocale,
-			)
-			if snapshotErr != nil {
-				return snapshotErr
-			}
-			switchErr := switchPostVersionRestoreSourceLocale(
-				ctx, tx, s.contentBlocks, version.PostID, documentID, domain.SourceLocale,
-				versionEnvelope.SourceLocale, currentSnapshot.Document.Revision, now,
-			)
-			if switchErr != nil {
-				return switchErr
-			}
-			sourceLocaleSwitched = true
-			domain.SourceLocale = versionEnvelope.SourceLocale
-		}
-		currentMetadata, metadataErr := loadPostLocaleMetadataRow(
-			ctx, tx, version.PostID, domain.SourceLocale,
-		)
-		if metadataErr != nil {
-			return metadataErr
-		}
-		titleChanged = !nullableStringEqual(currentMetadata.Title, versionEnvelope.Title)
-		summaryChanged = !nullableStringEqual(currentMetadata.Summary, versionEnvelope.Summary)
-
-		currentSnapshot, snapshotErr := s.contentBlocks.LoadSnapshotInTransaction(
-			ctx, tx, documentID, domain.SourceLocale,
-		)
-		if snapshotErr != nil {
-			return snapshotErr
-		}
-		unavailable, unavailableErr := s.versionRestore.LoadUnavailableVersionAttachmentKinds(ctx, tx, versionDocument)
-		if unavailableErr != nil {
-			return unavailableErr
-		}
-		replaceInput, replaceErr := contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(
-			documentID, currentSnapshot.Document.Revision, versionDocument, unavailable,
-		)
-		if replaceErr != nil {
-			return replaceErr
-		}
-		replaceResult, replaceErr := s.contentBlocks.ReplaceSnapshot(
-			ctx,
-			tx,
-			replaceInput,
-			postLockedDocumentFence(version.PostID, true),
-		)
-		if replaceErr != nil {
-			return replaceErr
-		}
-		finalRevision := replaceResult.DocumentRevision
-		metadataChanged := titleChanged || summaryChanged
-		if metadataChanged && !replaceResult.Changed {
-			_, advanceErr := s.contentBlocks.AdvanceRevision(
-				ctx,
-				tx,
-				contentblock.AdvanceInput{
-					DocumentID: documentID, ExpectedRevision: finalRevision,
-				},
-				postLockedDocumentFence(version.PostID, true),
-				func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-					if err := updatePostVersionSourceMetadata(
-						ctx,
-						tx,
-						version.PostID,
-						domain.SourceLocale,
-						versionEnvelope.Title,
-						versionEnvelope.Summary,
-						now,
-					); err != nil {
-						return contentblock.MetadataEffect{}, err
-					}
-					return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
-				},
-			)
-			if advanceErr != nil {
-				return advanceErr
-			}
-		} else if metadataChanged {
-			if err := updatePostVersionSourceMetadata(
-				ctx,
-				tx,
-				version.PostID,
-				domain.SourceLocale,
-				versionEnvelope.Title,
-				versionEnvelope.Summary,
-				now,
-			); err != nil {
-				return err
-			}
-		}
-		blocksChanged = replaceResult.Changed
-		changed = sourceLocaleSwitched || blocksChanged || metadataChanged
-		if !changed {
-			return nil
-		}
-		var loadFinalErr error
-		finalSnapshot, loadFinalErr = s.contentBlocks.LoadSnapshotInTransaction(
-			ctx, tx, documentID, domain.SourceLocale,
-		)
-		if loadFinalErr != nil {
-			return loadFinalErr
-		}
-		if err := tx.WithContext(ctx).Model(&model.Post{}).
-			Where("id = ?", version.PostID).
-			UpdateColumn("updated_at", now).Error; err != nil {
-			return err
-		}
-		if titleChanged || sourceLocaleSwitched {
-			if _, err := s.ogRefresher.RequestCurrentWithDB(
-				ctx,
-				tx,
-				managev1.OgEntityType_OG_ENTITY_TYPE_POST,
-				version.PostID,
-				domain.SourceLocale,
-				false,
-				"post_version_restored",
-			); err != nil {
-				return err
-			}
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditPostUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewPostVersionRestoreAuditRecord(metadata, version.PostID, version.ID)
-				},
-			); err != nil {
-				return err
-			}
-		}
-		fields := make([]string, 0, 4)
-		if blocksChanged {
-			fields = append(fields, "content")
-		}
-		if titleChanged {
-			fields = append(fields, "title")
-		}
-		if summaryChanged {
-			fields = append(fields, "summary")
-		}
-		if sourceLocaleSwitched {
-			fields = append(fields, "sourceLocale")
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-			EntityID:             version.PostID,
-			Fields:               fields,
-			DocumentRevision:     finalSnapshot.Document.Revision.String(),
-			Contributors:         restoreContributors,
-			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
-			Locale:               finalSnapshot.SourceLocale,
-			DocumentStateChanged: true,
-		}))
+		return s.publishPostVersionRestore(ctx, tx, version, envelope.SourceLocale, outcome, now)
 	})
 	if err != nil {
 		return nil, normalizePostContentBlockError(err)
@@ -372,6 +200,104 @@ func (s *PostService) RestorePostVersion(
 		return nil, err
 	}
 	return s.postResponseWithReadyOg(ctx, &post)
+}
+
+// lockPostVersionRestore locks the Post root, authorizes the caller and
+// returns the restore of envelope and document.
+func (s *PostService) lockPostVersionRestore(
+	ctx context.Context,
+	tx *gorm.DB,
+	postID string,
+	envelope postVersionContentSnapshot,
+	document *contentv1.LocalizedRichTextDocument,
+	now time.Time,
+) (versionrestore.Restore, error) {
+	documentID, err := loadPostContentDocumentID(ctx, tx, postID)
+	if err != nil {
+		return versionrestore.Restore{}, err
+	}
+	root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
+	if err != nil {
+		return versionrestore.Restore{}, err
+	}
+	if _, err := requireLockedPostActionForStatus(ctx, tx, s.spiceDB, postID, root.Status, policyv1.Post.Manage); err != nil {
+		return versionrestore.Restore{}, err
+	}
+	return versionrestore.Restore{
+		Store: s.contentBlocks, DocumentID: documentID,
+		Version: versionrestore.Source{Locale: envelope.SourceLocale, Title: envelope.Title, Summary: envelope.Summary},
+		Fence:   postLockedDocumentFence(postID, true),
+		LoadSource: func(ctx context.Context, tx *gorm.DB) (versionrestore.Source, error) {
+			domain, err := loadPostContentDomainContext(ctx, tx, postID)
+			if err != nil {
+				return versionrestore.Source{}, err
+			}
+			metadata, err := loadPostLocaleMetadataRow(ctx, tx, postID, domain.SourceLocale)
+			if err != nil {
+				return versionrestore.Source{}, err
+			}
+			return versionrestore.Source{Locale: domain.SourceLocale, Title: metadata.Title, Summary: metadata.Summary}, nil
+		},
+		SwitchSourceLocale: func(ctx context.Context, tx *gorm.DB, from string, revision uuid.UUID) error {
+			return switchPostVersionRestoreSourceLocale(
+				ctx, tx, s.contentBlocks, postID, documentID, from, envelope.SourceLocale, revision, now,
+			)
+		},
+		Replacement: func(ctx context.Context, tx *gorm.DB, revision uuid.UUID) (contentblock.ReplaceInput, error) {
+			unavailable, err := s.versionRestore.LoadUnavailableVersionAttachmentKinds(ctx, tx, document)
+			if err != nil {
+				return contentblock.ReplaceInput{}, err
+			}
+			return contentblock.ReplaceFromLocalizedRichTextProtoWithUnavailableAttachments(
+				documentID, revision, document, unavailable,
+			)
+		},
+		UpdateMetadata: func(ctx context.Context, tx *gorm.DB) error {
+			return updatePostVersionSourceMetadata(
+				ctx, tx, postID, envelope.SourceLocale, envelope.Title, envelope.Summary, now,
+			)
+		},
+	}, nil
+}
+
+// publishPostVersionRestore records a restore that changed the Post.
+func (s *PostService) publishPostVersionRestore(
+	ctx context.Context,
+	tx *gorm.DB,
+	version model.PostVersion,
+	sourceLocale string,
+	outcome versionrestore.Outcome,
+	now time.Time,
+) error {
+	if err := tx.WithContext(ctx).Model(&model.Post{}).
+		Where("id = ?", version.PostID).
+		UpdateColumn("updated_at", now).Error; err != nil {
+		return err
+	}
+	if outcome.RefreshesOG() {
+		if _, err := s.ogRefresher.RequestCurrentWithDB(
+			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST,
+			version.PostID, sourceLocale, false, "post_version_restored",
+		); err != nil {
+			return err
+		}
+	}
+	if s.auditWriter != nil {
+		if err := domainaudit.AppendRequest(
+			ctx, tx, s.auditWriter, sharedtelemetry.AuditPostUpdated,
+			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPostVersionRestoreAuditRecord(metadata, version.PostID, version.ID)
+			},
+		); err != nil {
+			return err
+		}
+	}
+	return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID: version.PostID, Fields: outcome.Fields(),
+		DocumentRevision: outcome.DocumentRevision.String(), Contributors: versionrestore.Contributors(ctx),
+		Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, Locale: sourceLocale,
+		DocumentStateChanged: true,
+	}))
 }
 
 func updatePostVersionSourceMetadata(
