@@ -242,6 +242,14 @@ func IsUnauthenticated(err error) bool {
 	return ok && classified.Code() == connect.CodeUnauthenticated
 }
 
+// IsClassified reports whether err already carries a client answer, a
+// use-case or Connect error, for a domain that maps only the failures
+// nothing has answered yet.
+func IsClassified(err error) bool {
+	_, ok := errs.Classified(err)
+	return ok
+}
+
 // IsNotFound reports whether err answers a missing resource, for a domain
 // that reads a shared helper's answer (a retired authorization target).
 func IsNotFound(err error) bool {
@@ -282,6 +290,7 @@ type Audit struct {
 	action    sharedtelemetry.AuditAction
 	build     domainaudit.Builder
 	memberID  string
+	version   bool
 	unchanged bool
 	all       []Audit
 }
@@ -295,6 +304,13 @@ func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder)
 // request has no member actor yet (onboarding).
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
 	return Audit{action: action, build: build, memberID: memberID}
+}
+
+// VersionAudit attributes a version record to the request's member or
+// system actor, for a checkpoint an internal service boundary creates
+// (domainaudit.AppendVersion).
+func VersionAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
+	return Audit{action: action, build: build, version: true}
 }
 
 // Audits names every record of a mutation that changes several audited
@@ -334,6 +350,8 @@ func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) erro
 		return errors.New("mutation audit record is required; return Unchanged when nothing changed")
 	case audit.memberID != "":
 		return domainaudit.AppendMember(ctx, tx, r.audit, audit.memberID, audit.action, audit.build)
+	case audit.version:
+		return domainaudit.AppendVersion(ctx, tx, r.audit, audit.action, audit.build)
 	default:
 		return domainaudit.AppendRequest(ctx, tx, r.audit, audit.action, audit.build)
 	}

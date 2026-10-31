@@ -253,6 +253,35 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 	require.False(t, IsNotFound(errs.NoPermission("edit", "post")))
 }
 
+func TestIsClassifiedRecognizesEveryClientAnswer(t *testing.T) {
+	require.True(t, IsClassified(fmt.Errorf("apply: %w", errs.NotFound("post", "id"))))
+	require.True(t, IsClassified(domainerr.Precondition("stale")))
+	require.False(t, IsClassified(errors.New("database is down")))
+	require.False(t, IsClassified(nil))
+}
+
+func TestVersionAuditAcceptsTheSystemActor(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "checkpoint")
+	spec.Audit = func(row note) Audit {
+		return VersionAudit(sharedtelemetry.AuditWorkUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewWorkVersionCreatedAuditRecord(metadata, uuid.NewString(), uuid.NewString(), []string{uuid.NewString()})
+		})
+	}
+	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
+		uuid.NewString(), sharedtelemetry.SystemActor{ServiceName: sharedtelemetry.ServiceEditorCollab},
+	)
+	require.NoError(t, err)
+
+	_, err = Run(sharedtelemetry.WithRequestContext(context.Background(), requestContext), runner, spec)
+
+	require.NoError(t, err)
+	require.Len(t, recorder.Records(), 1)
+	require.Equal(t, sharedtelemetry.ActorKindSystem, recorder.Records()[0].Kind)
+}
+
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {
 	db := &gorm.DB{}
 	_, err := NewRunner(nil, &auth.SpiceDBClient{}, &audittest.Recorder{})
