@@ -298,7 +298,6 @@
 2 internal/work -> client
 1 internal/work -> map_place
 2 internal/work -> member
-1 internal/work -> share_link
 1 internal/work/public -> artist
 1 internal/work/public -> client
 1 internal/work/public -> map_place

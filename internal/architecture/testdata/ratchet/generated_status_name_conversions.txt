@@ -31,6 +31,4 @@
 5 internal/series
 3 internal/series/public
 3 internal/transcode/application
-21 internal/work
-6 internal/work/public
 2 internal/worker

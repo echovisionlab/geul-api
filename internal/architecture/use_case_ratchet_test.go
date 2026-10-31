@@ -22,6 +22,7 @@ var pipelineDomains = []string{
 	"internal/menu",
 	"internal/series",
 	"internal/sharelink",
+	"internal/work",
 }
 
 func inPipelineDomain(pkg string) bool {

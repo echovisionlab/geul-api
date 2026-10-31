@@ -24,5 +24,4 @@
 2 internal/series
 1 internal/sitesettings
 5 internal/translation/application
-6 internal/work
 2 internal/worker
