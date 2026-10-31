@@ -146,7 +146,6 @@
 1 internal/mediaasset -> content_block_attachment_download_audience_segment
 4 internal/mediaasset -> file
 2 internal/mediaasset -> file_derivative
-1 internal/mediaasset -> kratos.identities
 4 internal/mediaasset -> media_generation
 1 internal/mediaasset -> member
 2 internal/mediaasset -> og_generation

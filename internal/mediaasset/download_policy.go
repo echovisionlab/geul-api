@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -736,8 +737,7 @@ func loadRestrictedFileDownloadMemberFacts(
 
 	query := db.WithContext(ctx).
 		Table("member AS member").
-		Joins(`JOIN kratos.identities AS identity
-			ON identity.id = member.account_identity_id`).
+		Joins(identityread.JoinLinked("member", "identity")).
 		Where("member.id = ?", memberID).
 		Where("member.account_identity_id = ?", identityID).
 		Where("identity.id = ?", identityID).
@@ -750,7 +750,6 @@ func loadRestrictedFileDownloadMemberFacts(
 			identity.id AS identity_id,
 			member.onboarded AS onboarded,
 			member.created_at AS member_created_at`)
-		query = query.Where("identity.external_id = ?", memberID)
 		query = query.Where(
 			"(json_extract(identity.metadata_admin, '$.banned') IS NULL OR json_extract(identity.metadata_admin, '$.banned') = 0)",
 		)
@@ -760,7 +759,6 @@ func loadRestrictedFileDownloadMemberFacts(
 			identity.id::text AS identity_id,
 			member.onboarded AS onboarded,
 			member.created_at AS member_created_at`)
-		query = query.Where("identity.external_id = ?", memberID)
 		query = query.Where(
 			"(identity.metadata_admin->>'banned' IS NULL OR identity.metadata_admin->>'banned' = 'false')",
 		)
