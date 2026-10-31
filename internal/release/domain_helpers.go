@@ -2,7 +2,6 @@ package release
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -13,8 +12,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-var errTranslationSourceNoLongerCurrent = errors.New("translation source is no longer current")
 
 type CollaborationPermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)

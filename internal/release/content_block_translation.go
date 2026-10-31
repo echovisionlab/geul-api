@@ -198,7 +198,7 @@ func applyTypedTranslationCandidateWithDB(
 	if _, err := uuidFromCanonicalString(
 		candidate.ContentDocumentRevision,
 	); err != nil {
-		return fmt.Errorf("%w: %w", errTranslationSourceNoLongerCurrent, err)
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	currentSnapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, currentSource.SourceLocale)
 	if err != nil {
@@ -283,7 +283,7 @@ func applyTypedTranslationCandidateWithDB(
 			},
 		)
 		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
-			return fmt.Errorf("%w: %w", errTranslationSourceNoLongerCurrent, applyErr)
+			return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
 		}
 		if applyErr != nil {
 			return normalizeReleaseContentBlockError(applyErr)
@@ -308,7 +308,7 @@ func applyTypedTranslationCandidateWithDB(
 		Now: metadataInput.Now, Fence: internalReleaseContentFence(job.EntityID),
 	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		return fmt.Errorf("%w: %w", errTranslationSourceNoLongerCurrent, err)
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return normalizeReleaseContentBlockError(err)
