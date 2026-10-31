@@ -644,9 +644,7 @@ func (s *WorkService) toProtoCredit(ctx context.Context, c *model.WorkCredit) *m
 		if err == nil {
 			credit.Member = summaries[*c.MemberID]
 		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "toProtoCredit", failurecause.Attr(err), "work_id", c.WorkID, "credit_id", c.ID)
-			}
+			slog.ErrorContext(ctx, "Work credit member lookup failed; serving credit without member summary", "domain", "work", "operation", "load_credit_member_summaries", failurecause.Attr(err), "work_id", c.WorkID, "credit_id", c.ID)
 		}
 	}
 
@@ -676,10 +674,11 @@ func (s *WorkService) loadWorkCreditArtist(ctx context.Context, artistID string)
 		`).
 		Where("artist.id = ?", artistID).
 		Scan(&artist).Error
-	if err != nil || artist.ID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadWorkCreditArtist", failurecause.Attr(err), "artist_id", artistID)
-		}
+	if err != nil {
+		slog.ErrorContext(ctx, "Work credit artist lookup failed; serving credit without artist", "domain", "work", "operation", "load_credit_artist", failurecause.Attr(err), "artist_id", artistID)
+		return nil
+	}
+	if artist.ID == "" {
 		return nil
 	}
 	creditArtist := &managev1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug}
@@ -697,10 +696,7 @@ func (s *WorkService) assignWorkCreditArtistImage(
 	}
 	asset, err := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *artist.ImageFileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx,
-			"Failed to resolve credited artist image asset",
-			"artistId", artist.ID, "fileId", *artist.ImageFileID, failurecause.Attr(err),
-		)
+		slog.ErrorContext(ctx, "Work credit artist image resolution failed; serving artist without image", "domain", "work", "operation", "resolve_artist_image_asset", failurecause.Attr(err), "artist_id", artist.ID, "file_id", *artist.ImageFileID)
 		return
 	}
 	creditArtist.ImageAsset = asset

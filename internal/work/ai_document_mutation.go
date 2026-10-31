@@ -3,11 +3,9 @@ package work
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"connectrpc.com/connect"
@@ -160,14 +158,12 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 	case errors.As(err, &conflict):
 		return AIDocumentMutationResult{}, conflict
 	case errors.As(err, &targetConflict):
-		slog.WarnContext(ctx, "AI document revision conflict", "domain", "work", "operation", "ExecuteAIDocumentMutation", "work_id", workID, "locale", locale, failurecause.Attr(err))
 		current := targetConflict.CurrentRevision
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: currentDocumentRevision,
 			CurrentTargetRevision: &current,
 		}
 	case errors.As(err, &stale):
-		slog.WarnContext(ctx, "AI document revision conflict", "domain", "work", "operation", "ExecuteAIDocumentMutation", "work_id", workID, "locale", locale, failurecause.Attr(err))
 		return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
 		}
@@ -182,10 +178,7 @@ func validateCompiledWorkAIDocumentMutation(
 ) error {
 	contributor, err := uuid.Parse(mutation.ContributorMemberID)
 	if err != nil || contributor == uuid.Nil || contributor.String() != mutation.ContributorMemberID {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "validateCompiledWorkAIDocumentMutation", failurecause.Attr(err))
-		}
-		return errs.InvalidArgument("contributor", "compiled Work contributor must be a canonical Member UUID")
+		return errs.WithCause(errs.InvalidArgument("contributor", "compiled Work contributor must be a canonical Member UUID"), err)
 	}
 	if mutation.WorkID != state.Work.ID || mutation.Locale != state.Locale ||
 		mutation.ObservedSourceLocale != state.SourceLocale ||

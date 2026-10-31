@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -196,10 +194,7 @@ func applySeriesFields(tx *gorm.DB, series *model.Series, plan seriesUpdatePlan,
 	updates["updated_at"] = plan.now
 	err := tx.Model(series).Updates(updates).Error
 	if dberrors.IsUniqueViolation(err) && plan.nextSlug != nil {
-		if err != nil {
-			slog.WarnContext(tx.Statement.Context, "Operation failed", "domain", "series", "operation", "applySeriesFields", failurecause.Attr(err))
-		}
-		return errs.SlugAlreadyExists("series", *plan.nextSlug)
+		return errs.WithCause(errs.SlugAlreadyExists("series", *plan.nextSlug), err)
 	}
 	if err != nil {
 		return errs.Internal(err)

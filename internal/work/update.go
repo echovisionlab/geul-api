@@ -3,7 +3,6 @@ package work
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"reflect"
 	"strings"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -454,8 +452,7 @@ func mapWorkUpdateError(err error) error {
 		return err
 	}
 	if dberrors.IsUniqueViolation(err) {
-		slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "mapWorkUpdateError", failurecause.Attr(err))
-		return errs.SlugAlreadyExists("work", "slug")
+		return errs.WithCause(errs.SlugAlreadyExists("work", "slug"), err)
 	}
 	return errs.Internal(err)
 }

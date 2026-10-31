@@ -3,14 +3,12 @@ package work
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -57,13 +55,11 @@ func requireWorkGlobalAction(ctx context.Context, checker CollaborationPermissio
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkGlobalAction", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkGlobalAction", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.AdminRequired()
@@ -116,18 +112,15 @@ func requireWorkPermissionForCurrentActor(
 	}
 	can, err := action(workID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkPermissionForCurrentActor", failurecause.Attr(err))
-		return errs.NotFound("work", workID)
+		return errs.WithCause(errs.NotFound("work", workID), err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkPermissionForCurrentActor", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "requireWorkPermissionForCurrentActor", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NotFound("work", workID)

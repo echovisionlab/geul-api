@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -77,8 +75,7 @@ func ApplyTypedTranslationCandidateWithDB(
 		candidate.ContentDocumentRevision,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "ApplyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "work_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	domain, err := workSystemTranslationDocumentFence(job.EntityID)(ctx, tx, documentID)
 	if err != nil {
@@ -131,8 +128,7 @@ func ApplyTypedTranslationCandidateWithDB(
 		true, false, true, true, entry.Now, workLockedTargetFence(documentID, domain),
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "ApplyTypedTranslationCandidateWithDB", failurecause.Attr(err), "job_id", job.ID, "work_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return err
@@ -198,8 +194,7 @@ func applyWorkProviderSourceCandidate(
 		},
 	)
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "applyWorkProviderSourceCandidate", failurecause.Attr(err), "job_id", job.ID, "work_id", job.EntityID, "locale", job.TargetLocale)
-		return translation.ErrSourceNoLongerCurrent
+		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
 		return err

@@ -218,7 +218,7 @@ func (s *WorkService) List(
 		req.Header().Get("Accept-Language"),
 	)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to resolve work summary localizations", failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Work summary localization lookup failed; listing works without localization", "domain", "work", "operation", "resolve_summary_localizations", failurecause.Attr(err))
 	}
 
 	// Convert to proto summaries
@@ -466,9 +466,7 @@ func (s *WorkService) buildWorkResponse(
 		if err == nil {
 			protoWork.Metadata = metadata
 		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "convert_public_work_metadata", failurecause.Attr(err), "work_id", work.ID)
-			}
+			slog.ErrorContext(ctx, "Public Work metadata conversion failed; serving work without metadata", "domain", "work", "operation", "convert_public_work_metadata", failurecause.Attr(err), "work_id", work.ID)
 		}
 	}
 
@@ -565,8 +563,7 @@ func (s *WorkService) overlayRequiredSourceStatesForPublicWorks(
 	for i := range works {
 		sourceState := sourceStates[works[i].ID]
 		if sourceState == nil {
-			slog.Error("missing work source locale row for public list item", "workId", works[i].ID)
-			return errs.InternalMsg("internal server error")
+			return errs.WithCause(errs.InternalMsg("internal server error"), fmt.Errorf("missing work source locale row for public list item %s", works[i].ID))
 		}
 		workdomain.OverlayWorkSourceLocaleDocumentForPublic(&works[i], sourceState)
 	}
@@ -588,8 +585,7 @@ func (s *WorkService) requireSourceRowsForPublicWorkMap(
 	}
 	for _, workID := range workIDs {
 		if sourceStates[workID] == nil {
-			slog.Error("missing work source locale row for public map item", "workId", workID)
-			return errs.InternalMsg("internal server error")
+			return errs.WithCause(errs.InternalMsg("internal server error"), fmt.Errorf("missing work source locale row for public map item %s", workID))
 		}
 	}
 	return nil
@@ -796,7 +792,7 @@ func (s *WorkService) loadWorkPublicRelationsSnapshot(
 			Order("id ASC").
 			Find(&snapshot.CreditGroups).Error
 	}); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "load_credit_groups", failurecause.Attr(err), "work_id", work.ID)
+		slog.ErrorContext(ctx, "Public Work credit group lookup failed; serving work without credit groups", "domain", "work", "operation", "load_credit_groups", failurecause.Attr(err), "work_id", work.ID)
 	}
 
 	if err := tx.WithContext(ctx).
@@ -815,7 +811,7 @@ func (s *WorkService) loadWorkPublicRelationsSnapshot(
 			Order("wc.sort_order ASC").
 			Scan(&snapshot.Clients).Error
 	}); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "load_clients", failurecause.Attr(err), "work_id", work.ID)
+		slog.ErrorContext(ctx, "Public Work client lookup failed; serving work without clients", "domain", "work", "operation", "load_clients", failurecause.Attr(err), "work_id", work.ID)
 	}
 
 	return snapshot, nil
@@ -874,10 +870,11 @@ func (s *WorkService) loadPublicCreditArtist(ctx context.Context, artistID strin
 		Table("artist").
 		Select("artist.id, "+workdomain.ArtistSourceTitleSQL("artist")+" AS name, artist.slug").
 		Where("artist.id = ?", artistID).
-		Scan(&artist).Error; err != nil || artist.ID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadPublicCreditArtist", failurecause.Attr(err), "artist_id", artistID)
-		}
+		Scan(&artist).Error; err != nil {
+		slog.ErrorContext(ctx, "Public Work credit artist lookup failed; serving credit without artist", "domain", "work", "operation", "load_credit_artist", failurecause.Attr(err), "artist_id", artistID)
+		return nil
+	}
+	if artist.ID == "" {
 		return nil
 	}
 	result := &openv1.CreditArtist{Id: artist.ID, Name: artist.Name, Slug: artist.Slug}

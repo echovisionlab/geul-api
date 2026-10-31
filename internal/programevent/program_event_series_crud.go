@@ -3,7 +3,6 @@ package programevent
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -71,8 +69,7 @@ func (s *ProgramEventSeriesService) CreateProgramEventSeries(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventSeries", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("program event series", slug)
+				return errs.WithCause(errs.SlugAlreadyExists("program event series", slug), err)
 			}
 			return errs.Internal(err)
 		}
@@ -210,7 +207,6 @@ func (s *ProgramEventSeriesService) DeleteProgramEventSeries(
 ) (*connect.Response[managev1.DeleteResponse], error) {
 	can, err := policyv1.ProgramEventSeries.Delete(req.Msg.Id)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventSeries", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("id", "must be a canonical resource UUID")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {

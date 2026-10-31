@@ -2,7 +2,6 @@ package programevent
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -195,7 +193,6 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 	for index := range batch.LocaleGroups {
 		normalized, normalizeErr := normalizeProgramEventDocumentLocale(batch.LocaleGroups[index].Locale)
 		if normalizeErr != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "ApplyProgramEventBlockBatch", failurecause.Attr(normalizeErr))
 			return nil, errs.InvalidArgument("locale", "unsupported Block locale")
 		}
 		if normalized != locale {
@@ -363,7 +360,6 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 		for index, raw := range req.Msg.ContributorMemberIds {
 			contributors[index], err = uuidutil.ParseCanonical(raw, "contributor_member_ids")
 			if err != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "UpdateProgramEventLocaleMetadata", failurecause.Attr(err))
 				return nil, errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
 			}
 		}

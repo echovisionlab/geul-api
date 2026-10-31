@@ -299,7 +299,7 @@ func (s *ProgramEventService) List(
 	posterFilesByEvent, posterQueryErr := loadProgramEventPosterFileIDs(ctx, s.db, collectPublicProgramEventIDs(events))
 	posterAssetsByEvent := make(map[string]*commonv1.AssetRef, len(posterFilesByEvent))
 	if posterQueryErr != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_poster_file_ids", failurecause.Attr(posterQueryErr))
+		slog.ErrorContext(ctx, "Program Event poster batch lookup failed; resolving posters per event", "domain", "programevent", "operation", "load_poster_file_ids", failurecause.Attr(posterQueryErr))
 		for i := range events {
 			posterAssetsByEvent[events[i].ID] = loadProgramEventPosterAsset(ctx, s.db, s.assets, events[i].ID)
 		}
@@ -314,9 +314,7 @@ func (s *ProgramEventService) List(
 			if resolveErr == nil {
 				assetsByFile = resolved
 			} else {
-				if resolveErr != nil {
-					slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolve_poster_assets", failurecause.Attr(resolveErr))
-				}
+				slog.ErrorContext(ctx, "Program Event poster batch asset resolution failed; resolving posters per file", "domain", "programevent", "operation", "resolve_poster_assets", failurecause.Attr(resolveErr))
 				for _, fileID := range posterFileIDs {
 					assetsByFile[fileID] = s.assets.ResolveReadyAssetForSourceFile(ctx, fileID, "poster", "image")
 				}
@@ -970,7 +968,7 @@ func resolveProgramEventLocalization(
 ) (publiccontent.Selection, error) {
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, db)
 	if settingsErr != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_localization_settings", failurecause.Attr(settingsErr), "event_id", eventID)
+		slog.ErrorContext(ctx, "Translation runtime settings lookup failed; using default Program Event localization settings", "domain", "programevent", "operation", "load_localization_settings", failurecause.Attr(settingsErr), "event_id", eventID)
 		settings = translation.DefaultRuntimeSettings()
 	}
 	sourceLocale = normalizeSourceLocaleWithDefault(sourceLocale, settings.DefaultLocale)
@@ -1023,9 +1021,7 @@ func resolveProgramEventLocalization(
 		}
 		selection.AvailableLocales = filtered
 	} else {
-		if availableErr != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "load_available_locales", failurecause.Attr(availableErr), "event_id", eventID)
-		}
+		slog.ErrorContext(ctx, "Program Event available locales lookup failed; serving without available locales", "domain", "programevent", "operation", "load_available_locales", failurecause.Attr(availableErr), "event_id", eventID)
 	}
 	return selection, nil
 }
@@ -1188,7 +1184,7 @@ func loadProgramEventPosterAsset(ctx context.Context, db *gorm.DB, assets Assets
 		eventID,
 	).Scan(&file).Error; err != nil || strings.TrimSpace(file.FileID) == "" {
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "loadProgramEventPosterAsset", failurecause.Attr(err), "event_id", eventID)
+			slog.ErrorContext(ctx, "Program Event poster lookup failed; serving event without poster", "domain", "programevent", "operation", "load_poster", failurecause.Attr(err), "event_id", eventID)
 		}
 		return nil
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -183,10 +181,10 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	if mutation.ExpectedRevision == uuid.Nil || mutation.Batch.DocumentID == uuid.Nil {
 		return AIDocumentMutationResult{}, errs.InvalidArgument("expected_revision", "is required")
 	}
-	contributorIDs := workAIContributorIDs(mutation.ContributorMemberID)
-	if len(contributorIDs) != 1 || len(mutation.Batch.ContributorMemberIDs) != 1 ||
-		mutation.Batch.ContributorMemberIDs[0] != contributorIDs[0] {
-		return AIDocumentMutationResult{}, errs.InvalidArgument("contributor", "compiled attribution must match the current Member")
+	contributorID, parseErr := uuid.Parse(mutation.ContributorMemberID)
+	if parseErr != nil || contributorID == uuid.Nil || len(mutation.Batch.ContributorMemberIDs) != 1 ||
+		mutation.Batch.ContributorMemberIDs[0] != contributorID {
+		return AIDocumentMutationResult{}, errs.WithCause(errs.InvalidArgument("contributor", "compiled attribution must match the current Member"), parseErr)
 	}
 	if mutation.Batch.ExpectedRevision != mutation.ExpectedRevision {
 		return AIDocumentMutationResult{}, errs.InvalidArgument("expected_revision", "does not match the compiled Block batch")
@@ -300,10 +298,7 @@ func loadWorkAIDocumentRoot(ctx context.Context, tx *gorm.DB, workID, lock strin
 	}
 	documentID, err := uuid.Parse(*root.ContentDocumentID)
 	if err != nil || documentID == uuid.Nil {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "loadWorkAIDocumentRoot", failurecause.Attr(err))
-		}
-		return model.Work{}, uuid.Nil, errs.InternalMsg("Work content document ID is invalid")
+		return model.Work{}, uuid.Nil, errs.WithCause(errs.InternalMsg("Work content document ID is invalid"), err)
 	}
 	return root, documentID, nil
 }
@@ -429,17 +424,6 @@ func lockWorkAIDocumentPrincipal(ctx context.Context, tx *gorm.DB) (*auth.UserIn
 		return nil, errs.NoPermission("edit", "work")
 	}
 	return principal, nil
-}
-
-func workAIContributorIDs(memberID string) []uuid.UUID {
-	parsed, err := uuid.Parse(memberID)
-	if err != nil || parsed == uuid.Nil {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "parse_ai_contributor", failurecause.Attr(err))
-		}
-		return nil
-	}
-	return []uuid.UUID{parsed}
 }
 
 func hasWorkAIDocumentBatchChanges(batch contentblock.Batch) bool {

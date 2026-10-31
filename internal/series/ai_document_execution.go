@@ -3,11 +3,9 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"connectrpc.com/connect"
@@ -225,7 +223,6 @@ func (s *AIDocumentService) executeMutation(
 	if err != nil {
 		var invalid *postSeriesAIAdapterValidationError
 		if errors.As(err, &invalid) {
-			slog.WarnContext(ctx, "AI document validation rejected", "domain", "series", "operation", "executeMutation", "series_id", string(identity.Reference), "locale", string(request.Locale), failurecause.Attr(err))
 			if mode == postSeriesAIExecutionValidate {
 				return invalid.result, core.ApplyResult{}, nil
 			}

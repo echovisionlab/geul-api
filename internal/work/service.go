@@ -274,7 +274,7 @@ func (s *WorkService) GetWork(
 	if err != nil {
 		return nil, err
 	}
-	protoWork := s.toProtoWork(&work, imageAsset, ogAsset)
+	protoWork := s.toProtoWork(ctx, &work, imageAsset, ogAsset)
 	protoWork.Clients, err = s.getWorkClients(ctx, work.ID)
 	if err != nil {
 		return nil, err
@@ -380,7 +380,7 @@ func (s *WorkService) ListWorksAdmin(
 			Where("work_id IN ?", workIDs).
 			Group("work_id").
 			Scan(&creditStats).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to get credit counts", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Work credit count lookup failed; listing works without credit counts", "domain", "work", "operation", "count_work_credits", failurecause.Attr(err))
 		}
 		for _, stat := range creditStats {
 			creditCounts[stat.WorkID] = stat.Count
@@ -400,7 +400,7 @@ func (s *WorkService) ListWorksAdmin(
 			Where("work_id IN ?", workIDs).
 			Group("work_id").
 			Scan(&clientStats).Error; err != nil {
-			slog.ErrorContext(ctx, "Failed to get client counts", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Work client count lookup failed; listing works without client counts", "domain", "work", "operation", "count_work_clients", failurecause.Attr(err))
 		}
 		for _, stat := range clientStats {
 			clientCounts[stat.WorkID] = stat.Count
@@ -412,7 +412,7 @@ func (s *WorkService) ListWorksAdmin(
 	for i, work := range works {
 		imageAsset := s.getWorkFeaturedImageAsset(ctx, work.ID)
 		protoWorks[i] = &managev1.WorkWithStats{
-			Work:        s.toProtoWork(&work, imageAsset, manageOgAssetFromReadyMap(readyOgAssets, work.OgAssetID)),
+			Work:        s.toProtoWork(ctx, &work, imageAsset, manageOgAssetFromReadyMap(readyOgAssets, work.OgAssetID)),
 			CreditCount: creditCounts[work.ID],
 			ClientCount: clientCounts[work.ID],
 		}
@@ -452,8 +452,7 @@ func (s *WorkService) CreateWork(
 			return nil, err
 		}
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "work", "operation", "CreateWork", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("work", "slug")
+			return nil, errs.WithCause(errs.SlugAlreadyExists("work", "slug"), err)
 		}
 		return nil, errs.Internal(err)
 	}

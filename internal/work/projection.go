@@ -84,16 +84,17 @@ func (s *WorkService) getWorkFeaturedImageAsset(ctx context.Context, workID stri
 		Where("work.id = ?", workID).
 		Scan(&result).Error
 
-	if err != nil || result.FileID == nil || *result.FileID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "getWorkFeaturedImageAsset", failurecause.Attr(err), "work_id", workID)
-		}
+	if err != nil {
+		slog.ErrorContext(ctx, "Work featured image lookup failed; serving work without featured image", "domain", "work", "operation", "load_featured_image", failurecause.Attr(err), "work_id", workID)
+		return nil
+	}
+	if result.FileID == nil || *result.FileID == "" {
 		return nil
 	}
 
 	asset, err := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *result.FileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to resolve work featured image asset", "workId", workID, "fileId", *result.FileID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Work featured image asset resolution failed; serving work without featured image", "domain", "work", "operation", "resolve_featured_image_asset", failurecause.Attr(err), "work_id", workID, "file_id", *result.FileID)
 		return nil
 	}
 	return asset
@@ -136,7 +137,7 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*man
 		if row.LightFileID != nil && *row.LightFileID != "" {
 			asset, assetErr := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *row.LightFileID, "logo")
 			if assetErr != nil {
-				slog.ErrorContext(ctx, "Failed to resolve client light logo asset", "clientId", row.ID, "fileId", *row.LightFileID, failurecause.Attr(assetErr))
+				slog.ErrorContext(ctx, "Work client light logo resolution failed; serving client without light logo", "domain", "work", "operation", "resolve_client_logo_asset", failurecause.Attr(assetErr), "work_id", workID, "client_id", row.ID, "file_id", *row.LightFileID)
 			} else {
 				client.LogoLightAsset = asset
 			}
@@ -144,7 +145,7 @@ func (s *WorkService) getWorkClients(ctx context.Context, workID string) ([]*man
 		if row.DarkFileID != nil && *row.DarkFileID != "" {
 			asset, assetErr := s.runtime.ReadyPublicAssetRefForSourceFile(ctx, s.db, *row.DarkFileID, "logo")
 			if assetErr != nil {
-				slog.ErrorContext(ctx, "Failed to resolve client dark logo asset", "clientId", row.ID, "fileId", *row.DarkFileID, failurecause.Attr(assetErr))
+				slog.ErrorContext(ctx, "Work client dark logo resolution failed; serving client without dark logo", "domain", "work", "operation", "resolve_client_logo_asset", failurecause.Attr(assetErr), "work_id", workID, "client_id", row.ID, "file_id", *row.DarkFileID)
 			} else {
 				client.LogoDarkAsset = asset
 			}
@@ -178,7 +179,7 @@ func (s *WorkService) workResponseWithReadyOg(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(s.toProtoWork(work, imageAsset, ogAsset)), nil
+	return connect.NewResponse(s.toProtoWork(ctx, work, imageAsset, ogAsset)), nil
 }
 
 func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *model.Work) error {
@@ -287,6 +288,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 
 // toProtoWork converts a model.Work to protobuf Work
 func (s *WorkService) toProtoWork(
+	ctx context.Context,
 	w *model.Work,
 	imageAsset *commonv1.AssetRef,
 	ogAsset *commonv1.AssetRef,
@@ -326,9 +328,7 @@ func (s *WorkService) toProtoWork(
 		if metadata, err := structpb.NewStruct(w.Metadata); err == nil {
 			work.Metadata = metadata
 		} else {
-			if err != nil {
-				slog.ErrorContext(context.Background(), "Operation failed", "domain", "work", "operation", "convert_work_metadata", failurecause.Attr(err), "work_id", w.ID)
-			}
+			slog.ErrorContext(ctx, "Work metadata conversion failed; serving work without metadata", "domain", "work", "operation", "convert_work_metadata", failurecause.Attr(err), "work_id", w.ID)
 		}
 	}
 

@@ -3,12 +3,10 @@ package work
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -398,9 +396,6 @@ func workContributorUUIDs(values []string) ([]uuid.UUID, error) {
 	for _, value := range values {
 		parsed, err := uuid.Parse(value)
 		if err != nil || parsed == uuid.Nil || parsed.String() != value {
-			if err != nil {
-				slog.WarnContext(context.Background(), "Operation failed", "domain", "work", "operation", "workContributorUUIDs", failurecause.Attr(err))
-			}
 			return nil, errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs")
 		}
 		result = append(result, parsed)

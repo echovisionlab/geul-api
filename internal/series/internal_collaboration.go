@@ -2,7 +2,6 @@ package series
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -231,9 +229,6 @@ func parseCanonicalPostSeriesUUID(value, field string) (uuid.UUID, error) {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(trimmed)
 	if err != nil || parsed == uuid.Nil || parsed.String() != trimmed || value != trimmed {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "series", "operation", "parseCanonicalPostSeriesUUID", failurecause.Attr(err))
-		}
 		return uuid.Nil, errs.InvalidArgument(field, "must be a canonical UUID")
 	}
 	return parsed, nil

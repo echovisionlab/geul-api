@@ -26,15 +26,16 @@ func (s *SeriesService) setSeriesFeaturedImageAsset(ctx context.Context, series 
 	if err := s.db.WithContext(ctx).Table("series").
 		Select("featured_image_file_id AS file_id").
 		Where("id = ?", series.Id).
-		Scan(&result).Error; err != nil || result.FileID == nil || *result.FileID == "" {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "setSeriesFeaturedImageAsset", failurecause.Attr(err), "series_id", series.Id)
-		}
+		Scan(&result).Error; err != nil {
+		slog.ErrorContext(ctx, "Series featured image lookup failed; serving Series without featured image", "domain", "series", "operation", "load_featured_image", failurecause.Attr(err), "series_id", series.Id)
+		return
+	}
+	if result.FileID == nil || *result.FileID == "" {
 		return
 	}
 	imageAsset, err := s.media.ReadyAssetForSourceFile(ctx, *result.FileID, "image")
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to resolve Series featured image asset", "seriesId", series.Id, "fileId", *result.FileID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Series featured image asset resolution failed; serving Series without featured image", "domain", "series", "operation", "resolve_featured_image_asset", failurecause.Attr(err), "series_id", series.Id, "file_id", *result.FileID)
 		return
 	}
 	if imageAsset != nil {

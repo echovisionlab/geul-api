@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -81,8 +79,7 @@ func (s *WorkService) ListWorkVersions(
 	for index := range versions {
 		protoVersions[index], err = s.toProtoWorkVersion(&versions[index], contributorNames)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "ListWorkVersions", failurecause.Attr(err))
-			return nil, errs.FailedPrecondition("Work Version typed snapshot is invalid")
+			return nil, errs.WithCause(errs.FailedPrecondition("Work Version typed snapshot is invalid"), err)
 		}
 	}
 
@@ -115,8 +112,7 @@ func (s *WorkService) RestoreWorkVersion(
 	}
 	versionEnvelope, versionDocument, err := DecodeVersionContentSnapshot(version.ContentSnapshot)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "work", "operation", "RestoreWorkVersion", failurecause.Attr(err))
-		return nil, errs.FailedPrecondition("Work Version typed snapshot is invalid")
+		return nil, errs.WithCause(errs.FailedPrecondition("Work Version typed snapshot is invalid"), err)
 	}
 	if versionEnvelope.Title == nil || strings.TrimSpace(*versionEnvelope.Title) == "" {
 		return nil, errs.FailedPrecondition("Work Version source title is invalid")

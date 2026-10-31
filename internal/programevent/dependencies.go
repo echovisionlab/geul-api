@@ -104,10 +104,8 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
-		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
-			}
+		} else if err != nil {
+			slog.ErrorContext(ctx, "Member preferred locale lookup failed; inferring Program Event source locale from the request", "domain", "programevent", "operation", "resolve_initial_source_locale", failurecause.Attr(err))
 		}
 	}
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
@@ -118,9 +116,7 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 			return *locale
 		}
 	} else {
-		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "programevent", "operation", "resolveInitialSourceLocale", failurecause.Attr(err))
-		}
+		slog.ErrorContext(ctx, "Translation runtime settings lookup failed; using the default Program Event source locale", "domain", "programevent", "operation", "resolve_initial_source_locale", failurecause.Attr(err))
 	}
 	return translation.DefaultLocale
 }
@@ -154,7 +150,6 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors 
 	}
 	for index, contributor := range contributors {
 		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "requireDocumentContributors", failurecause.Attr(err))
 			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires canonical Member UUIDs")
 		}
 		if index > 0 && contributors[index-1] >= contributor {

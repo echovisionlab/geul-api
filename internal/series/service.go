@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -431,8 +429,7 @@ func (s *SeriesService) CreateSeries(
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "CreateSeries", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("series", slug)
+			return nil, errs.WithCause(errs.SlugAlreadyExists("series", slug), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -513,8 +510,7 @@ func (s *SeriesService) DeleteSeries(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "series", "operation", "DeleteSeries", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		deleteRelationships, restoreRelationships, err := seriesAuthorizationSnapshotMutations(series.ID, snapshots)
 		if err != nil {

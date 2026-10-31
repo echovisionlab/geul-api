@@ -3,7 +3,6 @@ package programevent
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -66,8 +64,7 @@ func (s *ProgramEventTypeService) CreateProgramEventType(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(eventType).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "CreateProgramEventType", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("program event type", slug)
+				return errs.WithCause(errs.SlugAlreadyExists("program event type", slug), err)
 			}
 			return errs.Internal(err)
 		}
@@ -202,8 +199,7 @@ func (s *ProgramEventTypeService) DeleteProgramEventType(
 		}
 		if err := tx.Delete(&eventType).Error; err != nil {
 			if dberrors.IsForeignKeyViolation(err) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "programevent", "operation", "DeleteProgramEventType", failurecause.Attr(err))
-				return errs.FailedPrecondition("program event type is in use")
+				return errs.WithCause(errs.FailedPrecondition("program event type is in use"), err)
 			}
 			return errs.Internal(err)
 		}

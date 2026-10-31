@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -155,8 +153,7 @@ func (s *SeriesService) RemoveSeriesManager(
 		target, targetErr := authorizationtarget.RequireLockedLinked(ctx, tx, req.Msg.MemberId)
 		if targetErr != nil {
 			if connect.CodeOf(targetErr) == connect.CodeNotFound {
-				slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "RemoveSeriesManager", failurecause.Attr(targetErr))
-				return errs.FailedPrecondition("series manager target changed; retry")
+				return errs.WithCause(errs.FailedPrecondition("series manager target changed; retry"), targetErr)
 			}
 			return targetErr
 		}
