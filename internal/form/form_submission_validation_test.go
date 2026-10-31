@@ -18,8 +18,8 @@ func TestValidateFormSubmissionAgainstSchema(t *testing.T) {
 		]}]
 	}`)
 
-	require.NoError(t, ValidateFormSubmissionAgainstSchema(schema, []byte(`{"kind":"person","email":"hello@example.com"}`)))
-	require.NoError(t, ValidateFormSubmissionAgainstSchema(schema, []byte(`{"kind":"company","email":"hello@example.com","company":"Geul"}`)))
+	require.NoError(t, ValidateFormSubmissionAgainstSchema(t.Context(), schema, []byte(`{"kind":"person","email":"hello@example.com"}`)))
+	require.NoError(t, ValidateFormSubmissionAgainstSchema(t.Context(), schema, []byte(`{"kind":"company","email":"hello@example.com","company":"Geul"}`)))
 
 	cases := []struct {
 		name string
@@ -34,7 +34,7 @@ func TestValidateFormSubmissionAgainstSchema(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateFormSubmissionAgainstSchema(schema, []byte(tc.data))
+			err := ValidateFormSubmissionAgainstSchema(t.Context(), schema, []byte(tc.data))
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})

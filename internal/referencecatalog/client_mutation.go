@@ -57,8 +57,7 @@ func (s *ClientService) CreateClient(
 		}
 		if err := tx.Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}}}).Create(&client).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-				return errs.AlreadyExistsMsg("client with this name already exists")
+				return errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
 			}
 			return errs.Internal(err)
 		}
@@ -79,8 +78,7 @@ func (s *ClientService) CreateClient(
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.AlreadyExistsMsg("client with this name already exists")
+			return nil, errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
 		}
 		return nil, err
 	}
@@ -157,8 +155,7 @@ func (s *ClientService) applyClientUpdates(ctx context.Context, db *gorm.DB, cli
 	}
 	if err := db.WithContext(ctx).Model(client).Updates(updates).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return errs.AlreadyExistsMsg("client with this name already exists")
+			return errs.WithCause(errs.AlreadyExistsMsg("client with this name already exists"), err)
 		}
 		return errs.Internal(err)
 	}

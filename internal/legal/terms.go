@@ -681,7 +681,7 @@ func (s *TermsService) DeleteTerms(
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "terms", terms.ID); err != nil {
-		slog.Warn("failed to release legal OG assets", "entity_type", "terms", "entity_id", terms.ID, "failure_cause", failurecause.Message(err))
+		slog.WarnContext(ctx, "Legal OG asset release failed after the document was deleted", "domain", "legal", "operation", "release_og_assets", "outcome", "failed", "entity_type", "terms", "entity_id", terms.ID, failurecause.Attr(err))
 	}
 
 	return connect.NewResponse(&managev1.DeleteResponse{

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -101,7 +102,7 @@ func (s *FormService) loadResolvedFormDocument(
 	}
 	localization := s.loadResolvedFormLocalization(ctx, form, acceptLanguage)
 	localization = s.resolveFormOgLocalization(ctx, form.ID, localization)
-	applyLocalizedFormDocument(sourceDocument, localization)
+	applyLocalizedFormDocument(ctx, sourceDocument, localization)
 	return sourceDocument, nil
 }
 
@@ -115,7 +116,7 @@ func (s *FormService) resolveFormOgLocalization(
 	}
 	disposition, err := s.assets.LocalizedOGDisposition(ctx, s.db, formID, selection.DisplayedLocale)
 	if err != nil {
-		slog.Warn("failed to resolve form OG generation", "formId", formID, "error", err)
+		slog.WarnContext(ctx, "Localized form OG lookup failed; serving the source OG image", "domain", "form", "event", "form.operation_failed", "operation", "resolve_localized_og", "outcome", "failed", "form_id", formID, "locale", selection.DisplayedLocale, failurecause.Attr(err))
 		return sourceFormOgFallback(selection)
 	}
 	switch disposition {
@@ -183,7 +184,7 @@ func (s *FormService) loadResolvedFormDocumentWithLocalization(
 	}
 	localization := s.loadResolvedFormLocalization(ctx, form, acceptLanguage)
 	localization = s.resolveFormOgLocalization(ctx, form.ID, localization)
-	applyLocalizedFormDocument(sourceDocument, localization)
+	applyLocalizedFormDocument(ctx, sourceDocument, localization)
 	return sourceDocument, &localization, nil
 }
 
@@ -198,13 +199,14 @@ func (s *FormService) loadResolvedFormLocalization(
 
 	localization, err := formdomain.ResolvePublicLocalization(ctx, s.db, form.ID, acceptLanguage)
 	if err != nil {
-		slog.Warn("failed to resolve form localization", "formId", form.ID, "error", err)
+		slog.WarnContext(ctx, "Form localization lookup failed; serving the source locale", "domain", "form", "event", "form.operation_failed", "operation", "resolve_localization", "outcome", "failed", "form_id", form.ID, failurecause.Attr(err))
 		return localizedContentSelection{}
 	}
 	return localization
 }
 
 func applyLocalizedFormDocument(
+	ctx context.Context,
 	sourceDocument *formdomain.FormSourceDocument,
 	localization localizedContentSelection,
 ) {
@@ -214,7 +216,7 @@ func applyLocalizedFormDocument(
 	if localization.Title != nil && strings.TrimSpace(*localization.Title) != "" {
 		sourceDocument.Title = *localization.Title
 	}
-	if applyLocalizedFormSchema(sourceDocument, localization) {
+	if applyLocalizedFormSchema(ctx, sourceDocument, localization) {
 		return
 	}
 	if localization.ContentText != nil {
@@ -223,6 +225,7 @@ func applyLocalizedFormDocument(
 }
 
 func applyLocalizedFormSchema(
+	ctx context.Context,
 	sourceDocument *formdomain.FormSourceDocument,
 	localization localizedContentSelection,
 ) bool {
@@ -239,12 +242,7 @@ func applyLocalizedFormSchema(
 		localization.ContentJSON,
 	)
 	if err != nil {
-		slog.Warn(
-			"failed to canonicalize localized form schema against source",
-			"displayedLocale", localization.DisplayedLocale,
-			"sourceLocale", localization.SourceLocale,
-			"error", err,
-		)
+		slog.WarnContext(ctx, "Localized form schema does not match the source; serving it uncanonicalized", "domain", "form", "event", "form.operation_failed", "operation", "canonicalize_localized_schema", "outcome", "failed", "locale", localization.DisplayedLocale, "source_locale", localization.SourceLocale, failurecause.Attr(err))
 		sourceDocument.Schema = localization.ContentJSON
 		return false
 	}

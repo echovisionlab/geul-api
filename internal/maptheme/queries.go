@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	stderrors "errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -230,10 +228,9 @@ func (s *MapThemeService) DeleteMapTheme(
 	})
 	if err != nil {
 		if isMapThemeDefaultDeleteViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "DeleteMapTheme", failurecause.Attr(err))
-			return nil, errs.FailedPrecondition(
+			return nil, errs.WithCause(errs.FailedPrecondition(
 				"the current default or last map theme cannot be deleted; select another default first",
-			)
+			), err)
 		}
 		return nil, errs.Internal(err)
 	}

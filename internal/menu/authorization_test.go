@@ -117,6 +117,7 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 	labelOnly, err := json.Marshal([]model.MenuItem{{ID: "home", Label: "Start", LinkType: "custom"}})
 	require.NoError(t, err)
 	labelAction := menuUpdateAction(
+		t.Context(),
 		current,
 		request,
 		menuUpdate{fields: map[string]any{"items": json.RawMessage(labelOnly)}},
@@ -134,6 +135,7 @@ func TestMenuUpdateSelectsEditForValuesAndManageForTopology(t *testing.T) {
 	})
 	require.NoError(t, err)
 	structuralAction := menuUpdateAction(
+		t.Context(),
 		current,
 		request,
 		menuUpdate{fields: map[string]any{"items": json.RawMessage(structural)}},

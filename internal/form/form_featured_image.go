@@ -3,12 +3,10 @@ package form
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -88,13 +86,10 @@ func (s *FormService) SetFormFeaturedImage(
 				Model(&model.Form{}).
 				Where("id = ?", req.Msg.FormId).
 				Count(&count).Error
-			if lookupErr != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "resolve_missing_featured_image", "outcome", "failed", failurecause.Attr(lookupErr))
-			}
 			if lookupErr == nil && count == 0 {
 				return nil, errs.NotFound("form", req.Msg.FormId)
 			}
-			return nil, errs.NotFound("file", req.Msg.FileId)
+			return nil, errs.WithCause(errs.NotFound("file", req.Msg.FileId), lookupErr)
 		}
 		return nil, errs.Wrap(err)
 	}

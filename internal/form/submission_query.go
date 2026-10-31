@@ -3,11 +3,9 @@ package form
 import (
 	"context"
 	"errors"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -74,8 +72,7 @@ func (s *FormService) ListFormSubmissions(
 	}
 	if s.securityAccess != nil {
 		if err := s.securityAccess.AppendFormSubmissions(ctx, req.Msg.FormId); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
-			return nil, securityAccessUnavailable()
+			return nil, errs.WithCause(securityAccessUnavailable(), err)
 		}
 	}
 
@@ -124,8 +121,7 @@ func (s *FormService) GetFormSubmissionWithSchema(
 	}
 	if s.securityAccess != nil {
 		if err := s.securityAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
-			return nil, securityAccessUnavailable()
+			return nil, errs.WithCause(securityAccessUnavailable(), err)
 		}
 	}
 

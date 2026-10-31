@@ -32,7 +32,7 @@ func ResolvePublicLocalization(
 ) (LocalizationSelection, error) {
 	settings, settingsErr := translation.LoadRuntimeSettings(ctx, db)
 	if settingsErr != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
+		slog.ErrorContext(ctx, "Translation settings load failed; serving default locale settings", "domain", "form", "event", "form.operation_failed", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
 		settings = translation.DefaultRuntimeSettings()
 	}
 	requestedLocale := settings.DefaultLocale
@@ -110,7 +110,7 @@ func ResolvePublicLocalization(
 		selection.AvailableLocales = available
 	}
 	if availableErr != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr))
+		slog.ErrorContext(ctx, "Form locale list load failed; serving source locale only", "domain", "form", "event", "form.operation_failed", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr))
 	}
 	return selection, nil
 }

@@ -2,7 +2,6 @@ package menu
 
 import (
 	"context"
-	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -260,9 +258,6 @@ func requireCanonicalMenuCollaborationUUID(value, field string) error {
 	trimmed := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(trimmed)
 	if err != nil || parsed == uuid.Nil || parsed.String() != trimmed || value != trimmed {
-		if err != nil {
-			slog.WarnContext(context.Background(), "content operation failed", "domain", "menu", "operation", "menu.canonicalMenuCollaborationUUID", "outcome", "failed", failurecause.Attr(err))
-		}
 		return errs.InvalidArgument(field, "must be a canonical UUID")
 	}
 	return nil

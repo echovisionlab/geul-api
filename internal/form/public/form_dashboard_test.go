@@ -41,7 +41,7 @@ func TestBuildFormDashboardUsesSchemaLabels(t *testing.T) {
 		CreatedAt: now,
 	}}
 
-	dashboard := buildFormDashboardFromSubmissions(form, sourceDocument, submissions, now)
+	dashboard := buildFormDashboardFromSubmissions(t.Context(), form, sourceDocument, submissions, now)
 
 	assert.Equal(t, "문의 폼", dashboard.FormTitle)
 	require.Len(t, dashboard.FieldStats, 1)
@@ -70,7 +70,7 @@ func TestBuildFormDashboardLabelsSystemSubmissionMetadata(t *testing.T) {
 		CreatedAt:   now,
 	}}
 
-	dashboard := buildFormDashboardFromSubmissions(form, sourceDocument, submissions, now)
+	dashboard := buildFormDashboardFromSubmissions(t.Context(), form, sourceDocument, submissions, now)
 
 	require.Len(t, dashboard.FieldStats, 4)
 	assert.Equal(t, "Country code", dashboard.FieldStats[0].FieldLabel)
@@ -105,7 +105,7 @@ func TestBuildFormDashboardAggregatesTopValuesAndSkipsUnsupportedPayloads(t *tes
 		})
 	}
 
-	dashboard := buildFormDashboardFromSubmissions(form, sourceDocument, submissions, now)
+	dashboard := buildFormDashboardFromSubmissions(t.Context(), form, sourceDocument, submissions, now)
 
 	require.Equal(t, int32(11), dashboard.GetTotalSubmissions())
 	statsByID := make(map[string]*openv1.FormDashboardFieldStat)

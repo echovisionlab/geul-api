@@ -130,10 +130,7 @@ func (s *InternalFormService) SaveDocument(
 		if locale == root.SourceLocale {
 			documentID, parseErr := uuid.Parse(root.DocumentID)
 			if parseErr != nil || documentID == uuid.Nil {
-				if parseErr != nil {
-					slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(parseErr))
-				}
-				return errs.FailedPrecondition("Form Content Document is not initialized")
+				return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), parseErr)
 			}
 			advance, advanceErr := s.contentBlocks.AdvanceRevision(
 				ctx,
@@ -348,8 +345,7 @@ func (s *InternalFormService) LoadDocument(
 		}
 		sourceMeta, err := formMetaFromCanonicalRow(source)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-			return errs.FailedPrecondition("Form source locale document is invalid")
+			return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), err)
 		}
 
 		requested := source
@@ -368,21 +364,18 @@ func (s *InternalFormService) LoadDocument(
 		if requestedExists {
 			requestedMeta, err = formMetaFromCanonicalRow(requested)
 			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-				return errs.FailedPrecondition("Form requested locale document is invalid")
+				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), err)
 			}
 			if locale != root.SourceLocale {
 				if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
-					slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-					return errs.FailedPrecondition("Form requested locale document is invalid")
+					return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), err)
 				}
 			}
 			presentLocaleValues, err = formCanonicalLocaleTargets(
 				requested.Title, requested.Schema,
 			)
 			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "validate_persisted_document", "outcome", "failed", failurecause.Attr(err))
-				return errs.FailedPrecondition("Form requested locale document is invalid")
+				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), err)
 			}
 			if locale != root.SourceLocale {
 				revision, err := deriveFormTargetRevision(root.DocumentRevision, requested)

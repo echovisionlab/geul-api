@@ -167,8 +167,7 @@ func (s *FormatService) CreateFormat(
 		}
 		if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(format).Error; err != nil {
 			if dberrors.IsUniqueViolation(err) {
-				slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-				return errs.SlugAlreadyExists("format", slug)
+				return errs.WithCause(errs.SlugAlreadyExists("format", slug), err)
 			}
 			return errs.Internal(err)
 		}
@@ -268,8 +267,7 @@ func (s *FormatService) applyFormatUpdates(
 	}
 	if err := db.WithContext(ctx).Model(format).Updates(updates).Error; err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return errs.SlugAlreadyExists("format", optionalStringValue(slug))
+			return errs.WithCause(errs.SlugAlreadyExists("format", optionalStringValue(slug)), err)
 		}
 		return errs.Internal(err)
 	}

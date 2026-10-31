@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -326,10 +324,7 @@ func (s *FormService) applyFormUpdate(
 	if plan.nextSourceTitle != nil || plan.nextSourceSchema != nil {
 		documentID, err := uuid.Parse(form.ContentDocumentID)
 		if err != nil || documentID == uuid.Nil {
-			if err != nil {
-				slog.ErrorContext(ctx, "Invalid persisted document metadata", "domain", "form", "event", "form.document_invalid", "outcome", "failed", "operation", "parse_content_document_id", failurecause.Attr(err))
-			}
-			return errs.FailedPrecondition("Form Content Document is not initialized")
+			return errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), err)
 		}
 		var documentRevision uuid.UUID
 		if err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Take(&documentRevision).Error; err != nil {

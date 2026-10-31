@@ -58,11 +58,10 @@ func (s *FormService) GetFormSubmissionStats(
 		return nil, errs.Internal(err)
 	}
 
-	stats := buildFormSubmissionStats(formSchema, submissions, time.Now())
+	stats := buildFormSubmissionStats(ctx, formSchema, submissions, time.Now())
 	if s.securityAccess != nil {
 		if err := s.securityAccess.AppendFormSubmissions(ctx, formID); err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "append_security_access", "outcome", "failed", failurecause.Attr(err))
-			return nil, securityAccessUnavailable()
+			return nil, errs.WithCause(securityAccessUnavailable(), err)
 		}
 	}
 	return connect.NewResponse(&managev1.GetFormSubmissionStatsResponse{Stats: stats}), nil
@@ -74,6 +73,7 @@ type formSubmissionStatsRow struct {
 }
 
 func buildFormSubmissionStats(
+	ctx context.Context,
 	formSchema []byte,
 	submissions []formSubmissionStatsRow,
 	now time.Time,
@@ -102,7 +102,7 @@ func buildFormSubmissionStats(
 
 		var data structured.Fields
 		if err := json.Unmarshal(submission.Data, &data); err != nil {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "decode_submission_stats", "outcome", "failed", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Stored form submission is not valid JSON; skipping it in stats", "domain", "form", "event", "form.operation_failed", "operation", "decode_submission_stats", "outcome", "failed", failurecause.Attr(err))
 			continue
 		}
 

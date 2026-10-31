@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -12,7 +11,6 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -117,7 +115,6 @@ func (s *MapThemeService) ResolveByIds(
 			continue
 		}
 		if _, err := uuidutil.ParseCanonical(id, "requested_theme_ids"); err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "ResolveByIds", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("requested_theme_ids", "must contain only canonical UUIDs")
 		}
 		requested = append(requested, id)
@@ -157,7 +154,6 @@ func (s *MapThemeService) Resolve(
 		requestedID = *req.Msg.ThemeId
 		if requestedID != "" {
 			if _, err := uuidutil.ParseCanonical(requestedID, "theme_id"); err != nil {
-				slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "Resolve", failurecause.Attr(err))
 				return nil, errs.InvalidArgument("theme_id", "must be a canonical UUID")
 			}
 		}

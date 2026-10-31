@@ -1,10 +1,8 @@
 package referencecatalog
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"unicode/utf8"
 
@@ -12,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 const referenceValueMaxLength = 100
@@ -47,17 +44,15 @@ func classifyReferenceUniqueViolation(resource string, name string, slug string,
 		return errs.Internal(err)
 	}
 
-	slog.WarnContext(context.Background(), "content operation failed", "domain", "referencecatalog", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err), "resource", resource)
-
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.ConstraintName {
 		case resource + "_name_key":
-			return errs.AlreadyExists(resource, "name", name)
+			return errs.WithCause(errs.AlreadyExists(resource, "name", name), err)
 		case resource + "_slug_key":
-			return errs.SlugAlreadyExists(resource, slug)
+			return errs.WithCause(errs.SlugAlreadyExists(resource, slug), err)
 		}
 	}
 
-	return errs.AlreadyExistsMsg(fmt.Sprintf("%s with the same name or slug already exists", resource))
+	return errs.WithCause(errs.AlreadyExistsMsg(fmt.Sprintf("%s with the same name or slug already exists", resource)), err)
 }

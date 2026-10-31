@@ -53,7 +53,7 @@ func (s *FormService) VerifyPassword(
 	}
 
 	// Verify password
-	valid := s.verifyFormPassword(req.Msg.Password, *form.AccessPassword)
+	valid := s.verifyFormPassword(ctx, req.Msg.Password, *form.AccessPassword)
 
 	return connect.NewResponse(&openv1.VerifyFormPasswordResponse{
 		Valid: valid,
@@ -62,12 +62,12 @@ func (s *FormService) VerifyPassword(
 
 // verifyFormPassword checks if the password matches the hash.
 // Supports both legacy bcrypt hashes and new argon2id hashes for backward compatibility.
-func (s *FormService) verifyFormPassword(password, hash string) bool {
+func (s *FormService) verifyFormPassword(ctx context.Context, password, hash string) bool {
 	// Check if it's a legacy bcrypt hash
 	if crypto.IsBcryptHash(hash) {
 		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 		if err != nil && !errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
+			slog.ErrorContext(ctx, "Form password hash verification failed; rejecting the password", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
 		}
 		return err == nil
 	}
@@ -75,7 +75,7 @@ func (s *FormService) verifyFormPassword(password, hash string) bool {
 	// Otherwise, use argon2id
 	match, err := s.password.Verify(password, hash)
 	if err != nil {
-		slog.ErrorContext(context.Background(), "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
+		slog.ErrorContext(ctx, "Form password hash verification failed; rejecting the password", "domain", "form", "event", "form.operation_failed", "operation", "verify_form_password", "outcome", "failed", failurecause.Attr(err, password, hash))
 		return false
 	}
 	return match

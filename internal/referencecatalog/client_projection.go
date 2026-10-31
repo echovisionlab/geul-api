@@ -38,7 +38,7 @@ func (s *ClientService) getClientLogoAssets(ctx context.Context, clientID string
 		Where("id = ?", clientID).
 		Take(&row).Error
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "load_client_logo_assets", "outcome", "failed", failurecause.Attr(err), "client_id", clientID)
+		slog.ErrorContext(ctx, "Client logo lookup failed; serving the client without logos", "domain", "referencecatalog", "operation", "load_client_logo_assets", "outcome", "failed", failurecause.Attr(err), "client_id", clientID)
 		return nil
 	}
 
@@ -49,7 +49,7 @@ func (s *ClientService) getClientLogoAssets(ctx context.Context, clientID string
 		}
 		asset, err := s.assets.ReadyRef(ctx, s.db, AssetSource{FileID: *fileID, Kind: "logo"})
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "referencecatalog", "operation", "resolve_client_logo_asset", "outcome", "failed", failurecause.Attr(err), "client_id", clientID, "file_id", *fileID)
+			slog.ErrorContext(ctx, "Client logo asset lookup failed; serving the client without this logo", "domain", "referencecatalog", "operation", "resolve_client_logo_asset", "outcome", "failed", failurecause.Attr(err), "client_id", clientID, "file_id", *fileID)
 			return nil
 		}
 		return asset

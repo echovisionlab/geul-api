@@ -13,6 +13,7 @@ func TestBuildFormSubmissionStatsAggregatesValuesAndSchemaLabels(t *testing.T) {
 
 	now := time.Date(2026, 6, 24, 15, 0, 0, 0, time.UTC)
 	stats := buildFormSubmissionStats(
+		t.Context(),
 		[]byte(`{
 			"steps": [{
 				"fields": [

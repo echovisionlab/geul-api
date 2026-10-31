@@ -48,7 +48,7 @@ func (s *Cleanup) MarkDanglingReadyAssets(ctx context.Context, cutoff, now time.
 		}
 	}
 	if marked > 0 {
-		slog.Info("Marked dangling favicon assets for deletion", "count", marked)
+		slog.InfoContext(ctx, "Marked dangling favicon assets for deletion", "count", marked)
 	}
 	return stderrors.Join(cleanupErrs...)
 }

@@ -173,7 +173,7 @@ func deleteAutomaticLegalNoticePreviewShareLinks(
 		data, err := decodeEmailDeliveryTemplateData(runs[i].RunKind, eventKey, runs[i].TemplateData)
 		if err != nil || data.PreviewURL == nil {
 			if err != nil {
-				slog.ErrorContext(ctx, "Failed to decode legal notice data during preview revocation", "failure_cause", failurecause.Message(err), "run_id", runs[i].ID)
+				slog.ErrorContext(ctx, "Legal notice run data is invalid; skipping its preview revocation", "domain", "legal", "operation", "revoke_notice_preview", "outcome", "failed", "run_id", runs[i].ID, failurecause.Attr(err))
 			}
 			continue
 		}

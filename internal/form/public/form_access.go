@@ -35,7 +35,7 @@ func (s *FormService) validateShareToken(
 	var shareLink model.ShareLink
 	if err := s.db.WithContext(ctx).First(&shareLink, "token = ?", *shareToken).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "load_share_link", "outcome", "failed", failurecause.Attr(err, *shareToken))
+			slog.ErrorContext(ctx, "Share link lookup failed; treating the share token as invalid", "domain", "form", "event", "form.operation_failed", "operation", "load_share_link", "outcome", "failed", failurecause.Attr(err, *shareToken))
 		}
 		return formShareTokenState{}
 	}
@@ -50,7 +50,7 @@ func (s *FormService) validateShareToken(
 		}
 		matched, err := s.password.Verify(*sharePassword, *shareLink.PasswordHash)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "form", "event", "form.operation_failed", "operation", "verify_share_password", "outcome", "failed", failurecause.Attr(err, *sharePassword, *shareLink.PasswordHash))
+			slog.ErrorContext(ctx, "Share link password hash verification failed; treating the share token as invalid", "domain", "form", "event", "form.operation_failed", "operation", "verify_share_password", "outcome", "failed", failurecause.Attr(err, *sharePassword, *shareLink.PasswordHash))
 		}
 		if err != nil || !matched {
 			return formShareTokenState{}
@@ -167,7 +167,7 @@ func (s *FormService) evaluateFormAccess(
 	); err != nil || reason != openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED {
 		return reason, err
 	}
-	if formPasswordRequired(s, form, opts) {
+	if formPasswordRequired(ctx, s, form, opts) {
 		return openv1.FormAccessReason_FORM_ACCESS_REASON_PASSWORD_REQUIRED, nil
 	}
 
@@ -265,9 +265,9 @@ func (s *FormService) evaluateFormSubmissionLimit(
 	return openv1.FormAccessReason_FORM_ACCESS_REASON_ALLOWED, nil
 }
 
-func formPasswordRequired(service *FormService, form *model.Form, opts formAccessOptions) bool {
+func formPasswordRequired(ctx context.Context, service *FormService, form *model.Form, opts formAccessOptions) bool {
 	return opts.enforcePassword && form.AccessPassword != nil && *form.AccessPassword != "" &&
-		(opts.password == nil || *opts.password == "" || !service.verifyFormPassword(*opts.password, *form.AccessPassword))
+		(opts.password == nil || *opts.password == "" || !service.verifyFormPassword(ctx, *opts.password, *form.AccessPassword))
 }
 
 func (s *FormService) countSubmissions(ctx context.Context, formID string) (int64, error) {

@@ -682,7 +682,7 @@ func (s *PrivacyService) DeletePrivacy(
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "privacy", privacy.ID); err != nil {
-		slog.Warn("failed to release legal OG assets", "entity_type", "privacy", "entity_id", privacy.ID, "failure_cause", failurecause.Message(err))
+		slog.WarnContext(ctx, "Legal OG asset release failed after the document was deleted", "domain", "legal", "operation", "release_og_assets", "outcome", "failed", "entity_type", "privacy", "entity_id", privacy.ID, failurecause.Attr(err))
 	}
 
 	return connect.NewResponse(&managev1.DeleteResponse{
