@@ -46,9 +46,9 @@ func (s FieldPathSegment) validate() error {
 		return errors.New("field path segment must contain exactly one field or list item handle")
 	}
 	if s.Field != "" {
-		return validateStableID("nested field ID", string(s.Field), 120)
+		return validateStableID("nested field ID", string(s.Field), maxCatalogIDLength)
 	}
-	return validateStableID("list item handle", string(s.Item), 160)
+	return validateStableID("list item handle", string(s.Item), maxHandleLength)
 }
 
 func (s FieldPathSegment) MarshalJSON() ([]byte, error) {
@@ -579,48 +579,48 @@ func validateCanonicalOperations(operations []Operation) error {
 		case OperationUnsetField:
 			err = validateCanonicalFieldTarget(operation.UnsetField.Target)
 		case OperationInsertBlock:
-			if err = validateStableID("block ID", string(operation.InsertBlock.Block), 160); err == nil {
-				err = validateStableID("block kind", string(operation.InsertBlock.Kind), 80)
+			if err = validateStableID("block ID", string(operation.InsertBlock.Block), maxHandleLength); err == nil {
+				err = validateStableID("block kind", string(operation.InsertBlock.Kind), maxKindLength)
 			}
 			if err == nil && operation.InsertBlock.Parent != "" {
-				err = validateStableID("parent block ID", string(operation.InsertBlock.Parent), 160)
+				err = validateStableID("parent block ID", string(operation.InsertBlock.Parent), maxHandleLength)
 			}
 			if err == nil && operation.InsertBlock.After != "" {
-				err = validateStableID("after block ID", string(operation.InsertBlock.After), 160)
+				err = validateStableID("after block ID", string(operation.InsertBlock.After), maxHandleLength)
 			}
 		case OperationDeleteBlock:
-			err = validateStableID("block ID", string(operation.DeleteBlock.Block), 160)
+			err = validateStableID("block ID", string(operation.DeleteBlock.Block), maxHandleLength)
 		case OperationMoveBlock:
-			if err = validateStableID("block ID", string(operation.MoveBlock.Block), 160); err == nil && operation.MoveBlock.Parent != "" {
-				err = validateStableID("parent block ID", string(operation.MoveBlock.Parent), 160)
+			if err = validateStableID("block ID", string(operation.MoveBlock.Block), maxHandleLength); err == nil && operation.MoveBlock.Parent != "" {
+				err = validateStableID("parent block ID", string(operation.MoveBlock.Parent), maxHandleLength)
 			}
 			if err == nil && operation.MoveBlock.After != "" {
-				err = validateStableID("after block ID", string(operation.MoveBlock.After), 160)
+				err = validateStableID("after block ID", string(operation.MoveBlock.After), maxHandleLength)
 			}
 		case OperationReplaceBlockKind:
-			if err = validateStableID("block ID", string(operation.ReplaceBlockKind.Block), 160); err == nil {
-				err = validateStableID("block kind", string(operation.ReplaceBlockKind.Kind), 80)
+			if err = validateStableID("block ID", string(operation.ReplaceBlockKind.Block), maxHandleLength); err == nil {
+				err = validateStableID("block kind", string(operation.ReplaceBlockKind.Kind), maxKindLength)
 			}
 		case OperationInsertRelationItem:
 			err = validateRelationOperationIDs(operation.InsertRelationItem.Block, operation.InsertRelationItem.Relation, operation.InsertRelationItem.Item)
 			if err == nil {
-				err = validateStableID("relation item kind", string(operation.InsertRelationItem.Kind), 80)
+				err = validateStableID("relation item kind", string(operation.InsertRelationItem.Kind), maxKindLength)
 			}
 			if err == nil && operation.InsertRelationItem.After != "" {
-				err = validateStableID("after relation item ID", string(operation.InsertRelationItem.After), 160)
+				err = validateStableID("after relation item ID", string(operation.InsertRelationItem.After), maxHandleLength)
 			}
 		case OperationDeleteRelationItem:
 			err = validateRelationOperationIDs(operation.DeleteRelationItem.Block, operation.DeleteRelationItem.Relation, operation.DeleteRelationItem.Item)
 		case OperationMoveRelationItem:
 			err = validateRelationOperationIDs(operation.MoveRelationItem.Block, operation.MoveRelationItem.Relation, operation.MoveRelationItem.Item)
 			if err == nil {
-				err = validateStableID("target block ID", string(operation.MoveRelationItem.TargetBlock), 160)
+				err = validateStableID("target block ID", string(operation.MoveRelationItem.TargetBlock), maxHandleLength)
 			}
 			if err == nil {
-				err = validateStableID("target relation ID", string(operation.MoveRelationItem.Target), 120)
+				err = validateStableID("target relation ID", string(operation.MoveRelationItem.Target), maxCatalogIDLength)
 			}
 			if err == nil && operation.MoveRelationItem.After != "" {
-				err = validateStableID("after relation item ID", string(operation.MoveRelationItem.After), 160)
+				err = validateStableID("after relation item ID", string(operation.MoveRelationItem.After), maxHandleLength)
 			}
 		case OperationAttachFile:
 			if err = validateCanonicalFieldTarget(operation.AttachFile.Target); err == nil {

@@ -41,6 +41,17 @@ func validateOpaque(name, value string, max int) error {
 	return nil
 }
 
+// Length limits for stable protocol identities.
+const (
+	// maxHandleLength bounds document instance handles: block, relation item,
+	// list item and placeholder IDs.
+	maxHandleLength = 160
+	// maxCatalogIDLength bounds field and relation IDs declared by the catalog.
+	maxCatalogIDLength = 120
+	// maxKindLength bounds block and relation item kinds.
+	maxKindLength = 80
+)
+
 // Stable protocol identities must not be array positions or paths derived
 // from positions. Domain adapters have to map positional persistence shapes to
 // stable semantic handles before entering this package.
@@ -157,7 +168,7 @@ func validateProjectedNodes(nodes []Node) error {
 	ids := make(map[BlockID]struct{}, len(nodes))
 	parents := make(map[BlockID]BlockID, len(nodes))
 	for _, node := range nodes {
-		if err := validateStableID("block ID", string(node.ID), 160); err != nil {
+		if err := validateStableID("block ID", string(node.ID), maxHandleLength); err != nil {
 			return err
 		}
 		if _, duplicate := ids[node.ID]; duplicate {
@@ -166,7 +177,7 @@ func validateProjectedNodes(nodes []Node) error {
 		ids[node.ID] = struct{}{}
 		parents[node.ID] = node.Parent
 		if node.Parent != "" {
-			if err := validateStableID("parent block ID", string(node.Parent), 160); err != nil {
+			if err := validateStableID("parent block ID", string(node.Parent), maxHandleLength); err != nil {
 				return err
 			}
 		}
@@ -186,7 +197,7 @@ func validateProjectedNodes(nodes []Node) error {
 				return fmt.Errorf("block %q has duplicate file target %q", node.ID, key)
 			}
 			files[key] = struct{}{}
-			if err := validateStableID("file field ID", string(binding.Field), 120); err != nil {
+			if err := validateStableID("file field ID", string(binding.Field), maxCatalogIDLength); err != nil {
 				return err
 			}
 			for _, segment := range binding.Path {
@@ -201,7 +212,7 @@ func validateProjectedNodes(nodes []Node) error {
 		relations := make(map[RelationID]struct{}, len(node.Relations))
 		items := make(map[RelationItemID]struct{})
 		for _, relation := range node.Relations {
-			if err := validateStableID("relation ID", string(relation.ID), 120); err != nil {
+			if err := validateStableID("relation ID", string(relation.ID), maxCatalogIDLength); err != nil {
 				return err
 			}
 			if _, duplicate := relations[relation.ID]; duplicate {
@@ -209,10 +220,10 @@ func validateProjectedNodes(nodes []Node) error {
 			}
 			relations[relation.ID] = struct{}{}
 			for _, item := range relation.Items {
-				if err := validateStableID("relation item ID", string(item.ID), 160); err != nil {
+				if err := validateStableID("relation item ID", string(item.ID), maxHandleLength); err != nil {
 					return err
 				}
-				if err := validateStableID("relation item kind", string(item.Kind), 80); err != nil {
+				if err := validateStableID("relation item kind", string(item.Kind), maxKindLength); err != nil {
 					return err
 				}
 				if _, duplicate := items[item.ID]; duplicate {
@@ -235,7 +246,7 @@ func validateProjectedNodes(nodes []Node) error {
 						return fmt.Errorf("relation item %q has duplicate file target %q", item.ID, key)
 					}
 					itemFiles[key] = struct{}{}
-					if err := validateStableID("file field ID", string(binding.Field), 120); err != nil {
+					if err := validateStableID("file field ID", string(binding.Field), maxCatalogIDLength); err != nil {
 						return err
 					}
 					for _, segment := range binding.Path {
@@ -282,7 +293,7 @@ func nestedFieldKey(field FieldID, path []FieldPathSegment) string {
 func validateFieldValues(fields []FieldValue) error {
 	seen := make(map[FieldID]struct{}, len(fields))
 	for _, field := range fields {
-		if err := validateStableID("field ID", string(field.ID), 120); err != nil {
+		if err := validateStableID("field ID", string(field.ID), maxCatalogIDLength); err != nil {
 			return err
 		}
 		if _, duplicate := seen[field.ID]; duplicate {

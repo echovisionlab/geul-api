@@ -122,7 +122,7 @@ func (v Value) validateDepth(depth int) error {
 				return errors.New("list item handles must be either present for every item or absent for every item")
 			}
 			if stable {
-				if err := validateStableID("list item handle", string(item.ID), 160); err != nil {
+				if err := validateStableID("list item handle", string(item.ID), maxHandleLength); err != nil {
 					return err
 				}
 				if _, duplicate := seen[item.ID]; duplicate {
@@ -141,7 +141,7 @@ func (v Value) validateDepth(depth int) error {
 		}
 		seen := make(map[FieldID]struct{}, len(v.Object))
 		for _, field := range v.Object {
-			if err := validateStableID("object field ID", string(field.ID), 120); err != nil {
+			if err := validateStableID("object field ID", string(field.ID), maxCatalogIDLength); err != nil {
 				return err
 			}
 			if _, duplicate := seen[field.ID]; duplicate {
@@ -222,7 +222,7 @@ func (i InlineItem) validate(depth int) error {
 		if i.Target != "" || len(i.Children) != 0 {
 			return errors.New("placeholder cannot contain a target or children")
 		}
-		return validateStableID("placeholder handle", i.Text, 160)
+		return validateStableID("placeholder handle", i.Text, maxHandleLength)
 	default:
 		return fmt.Errorf("unsupported inline item kind %q", i.Kind)
 	}

@@ -547,7 +547,7 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 	case ReadBlocks:
 		selected := make(map[BlockID]struct{}, len(request.Blocks))
 		for _, block := range request.Blocks {
-			if err := validateStableID("block ID", string(block), 160); err != nil {
+			if err := validateStableID("block ID", string(block), maxHandleLength); err != nil {
 				return nil, err
 			}
 			selected[block] = struct{}{}
@@ -681,21 +681,21 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 }
 
 func validateCanonicalFieldTarget(target FieldTarget) error {
-	if err := validateStableID("block ID", string(target.Block), 160); err != nil {
+	if err := validateStableID("block ID", string(target.Block), maxHandleLength); err != nil {
 		return err
 	}
 	if target.relationItem() {
 		if target.Relation == "" || target.Item == "" {
 			return errors.New("relation-item field target requires both relation and item IDs")
 		}
-		if err := validateStableID("relation ID", string(target.Relation), 120); err != nil {
+		if err := validateStableID("relation ID", string(target.Relation), maxCatalogIDLength); err != nil {
 			return err
 		}
-		if err := validateStableID("relation item ID", string(target.Item), 160); err != nil {
+		if err := validateStableID("relation item ID", string(target.Item), maxHandleLength); err != nil {
 			return err
 		}
 	}
-	if err := validateStableID("field ID", string(target.Field), 120); err != nil {
+	if err := validateStableID("field ID", string(target.Field), maxCatalogIDLength); err != nil {
 		return err
 	}
 	for _, segment := range target.Path {

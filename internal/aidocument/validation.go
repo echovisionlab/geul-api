@@ -278,7 +278,7 @@ func validateOperation(
 		if sourceIssue := requireSource(blockHandle(operation.InsertBlock.Block)); sourceIssue != nil {
 			return sourceIssue
 		}
-		if err := validateStableID("block ID", string(operation.InsertBlock.Block), 160); err != nil {
+		if err := validateStableID("block ID", string(operation.InsertBlock.Block), maxHandleLength); err != nil {
 			return issue(IssueInvalidOperation, blockHandle(operation.InsertBlock.Block), err.Error())
 		}
 		if _, exists := graph[operation.InsertBlock.Block]; exists {
@@ -326,11 +326,11 @@ func validateOperation(
 		if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
 			return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
 		}
-		if err := validateStableID("relation item kind", string(op.Kind), 80); err != nil {
+		if err := validateStableID("relation item kind", string(op.Kind), maxKindLength); err != nil {
 			return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
 		}
 		if op.After != "" {
-			if err := validateStableID("after relation item ID", string(op.After), 160); err != nil {
+			if err := validateStableID("after relation item ID", string(op.After), maxHandleLength); err != nil {
 				return issue(IssueInvalidOperation, relationItemHandle(op.Block, op.Relation, op.Item), err.Error())
 			}
 		}
@@ -374,7 +374,7 @@ func validateOperation(
 			return issue(IssueInvalidOperation, relationItemHandle(op.TargetBlock, op.Target, op.Item), err.Error())
 		}
 		if op.After != "" {
-			if err := validateStableID("after relation item ID", string(op.After), 160); err != nil {
+			if err := validateStableID("after relation item ID", string(op.After), maxHandleLength); err != nil {
 				return issue(IssueInvalidOperation, relationItemHandle(op.TargetBlock, op.Target, op.Item), err.Error())
 			}
 		}
@@ -551,13 +551,13 @@ func requireRelationItem(index int, blockID BlockID, relation RelationID, item R
 }
 
 func validateRelationOperationIDs(block BlockID, relation RelationID, item RelationItemID) error {
-	if err := validateStableID("block ID", string(block), 160); err != nil {
+	if err := validateStableID("block ID", string(block), maxHandleLength); err != nil {
 		return err
 	}
-	if err := validateStableID("relation ID", string(relation), 120); err != nil {
+	if err := validateStableID("relation ID", string(relation), maxCatalogIDLength); err != nil {
 		return err
 	}
-	return validateStableID("relation item ID", string(item), 160)
+	return validateStableID("relation item ID", string(item), maxHandleLength)
 }
 
 func validateRelationPlacement(index int, blockID BlockID, relation RelationID, moving, after RelationItemID, graph map[BlockID]graphBlock) *OperationIssue {

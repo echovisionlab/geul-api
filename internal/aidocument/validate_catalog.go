@@ -11,7 +11,7 @@ func (c Catalog) validate() error {
 	}
 	kinds := make(map[BlockKind]struct{}, len(c.BlockKinds))
 	for _, kind := range c.BlockKinds {
-		if err := validateStableID("block kind", string(kind), 80); err != nil {
+		if err := validateStableID("block kind", string(kind), maxKindLength); err != nil {
 			return err
 		}
 		if _, duplicate := kinds[kind]; duplicate {
@@ -24,7 +24,7 @@ func (c Catalog) validate() error {
 		if _, ok := kinds[rule.BlockKind]; !ok {
 			return fmt.Errorf("field %q refers to unknown block kind %q", rule.Field, rule.BlockKind)
 		}
-		if err := validateStableID("field ID", string(rule.Field), 120); err != nil {
+		if err := validateStableID("field ID", string(rule.Field), maxCatalogIDLength); err != nil {
 			return err
 		}
 		key := string(rule.BlockKind) + "\x00" + string(rule.Field)
@@ -49,7 +49,7 @@ func (c Catalog) validate() error {
 		if _, ok := kinds[rule.BlockKind]; !ok {
 			return fmt.Errorf("relation %q refers to unknown block kind %q", rule.Relation, rule.BlockKind)
 		}
-		if err := validateStableID("relation ID", string(rule.Relation), 120); err != nil {
+		if err := validateStableID("relation ID", string(rule.Relation), maxCatalogIDLength); err != nil {
 			return err
 		}
 		key := relationRuleKey(rule.BlockKind, rule.Relation)
@@ -58,7 +58,7 @@ func (c Catalog) validate() error {
 		}
 		itemKinds := make(map[RelationItemKind]struct{}, len(rule.ItemKinds))
 		for _, kind := range rule.ItemKinds {
-			if err := validateStableID("relation item kind", string(kind), 80); err != nil {
+			if err := validateStableID("relation item kind", string(kind), maxKindLength); err != nil {
 				return err
 			}
 			if _, duplicate := itemKinds[kind]; duplicate {
@@ -80,7 +80,7 @@ func (c Catalog) validate() error {
 		if _, ok := itemKinds[rule.ItemKind]; !ok {
 			return fmt.Errorf("relation field %q refers to unsupported item kind %q", rule.Field, rule.ItemKind)
 		}
-		if err := validateStableID("relation field ID", string(rule.Field), 120); err != nil {
+		if err := validateStableID("relation field ID", string(rule.Field), maxCatalogIDLength); err != nil {
 			return err
 		}
 		key := relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)
@@ -131,7 +131,7 @@ func validateFieldSchema(schema FieldSchema, depth int) error {
 		}
 		seen := make(map[FieldID]struct{}, len(schema.Fields))
 		for _, field := range schema.Fields {
-			if err := validateStableID("nested field ID", string(field.Field), 120); err != nil {
+			if err := validateStableID("nested field ID", string(field.Field), maxCatalogIDLength); err != nil {
 				return err
 			}
 			if _, duplicate := seen[field.Field]; duplicate {
@@ -162,7 +162,7 @@ func validateListIdentity(identity ListIdentityRule) error {
 			return errors.New("value list identity cannot carry handles or a field")
 		}
 	case ListIdentityField:
-		if err := validateStableID("list identity field", string(identity.Field), 120); err != nil {
+		if err := validateStableID("list identity field", string(identity.Field), maxCatalogIDLength); err != nil {
 			return err
 		}
 		if len(identity.Handles) != 0 {
@@ -174,7 +174,7 @@ func validateListIdentity(identity ListIdentityRule) error {
 		}
 		seen := make(map[RelationItemID]struct{}, len(identity.Handles))
 		for _, handle := range identity.Handles {
-			if err := validateStableID("fixed list handle", string(handle), 160); err != nil {
+			if err := validateStableID("fixed list handle", string(handle), maxHandleLength); err != nil {
 				return err
 			}
 			if _, duplicate := seen[handle]; duplicate {
