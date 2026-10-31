@@ -286,7 +286,7 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 		return err
 	})
 	if err != nil {
-		return nil, normalizeReleaseTargetWriterError(err)
+		return nil, normalizeReleaseContentBlockError(err)
 	}
 	response := &intrav1.ApplyReleaseBlockBatchResponse{Locale: locale}
 	if locale == source.SourceLocale {
@@ -466,7 +466,7 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 		)
 	})
 	if err != nil {
-		return nil, normalizeReleaseTargetWriterError(err)
+		return nil, normalizeReleaseContentBlockError(err)
 	}
 	response := &intrav1.UpdateReleaseLocaleMetadataResponse{Locale: locale}
 	if locale == source.SourceLocale {

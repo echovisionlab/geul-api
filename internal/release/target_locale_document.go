@@ -117,14 +117,6 @@ func deriveReleaseTargetRevision(documentRevision string, metadata releaseLocale
 	return revision, nil
 }
 
-func normalizeReleaseTargetWriterError(err error) error {
-	var conflict *translation.TargetRevisionConflict
-	if errors.As(err, &conflict) {
-		return normalizeReleaseContentBlockError(err)
-	}
-	return normalizeReleaseContentBlockError(err)
-}
-
 func loadReleaseTargetLocaleState(
 	ctx context.Context,
 	tx *gorm.DB,
