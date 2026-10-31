@@ -1,7 +1,7 @@
-// Package targetbatchtest drives every domain's target-locale batch validator
-// through the same rejection table. The ten validators are still separate
-// copies; one shared table makes any unification show up as an explicit
-// expectation diff instead of a silent change in code, message or reason.
+// Package targetbatchtest drives the shared target-locale batch validator
+// through one rejection table per domain. Each domain table pins the client
+// messages its entity name produces, so a change to the shared rules shows up
+// as an explicit expectation diff in every domain.
 package targetbatchtest
 
 import (
@@ -175,4 +175,12 @@ func Describe(t *testing.T, err error) Outcome {
 		outcome.Reason = rejection.GetReason()
 	}
 	return outcome
+}
+
+// Shared is the shared contentblock validator speaking for one domain's
+// entity name.
+func Shared(entity string) Validator {
+	return func(batch contentblock.Batch, documentID, expectedRevision uuid.UUID, locale string, allowLocaleDeletes bool) error {
+		return contentblock.ValidateTargetLocaleBatch(entity, batch, documentID, expectedRevision, locale, allowLocaleDeletes)
+	}
 }

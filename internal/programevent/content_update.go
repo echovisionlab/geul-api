@@ -23,16 +23,9 @@ func publishContentUpdatedEvent(
 	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
-func buildProgramEventBlockContentUpdatedEvent(
-	eventID string,
-	fields []string,
-	revision string,
-	contributors []string,
-	locale string,
-	localeExists bool,
-	targetRevision *string,
-	documentStateChanged bool,
-) *managev1.ContentUpdatedEvent {
+func buildProgramEventLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
+	eventID, fields, revision, locale := change.EntityID, change.Fields, change.DocumentRevision, change.Locale
+	localeExists, targetRevision, documentStateChanged := !change.LocaleDeleted, change.TargetRevision, change.DocumentStateChanged
 	if strings.TrimSpace(eventID) == "" {
 		return nil
 	}
@@ -65,9 +58,9 @@ func buildProgramEventBlockContentUpdatedEvent(
 		// revision is the authority for the deletion.
 		targetRevision = nil
 	}
-	normalizedContributors := make([]string, 0, len(contributors))
-	unique := make(map[string]struct{}, len(contributors))
-	for _, contributor := range contributors {
+	normalizedContributors := make([]string, 0, len(change.Contributors))
+	unique := make(map[string]struct{}, len(change.Contributors))
+	for _, contributor := range change.Contributors {
 		contributor = strings.TrimSpace(contributor)
 		if contributor == "" {
 			continue
@@ -81,7 +74,7 @@ func buildProgramEventBlockContentUpdatedEvent(
 	event := &managev1.ContentUpdatedEvent{
 		EntityType:           managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PROGRAM_EVENT,
 		EntityId:             eventID,
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Source:               change.Source,
 		ChangedFields:        changed,
 		ContributorMemberIds: normalizedContributors,
 		DocumentStateChanged: documentStateChanged,
@@ -116,18 +109,15 @@ func buildProgramEventAIDocumentContentUpdatedEvent(
 		len(command.Batch.Reorders) != 0 || len(command.Batch.LocaleGroups) != 0 {
 		fields = append(fields, "content")
 	}
-	event := buildProgramEventBlockContentUpdatedEvent(
-		command.EventID,
-		fields,
-		result.DocumentRevision,
-		[]string{command.ContributorMemberID.String()},
-		command.RequestedLocale,
-		!command.DeleteTranslation,
-		result.TargetRevision,
-		command.RequestedLocale == command.ObservedSourceLocale,
-	)
-	if event != nil {
-		event.Source = managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI
-	}
-	return event
+	return buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             command.EventID,
+		Fields:               fields,
+		DocumentRevision:     result.DocumentRevision,
+		Contributors:         []string{command.ContributorMemberID.String()},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:               command.RequestedLocale,
+		LocaleDeleted:        command.DeleteTranslation,
+		TargetRevision:       result.TargetRevision,
+		DocumentStateChanged: command.RequestedLocale == command.ObservedSourceLocale,
+	})
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -212,16 +213,18 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	}
 	now := dbtime.Now()
 	if mutation.Locale != mutation.ObservedSourceLocale {
-		result, targetRevision, err := applyPageTargetLocaleBatch(
-			ctx, tx, s.internal.contentBlocks, mutation.PageID, mutation.Batch.DocumentID,
-			mutation.Locale, mutation.Batch, mutation.ExpectedTargetRevision,
-			pageTargetMetadataPatch{
+		result, targetRevision, err := applyPageTargetLocaleMutation(ctx, tx, s.internal.contentBlocks, pageTargetLocaleMutationInput{
+			PageID: mutation.PageID, DocumentID: mutation.Batch.DocumentID, Locale: mutation.Locale,
+			Batch: mutation.Batch, ExpectedTargetRevision: mutation.ExpectedTargetRevision,
+			Patch: pageTargetMetadataPatch{
 				EnsureLocale: mutation.Metadata.EnsureLocale,
 				UpdateTitle:  mutation.Metadata.SetTitle, Title: mutation.Metadata.Title,
 				UpdateSummary: mutation.Metadata.SetSummary, Summary: mutation.Metadata.Summary,
 				DeleteLocale: mutation.DeleteTranslation,
-			}, mutation.Metadata.EnsureLocale, false, now, fence,
-		)
+			},
+			Policy: targetlocale.Policy{AllowCreate: mutation.Metadata.EnsureLocale},
+			Now:    now, Fence: fence,
+		})
 		if err != nil || !result.Changed {
 			return result, targetRevision, err
 		}

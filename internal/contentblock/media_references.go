@@ -1,4 +1,4 @@
-package work
+package contentblock
 
 import (
 	"context"
@@ -9,26 +9,27 @@ import (
 	"gorm.io/gorm"
 )
 
-type contentBlockMediaReferenceRow struct {
+type mediaReferenceRow struct {
 	BlockID       string `gorm:"column:block_id"`
 	ReferencePath string `gorm:"column:reference_path"`
 	FileID        string `gorm:"column:file_id"`
 }
 
-// LoadContentBlockMediaReferences returns the exact active File usages for an
-// already-authorized Work Content Document.
-func LoadContentBlockMediaReferences(
+// LoadMediaReferences returns the exact active File usages for one
+// already-authorized Content Document. Callers may layer runtime delivery onto
+// these items, but must not merge it into the persisted Block payload.
+func LoadMediaReferences(
 	ctx context.Context,
 	db *gorm.DB,
 	documentID uuid.UUID,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
 	if db == nil {
-		return nil, fmt.Errorf("work content media database is required")
+		return nil, fmt.Errorf("database is required")
 	}
 	if documentID == uuid.Nil {
 		return []*contentv1.ContentBlockMediaItem{}, nil
 	}
-	var rows []contentBlockMediaReferenceRow
+	var rows []mediaReferenceRow
 	if err := db.WithContext(ctx).Raw(`
 		SELECT attachment.block_id, attachment.reference_path, attachment.file_id
 		FROM content_block_attachment AS attachment
@@ -36,7 +37,7 @@ func LoadContentBlockMediaReferences(
 		WHERE block.document_id = ? AND attachment.selector_kind = 'active'
 		ORDER BY attachment.block_id ASC, attachment.reference_path ASC
 	`, documentID).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("load Work Content Block attachment references: %w", err)
+		return nil, fmt.Errorf("load active Content Block attachment references: %w", err)
 	}
 	items := make([]*contentv1.ContentBlockMediaItem, 0, len(rows))
 	for _, row := range rows {

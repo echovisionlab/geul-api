@@ -8,15 +8,16 @@ import (
 
 func TestValidateEmailTemplateTargetBatchOutcomes(t *testing.T) {
 	identity := tb.Invalid("batch: Email Template target document identity and revision must match the locked state")
-	tb.Run(t, validateEmailTemplateTargetBatch, []tb.Case{
+	graph := tb.Rejected(tb.NonSourceStructureForbidden, "Email Template target locale cannot mutate the shared Block graph or File ownership")
+	tb.Run(t, tb.Shared(emailTemplateEntityName), []tb.Case{
 		{Kind: tb.DocumentMismatch, Want: identity},
 		{Kind: tb.RevisionMismatch, Want: identity},
-		{Kind: tb.GraphUpsert, Want: tb.Invalid("batch: Email Template target locale cannot mutate the shared Block graph")},
-		{Kind: tb.GraphDelete, Want: tb.Invalid("batch: Email Template target locale cannot mutate the shared Block graph")},
-		{Kind: tb.GraphReorder, Want: tb.Invalid("batch: Email Template target locale cannot mutate the shared Block graph")},
-		{Kind: tb.MultipleLocaleGroups, Want: tb.Invalid("batch: Email Template target locale contains multiple locale groups")},
-		{Kind: tb.LocaleMismatch, Want: tb.Invalid("batch: Email Template target mutation must match the authorized locale")},
-		{Kind: tb.LocaleDelete, Want: tb.Invalid("batch: Email Template target locale values use explicit empty and cannot be deleted")},
+		{Kind: tb.GraphUpsert, Want: graph},
+		{Kind: tb.GraphDelete, Want: graph},
+		{Kind: tb.GraphReorder, Want: graph},
+		{Kind: tb.MultipleLocaleGroups, Want: tb.Rejected(tb.RoomLocaleMismatch, "Email Template target locale contains multiple locale groups")},
+		{Kind: tb.LocaleMismatch, Want: tb.Rejected(tb.RoomLocaleMismatch, "Email Template target mutation must match the authorized locale")},
+		{Kind: tb.LocaleDelete, Want: tb.Rejected(tb.NonSourceStructureForbidden, "Email Template target patch cannot unset locale Blocks; write explicit empty values instead")},
 		{Kind: tb.LocaleDeleteAllowed, Want: tb.Accepted()},
 		{Kind: tb.LocaleUpsert, Want: tb.Accepted()},
 		{Kind: tb.Empty, Want: tb.Accepted()},

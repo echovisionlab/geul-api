@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -195,7 +196,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 	err = db.Transaction(func(tx *gorm.DB) error {
 		return applyProgramEventTypedTranslationCandidateWithDB(
 			ctx, tx, store, staleInterchangeJob, staleInterchangeCandidate,
-			translation.EntryWrite{Now: time.Now().UTC()}, &targetRevision, false,
+			translation.EntryWrite{Now: time.Now().UTC()}, &targetRevision, targetlocale.RevisionObserved,
 			apitelemetry.NewDurableWriter(db),
 		)
 	})
@@ -676,20 +677,19 @@ func seedProgramEventTargetLocaleForIntegration(
 	require.NoError(t, err)
 	expectedRevision := uuid.MustParse(documentRevision)
 	contributor := uuid.MustParse(contributorID)
-	var output programEventTargetMutationResult
+	var output programEventTargetLocaleMutationResult
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var applyErr error
-		output, applyErr = applyProgramEventTargetMutation(
+		output, applyErr = applyProgramEventTargetLocaleMutation(
 			t.Context(), tx, store,
-			programEventTargetMutationInput{
+			programEventTargetLocaleMutationInput{
 				EventID: eventID, DocumentID: documentID, Locale: locale,
 				Batch: contentblock.Batch{
 					DocumentID: documentID, ExpectedRevision: expectedRevision,
 					ContributorMemberIDs: []uuid.UUID{contributor},
 				},
 				ExpectedDocumentRevision: expectedRevision,
-				AllowCreate:              true,
-				SeedSourceOnCreate:       true,
+				Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true},
 				Now:                      time.Now().UTC(),
 				Fence: programEventContentDocumentFence(
 					eventID,

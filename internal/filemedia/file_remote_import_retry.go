@@ -239,7 +239,7 @@ func (s *FileService) buildCompletedRemoteImportResult(
 	if err != nil {
 		return nil, fmt.Errorf("sign existing remote import inline delivery: %w", err)
 	}
-	downloadFileName := CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
+	downloadFileName := mediaauth.CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
 	download, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,

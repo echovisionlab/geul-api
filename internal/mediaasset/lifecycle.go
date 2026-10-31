@@ -495,7 +495,7 @@ func (s *Lifecycle) AssetRef(asset model.PublicAsset) (*commonv1.AssetRef, error
 	}
 	return &commonv1.AssetRef{
 		AssetId:     asset.ID,
-		Url:         joinOriginPath(s.cdnDomain, assetPath),
+		Url:         mediaauth.JoinOrigin(s.cdnDomain, assetPath),
 		Extension:   asset.Extension,
 		MimeType:    asset.MimeType,
 		FileSize:    *asset.FileSize,
@@ -885,15 +885,4 @@ func normalizedOptionalString(value *string) *string {
 		return nil
 	}
 	return &normalized
-}
-
-func joinOriginPath(origin, resourcePath string) string {
-	if origin == "" {
-		return resourcePath
-	}
-	trimmedDomain := strings.TrimRight(origin, "/")
-	if strings.HasPrefix(trimmedDomain, "http://") || strings.HasPrefix(trimmedDomain, "https://") {
-		return trimmedDomain + resourcePath
-	}
-	return "https://" + trimmedDomain + resourcePath
 }

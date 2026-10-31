@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"github.com/google/uuid"
@@ -253,16 +254,16 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	}
 	switch {
 	case mutation.CreateTranslation:
-		output, applyErr := applyEmailTemplateTargetMutation(
+		output, applyErr := applyEmailTemplateTargetLocaleMutation(
 			ctx, tx, s.internal.contentBlocks,
-			emailTemplateTargetMutationInput{
+			emailTemplateTargetLocaleMutationInput{
 				TemplateID: mutation.TemplateID, DocumentID: documentID, Locale: mutation.Locale,
 				Batch: contentblock.Batch{
 					DocumentID: documentID, ExpectedRevision: expected,
 					ContributorMemberIDs: []uuid.UUID{mutation.ContributorMember},
 				},
 				ExpectedDocumentRevision: expected, ExpectedTargetRevision: mutation.ExpectedTargetRevision,
-				AllowCreate: true, SeedSourceOnCreate: true, Now: now, Fence: fence,
+				Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: now, Fence: fence,
 			},
 		)
 		if applyErr != nil {
@@ -297,14 +298,14 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 				return AIDocumentMutationResult{}, err
 			}
 		} else {
-			output, applyErr := applyEmailTemplateTargetMutation(
+			output, applyErr := applyEmailTemplateTargetLocaleMutation(
 				ctx, tx, s.internal.contentBlocks,
-				emailTemplateTargetMutationInput{
+				emailTemplateTargetLocaleMutationInput{
 					TemplateID: mutation.TemplateID, DocumentID: documentID, Locale: mutation.Locale,
 					Batch: batch, ExpectedDocumentRevision: expected,
 					ExpectedTargetRevision: mutation.ExpectedTargetRevision,
-					AllowCreate:            true, SeedSourceOnCreate: true,
-					SetSubject: mutation.SetSubject, Subject: targetSubject,
+					Policy:                 targetlocale.Policy{AllowCreate: true, SeedSource: true},
+					SetSubject:             mutation.SetSubject, Subject: targetSubject,
 					Now: now, Fence: fence,
 				},
 			)

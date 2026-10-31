@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -473,9 +474,9 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 	var targetRevision *string
 	switch {
 	case command.CreateTranslation:
-		output, err := applyProgramEventTargetMutation(
+		output, err := applyProgramEventTargetLocaleMutation(
 			ctx, tx, s.contentBlocks,
-			programEventTargetMutationInput{
+			programEventTargetLocaleMutationInput{
 				EventID: command.EventID, DocumentID: documentID, Locale: locale,
 				Batch: contentblock.Batch{
 					DocumentID: documentID, ExpectedRevision: command.ExpectedRevision,
@@ -483,7 +484,7 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 				},
 				ExpectedDocumentRevision: command.ExpectedRevision,
 				ExpectedTargetRevision:   command.ExpectedTargetRevision,
-				AllowCreate:              true, SeedSourceOnCreate: true, Now: now, Fence: fence,
+				Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: now, Fence: fence,
 			},
 		)
 		if err != nil {
@@ -536,13 +537,13 @@ func (s *ProgramEventService) applyAIDocumentCommandAfterAuthorizationInTransact
 				return AIDocumentResult{}, err
 			}
 		} else {
-			output, applyErr := applyProgramEventTargetMutation(
+			output, applyErr := applyProgramEventTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				programEventTargetMutationInput{
+				programEventTargetLocaleMutationInput{
 					EventID: command.EventID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: command.ExpectedRevision,
 					ExpectedTargetRevision: command.ExpectedTargetRevision,
-					AllowCreate:            true, SeedSourceOnCreate: true, Now: now, Fence: fence,
+					Policy:                 targetlocale.Policy{AllowCreate: true, SeedSource: true}, Now: now, Fence: fence,
 					SetSummary: command.Metadata.SetSummary, Summary: command.Metadata.Summary,
 				},
 			)

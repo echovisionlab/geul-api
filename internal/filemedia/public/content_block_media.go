@@ -349,7 +349,7 @@ func (s *FileService) applyDelivery(
 	if delivery != nil {
 		item.Delivery = proto.Clone(delivery).(*commonv1.MediaDelivery)
 		if decision.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
-			download, err := buildExpiringFileRef(
+			download, err := mediaauth.ExpiringFileRef(
 				s.mediaDomain, s.mediaSecret, source.FileID, source.Extension,
 				source.MimeType, source.FileName, mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
 			)

@@ -78,7 +78,7 @@ func TestPageVersionRestoreCharacterizationIntegration(t *testing.T) {
 			},
 			want: pageVersionRestoreWant{
 				eventFields:          []string{"document.content TEXT"},
-				documentStateChanged: true, eventLocale: "en", ogGenerations: 1,
+				documentStateChanged: true, eventLocale: "en",
 			},
 		},
 		{
@@ -98,7 +98,7 @@ func TestPageVersionRestoreCharacterizationIntegration(t *testing.T) {
 			},
 			want: pageVersionRestoreWant{
 				eventFields:          []string{"summary TEXT"},
-				documentStateChanged: true, eventLocale: "en", ogGenerations: 1,
+				documentStateChanged: true, eventLocale: "en",
 			},
 		},
 		{

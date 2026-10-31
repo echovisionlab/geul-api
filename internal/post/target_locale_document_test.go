@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -77,15 +76,4 @@ func TestPostTargetLocaleValueDeleteRequiresInternalReplacementAuthority(t *test
 
 	require.Error(t, validatePostTargetStorage(storage, documentID, "en", false))
 	require.NoError(t, validatePostTargetStorage(storage, documentID, "en", true))
-
-	batch := contentblock.Batch{
-		DocumentID:       documentID,
-		ExpectedRevision: documentID,
-		LocaleGroups: []contentblock.LocaleMutationGroup{{
-			Locale:  "en",
-			Deletes: []uuid.UUID{blockID},
-		}},
-	}
-	require.Error(t, validatePostTargetBatch(batch, documentID, documentID, "en", false))
-	require.NoError(t, validatePostTargetBatch(batch, documentID, documentID, "en", true))
 }

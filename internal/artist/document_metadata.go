@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -56,7 +57,7 @@ func buildArtistDocumentMetadataPlan(
 		return artistDocumentMetadataPlan{}, err
 	}
 	if plan.slug.Value != nil {
-		if err := validateSlugWithoutSlash(*plan.slug.Value); err != nil {
+		if err := pathslug.Validate(*plan.slug.Value); err != nil {
 			return artistDocumentMetadataPlan{}, err
 		}
 	}

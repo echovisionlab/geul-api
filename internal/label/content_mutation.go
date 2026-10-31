@@ -51,7 +51,7 @@ func (s *InternalLabelService) applyLabelBlockBatch(ctx context.Context, id, loc
 			return err
 		}
 		out.SourceLocale = domain.SourceLocale
-		lockedFence := lockedLabelContentFence(doc, domain)
+		lockedFence := contentblock.LockedFence(labelEntityName, doc, domain)
 		if locale != domain.SourceLocale {
 			snapshot, loadErr := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, doc, domain.SourceLocale)
 			if loadErr != nil {
@@ -76,7 +76,7 @@ func (s *InternalLabelService) applyLabelBlockBatch(ctx context.Context, id, loc
 			target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
 				LabelID: id, Locale: locale, ExpectedDocumentRevision: batch.ExpectedRevision,
 				ExpectedTargetRevision: expectedTargetRevision, Batch: batch,
-				AllowCreate: false, Fence: lockedFence,
+				Fence: lockedFence,
 			})
 			if err != nil {
 				return normalizeLabelContentBlockError(err)
@@ -243,7 +243,7 @@ func (s *InternalLabelService) updateLabelLocaleTitle(ctx context.Context, id, l
 		if expectedTargetRevision != nil {
 			return errs.InvalidArgument("expected_target_revision", "source Label metadata mutation cannot carry a target revision")
 		}
-		advanced, err := s.contentBlocks.AdvanceRevision(ctx, tx, contentblock.AdvanceInput{DocumentID: doc, ExpectedRevision: expected}, lockedLabelContentFence(doc, domain), func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+		advanced, err := s.contentBlocks.AdvanceRevision(ctx, tx, contentblock.AdvanceInput{DocumentID: doc, ExpectedRevision: expected}, contentblock.LockedFence(labelEntityName, doc, domain), func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 			sourceLocale = domain.SourceLocale
 			if err := saveLabelSourceLocaleDocumentState(ctx, tx, id, sourceLocale, translationLocaleDocumentSaveInput{Title: &name, OverwriteNullFields: true, Now: time.Now().UTC()}); err != nil {
 				return contentblock.MetadataEffect{}, err

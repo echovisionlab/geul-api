@@ -5,14 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 )
 
@@ -214,49 +211,8 @@ func (s *FileService) ResolveReadyOGAsset(
 	return resolvedOgAssetRef(ctx, s.db, s.cdnDomain, sourceAssetID, localizedAssetID)
 }
 
-func buildExpiringFileRef(
-	mediaDomain string,
-	mediaSecret string,
-	fileID string,
-	extension string,
-	mimeType string,
-	fileName *string,
-	purpose mediaauth.Purpose,
-	ttl time.Duration,
-) (*commonv1.ExpiringMediaRef, error) {
-	var downloadFilename string
-	if purpose == mediaauth.PurposeDownload {
-		downloadFilename = filemedia.CanonicalDownloadFilename(fileName, fileID, extension)
-	}
-	url, expiresAt, err := filemedia.SignMediaFileURL(
-		mediaDomain,
-		fileID,
-		extension,
-		mediaSecret,
-		ttl,
-		purpose,
-		downloadFilename,
-	)
-	if err != nil {
-		return nil, err
-	}
-	ref := &commonv1.ExpiringMediaRef{
-		FileId:    fileID,
-		Url:       url,
-		Purpose:   mediaDeliveryPurpose(purpose),
-		ExpiresAt: timestamppb.New(expiresAt),
-		Extension: extension,
-		MimeType:  mimeType,
-		FileName:  fileName,
-	}
-	if purpose == mediaauth.PurposeDownload {
-		ref.FileName = &downloadFilename
-	}
-	return ref, nil
-}
-
 func buildPublicHLSRef(mediaDomain string, row readyMediaGenerationRow) (*commonv1.HlsMediaRef, error) {
-	url, err := filemedia.BuildPublicMediaHLSURL(mediaDomain, row.FileID, row.GenerationID, row.ManifestName)
+	url, err := mediaauth.PublicHLSURL(mediaDomain, row.FileID, row.GenerationID, row.ManifestName)
 	if err != nil {
 		return nil, err
 	}
@@ -265,17 +221,6 @@ func buildPublicHLSRef(mediaDomain string, row readyMediaGenerationRow) (*common
 		GenerationId: row.GenerationID,
 		Url:          url,
 	}, nil
-}
-
-func mediaDeliveryPurpose(purpose mediaauth.Purpose) commonv1.MediaDeliveryPurpose {
-	switch purpose {
-	case mediaauth.PurposeInline:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE
-	case mediaauth.PurposeDownload:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD
-	default:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_UNSPECIFIED
-	}
 }
 
 func joinPublicCDNPath(cdnDomain string, resourcePath string) string {

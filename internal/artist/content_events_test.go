@@ -3,16 +3,21 @@ package artist
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func TestBuildArtistContentUpdatedEventUsesExactLocaleFence(t *testing.T) {
+func TestBuildArtistLocaleContentUpdatedEventUsesExactLocaleFence(t *testing.T) {
 	targetRevision := "target-token"
-	event := buildArtistContentUpdatedEvent(
-		"artist-1", []string{"content", "content", "title"}, "document-revision",
-		[]string{"member-1"}, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		" ko ", true, &targetRevision, false,
-	)
+	event := buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "artist-1",
+		Fields:           []string{"content", "content", "title"},
+		DocumentRevision: "document-revision",
+		Contributors:     []string{"member-1"},
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:           " ko ",
+		TargetRevision:   &targetRevision,
+	})
 	if event == nil {
 		t.Fatal("target event is nil")
 	}
@@ -24,16 +29,20 @@ func TestBuildArtistContentUpdatedEventUsesExactLocaleFence(t *testing.T) {
 		t.Fatalf("target event fields = %+v", event.GetChangedFields())
 	}
 
-	source := buildArtistContentUpdatedEvent(
-		"artist-1", []string{"content"}, "document-revision", nil,
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI, "en", true, nil, true,
-	)
+	source := buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "artist-1",
+		Fields:               []string{"content"},
+		DocumentRevision:     "document-revision",
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:               "en",
+		DocumentStateChanged: true,
+	})
 	if source == nil || !source.GetDocumentStateChanged() || source.GetLocale() != "en" || !source.GetLocaleExists() || source.TargetRevision != nil {
 		t.Fatalf("source event = %+v", source)
 	}
 }
 
-func TestBuildArtistContentUpdatedEventRejectsInvalidLocaleFence(t *testing.T) {
+func TestBuildArtistLocaleContentUpdatedEventRejectsInvalidLocaleFence(t *testing.T) {
 	targetRevision := "target-token"
 	cases := []struct {
 		name    string
@@ -48,11 +57,16 @@ func TestBuildArtistContentUpdatedEventRejectsInvalidLocaleFence(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if event := buildArtistContentUpdatedEvent(
-				"artist-1", []string{"content"}, "document-revision", nil,
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "ko",
-				test.exists, test.target, test.changed,
-			); event != nil {
+			if event := buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:             "artist-1",
+				Fields:               []string{"content"},
+				DocumentRevision:     "document-revision",
+				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:               "ko",
+				LocaleDeleted:        !test.exists,
+				TargetRevision:       test.target,
+				DocumentStateChanged: test.changed,
+			}); event != nil {
 				t.Fatalf("invalid locale fence event = %+v", event)
 			}
 		})

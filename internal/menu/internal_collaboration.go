@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -77,7 +78,7 @@ func (s *InternalMenuService) LoadDocument(
 			SourceLabels:     cloneMenuLabels(snapshot.sourceLabels),
 			RequestedLabels:  cloneMenuLabels(snapshot.Labels),
 			DocumentRevision: snapshot.DocumentRevision,
-			TargetRevision:   cloneMenuRevision(snapshot.TargetRevision),
+			TargetRevision:   optional.Clone(snapshot.TargetRevision),
 		})
 		return nil
 	})
@@ -135,7 +136,7 @@ func (s *InternalMenuService) SaveDocument(
 			if !previous.LocaleExists {
 				return errs.FailedPrecondition("Menu target locale document does not exist")
 			}
-			if !equalMenuRevision(previous.TargetRevision, r.ExpectedTargetRevision) {
+			if !optional.Equal(previous.TargetRevision, r.ExpectedTargetRevision) {
 				return errs.CollaborationConflict(
 					intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
 					"Menu target changed; reload before saving", errs.CollaborationState{Document: previous.DocumentRevision, Target: *previous.TargetRevision, TargetExists: &previous.LocaleExists},
@@ -171,7 +172,7 @@ func (s *InternalMenuService) SaveDocument(
 		if !changed {
 			result = AIDocumentApplyResult{
 				DocumentRevision: previous.DocumentRevision,
-				TargetRevision:   cloneMenuRevision(previous.TargetRevision),
+				TargetRevision:   optional.Clone(previous.TargetRevision),
 			}
 			return nil
 		}
@@ -232,7 +233,7 @@ func (s *InternalMenuService) SaveDocument(
 		}
 		result = AIDocumentApplyResult{
 			DocumentRevision: reloaded.DocumentRevision,
-			TargetRevision:   cloneMenuRevision(reloaded.TargetRevision),
+			TargetRevision:   optional.Clone(reloaded.TargetRevision),
 			Changed:          true,
 		}
 		return nil

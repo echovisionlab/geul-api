@@ -179,7 +179,7 @@ func (p *emailLayoutPort) executeMutation(
 	}
 	result := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   emailLayoutCoreRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Changed,
 	}
 	if domainResult.Changed {
@@ -221,7 +221,7 @@ func projectEmailLayoutDocument(
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: emailLayoutCoreRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: emailLayoutCatalog, Nodes: nodes,
 	}, nil
@@ -236,7 +236,7 @@ func compileEmailLayoutMutation(
 	mutation := emailauthoring.EmailLayoutAIDocumentMutation{
 		LayoutID: state.LayoutID, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   emailLayoutStringRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale,
 		ExpectedPresence:         document.LocaleExists, ContributorMemberID: contributor,
 	}
@@ -377,25 +377,9 @@ func emailLayoutConflict(
 	return &core.ConflictError{Conflict: core.Conflict{
 		Code:                    code,
 		CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-		CurrentTargetRevision:   emailLayoutCoreRevision(conflict.CurrentTargetRevision),
+		CurrentTargetRevision:   core.OptionalRevision(conflict.CurrentTargetRevision),
 		AffectedHandles:         append([]string(nil), handles...),
 	}}
-}
-
-func emailLayoutCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func emailLayoutStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 var _ core.DomainPort = (*emailLayoutPort)(nil)

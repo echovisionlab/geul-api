@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -175,12 +176,12 @@ func applyCampaignEmailTypedTranslationCandidateWithDB(
 			campaignLocaleContentOperation(true, false, false, true),
 		)
 	}
-	output, err := applyCampaignTargetMutation(
+	output, err := applyCampaignTargetLocaleMutation(
 		ctx, tx, store,
-		campaignTargetMutationInput{
+		campaignTargetLocaleMutationInput{
 			CampaignID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale,
 			Batch: batch, ExpectedDocumentRevision: currentSnapshot.Document.Revision,
-			AllowCreate: true, AllowLocaleDeletes: true, OverwriteCurrentTargetCAS: true,
+			Policy:     targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent},
 			SetSubject: true, Subject: candidate.Title, Now: input.Now, Fence: applyFence,
 		},
 	)

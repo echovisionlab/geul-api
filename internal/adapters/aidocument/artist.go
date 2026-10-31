@@ -121,7 +121,7 @@ func (p *artistPort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
-				CurrentTargetRevision: artistTargetAIDocumentRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
@@ -133,7 +133,7 @@ func (p *artistPort) executeMutation(
 
 	output := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.Revision), Changed: domainResult.Changed,
-		TargetRevision: artistTargetAIDocumentRevision(domainResult.TargetRevision),
+		TargetRevision: core.OptionalRevision(domainResult.TargetRevision),
 	}
 	if domainResult.Changed {
 		for index, operation := range run.command.Operations {
@@ -157,7 +157,7 @@ func (p *artistPort) document(identity core.DocumentIdentity, locale core.Locale
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.Revision),
-		TargetRevision: artistTargetAIDocumentRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: p.codec.Catalog(), Nodes: nodes,
 	}, nil
@@ -167,7 +167,7 @@ func (p *artistPort) compile(state artistdomain.AIDocumentState, document core.D
 	mutation := artistdomain.AIDocumentMutation{
 		ArtistID: state.ArtistID, Locale: string(document.Locale),
 		ExpectedRevision: string(document.DocumentRevision), ExpectedSource: state.SourceLocale,
-		ExpectedTargetRevision: artistDomainTargetRevision(document.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(document.TargetRevision),
 		ExpectedPresence:       state.LocaleExists, ContributorMemberID: contributor,
 	}
 	if len(operations) == 1 && operations[0].Kind == core.OperationCreateTranslation {
@@ -211,21 +211,6 @@ func artistContributorID(value string) (uuid.UUID, error) {
 	return contributor, nil
 }
 
-func artistTargetAIDocumentRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func artistDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
-}
 func artistOperationHandles(operation core.Operation, locale core.Locale) []string {
 	return compactOperationHandles(operation, locale, "artist")
 }

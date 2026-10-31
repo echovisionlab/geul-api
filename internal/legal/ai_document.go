@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"connectrpc.com/connect"
@@ -440,10 +441,12 @@ func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
 					ExpectedDocumentRevision: expected,
 					ExpectedTargetRevision:   mutation.ExpectedTargetRevision,
 					Batch:                    batch,
-					AllowCreate:              mutation.Translation == AITranslationCreate,
-					SeedSourceOnCreate:       mutation.Translation == AITranslationCreate,
-					AllowLocaleDeletes:       mutation.AuthoritativeTargetReplacement,
-					SetTitle:                 mutation.SetTitle, Title: mutation.Title, Now: now, Fence: fence,
+					Policy: targetlocale.Policy{
+						AllowCreate:        mutation.Translation == AITranslationCreate,
+						SeedSource:         mutation.Translation == AITranslationCreate,
+						AllowLocaleDeletes: mutation.AuthoritativeTargetReplacement,
+					},
+					SetTitle: mutation.SetTitle, Title: mutation.Title, Now: now, Fence: fence,
 				},
 			)
 			if err != nil {

@@ -8,7 +8,10 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -338,17 +341,17 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 			return nil
 		}
 		localeExists := input.Locale == input.ExpectedSource || output.TargetRevision != nil
-		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelContentUpdatedEvent(
-			input.LabelID,
-			[]string{"content"},
-			output.Content.DocumentRevision.String(),
-			[]string{input.ContributorMemberID.String()},
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-			input.Locale,
-			localeExists,
-			output.TargetRevision,
-			input.Locale == input.ExpectedSource,
-		))
+		return publishLabelContentUpdated(ctx, tx, s.asyncPublisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             input.LabelID,
+			Fields:               []string{"content"},
+			DocumentRevision:     output.Content.DocumentRevision.String(),
+			Contributors:         []string{input.ContributorMemberID.String()},
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+			Locale:               input.Locale,
+			LocaleDeleted:        !localeExists,
+			TargetRevision:       output.TargetRevision,
+			DocumentStateChanged: input.Locale == input.ExpectedSource,
+		}))
 	})
 	if errors.Is(err, errRollbackLabelAIDocumentValidation) {
 		return output, nil
@@ -424,11 +427,11 @@ func validateCompiledLabelAIDocumentMutation(
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.Revision,
 		}
 	}
-	if !equalLabelTargetRevision(input.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
 		return uuid.Nil, &AIDocumentRevisionConflictError{
 			Kind:                    AIDocumentTargetRevisionConflict,
 			CurrentDocumentRevision: state.Revision,
-			CurrentTargetRevision:   cloneLabelTargetRevision(state.TargetRevision),
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
 		}
 	}
 	if input.Batch != nil {
@@ -464,7 +467,7 @@ func (s *LabelService) applyAIDocumentMode(
 			target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
 				LabelID: input.LabelID, Locale: input.Locale,
 				ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
-				Batch: batch, AllowCreate: createTarget, SeedSource: createTarget, Fence: fence,
+				Batch: batch, Policy: targetlocale.Policy{AllowCreate: createTarget, SeedSource: createTarget}, Fence: fence,
 			})
 			if err != nil {
 				return AIDocumentMutationResult{}, err
@@ -481,8 +484,8 @@ func (s *LabelService) applyAIDocumentMode(
 		target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
 			LabelID: input.LabelID, Locale: input.Locale,
 			ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
-			Batch:       contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}},
-			AllowCreate: true, SeedSource: true, Fence: fence,
+			Batch:  contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}},
+			Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true}, Fence: fence,
 		})
 		if err != nil {
 			return AIDocumentMutationResult{}, err
@@ -533,7 +536,7 @@ func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) 
 	if errors.As(err, &targetConflict) {
 		var currentTargetRevision *string
 		if targetConflict.CurrentExists {
-			currentTargetRevision = cloneLabelTargetRevision(&targetConflict.CurrentRevision)
+			currentTargetRevision = optional.Clone(&targetConflict.CurrentRevision)
 		}
 		return &AIDocumentRevisionConflictError{
 			Kind:                    AIDocumentTargetRevisionConflict,
@@ -542,19 +545,4 @@ func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) 
 		}
 	}
 	return normalizeLabelContentBlockError(err)
-}
-
-func equalLabelTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func cloneLabelTargetRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	clone := *value
-	return &clone
 }

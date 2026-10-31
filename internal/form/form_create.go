@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/lib/pq"
@@ -83,7 +84,7 @@ func (s *FormService) normalizeNewFormSlug(ctx context.Context, requested *strin
 		return nil, nil
 	}
 	slug := strings.TrimSpace(*requested)
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return nil, err
 	}
 	if err := ensureSlugAvailable(ctx, s.db, slug, ""); err != nil {

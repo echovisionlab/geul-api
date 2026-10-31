@@ -112,7 +112,7 @@ func TestPostVersionRestoreCharacterizationIntegration(t *testing.T) {
 				f.applyBody(t, entity, "Drifted body")
 			},
 			want: postVersionRestoreWant{
-				eventFields:          []string{"document.content TEXT", "title TEXT", "summary TEXT"},
+				eventFields:          []string{"title TEXT", "summary TEXT", "document.content TEXT"},
 				documentStateChanged: true, eventLocale: "en", ogGenerations: 1,
 			},
 		},

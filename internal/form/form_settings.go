@@ -5,6 +5,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -25,7 +26,7 @@ func validateFormSettings(form *model.Form) error {
 		if slug == "" {
 			return errs.InvalidArgument("slug", "must not be blank")
 		}
-		if err := validateSlugWithoutSlash(slug); err != nil {
+		if err := pathslug.Validate(slug); err != nil {
 			return err
 		}
 	}

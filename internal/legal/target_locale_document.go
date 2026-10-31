@@ -3,7 +3,6 @@ package legal
 import (
 	"context"
 	"errors"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,14 +10,16 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
+
+// legalEntityName names the owner in shared content document messages.
+const legalEntityName = "legal"
 
 type legalTargetLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
@@ -36,6 +37,13 @@ type legalTargetLocaleState struct {
 	LocalizedDocument *contentv1.LocalizedRichTextDocument
 }
 
+func (state legalTargetLocaleState) locked() targetlocale.State {
+	return targetlocale.State{
+		Entity: legalEntityName, Snapshot: state.Snapshot, SourceLocale: state.SourceLocale,
+		TargetExists: state.TargetMetadata != nil, TargetRevision: state.TargetRevision,
+	}
+}
+
 type legalTargetLocaleMutationInput struct {
 	EntityType               string
 	EntityID                 string
@@ -43,10 +51,7 @@ type legalTargetLocaleMutationInput struct {
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
 	Batch                    contentblock.Batch
-	AllowCreate              bool
-	SeedSourceOnCreate       bool
-	OverwriteExistingTarget  bool
-	AllowLocaleDeletes       bool
+	Policy                   targetlocale.Policy
 	SetTitle                 bool
 	Title                    *string
 	Now                      time.Time
@@ -69,7 +74,6 @@ type legalTargetLocaleDeleteInput struct {
 	ExpectedDocumentRevision uuid.UUID
 	ExpectedTargetRevision   *string
 	ContributorMemberIDs     []uuid.UUID
-	OverwriteExistingTarget  bool
 	Fence                    contentblock.DomainFence
 }
 
@@ -145,7 +149,7 @@ func loadLegalTargetLocaleState(
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return legalTargetLocaleState{}, errs.Internal(err)
 		}
-		if legalSnapshotContainsLocale(snapshot, locale) {
+		if targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return legalTargetLocaleState{}, errs.FailedPrecondition(
 				entityType + " target locale Blocks exist without owning metadata",
 			)
@@ -172,54 +176,6 @@ func deriveLegalTargetRevision(
 		return "", errs.Internal(err)
 	}
 	return revision, nil
-}
-
-func legalSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale {
-			return true
-		}
-	}
-	return false
-}
-
-func validateLegalTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "legal target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"legal target locale cannot mutate the shared Block graph or File relations",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-			"legal target locale contains multiple locale groups",
-		)
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"legal target locale mutation must match the authorized room locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"legal target locale values must be set explicitly; ordinary edits cannot unset or delete locale Blocks",
-			)
-		}
-	}
-	return nil
 }
 
 func applyLegalTargetLocaleMutation(
@@ -250,30 +206,10 @@ func applyLegalTargetLocaleMutation(
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return legalTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteExistingTarget,
-	); err != nil {
-		return legalTargetLocaleMutationResult{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
-	}
-	if state.TargetMetadata == nil && !input.AllowCreate {
-		return legalTargetLocaleMutationResult{}, errs.FailedPrecondition(
-			input.EntityType + " target locale must be explicitly created before collaboration editing",
-		)
-	}
 	documentID := *state.Root.ContentDocumentID
-	batch := input.Batch
-	if err := validateLegalTargetBatch(
-		batch, documentID, input.ExpectedDocumentRevision, locale, input.AllowLocaleDeletes,
-	); err != nil {
+	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
+	if err != nil {
 		return legalTargetLocaleMutationResult{}, err
-	}
-	if state.TargetMetadata == nil && input.SeedSourceOnCreate {
-		batch, err = contentblock.SeedTargetLocaleBatch(
-			batch, state.Snapshot, state.Snapshot.SourceLocale, locale,
-		)
-		if err != nil {
-			return legalTargetLocaleMutationResult{}, err
-		}
 	}
 	domain, err := input.Fence(ctx, tx, documentID)
 	if err != nil {
@@ -282,20 +218,7 @@ func applyLegalTargetLocaleMutation(
 	if domain.SourceLocale != state.SourceLocale {
 		return legalTargetLocaleMutationResult{}, errs.FailedPrecondition("legal source locale changed; reload before saving")
 	}
-	authorizedFence := func(
-		_ context.Context,
-		_ *gorm.DB,
-		requestedDocumentID uuid.UUID,
-	) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("legal content document changed; reload before saving")
-		}
-		return domain, nil
-	}
-	now := input.Now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		now = dbtime.Now()
-	}
+	now := targetlocale.WriteTime(input.Now)
 	result := legalTargetLocaleMutationResult{
 		DocumentRevision: state.Snapshot.Document.Revision.String(),
 		LocaleCreated:    state.TargetMetadata == nil,
@@ -306,7 +229,7 @@ func applyLegalTargetLocaleMutation(
 		tx,
 		batch,
 		locale,
-		authorizedFence,
+		contentblock.LockedFence(legalEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
 			currentTitle := state.SourceMetadata.Title
 			if state.TargetMetadata != nil {
@@ -391,10 +314,8 @@ func deleteLegalTargetLocale(
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	if err := translation.ValidateTargetRevisionWrite(
-		input.ExpectedTargetRevision, state.TargetRevision, state.TargetMetadata != nil, input.OverwriteExistingTarget,
-	); err != nil {
-		return contentblock.Result{}, translation.WithDocumentRevision(err, state.Snapshot.Document.Revision.String())
+	if err := state.locked().CheckRevision(input.ExpectedTargetRevision, targetlocale.RevisionObserved); err != nil {
+		return contentblock.Result{}, err
 	}
 	if state.TargetMetadata == nil {
 		return contentblock.Result{
@@ -412,39 +333,14 @@ func deleteLegalTargetLocale(
 	batch := contentblock.Batch{
 		DocumentID: documentID, ExpectedRevision: input.ExpectedDocumentRevision,
 		ContributorMemberIDs: append([]uuid.UUID(nil), input.ContributorMemberIDs...),
-	}
-	group := contentblock.LocaleMutationGroup{Locale: locale}
-	for _, overlay := range state.Snapshot.LocaleOverlays {
-		if overlay.Locale != locale {
-			continue
-		}
-		for _, block := range overlay.Blocks {
-			group.Deletes = append(group.Deletes, block.BlockID)
-		}
-		break
-	}
-	sort.Slice(group.Deletes, func(i, j int) bool {
-		return group.Deletes[i].String() < group.Deletes[j].String()
-	})
-	if len(group.Deletes) != 0 {
-		batch.LocaleGroups = []contentblock.LocaleMutationGroup{group}
-	}
-	authorizedFence := func(
-		_ context.Context,
-		_ *gorm.DB,
-		requestedDocumentID uuid.UUID,
-	) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("legal content document changed; reload before deleting target")
-		}
-		return domain, nil
+		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
 	return store.ApplyTargetLocaleBatchWithMetadata(
 		ctx,
 		tx,
 		batch,
 		locale,
-		authorizedFence,
+		contentblock.LockedFence(legalEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
 			deleted := tx.WithContext(ctx).Table(input.EntityType+"_translation").
 				Where("entity_id = ? AND locale = ?", input.EntityID, locale).Delete(nil)

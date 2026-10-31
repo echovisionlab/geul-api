@@ -32,13 +32,6 @@ func normalizeOptionalNullableString(raw *string) (*string, bool) {
 	return &trimmed, true
 }
 
-func validateSlugWithoutSlash(slug string) error {
-	if strings.Contains(slug, "/") {
-		return errs.InvalidArgument("slug", "must not contain '/'")
-	}
-	return nil
-}
-
 func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.IdentityManager, acceptLanguage string) string {
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
 		var preferredLocale *string

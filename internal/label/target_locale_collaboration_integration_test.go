@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -403,7 +404,7 @@ func executeLabelTargetValueIntegration(
 			}
 			return AIDocumentMutation{
 				LabelID: state.LabelID, Locale: locale, ExpectedRevision: state.Revision,
-				ExpectedTargetRevision: cloneLabelTargetRevision(state.TargetRevision),
+				ExpectedTargetRevision: optional.Clone(state.TargetRevision),
 				ExpectedSource:         state.SourceLocale, ExpectedPresence: state.LocaleExists,
 				ContributorMemberID: memberID, Batch: &batch,
 			}, nil

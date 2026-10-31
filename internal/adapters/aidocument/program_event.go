@@ -104,7 +104,7 @@ func (p *programEventPort) project(
 	nodes = append([]core.Node{metadata}, nodes...)
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: programEventCoreRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: programEventCatalog(p.codec), Nodes: nodes,
 	}, nil
@@ -190,7 +190,7 @@ func (p *programEventPort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: programEventCoreRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), programEventRequestAffectedHandles(request)...),
 			}}
 		}
@@ -213,7 +213,7 @@ func (p *programEventPort) executeMutation(
 
 	applicationResult := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   programEventCoreRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Changed,
 	}
 	if domainResult.Changed {
@@ -248,7 +248,7 @@ func (p *programEventPort) compileCommand(
 	command := programeventdomain.AIDocumentCommand{
 		EventID: string(loaded.Identity.Reference), RequestedLocale: string(loaded.Locale),
 		ObservedSourceLocale: state.SourceLocale, ObservedLocaleExists: state.LocaleExists,
-		ExpectedRevision: expected, ExpectedTargetRevision: programEventStringRevision(loaded.TargetRevision),
+		ExpectedRevision: expected, ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ContributorMemberID: contributor,
 	}
 	if len(operations) == 1 && operations[0].Kind == core.OperationCreateTranslation {
@@ -346,22 +346,6 @@ func programEventLocalizedDocument(state programeventdomain.AIDocumentState) (*c
 		return nil, errors.New("clone Program Event Rich Text document")
 	}
 	return cloned, nil
-}
-
-func programEventCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func programEventStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 func validateProgramEventIdentity(identity core.DocumentIdentity) error {

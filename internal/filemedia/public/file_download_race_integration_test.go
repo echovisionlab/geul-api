@@ -13,7 +13,7 @@ import (
 	"connectrpc.com/connect"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -219,7 +219,7 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 		(?::uuid, 'file', 'active', ?::uuid, 'public'),
 		(?::uuid, 'file', 'active', ?::uuid, 'public')`, stableBlockID, originalFileID, replacedBlockID, originalFileID).Error)
 
-	items, err := filemedia.LoadContentBlockMediaReferences(t.Context(), db, uuid.MustParse(documentID))
+	items, err := contentblock.LoadMediaReferences(t.Context(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	require.Len(t, items, 2)
 	loaded, release := make(chan struct{}), make(chan struct{})

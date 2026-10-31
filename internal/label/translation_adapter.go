@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -65,7 +66,7 @@ func ApplyTypedTranslationCandidateWithDB(
 	auditWriter domainaudit.Appender,
 ) error {
 	return applyTypedTranslationCandidateWithTargetRevision(
-		ctx, tx, store, job, candidate, metadata, auditWriter, nil, true,
+		ctx, tx, store, job, candidate, metadata, auditWriter, nil, targetlocale.RevisionCurrent,
 	)
 }
 
@@ -84,7 +85,7 @@ func ApplyTypedTranslationCandidateWithTargetRevision(
 	expectedTargetRevision *string,
 ) error {
 	return applyTypedTranslationCandidateWithTargetRevision(
-		ctx, tx, store, job, candidate, metadata, auditWriter, expectedTargetRevision, false,
+		ctx, tx, store, job, candidate, metadata, auditWriter, expectedTargetRevision, targetlocale.RevisionObserved,
 	)
 }
 
@@ -97,7 +98,7 @@ func applyTypedTranslationCandidateWithTargetRevision(
 	metadata translation.EntryWrite,
 	auditWriter domainaudit.Appender,
 	expectedTargetRevision *string,
-	useCurrentTargetRevision bool,
+	revisionMode targetlocale.RevisionMode,
 ) error {
 	if store == nil || job == nil || job.EntityType != labelContentEntity || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
 		return errors.New("typed Label translation candidate and content Block store are required")
@@ -138,7 +139,7 @@ func applyTypedTranslationCandidateWithTargetRevision(
 			return errors.New("label translation provider delivery requires its requesting Member")
 		}
 		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
-		result, applyErr := store.ApplyBatch(ctx, tx, batch, lockedLabelContentFence(documentID, domain))
+		result, applyErr := store.ApplyBatch(ctx, tx, batch, contentblock.LockedFence(labelEntityName, documentID, domain))
 		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
 			return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
 		}
@@ -184,10 +185,9 @@ func applyTypedTranslationCandidateWithTargetRevision(
 		LabelID: job.EntityID, Locale: job.TargetLocale,
 		ExpectedDocumentRevision: batch.ExpectedRevision,
 		ExpectedTargetRevision:   expectedTargetRevision,
-		Batch:                    batch, AllowCreate: true, SeedSource: false,
-		AllowLocaleDeletes:       true,
-		UseCurrentTargetRevision: useCurrentTargetRevision,
-		Now:                      metadata.Now, Fence: lockedLabelContentFence(documentID, domain),
+		Batch:                    batch,
+		Policy:                   targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: revisionMode},
+		Now:                      metadata.Now, Fence: contentblock.LockedFence(labelEntityName, documentID, domain),
 	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
 		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)

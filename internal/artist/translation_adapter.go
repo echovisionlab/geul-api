@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -91,7 +92,7 @@ func ApplyTypedTranslationCandidateWithDB(
 	auditWriter domainaudit.Appender,
 ) error {
 	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadata, nil, true, auditWriter, true,
+		ctx, tx, store, job, candidate, metadata, nil, targetlocale.RevisionCurrent, auditWriter, true,
 	)
 }
 
@@ -107,7 +108,7 @@ func ApplyTypedTranslationInterchangeCandidateWithDB(
 	expectedTargetRevision *string,
 ) error {
 	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadata, expectedTargetRevision, false, nil, false,
+		ctx, tx, store, job, candidate, metadata, expectedTargetRevision, targetlocale.RevisionObserved, nil, false,
 	)
 }
 
@@ -119,7 +120,7 @@ func applyTypedTranslationCandidateWithDB(
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
 	expectedTargetRevision *string,
-	useCurrentTargetRevision bool,
+	revisionMode targetlocale.RevisionMode,
 	auditWriter domainaudit.Appender,
 	appendProviderAudit bool,
 ) error {
@@ -159,7 +160,7 @@ func applyTypedTranslationCandidateWithDB(
 		}
 		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
 		result, applyErr := store.ApplyBatch(
-			ctx, tx, batch, artistLockedTargetFence(documentID, domain),
+			ctx, tx, batch, contentblock.LockedFence(artistEntityName, documentID, domain),
 		)
 		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
 			return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
@@ -207,11 +208,12 @@ func applyTypedTranslationCandidateWithDB(
 	if err != nil {
 		return normalizeCreativeContentBlockError(artistContentEntity, err)
 	}
-	result, targetRevision, err := applyArtistTargetLocaleBatchAuthority(
-		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, batch,
-		expectedTargetRevision, true, true, useCurrentTargetRevision, metadata.Now,
-		artistLockedTargetFence(documentID, domain),
-	)
+	result, targetRevision, err := applyArtistTargetLocaleMutation(ctx, tx, store, artistTargetLocaleMutationInput{
+		ArtistID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
+		ExpectedTargetRevision: expectedTargetRevision,
+		Policy:                 targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: revisionMode},
+		Now:                    metadata.Now, Fence: contentblock.LockedFence(artistEntityName, documentID, domain),
+	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
 		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
@@ -223,7 +225,7 @@ func applyTypedTranslationCandidateWithDB(
 		titleResult, _, titleErr := updateArtistTargetLocaleTitle(
 			ctx, tx, store, job.EntityID, documentID, job.TargetLocale,
 			result.DocumentRevision, &targetRevision, candidate.Title, metadata.Now,
-			artistLockedTargetFence(documentID, domain),
+			contentblock.LockedFence(artistEntityName, documentID, domain),
 		)
 		if titleErr != nil {
 			return titleErr

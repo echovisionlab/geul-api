@@ -3,6 +3,7 @@ package page
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,18 +29,16 @@ func TestPageContentUpdatedFieldSpecs(t *testing.T) {
 	}, pageContentUpdatedFieldSpecs)
 }
 
-func TestBuildPageContentUpdatedEvent(t *testing.T) {
-	event := buildPageContentUpdatedEvent(
-		"page-1",
-		[]string{"content"},
-		"document-revision",
-		[]string{"member-1"},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"en",
-		true,
-		nil,
-		true,
-	)
+func TestBuildPageLocaleContentUpdatedEvent(t *testing.T) {
+	event := buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "page-1",
+		Fields:               []string{"content"},
+		DocumentRevision:     "document-revision",
+		Contributors:         []string{"member-1"},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:               "en",
+		DocumentStateChanged: true,
+	})
 	require.NotNil(t, event)
 
 	assert.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, event.EntityType)
@@ -56,17 +55,15 @@ func TestBuildPageContentUpdatedEvent(t *testing.T) {
 
 func TestBuildPageTargetContentUpdatedEventCarriesExactTargetFence(t *testing.T) {
 	targetRevision := "target-revision"
-	event := buildPageContentUpdatedEvent(
-		"page-1",
-		[]string{"content"},
-		"document-revision",
-		[]string{"member-1"},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-		"ko",
-		true,
-		&targetRevision,
-		false,
-	)
+	event := buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "page-1",
+		Fields:           []string{"content"},
+		DocumentRevision: "document-revision",
+		Contributors:     []string{"member-1"},
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:           "ko",
+		TargetRevision:   &targetRevision,
+	})
 	require.NotNil(t, event)
 	assert.False(t, event.DocumentStateChanged)
 	assert.Equal(t, "document-revision", event.GetDocumentRevision())
@@ -76,17 +73,15 @@ func TestBuildPageTargetContentUpdatedEventCarriesExactTargetFence(t *testing.T)
 }
 
 func TestBuildPageAIDeleteContentUpdatedEventCarriesDeletedTargetFence(t *testing.T) {
-	event := buildPageContentUpdatedEvent(
-		"page-1",
-		[]string{"content"},
-		"document-revision",
-		[]string{"member-1"},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		"ko",
-		false,
-		nil,
-		false,
-	)
+	event := buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "page-1",
+		Fields:           []string{"content"},
+		DocumentRevision: "document-revision",
+		Contributors:     []string{"member-1"},
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:           "ko",
+		LocaleDeleted:    true,
+	})
 	require.NotNil(t, event)
 	assert.Equal(t, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI, event.Source)
 	assert.False(t, event.DocumentStateChanged)
@@ -96,16 +91,24 @@ func TestBuildPageAIDeleteContentUpdatedEventCarriesDeletedTargetFence(t *testin
 	assert.Nil(t, event.TargetRevision)
 }
 
-func TestBuildPageContentUpdatedEventRejectsInconsistentLocaleFence(t *testing.T) {
+func TestBuildPageLocaleContentUpdatedEventRejectsInconsistentLocaleFence(t *testing.T) {
 	targetRevision := "target-revision"
-	assert.Nil(t, buildPageContentUpdatedEvent(
-		"page-1", []string{"content"}, "document-revision", nil,
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "ko", true, &targetRevision, true,
-	))
-	assert.Nil(t, buildPageContentUpdatedEvent(
-		"page-1", []string{"content"}, "document-revision", nil,
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "en", true, nil, false,
-	))
+	assert.Nil(t, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             "page-1",
+		Fields:               []string{"content"},
+		DocumentRevision:     "document-revision",
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:               "ko",
+		TargetRevision:       &targetRevision,
+		DocumentStateChanged: true,
+	}))
+	assert.Nil(t, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:         "page-1",
+		Fields:           []string{"content"},
+		DocumentRevision: "document-revision",
+		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Locale:           "en",
+	}))
 }
 
 func TestBuildManagePageContentUpdatedEvent(t *testing.T) {

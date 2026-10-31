@@ -11,7 +11,9 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -152,17 +154,17 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 				return err
 			}
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.internal.asyncPublisher, buildPageContentUpdatedEvent(
-			mutation.PageID,
-			pageAIDocumentContentUpdatedFields(mutation),
-			result.DocumentRevision.String(),
-			[]string{mutation.ContributorMemberID},
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-			mutation.Locale,
-			!mutation.DeleteTranslation,
-			targetRevision,
-			mutation.Locale == mutation.ObservedSourceLocale,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.internal.asyncPublisher, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             mutation.PageID,
+			Fields:               pageAIDocumentContentUpdatedFields(mutation),
+			DocumentRevision:     result.DocumentRevision.String(),
+			Contributors:         []string{mutation.ContributorMemberID},
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+			Locale:               mutation.Locale,
+			LocaleDeleted:        mutation.DeleteTranslation,
+			TargetRevision:       targetRevision,
+			DocumentStateChanged: mutation.Locale == mutation.ObservedSourceLocale,
+		}))
 	})
 	if errors.Is(err, errRollbackPageAIDocumentValidation) {
 		return AIDocumentMutationResult{DocumentRevision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}, nil
@@ -247,20 +249,13 @@ func validateCompiledPageAIDocumentMutation(
 	if mutation.ExpectedRevision.String() != state.Revision {
 		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision}
 	}
-	if !samePageTargetRevision(mutation.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
 			CurrentTargetRevision: cloneOptionalString(state.TargetRevision),
 		}
 	}
 	return nil
-}
-
-func samePageTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func pageTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

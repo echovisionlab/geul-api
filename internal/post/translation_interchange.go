@@ -10,6 +10,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -101,9 +102,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 		ExpectedDocumentRevision: before.Document.Revision,
 		ExpectedTargetRevision:   expectedRevision,
 		Storage:                  storage,
-		AllowLocaleValueDeletes:  true,
-		AllowCreate:              true,
-		SeedSourceOnCreate:       true,
+		Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true, AllowLocaleDeletes: true},
 		SetTitle:                 true,
 		Title:                    candidate.Title,
 		SetSummary:               true,

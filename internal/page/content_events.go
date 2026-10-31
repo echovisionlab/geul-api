@@ -46,29 +46,19 @@ func publishContentUpdatedEvent(
 	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
 }
 
-func buildPageContentUpdatedEvent(
-	pageID string,
-	fields []string,
-	revision string,
-	contributors []string,
-	source managev1.ContentUpdateSource,
-	locale string,
-	localeExists bool,
-	targetRevision *string,
-	documentStateChanged bool,
-) *managev1.ContentUpdatedEvent {
-	if pageID == "" {
+func buildPageLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *managev1.ContentUpdatedEvent {
+	if change.EntityID == "" {
 		return nil
 	}
 	return buildContentUpdatedEvent(
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-		pageID,
-		source,
-		buildContentUpdatedFields(fields, pageContentUpdatedFieldSpecs),
-		documentStateChanged,
-		revision,
-		contributors,
-		&contentUpdatedLocaleState{locale: locale, exists: localeExists, targetRevision: targetRevision},
+		change.EntityID,
+		change.Source,
+		buildContentUpdatedFields(change.Fields, pageContentUpdatedFieldSpecs),
+		change.DocumentStateChanged,
+		change.DocumentRevision,
+		change.Contributors,
+		&contentUpdatedLocaleState{locale: change.Locale, exists: !change.LocaleDeleted, targetRevision: change.TargetRevision},
 	)
 }
 

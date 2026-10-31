@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/glebarez/sqlite"
@@ -51,7 +51,7 @@ func TestHydrateAuthorizedContentBlockMediaKeepsPolicyPerExactBlockRelation(t *t
 		"unit-secret",
 		time.Minute,
 	)
-	items, err := filemedia.LoadContentBlockMediaReferences(
+	items, err := contentblock.LoadMediaReferences(
 		context.Background(),
 		db,
 		uuid.MustParse(documentID),
@@ -87,7 +87,7 @@ func TestHydrateAuthorizedContentBlockMediaKeepsPolicyPerExactBlockRelation(t *t
 	inactiveContext := auth.WithUser(hydrationContext, &auth.UserInfo{
 		IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()), Authenticated: true,
 	})
-	inactiveItems, err := filemedia.LoadContentBlockMediaReferences(context.Background(), db, uuid.MustParse(documentID))
+	inactiveItems, err := contentblock.LoadMediaReferences(context.Background(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	inactiveItems, err = service.HydrateAuthorizedContentBlockMedia(inactiveContext, inactiveItems)
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestHydrateAuthorizedContentBlockMediaDeliversImmersiveSceneAttachmentsWith
 	}
 
 	service := NewFileService(db, &auth.SpiceDBClient{}, "https://cdn.example.com", "https://media.example.com", "unit-secret", time.Minute)
-	items, err := filemedia.LoadContentBlockMediaReferences(context.Background(), db, uuid.MustParse(documentID))
+	items, err := contentblock.LoadMediaReferences(context.Background(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	items, err = service.HydrateAuthorizedContentBlockMedia(
 		mediaasset.WithContentDownloadOwnerAuthorization(context.Background(), mediaasset.ContentDownloadOwnerAuthorization{
@@ -149,7 +149,7 @@ func TestHydrateAuthorizedContentBlockMediaDoesNotIssuePrivateRefsAfterOwnerOrSh
 
 	service := NewFileService(db, &auth.SpiceDBClient{}, "https://cdn.example.com", "https://media.example.com", "unit-secret", time.Minute)
 	loadItems := func() []*contentv1.ContentBlockMediaItem {
-		items, err := filemedia.LoadContentBlockMediaReferences(context.Background(), db, uuid.MustParse(documentID))
+		items, err := contentblock.LoadMediaReferences(context.Background(), db, uuid.MustParse(documentID))
 		require.NoError(t, err)
 		return items
 	}

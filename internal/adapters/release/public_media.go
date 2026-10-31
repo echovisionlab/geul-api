@@ -79,7 +79,7 @@ func (m *PublicMedia) TrackHLS(
 }
 
 func (m *PublicMedia) DownloadRef(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-	return buildExpiringFileRef(
+	return mediaauth.ExpiringFileRef(
 		m.mediaDomain, m.mediaSecret, file.ID, file.Extension, file.MimeType,
 		file.FileName, mediaauth.PurposeDownload, m.downloadTTL,
 	)

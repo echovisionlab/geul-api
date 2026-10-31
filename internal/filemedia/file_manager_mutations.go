@@ -13,6 +13,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -54,7 +55,7 @@ func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[manag
 		if file.DeleteRequestedAt != nil {
 			return errs.FailedPrecondition("file is pending deletion")
 		}
-		if strings.EqualFold(filepathExtension(name), file.Extension) {
+		if strings.EqualFold(mediaauth.FilenameExtension(name), file.Extension) {
 			return errs.InvalidArgument("file_name", "must not include the file extension")
 		}
 		if file.FileName == name {

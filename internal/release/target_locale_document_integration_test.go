@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -72,7 +73,7 @@ func TestReleaseTargetLocaleCASIsIndependentAndDeletePreservesSharedRevisionInte
 		var applyErr error
 		fr, applyErr = applyReleaseTargetLocaleMutation(ctx, tx, store, releaseTargetLocaleMutationInput{
 			ReleaseID: releaseID, DocumentID: documentID, Locale: "fr",
-			ExpectedDocumentRevision: seeded.DocumentRevision, AllowCreate: true,
+			ExpectedDocumentRevision: seeded.DocumentRevision, Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true},
 			Batch: frBatch, SetTitle: true, Title: &frTitle,
 			CreditNotePatch: map[string]string{creditID: "Note francaise"},
 			Now:             now.Add(time.Second), Fence: internalReleaseContentFence(releaseID),
@@ -123,7 +124,7 @@ func TestReleaseTargetLocaleCASIsIndependentAndDeletePreservesSharedRevisionInte
 		var applyErr error
 		ko, applyErr = applyReleaseTargetLocaleMutation(ctx, tx, store, releaseTargetLocaleMutationInput{
 			ReleaseID: releaseID, DocumentID: documentID, Locale: "ko",
-			ExpectedDocumentRevision: seeded.DocumentRevision, AllowCreate: true,
+			ExpectedDocumentRevision: seeded.DocumentRevision, Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true},
 			Batch: koBatch, Now: now.Add(3 * time.Second), Fence: internalReleaseContentFence(releaseID),
 		})
 		return applyErr

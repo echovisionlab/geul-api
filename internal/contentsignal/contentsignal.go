@@ -165,3 +165,25 @@ func completeRevision(ctx context.Context, tx *gorm.DB, event *managev1.ContentU
 	event.DocumentRevision = &row.Revision
 	return nil
 }
+
+// LocaleChange is one change to one locale of a collaborative content
+// document: the input every domain's locale ContentUpdatedEvent builder
+// takes. The builder decides which combinations it publishes.
+type LocaleChange struct {
+	EntityID string
+	// Fields names what changed, such as "title", "summary" or "content";
+	// each domain maps its names to event paths.
+	Fields           []string
+	DocumentRevision string
+	Contributors     []string
+	Source           managev1.ContentUpdateSource
+	Locale           string
+	// LocaleDeleted marks a change that removed the target locale.
+	LocaleDeleted bool
+	// TargetRevision is the new target revision of a target-locale change;
+	// nil for a source change or a deleted locale.
+	TargetRevision *string
+	// DocumentStateChanged is set when the shared document revision
+	// advanced, which only a source-locale change does.
+	DocumentStateChanged bool
+}

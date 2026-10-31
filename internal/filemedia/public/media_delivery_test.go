@@ -126,7 +126,7 @@ func TestCanonicalExpiringMediaRefsUsePurposePolicyUnit(t *testing.T) {
 	fileID := uuid.NewString()
 	before := time.Now().UTC()
 	downloadTTL := 3 * time.Minute
-	download, err := buildExpiringFileRef(
+	download, err := mediaauth.ExpiringFileRef(
 		"https://media.example.com",
 		"media-secret",
 		fileID,
@@ -149,7 +149,7 @@ func TestCanonicalExpiringMediaRefsUsePurposePolicyUnit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, generationID, playback.GetGenerationId())
 	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", playback.GetUrl())
-	assert.Equal(t, commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_UNSPECIFIED, mediaDeliveryPurpose(mediaauth.Purpose("unknown")))
+	assert.Equal(t, commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_UNSPECIFIED, mediaauth.DeliveryPurpose(mediaauth.Purpose("unknown")))
 	assert.Equal(t, "/asset/id/image.webp", joinPublicCDNPath("", "/asset/id/image.webp"))
 	assert.Equal(t, "https://cdn.example.com/asset/id/image.webp", joinPublicCDNPath("cdn.example.com/", "asset/id/image.webp"))
 }

@@ -14,11 +14,14 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -242,20 +245,13 @@ func validateCompiledPostAIDocumentMutation(
 		)
 	}
 	if mutation.ExpectedRevision.String() != state.DocumentRevision ||
-		!equalPostAIDocumentTargetRevision(mutation.ExpectedTargetRevision, state.TargetRevision) {
+		!optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
 		return uuid.Nil, errs.InvalidArgument(
 			"mutation",
 			"compiled Post document and target revisions must match the locked state",
 		)
 	}
 	return documentID, nil
-}
-
-func equalPostAIDocumentTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func postAIDocumentUpdatedEvent(
@@ -273,16 +269,15 @@ func postAIDocumentUpdatedEvent(
 	if result.ContentChanged && !slices.Contains(fields, "content") {
 		fields = append(fields, "content")
 	}
-	return buildPostBlockContentUpdatedEvent(
-		mutation.PostID,
-		fields,
-		result.DocumentRevision.String(),
-		[]string{mutation.ContributorMemberID.String()},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		mutation.Locale,
-		nil,
-		true,
-	)
+	return buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             mutation.PostID,
+		Fields:               fields,
+		DocumentRevision:     result.DocumentRevision.String(),
+		Contributors:         []string{mutation.ContributorMemberID.String()},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:               mutation.Locale,
+		DocumentStateChanged: true,
+	})
 }
 
 func (s *PostService) applyAIDocumentMutationInTransaction(
@@ -353,14 +348,15 @@ func (s *PostService) applyAIDocumentMutationInTransaction(
 			ExpectedDocumentRevision: mutation.ExpectedRevision,
 			ExpectedTargetRevision:   mutation.ExpectedTargetRevision,
 			Batch:                    &mutation.Batch,
-			AllowCreate:              mutation.Metadata.EnsureLocale,
-			SeedSourceOnCreate:       mutation.Metadata.EnsureLocale,
-			SetTitle:                 mutation.Metadata.SetTitle,
-			Title:                    mutation.Metadata.Title,
-			SetSummary:               mutation.Metadata.SetSummary,
-			Summary:                  mutation.Metadata.Summary,
-			Now:                      now,
-			Fence:                    fence,
+			Policy: targetlocale.Policy{
+				AllowCreate: mutation.Metadata.EnsureLocale, SeedSource: mutation.Metadata.EnsureLocale,
+			},
+			SetTitle:   mutation.Metadata.SetTitle,
+			Title:      mutation.Metadata.Title,
+			SetSummary: mutation.Metadata.SetSummary,
+			Summary:    mutation.Metadata.Summary,
+			Now:        now,
+			Fence:      fence,
 		})
 		if err != nil {
 			return AIDocumentMutationResult{}, err

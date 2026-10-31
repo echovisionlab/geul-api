@@ -105,18 +105,6 @@ func internalLabelCollaborationContentFence(
 	}
 }
 
-func lockedLabelContentFence(
-	documentID uuid.UUID,
-	domain contentblock.DomainContext,
-) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
-		if requestedDocumentID != documentID {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Label content document changed; reload before saving")
-		}
-		return domain, nil
-	}
-}
-
 func labelContentDocumentFence(labelID string, authorize func(context.Context, *gorm.DB) error) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if err := lockLabelContentDocumentRoot(ctx, tx, labelID, documentID); err != nil {

@@ -17,13 +17,6 @@ import (
 
 func IsValidUUID(value string) bool { _, err := uuid.Parse(value); return err == nil }
 
-func validateSlugWithoutSlash(slug string) error {
-	if strings.Contains(slug, "/") {
-		return errors.InvalidArgument("slug", "must not contain '/'")
-	}
-	return nil
-}
-
 func ensureSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Value, entity, slug, excludeID string) error {
 	if slug == "" {
 		return nil

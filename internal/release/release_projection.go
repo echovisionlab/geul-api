@@ -10,6 +10,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -33,7 +34,7 @@ func (s *ReleaseService) CheckReleaseSlugAvailable(
 			return nil, err
 		}
 	}
-	if err := validateSlugWithoutSlash(req.Msg.Slug); err != nil {
+	if err := pathslug.Validate(req.Msg.Slug); err != nil {
 		return nil, err
 	}
 

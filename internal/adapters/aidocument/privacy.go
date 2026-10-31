@@ -146,7 +146,7 @@ func (p *legalAIDocumentPort) executeMutation(
 			return legal.AIDocumentMutation{
 				EntityType: p.entityType, EntityID: string(identity.Reference), Locale: string(request.Locale),
 				ExpectedRevision: raw.Revision, ContributorMemberID: contributor.String(),
-				ExpectedTargetRevision: legalStringRevision(run.command.ExpectedTargetRevision),
+				ExpectedTargetRevision: core.OptionalRevisionString(run.command.ExpectedTargetRevision),
 				Content:                compiled.content, SetTitle: compiled.setTitle, Title: compiled.title,
 				Translation: compiled.translation,
 			}, nil
@@ -166,7 +166,7 @@ func (p *legalAIDocumentPort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
-				CurrentTargetRevision: legalCoreRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       legalRequestAffectedHandles(request),
 			}}
 		}
@@ -178,7 +178,7 @@ func (p *legalAIDocumentPort) executeMutation(
 
 	accepted := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.Revision),
-		TargetRevision:   legalCoreRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Changed,
 	}
 	if domainResult.Changed {
@@ -377,25 +377,9 @@ func (p *legalAIDocumentPort) project(
 	nodes = append([]core.Node{metadata}, nodes...)
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(raw.Revision),
-		TargetRevision: legalCoreRevision(raw.TargetRevision), SourceLocale: core.Locale(raw.SourceLocale),
+		TargetRevision: core.OptionalRevision(raw.TargetRevision), SourceLocale: core.Locale(raw.SourceLocale),
 		Locale: locale, LocaleExists: raw.LocaleExists, Catalog: p.catalog, Nodes: nodes,
 	}, nil
-}
-
-func legalCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func legalStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 func localizedLegalRichText(raw legal.AIDocument) (*contentv1.LocalizedRichTextDocument, error) {

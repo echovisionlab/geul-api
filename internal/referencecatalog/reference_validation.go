@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
 
 // Reference kinds bound name and slug by their column length: varchar(100) for
@@ -38,7 +39,7 @@ func normalizeReferenceSlug(value string, maxLength int) (string, error) {
 	if utf8.RuneCountInString(value) > maxLength {
 		return "", errs.InvalidArgument("slug", fmt.Sprintf("must be at most %d characters", maxLength))
 	}
-	if err := validateSlugWithoutSlash(value); err != nil {
+	if err := pathslug.Validate(value); err != nil {
 		return "", err
 	}
 	return value, nil

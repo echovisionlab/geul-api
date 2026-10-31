@@ -156,6 +156,18 @@ func applyWorkLocaleMetadataMutation(
 	}, nil
 }
 
+// changedFields names the changed metadata for a content update event.
+func (result workLocaleMetadataMutationResult) changedFields() []string {
+	fields := make([]string, 0, 2)
+	if result.TitleChanged {
+		fields = append(fields, "title")
+	}
+	if result.SummaryChanged {
+		fields = append(fields, "summary")
+	}
+	return fields
+}
+
 func nullableStringFromSQL(value sql.NullString) *string {
 	if !value.Valid {
 		return nil

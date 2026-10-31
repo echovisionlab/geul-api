@@ -14,6 +14,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -43,7 +44,7 @@ func (s *WorkService) CheckWorkSlugAvailable(
 	} else if err := requireWorkCreate(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-	if err := validateSlugWithoutSlash(req.Msg.Slug); err != nil {
+	if err := pathslug.Validate(req.Msg.Slug); err != nil {
 		return nil, err
 	}
 
@@ -216,7 +217,7 @@ func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *mo
 		if loadErr != nil {
 			return loadErr
 		}
-		mediaItems, loadErr = LoadContentBlockMediaReferences(ctx, tx, documentID)
+		mediaItems, loadErr = contentblock.LoadMediaReferences(ctx, tx, documentID)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -276,7 +277,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 	if err != nil {
 		return nil, "", nil, normalizeWorkContentBlockError(err)
 	}
-	media, err := LoadContentBlockMediaReferences(ctx, tx, documentID)
+	media, err := contentblock.LoadMediaReferences(ctx, tx, documentID)
 	if err != nil {
 		return nil, "", nil, err
 	}

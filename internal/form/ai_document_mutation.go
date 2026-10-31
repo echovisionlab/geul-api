@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/optional"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -113,7 +114,7 @@ func (s *InternalFormService) ExecuteAIDocumentMutation(
 		}
 		output = AIDocumentMutationResult{
 			DocumentRevision: next.State.DocumentRevision,
-			TargetRevision:   cloneFormRevision(next.State.TargetRevision),
+			TargetRevision:   optional.Clone(next.State.TargetRevision),
 			Changed:          changed,
 		}
 		if changed {
@@ -162,37 +163,22 @@ func validateCompiledFormAIDocumentMutation(state AIDocumentState, input AIDocum
 	if input.ExpectedSource != state.SourceLocale || input.ExpectedPresence != state.LocaleExists {
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: cloneFormRevision(state.TargetRevision),
+			CurrentTargetRevision: optional.Clone(state.TargetRevision),
 		}
 	}
 	if input.ExpectedDocumentRevision != state.DocumentRevision {
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: cloneFormRevision(state.TargetRevision),
+			CurrentTargetRevision: optional.Clone(state.TargetRevision),
 		}
 	}
-	if !equalFormRevision(input.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: cloneFormRevision(state.TargetRevision),
+			CurrentTargetRevision: optional.Clone(state.TargetRevision),
 		}
 	}
 	return nil
-}
-
-func cloneFormRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}
-
-func equalFormRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func (s *InternalFormService) persistAIDocumentMutation(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, root formAIDocumentRoot, source, current formAIDocumentLocaleRow, exists bool) (bool, error) {

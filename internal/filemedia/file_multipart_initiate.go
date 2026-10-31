@@ -18,6 +18,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -172,7 +173,7 @@ func validateMultipartUploadFile(
 		return "", "", errs.InvalidArgument("file_name", err.Error())
 	}
 	fileExtension := mediaExtension(&canonicalMime)
-	if !strings.EqualFold(filepathExtension(fileName), fileExtension) {
+	if !strings.EqualFold(mediaauth.FilenameExtension(fileName), fileExtension) {
 		message := fmt.Sprintf("filename extension must be .%s", fileExtension)
 		return "", "", errs.InvalidArgument("file_name", message)
 	}

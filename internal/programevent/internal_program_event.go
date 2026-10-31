@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -19,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -115,7 +117,7 @@ func (s *InternalProgramEventService) LoadProgramEventBlockDocument(
 		if err != nil {
 			return err
 		}
-		blockMedia, err = LoadContentBlockMediaReferences(ctx, tx, documentID)
+		blockMedia, err = contentblock.LoadMediaReferences(ctx, tx, documentID)
 		if err != nil {
 			return err
 		}
@@ -223,13 +225,13 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 	if locale != sourceState.SourceLocale {
 		var targetRevision string
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			output, applyErr := applyProgramEventTargetMutation(
+			output, applyErr := applyProgramEventTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				programEventTargetMutationInput{
+				programEventTargetLocaleMutationInput{
 					EventID: req.Msg.EventId, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, Now: now, Fence: fence,
+					Now:                    now, Fence: fence,
 				},
 			)
 			if applyErr != nil {
@@ -246,16 +248,15 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 				return err
 			}
 			targetRevisionValue := targetRevision
-			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
-				req.Msg.EventId,
-				[]string{"content"},
-				result.DocumentRevision.String(),
-				contributors,
-				locale,
-				true,
-				&targetRevisionValue,
-				false,
-			))
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:         req.Msg.EventId,
+				Fields:           []string{"content"},
+				DocumentRevision: result.DocumentRevision.String(),
+				Contributors:     contributors,
+				Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:           locale,
+				TargetRevision:   &targetRevisionValue,
+			}))
 		}); err != nil {
 			return nil, normalizeProgramEventContentBlockError(err)
 		}
@@ -292,16 +293,15 @@ func (s *InternalProgramEventService) ApplyProgramEventBlockBatch(
 		); err != nil {
 			return err
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
-			req.Msg.EventId,
-			[]string{"content"},
-			result.DocumentRevision.String(),
-			contributors,
-			locale,
-			true,
-			nil,
-			true,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             req.Msg.EventId,
+			Fields:               []string{"content"},
+			DocumentRevision:     result.DocumentRevision.String(),
+			Contributors:         contributors,
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               locale,
+			DocumentStateChanged: true,
+		}))
 	}); err != nil {
 		return nil, normalizeProgramEventContentBlockError(err)
 	}
@@ -375,16 +375,16 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 				ctx, tx, s.checkpoints, req.Msg.EventId, req.Msg.ContributorMemberIds,
 			)
 		})
-		var output programEventTargetMutationResult
+		var output programEventTargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var applyErr error
-			output, applyErr = applyProgramEventTargetMutation(
+			output, applyErr = applyProgramEventTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				programEventTargetMutationInput{
+				programEventTargetLocaleMutationInput{
 					EventID: req.Msg.EventId, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-					AllowCreate:            false, SetSummary: patchSummary, Summary: summary,
+					SetSummary:             patchSummary, Summary: summary,
 					Now: now, Fence: fence,
 				},
 			)
@@ -401,16 +401,15 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 				return err
 			}
 			targetRevisionValue := output.TargetRevision
-			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
-				req.Msg.EventId,
-				[]string{"summary"},
-				output.Result.DocumentRevision.String(),
-				[]string{originMemberID},
-				locale,
-				true,
-				&targetRevisionValue,
-				false,
-			))
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:         req.Msg.EventId,
+				Fields:           []string{"summary"},
+				DocumentRevision: output.Result.DocumentRevision.String(),
+				Contributors:     []string{originMemberID},
+				Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:           locale,
+				TargetRevision:   &targetRevisionValue,
+			}))
 		}); err != nil {
 			return nil, normalizeProgramEventContentBlockError(err)
 		}
@@ -469,16 +468,15 @@ func (s *InternalProgramEventService) UpdateProgramEventLocaleMetadata(
 		if patchSummary {
 			paths = append(paths, "summary")
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventBlockContentUpdatedEvent(
-			req.Msg.EventId,
-			paths,
-			advanced.DocumentRevision.String(),
-			req.Msg.ContributorMemberIds,
-			locale,
-			true,
-			nil,
-			true,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             req.Msg.EventId,
+			Fields:               paths,
+			DocumentRevision:     advanced.DocumentRevision.String(),
+			Contributors:         req.Msg.ContributorMemberIds,
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               locale,
+			DocumentStateChanged: true,
+		}))
 	}); err != nil {
 		return nil, normalizeProgramEventContentBlockError(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"github.com/google/uuid"
@@ -258,16 +259,16 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 	}
 	switch {
 	case mutation.CreateTranslation:
-		output, applyErr := applyCampaignTargetMutation(
+		output, applyErr := applyCampaignTargetLocaleMutation(
 			ctx, tx, s.internal.contentBlocks,
-			campaignTargetMutationInput{
+			campaignTargetLocaleMutationInput{
 				CampaignID: mutation.CampaignID, DocumentID: documentID, Locale: mutation.Locale,
 				Batch: contentblock.Batch{
 					DocumentID: documentID, ExpectedRevision: expected,
 					ContributorMemberIDs: []uuid.UUID{mutation.ContributorMember},
 				},
 				ExpectedDocumentRevision: expected, ExpectedTargetRevision: mutation.ExpectedTargetRevision,
-				AllowCreate: true, SeedSourceOnCreate: true,
+				Policy:            targetlocale.Policy{AllowCreate: true, SeedSource: true},
 				ContributorMember: mutation.ContributorMember, Now: now, Fence: fence,
 			},
 		)
@@ -303,14 +304,14 @@ func (s *AIDocumentService) applyAIDocumentMutationInTransaction(
 				return AIDocumentMutationResult{}, err
 			}
 		} else {
-			output, applyErr := applyCampaignTargetMutation(
+			output, applyErr := applyCampaignTargetLocaleMutation(
 				ctx, tx, s.internal.contentBlocks,
-				campaignTargetMutationInput{
+				campaignTargetLocaleMutationInput{
 					CampaignID: mutation.CampaignID, DocumentID: documentID, Locale: mutation.Locale,
 					Batch: batch, ExpectedDocumentRevision: expected,
 					ExpectedTargetRevision: mutation.ExpectedTargetRevision,
-					AllowCreate:            true, SeedSourceOnCreate: true,
-					SetSubject: mutation.SetSubject, Subject: targetSubject,
+					Policy:                 targetlocale.Policy{AllowCreate: true, SeedSource: true},
+					SetSubject:             mutation.SetSubject, Subject: targetSubject,
 					ContributorMember: mutation.ContributorMember, Now: now, Fence: fence,
 				},
 			)

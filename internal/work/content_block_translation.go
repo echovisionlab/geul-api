@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -116,17 +117,20 @@ func ApplyTypedTranslationCandidateWithDB(
 	if err != nil {
 		return err
 	}
-	result, _, err := applyWorkTargetLocaleBatch(
-		ctx, tx, store, job.EntityID, documentID, job.TargetLocale, batch, nil,
-		workTargetMetadataPatch{
+	result, _, err := applyWorkTargetLocaleMutation(ctx, tx, store, workTargetLocaleMutationInput{
+		WorkID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
+		Patch: workTargetMetadataPatch{
 			EnsureLocale:  true,
 			UpdateTitle:   !candidate.HasProviderUnitPatch() || candidate.ProviderUnitRequested("entity:title"),
 			Title:         cloneOptionalString(entry.Title),
 			UpdateSummary: !candidate.HasProviderUnitPatch() || candidate.ProviderUnitRequested("entity:summary"),
 			Summary:       cloneOptionalString(entry.Summary),
 		},
-		true, false, true, true, entry.Now, workLockedTargetFence(documentID, domain),
-	)
+		Policy: targetlocale.Policy{
+			AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent,
+		},
+		Now: entry.Now, Fence: contentblock.LockedFence(workEntityName, documentID, domain),
+	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
 		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
@@ -186,7 +190,7 @@ func applyWorkProviderSourceCandidate(
 		SetSummary: candidate.ProviderUnitRequested("entity:summary"), Summary: cloneOptionalString(entry.Summary),
 	}
 	result, err := store.ApplyBatchWithMetadata(
-		ctx, tx, batch, workLockedTargetFence(documentID, domain),
+		ctx, tx, batch, contentblock.LockedFence(workEntityName, documentID, domain),
 		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
 			return applyWorkAIDocumentMetadata(
 				ctx, tx, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,

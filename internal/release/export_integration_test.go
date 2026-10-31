@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 )
 
 // SeedReleaseTargetLocaleForTest explicitly creates a Release target locale the
@@ -36,7 +37,7 @@ func SeedReleaseTargetLocaleForTest(
 		var applyErr error
 		result, applyErr = applyReleaseTargetLocaleMutation(ctx, tx, store, releaseTargetLocaleMutationInput{
 			ReleaseID: releaseID, DocumentID: documentID, Locale: locale,
-			ExpectedDocumentRevision: revision, AllowCreate: true,
+			ExpectedDocumentRevision: revision, Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true},
 			Batch:    contentblock.Batch{DocumentID: documentID, ExpectedRevision: revision},
 			SetTitle: true, Title: &title, CreditNotePatch: notes,
 			Now: time.Now().UTC(), Fence: internalReleaseContentFence(releaseID),

@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -144,7 +145,7 @@ func (s *InternalReleaseService) LoadReleaseBlockDocument(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	if targetRow == nil && releaseSnapshotContainsLocale(bootstrap.Snapshot, locale) {
+	if targetRow == nil && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, locale) {
 		return nil, errs.FailedPrecondition("Release target locale Blocks exist without owning metadata")
 	}
 	// Collaboration renders the effective locale view: target values override
@@ -235,7 +236,7 @@ func (s *InternalReleaseService) ApplyReleaseBlockBatch(
 			target, err = applyReleaseTargetLocaleMutation(ctx, tx, s.contentBlocks, releaseTargetLocaleMutationInput{
 				ReleaseID: req.Msg.ReleaseId, DocumentID: documentID, Locale: locale,
 				ExpectedDocumentRevision: expected, ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-				Batch: batch, AllowCreate: false, Now: time.Now().UTC(), Fence: internalReleaseContentFence(req.Msg.ReleaseId),
+				Batch: batch, Now: time.Now().UTC(), Fence: internalReleaseContentFence(req.Msg.ReleaseId),
 			})
 			if err != nil || !target.Content.Changed {
 				return err
@@ -344,9 +345,8 @@ func (s *InternalReleaseService) UpdateReleaseLocaleMetadata(
 			targetResult, err = applyReleaseTargetLocaleMutation(ctx, tx, s.contentBlocks, releaseTargetLocaleMutationInput{
 				ReleaseID: input.ReleaseId, DocumentID: documentID, Locale: locale,
 				ExpectedDocumentRevision: expectedRevision, ExpectedTargetRevision: input.ExpectedTargetRevision,
-				AllowCreate: false,
-				Batch:       contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision, ContributorMemberIDs: releaseContributorUUIDs(input.ContributorMemberIds)},
-				SetTitle:    input.Title != nil, Title: input.Title, ReplaceCreditNotes: requestedNotes,
+				Batch:    contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision, ContributorMemberIDs: releaseContributorUUIDs(input.ContributorMemberIds)},
+				SetTitle: input.Title != nil, Title: input.Title, ReplaceCreditNotes: requestedNotes,
 				Now: now, Fence: internalReleaseContentFence(input.ReleaseId),
 			})
 			if err != nil || !targetResult.Content.Changed {

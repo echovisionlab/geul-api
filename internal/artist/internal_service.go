@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -194,11 +195,11 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 			if batchErr != nil {
 				return normalizeCreativeContentBlockError(artistContentEntity, batchErr)
 			}
-			result, targetRevision, err = applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.ArtistId, documentID, locale, batch,
-				req.Msg.ExpectedTargetRevision, false, now,
-				internalCreativeContentFence(req.Msg.ArtistId),
-			)
+			result, targetRevision, err = applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+				ArtistID: req.Msg.ArtistId, DocumentID: documentID, Locale: locale, Batch: batch,
+				ExpectedTargetRevision: req.Msg.ExpectedTargetRevision, Now: now,
+				Fence: internalCreativeContentFence(req.Msg.ArtistId),
+			})
 			if err != nil {
 				return err
 			}
@@ -254,17 +255,16 @@ func (s *InternalArtistService) ApplyArtistBlockBatch(
 		if locale != sourceLocale {
 			eventTargetRevision = &targetRevision
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistContentUpdatedEvent(
-			req.Msg.ArtistId,
-			[]string{"content"},
-			result.DocumentRevision.String(),
-			req.Msg.Batch.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			true,
-			eventTargetRevision,
-			locale == sourceLocale,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             req.Msg.ArtistId,
+			Fields:               []string{"content"},
+			DocumentRevision:     result.DocumentRevision.String(),
+			Contributors:         req.Msg.Batch.ContributorMemberIds,
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               locale,
+			TargetRevision:       eventTargetRevision,
+			DocumentStateChanged: locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
@@ -323,17 +323,15 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 			if err != nil || !result.Changed {
 				return err
 			}
-			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistContentUpdatedEvent(
-				req.Msg.ArtistId,
-				[]string{"title"},
-				result.DocumentRevision.String(),
-				req.Msg.ContributorMemberIds,
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				locale,
-				true,
-				&targetRevision,
-				false,
-			))
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:         req.Msg.ArtistId,
+				Fields:           []string{"title"},
+				DocumentRevision: result.DocumentRevision.String(),
+				Contributors:     req.Msg.ContributorMemberIds,
+				Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:           locale,
+				TargetRevision:   &targetRevision,
+			}))
 		})
 		if updateErr != nil {
 			return nil, updateErr
@@ -365,17 +363,15 @@ func (s *InternalArtistService) UpdateArtistLocaleMetadata(
 			if !result.Advance.Changed {
 				return nil
 			}
-			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistContentUpdatedEvent(
-				req.Msg.ArtistId,
-				[]string{"title"},
-				result.Advance.DocumentRevision.String(),
-				req.Msg.ContributorMemberIds,
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				locale,
-				true,
-				nil,
-				true,
-			))
+			return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+				EntityID:             req.Msg.ArtistId,
+				Fields:               []string{"title"},
+				DocumentRevision:     result.Advance.DocumentRevision.String(),
+				Contributors:         req.Msg.ContributorMemberIds,
+				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Locale:               locale,
+				DocumentStateChanged: true,
+			}))
 		},
 	)
 	if err != nil {

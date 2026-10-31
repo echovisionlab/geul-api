@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
@@ -83,13 +82,6 @@ func RequireExists(ctx context.Context, db *gorm.DB, eventID string) error {
 			return errs.NotFound("program event", eventID)
 		}
 		return errs.Internal(err)
-	}
-	return nil
-}
-
-func validateSlugWithoutSlash(slug string) error {
-	if strings.Contains(slug, "/") {
-		return errs.InvalidArgument("slug", "must not contain '/'")
 	}
 	return nil
 }

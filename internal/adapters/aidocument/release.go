@@ -142,7 +142,7 @@ func (p *releasePort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: releaseTargetRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
@@ -155,7 +155,7 @@ func (p *releasePort) executeMutation(
 	output := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision), Changed: domainResult.Changed,
 	}
-	output.TargetRevision = releaseTargetRevision(domainResult.TargetRevision)
+	output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
 	if domainResult.Changed {
 		for index, operation := range run.command.Operations {
 			output.Changes = append(output.Changes, core.Change{
@@ -192,7 +192,7 @@ func (p *releasePort) document(identity core.DocumentIdentity, locale core.Local
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: releaseTargetRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: p.catalog, Nodes: nodes,
 	}, nil
@@ -202,7 +202,7 @@ func (p *releasePort) compile(state releasedomain.AIDocumentState, document core
 	mutation := releasedomain.AIDocumentMutation{
 		ReleaseID: state.ReleaseID, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   releaseDomainTargetRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale,
 		ExpectedPresence:         state.LocaleExists, ContributorMemberID: contributor,
 	}
@@ -338,22 +338,6 @@ func releaseContributorID(value string) (uuid.UUID, error) {
 		return uuid.Nil, errors.New("release contributor Member must be a canonical UUID")
 	}
 	return contributor, nil
-}
-
-func releaseTargetRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func releaseDomainTargetRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 var _ core.DomainPort = (*releasePort)(nil)

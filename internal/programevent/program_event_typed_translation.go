@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -101,7 +102,7 @@ func ApplyTypedTranslationCandidateWithDB(
 	auditWriter domainaudit.Appender,
 ) error {
 	return applyProgramEventTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, entry, nil, true, auditWriter,
+		ctx, tx, store, job, candidate, entry, nil, targetlocale.RevisionCurrent, auditWriter,
 	)
 }
 
@@ -113,7 +114,7 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
 	expectedTargetRevision *string,
-	overwriteCurrentTargetCAS bool,
+	revisionMode targetlocale.RevisionMode,
 	auditWriter domainaudit.Appender,
 ) error {
 	if store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
@@ -182,15 +183,14 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 			sharedtelemetry.AuditItemOperationUpdated,
 		)
 	}
-	output, err := applyProgramEventTargetMutation(
+	output, err := applyProgramEventTargetLocaleMutation(
 		ctx, tx, store,
-		programEventTargetMutationInput{
+		programEventTargetLocaleMutationInput{
 			EventID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale,
 			Batch: batch, ExpectedDocumentRevision: current.Document.Revision,
 			ExpectedTargetRevision: expectedTargetRevision,
-			AllowCreate:            true, AllowLocaleDeletes: true,
-			OverwriteCurrentTargetCAS: overwriteCurrentTargetCAS,
-			SetSummary:                true, Summary: candidate.Summary, Now: entry.Now, Fence: fence,
+			Policy:                 targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: revisionMode},
+			SetSummary:             true, Summary: candidate.Summary, Now: entry.Now, Fence: fence,
 		},
 	)
 	if err != nil {
@@ -243,7 +243,7 @@ func (s *ProgramEventService) ApplyTranslationInterchangeCandidateWithDB(
 		candidate,
 		entry,
 		expectedTargetRevision,
-		false,
+		targetlocale.RevisionObserved,
 		s.auditWriter,
 	)
 }

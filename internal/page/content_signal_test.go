@@ -56,18 +56,30 @@ func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 		"featured image": buildManageMediaMutationContentUpdatedEvent(
 			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1", "media.featured_image",
 		),
-		"collab source": buildPageContentUpdatedEvent(
-			"page-1", []string{"content"}, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "en", true, nil, true,
-		),
-		"collab target": buildPageContentUpdatedEvent(
-			"page-1", []string{"title"}, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, "ko", true, &targetRevision, false,
-		),
-		"ai target delete": buildPageContentUpdatedEvent(
-			"page-1", []string{"content"}, "revision", nil,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI, "ko", false, nil, false,
-		),
+		"collab source": buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             "page-1",
+			Fields:               []string{"content"},
+			DocumentRevision:     "revision",
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               "en",
+			DocumentStateChanged: true,
+		}),
+		"collab target": buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:         "page-1",
+			Fields:           []string{"title"},
+			DocumentRevision: "revision",
+			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:           "ko",
+			TargetRevision:   &targetRevision,
+		}),
+		"ai target delete": buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:         "page-1",
+			Fields:           []string{"content"},
+			DocumentRevision: "revision",
+			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+			Locale:           "ko",
+			LocaleDeleted:    true,
+		}),
 		"document layout": buildContentUpdatedEvent(
 			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1",
 			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,

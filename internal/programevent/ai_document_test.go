@@ -3,8 +3,9 @@ package programevent
 import (
 	"context"
 	"errors"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"testing"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
@@ -247,12 +248,24 @@ func TestProgramEventContentSignalsSatisfyContract(t *testing.T) {
 	require.Equal(t, documentRevision, deleted.GetDocumentRevision())
 
 	for _, collab := range []*managev1.ContentUpdatedEvent{
-		buildProgramEventBlockContentUpdatedEvent(
-			eventID, []string{"content"}, documentRevision, []string{contributor.String()}, "en", true, nil, true,
-		),
-		buildProgramEventBlockContentUpdatedEvent(
-			eventID, []string{"summary"}, documentRevision, []string{contributor.String()}, "ko", true, &targetRevision, false,
-		),
+		buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             eventID,
+			Fields:               []string{"content"},
+			DocumentRevision:     documentRevision,
+			Contributors:         []string{contributor.String()},
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               "en",
+			DocumentStateChanged: true,
+		}),
+		buildProgramEventLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:         eventID,
+			Fields:           []string{"summary"},
+			DocumentRevision: documentRevision,
+			Contributors:     []string{contributor.String()},
+			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:           "ko",
+			TargetRevision:   &targetRevision,
+		}),
 	} {
 		require.NotNil(t, collab)
 		require.Equal(t, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB, collab.GetSource())

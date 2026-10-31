@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -188,7 +189,7 @@ func (s *PostService) loadAIDocumentStateAfterAuthorization(
 		if err != nil {
 			return AIDocumentState{}, err
 		}
-		if !exists && snapshotContainsLocale(snapshot, locale) {
+		if !exists && targetlocale.SnapshotHasLocale(snapshot, locale) {
 			return AIDocumentState{}, errs.FailedPrecondition("Post locale Blocks exist without owning translation metadata")
 		}
 		state.LocaleExists = exists
@@ -231,13 +232,4 @@ func loadAIDocumentMetadata(
 		return AIDocumentLocaleMetadata{}, false, errs.Internal(fmt.Errorf("load Post AI document locale metadata: %w", err))
 	}
 	return AIDocumentLocaleMetadata(row), true, nil
-}
-
-func snapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {
-	for _, overlay := range snapshot.LocaleOverlays {
-		if overlay.Locale == locale {
-			return true
-		}
-	}
-	return false
 }

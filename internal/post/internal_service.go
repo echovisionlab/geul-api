@@ -18,6 +18,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -158,7 +160,7 @@ func (s *InternalPostService) LoadPostBlockDocument(
 			if loadErr != nil {
 				return loadErr
 			}
-			if !exists && snapshotContainsLocale(snapshot, locale) {
+			if !exists && targetlocale.SnapshotHasLocale(snapshot, locale) {
 				return errs.FailedPrecondition("Post target locale Blocks exist without owning metadata")
 			}
 			if exists {
@@ -269,7 +271,7 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 			return fenceErr
 		}
 		sourceLocale = domain.SourceLocale
-		authorizedFence := postAuthorizedDocumentFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(postEntityName, documentID, domain)
 		if locale != domain.SourceLocale {
 			targetResult, err = applyPostTargetLocaleMutation(ctx, tx, s.contentBlocks, postTargetLocaleMutationInput{
 				PostID: req.Msg.PostId, Locale: locale,
@@ -350,16 +352,16 @@ func (s *InternalPostService) ApplyPostBlockBatch(
 		if locale != sourceLocale {
 			documentRevision = targetResult.DocumentRevision
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
-			req.Msg.PostId,
-			[]string{"content"},
-			documentRevision,
-			req.Msg.Batch.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
-			locale == sourceLocale,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             req.Msg.PostId,
+			Fields:               []string{"content"},
+			DocumentRevision:     documentRevision,
+			Contributors:         req.Msg.Batch.ContributorMemberIds,
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               locale,
+			TargetRevision:       postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
+			DocumentStateChanged: locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizePostContentBlockError(err)
@@ -425,7 +427,7 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 			return fenceErr
 		}
 		sourceLocale = domain.SourceLocale
-		authorizedFence := postAuthorizedDocumentFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(postEntityName, documentID, domain)
 		if locale != domain.SourceLocale {
 			title, titleSet, changeErr := postOptionalMetadataChangeValue(req.Msg.TitleChange)
 			if changeErr != nil {
@@ -542,16 +544,16 @@ func (s *InternalPostService) UpdatePostLocaleMetadata(
 		if req.Msg.SummaryChange != nil {
 			fields = append(fields, "summary")
 		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostBlockContentUpdatedEvent(
-			req.Msg.PostId,
-			fields,
-			documentRevision,
-			req.Msg.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
-			locale == sourceLocale,
-		))
+		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID:             req.Msg.PostId,
+			Fields:               fields,
+			DocumentRevision:     documentRevision,
+			Contributors:         req.Msg.ContributorMemberIds,
+			Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:               locale,
+			TargetRevision:       postTargetRevisionSignal(locale, sourceLocale, targetResult.TargetRevision),
+			DocumentStateChanged: locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizePostContentBlockError(err)

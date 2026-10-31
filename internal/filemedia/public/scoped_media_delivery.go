@@ -242,7 +242,7 @@ func projectScopedMediaURL(
 		if access.directDraft {
 			inlineTTL = directDraftMediaTTL(inlineTTL)
 		}
-		inlineRef, err := buildExpiringFileRef(
+		inlineRef, err := mediaauth.ExpiringFileRef(
 			mediaDomain,
 			mediaSecret,
 			file.ID,

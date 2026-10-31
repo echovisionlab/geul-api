@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
@@ -38,7 +38,7 @@ func (ContentBlockMedia) LoadContentBlockMediaReferences(
 	db *gorm.DB,
 	documentID uuid.UUID,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	return filemedia.LoadContentBlockMediaReferences(ctx, db, documentID)
+	return contentblock.LoadMediaReferences(ctx, db, documentID)
 }
 
 // VersionRestore provides the shared File attachment availability checks used

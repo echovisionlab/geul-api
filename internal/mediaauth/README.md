@@ -9,6 +9,9 @@ This internal package owns canonical delivery/object paths, HMAC token issuance
 and validation, token lifetimes and request scope checks. Moving the package
 changes no wire format, signing secret, URL, expiry, or authorization behavior.
 All API consumers, including the imported media services, use this package.
+`media_url.go` is API code on top of the contract: signed file URLs, public
+HLS entry points, canonical download filenames and expiring file references,
+shared by every domain that delivers media.
 
 Run `GOWORK=off go test -race -cover ./internal/mediaauth`. The original golden
 V1 token test and full statement-coverage requirement are retained in API CI.

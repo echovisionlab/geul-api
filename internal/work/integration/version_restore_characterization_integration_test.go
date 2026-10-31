@@ -80,7 +80,7 @@ func TestWorkVersionRestoreCharacterizationIntegration(t *testing.T) {
 			},
 			want: workVersionRestoreWant{
 				eventFields:          []string{"document.content TEXT"},
-				documentStateChanged: true, eventLocale: "en", ogGenerations: 1,
+				documentStateChanged: true, eventLocale: "en",
 			},
 		},
 		{
@@ -100,7 +100,7 @@ func TestWorkVersionRestoreCharacterizationIntegration(t *testing.T) {
 			},
 			want: workVersionRestoreWant{
 				eventFields:          []string{"summary TEXT"},
-				documentStateChanged: true, eventLocale: "en", ogGenerations: 1,
+				documentStateChanged: true, eventLocale: "en",
 			},
 		},
 		{

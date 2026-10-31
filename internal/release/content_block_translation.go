@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -107,7 +108,11 @@ func ApplyTypedTranslationCandidateWithDB(
 		return errors.New("release translation audit writer is required")
 	}
 	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadataInput, nil, true, true, false, auditWriter,
+		ctx, tx, store, job, candidate, metadataInput, nil,
+		targetlocale.Policy{
+			AllowCreate: true, SeedSource: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent,
+		},
+		false, auditWriter,
 	)
 }
 
@@ -124,7 +129,9 @@ func ApplyTypedTranslationInterchangeCandidateWithDB(
 	allowLocaleDeletes bool,
 ) error {
 	return applyTypedTranslationCandidateWithDB(
-		ctx, tx, store, job, candidate, metadataInput, expectedTargetRevision, false, allowLocaleDeletes, true, nil,
+		ctx, tx, store, job, candidate, metadataInput, expectedTargetRevision,
+		targetlocale.Policy{AllowCreate: true, SeedSource: true, AllowLocaleDeletes: allowLocaleDeletes},
+		true, nil,
 	)
 }
 
@@ -136,8 +143,7 @@ func applyTypedTranslationCandidateWithDB(
 	candidate *translation.Candidate,
 	metadataInput translation.EntryWrite,
 	expectedTargetRevision *string,
-	overwriteCurrentTargetCAS bool,
-	allowLocaleDeletes bool,
+	policy targetlocale.Policy,
 	allowEmptyCreditNotes bool,
 	auditWriter domainaudit.Appender,
 ) error {
@@ -296,9 +302,8 @@ func applyTypedTranslationCandidateWithDB(
 	target, err := applyReleaseTargetLocaleMutation(ctx, tx, store, releaseTargetLocaleMutationInput{
 		ReleaseID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale,
 		ExpectedDocumentRevision: expectedRevision, ExpectedTargetRevision: expectedTargetRevision,
-		AllowCreate: true, OverwriteCurrentTargetCAS: overwriteCurrentTargetCAS,
-		AllowLocaleDeletes: allowLocaleDeletes,
-		Batch:              batch, SetTitle: true, Title: metadataInput.Title,
+		Policy: policy,
+		Batch:  batch, SetTitle: true, Title: metadataInput.Title,
 		CreditNotePatch: creditNotePatch, ReplaceCreditNotes: replaceCreditNotes,
 		Now: metadataInput.Now, Fence: internalReleaseContentFence(job.EntityID),
 	})

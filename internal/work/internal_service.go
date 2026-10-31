@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -141,7 +142,7 @@ func (s *InternalWorkService) LoadWorkBlockDocument(
 		if loadErr != nil {
 			return loadErr
 		}
-		mediaItems, loadErr = LoadContentBlockMediaReferences(ctx, tx, documentID)
+		mediaItems, loadErr = contentblock.LoadMediaReferences(ctx, tx, documentID)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -252,15 +253,15 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 		if fenceErr != nil {
 			return fenceErr
 		}
-		authorizedFence := workLockedTargetFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(workEntityName, documentID, domain)
 		sourceLocale = domain.SourceLocale
 		output.Locale = locale
 		if locale != domain.SourceLocale {
-			result, targetRevision, targetErr := applyWorkTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.WorkId, documentID, locale, batch,
-				req.Msg.ExpectedTargetRevision, workTargetMetadataPatch{},
-				false, false, false, false, now,
-				authorizedFence,
+			result, targetRevision, targetErr := applyWorkTargetLocaleMutation(
+				ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
+					WorkID: req.Msg.WorkId, DocumentID: documentID, Locale: locale, Batch: batch,
+					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision, Now: now, Fence: authorizedFence,
+				},
 			)
 			if targetErr != nil {
 				return targetErr
@@ -312,18 +313,14 @@ func (s *InternalWorkService) ApplyWorkBlockBatch(
 		if err := mutate(tx); err != nil || !output.Content.Changed {
 			return err
 		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
-			req.Msg.WorkId,
-			false,
-			false,
-			true,
-			output.Content.DocumentRevision.String(),
-			req.Msg.Batch.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			locale,
-			output.TargetRevision,
-			locale == sourceLocale,
-		))
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: req.Msg.WorkId, Fields: []string{"content"},
+			DocumentRevision: output.Content.DocumentRevision.String(),
+			Contributors:     req.Msg.Batch.ContributorMemberIds,
+			Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale:           locale, TargetRevision: output.TargetRevision,
+			DocumentStateChanged: locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)
@@ -388,21 +385,22 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 		if planErr != nil {
 			return planErr
 		}
-		authorizedFence := workLockedTargetFence(documentID, domain)
+		authorizedFence := contentblock.LockedFence(workEntityName, documentID, domain)
 		if plan.Locale != sourceLocale {
-			result, targetRevision, targetErr := applyWorkTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, req.Msg.WorkId, documentID, plan.Locale,
-				contentblock.Batch{
-					DocumentID: documentID, ExpectedRevision: expectedRevision,
-					ContributorMemberIDs: contributors,
+			result, targetRevision, targetErr := applyWorkTargetLocaleMutation(
+				ctx, tx, s.contentBlocks, workTargetLocaleMutationInput{
+					WorkID: req.Msg.WorkId, DocumentID: documentID, Locale: plan.Locale,
+					Batch: contentblock.Batch{
+						DocumentID: documentID, ExpectedRevision: expectedRevision,
+						ContributorMemberIDs: contributors,
+					},
+					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
+					Patch: workTargetMetadataPatch{
+						UpdateTitle: plan.UpdateTitle, Title: plan.Title,
+						UpdateSummary: plan.UpdateSummary, Summary: plan.Summary,
+					},
+					Now: now, Fence: authorizedFence,
 				},
-				req.Msg.ExpectedTargetRevision,
-				workTargetMetadataPatch{
-					UpdateTitle: plan.UpdateTitle, Title: plan.Title,
-					UpdateSummary: plan.UpdateSummary, Summary: plan.Summary,
-				},
-				false, false, false, false, now,
-				authorizedFence,
 			)
 			if targetErr != nil {
 				return targetErr
@@ -489,18 +487,13 @@ func (s *InternalWorkService) UpdateWorkLocaleMetadata(
 		if !changed {
 			return nil
 		}
-		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkSourceContentUpdatedEvent(
-			req.Msg.WorkId,
-			output.Mutation.TitleChanged,
-			output.Mutation.SummaryChanged,
-			false,
-			documentRevision,
-			req.Msg.ContributorMemberIds,
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			plan.Locale,
-			output.TargetRevision,
-			plan.Locale == sourceLocale,
-		))
+		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: req.Msg.WorkId, Fields: output.Mutation.changedFields(),
+			DocumentRevision: documentRevision, Contributors: req.Msg.ContributorMemberIds,
+			Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			Locale: plan.Locale, TargetRevision: output.TargetRevision,
+			DocumentStateChanged: plan.Locale == sourceLocale,
+		}))
 	})
 	if err != nil {
 		return nil, normalizeWorkContentBlockError(err)

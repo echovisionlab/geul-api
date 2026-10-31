@@ -7,8 +7,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/optional"
+	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -175,10 +178,10 @@ func validateCompiledArtistAIDocumentMutation(
 			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision,
 		}
 	}
-	if !sameArtistTargetRevision(input.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
 		return uuid.Nil, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
-			CurrentTargetRevision: cloneArtistTargetRevision(state.TargetRevision),
+			CurrentTargetRevision: optional.Clone(state.TargetRevision),
 		}
 	}
 	if input.Batch != nil {
@@ -226,10 +229,10 @@ func (s *InternalArtistService) applyAIDocumentMode(ctx context.Context, tx *gor
 		if input.Batch != nil {
 			batch := *input.Batch
 			batch.ExpectedRevision, batch.ContributorMemberIDs = expected, []uuid.UUID{memberID}
-			result, revision, err := applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, batch,
-				input.ExpectedTargetRevision, false, time.Now().UTC(), fence,
-			)
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
+				ExpectedTargetRevision: input.ExpectedTargetRevision, Now: time.Now().UTC(), Fence: fence,
+			})
 			return result, &revision, err
 		}
 		if input.CreateTranslation {
@@ -237,10 +240,11 @@ func (s *InternalArtistService) applyAIDocumentMode(ctx context.Context, tx *gor
 				DocumentID: documentID, ExpectedRevision: expected,
 				ContributorMemberIDs: []uuid.UUID{memberID},
 			}
-			result, revision, err := applyArtistTargetLocaleBatch(
-				ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, batch,
-				input.ExpectedTargetRevision, true, time.Now().UTC(), fence,
-			)
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
+				ExpectedTargetRevision: input.ExpectedTargetRevision, Policy: targetlocale.Policy{AllowCreate: true},
+				Now: time.Now().UTC(), Fence: fence,
+			})
 			return result, &revision, err
 		}
 		result, err := deleteArtistTargetLocale(
@@ -330,37 +334,22 @@ func artistAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocu
 	}
 	exists := input.Locale == input.ExpectedSource || !input.DeleteTranslation
 	documentChanged := input.Locale == input.ExpectedSource
-	return buildArtistContentUpdatedEvent(
-		input.ArtistID,
-		[]string{"content"},
-		result.Revision,
-		[]string{contributor},
-		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		input.Locale,
-		exists,
-		result.TargetRevision,
-		documentChanged,
-	)
+	return buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+		EntityID:             input.ArtistID,
+		Fields:               []string{"content"},
+		DocumentRevision:     result.Revision,
+		Contributors:         []string{contributor},
+		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Locale:               input.Locale,
+		LocaleDeleted:        !exists,
+		TargetRevision:       result.TargetRevision,
+		DocumentStateChanged: documentChanged,
+	})
 }
 
 func createArtistAIDocumentTranslation(ctx context.Context, tx *gorm.DB, artistID, locale string) (bool, error) {
 	result := tx.WithContext(ctx).Exec("INSERT INTO artist_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, NULL, now(), now()) ON CONFLICT (entity_id, locale) DO NOTHING", artistID, locale)
 	return result.RowsAffected != 0, result.Error
-}
-
-func sameArtistTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func cloneArtistTargetRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func artistTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

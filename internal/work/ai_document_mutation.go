@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"connectrpc.com/connect"
@@ -195,28 +196,13 @@ func validateCompiledWorkAIDocumentMutation(
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
 		}
 	}
-	if !equalWorkTargetRevision(mutation.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: cloneWorkTargetRevision(state.TargetRevision),
+			CurrentTargetRevision: optional.Clone(state.TargetRevision),
 		}
 	}
 	return nil
-}
-
-func equalWorkTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func cloneWorkTargetRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func workAuthorizedAIDocumentFence(
