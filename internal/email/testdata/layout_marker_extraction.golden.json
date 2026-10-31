@@ -186,6 +186,12 @@
       "unit:11111111-1111-4111-8111-111111111111:text": ""
     }
   },
+  "overlay_explicit_empty_text_before_comment": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values": {
+      "unit:11111111-1111-4111-8111-111111111111:text": ""
+    }
+  },
   "overlay_explicit_empty_text_before_element": {
     "units_error": "Email Layout source contains a target value marker",
     "locale_values": {

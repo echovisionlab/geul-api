@@ -568,6 +568,15 @@ func ExtractLayoutLocaleValues(content string) (map[string]string, error) {
 				valueMarkers = append(valueMarkers, valueMarker)
 				continue
 			}
+			if unit != nil && unit.Kind == layoutTextMarker && len(valueMarkers) != 0 {
+				// An ordinary comment also ends an explicit empty text value.
+				if err := flushEmptyText(); err != nil {
+					return nil, err
+				}
+				unit = nil
+				valueMarkers = valueMarkers[:0]
+				continue
+			}
 			if len(valueMarkers) != 0 {
 				return nil, errors.New("Email Layout target value marker is detached from its value")
 			}
