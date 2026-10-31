@@ -9,46 +9,45 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// Authority resolves Share Link targets for the Share Link use cases.
 type Authority struct {
-	db          *gorm.DB
-	spiceDB     resourcePermissionChecker
-	auditWriter domainaudit.Appender
+	db      *gorm.DB
+	spiceDB resourcePermissionChecker
 }
 
 type resourcePermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
 }
 
-func NewAuthority(db *gorm.DB, spiceDB *auth.SpiceDBClient, auditWriter domainaudit.Appender) *Authority {
+func NewAuthority(db *gorm.DB, spiceDB *auth.SpiceDBClient) *Authority {
 	if spiceDB == nil {
 		panic("sharelink adapter: spiceDB is required")
 	}
-	return newAuthority(db, spiceDB, auditWriter)
+	return newAuthority(db, spiceDB)
 }
 
-func newAuthority(db *gorm.DB, spiceDB resourcePermissionChecker, auditWriter domainaudit.Appender) *Authority {
+func newAuthority(db *gorm.DB, spiceDB resourcePermissionChecker) *Authority {
 	if db == nil {
 		panic("sharelink adapter: db is required")
 	}
 	if spiceDB == nil {
 		panic("sharelink adapter: spiceDB is required")
 	}
-	return &Authority{db: db, spiceDB: spiceDB, auditWriter: auditWriter}
+	return &Authority{db: db, spiceDB: spiceDB}
 }
 
 type target struct {
 	table                string
 	name                 string
-	entityType           managev1.ShareLinkEntityType
+	entityType           sharelink.EntityType
 	archivedStatus       string
 	legalScheduledStatus string
 	manageShareLinks     auth.ResourceAction
@@ -56,9 +55,9 @@ type target struct {
 	editArchived         auth.ResourceAction
 }
 
-func targetFor(entityType managev1.ShareLinkEntityType) (target, error) {
+func targetFor(entityType sharelink.EntityType) (target, error) {
 	switch entityType {
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST:
+	case sharelink.EntityPost:
 		return target{
 			table:            "post",
 			name:             "post",
@@ -68,9 +67,9 @@ func targetFor(entityType managev1.ShareLinkEntityType) (target, error) {
 			viewArchived:     policyv1.Post.ViewArchived,
 			editArchived:     policyv1.Post.EditArchived,
 		}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE:
+	case sharelink.EntityPage:
 		return target{table: "page", name: "page", entityType: entityType, manageShareLinks: policyv1.Page.ManageShareLinks}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK:
+	case sharelink.EntityWork:
 		return target{
 			table:            "work",
 			name:             "work",
@@ -80,15 +79,15 @@ func targetFor(entityType managev1.ShareLinkEntityType) (target, error) {
 			viewArchived:     policyv1.Work.ViewArchived,
 			editArchived:     policyv1.Work.EditArchived,
 		}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE:
+	case sharelink.EntityRelease:
 		return target{table: "release", name: "release", entityType: entityType, manageShareLinks: policyv1.Release.ManageShareLinks}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD:
+	case sharelink.EntityForm, sharelink.EntityFormDashboard:
 		return target{table: "form", name: "form", entityType: entityType, manageShareLinks: policyv1.Form.ManageShareLinks}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL:
+	case sharelink.EntityLabel:
 		return target{table: "label", name: "label", entityType: entityType, manageShareLinks: policyv1.Label.ManageShareLinks}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST:
+	case sharelink.EntityArtist:
 		return target{table: "artist", name: "artist", entityType: entityType, manageShareLinks: policyv1.Artist.ManageShareLinks}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
+	case sharelink.EntityPrivacy:
 		return target{
 			table:                "privacy_history",
 			name:                 "privacy",
@@ -99,7 +98,7 @@ func targetFor(entityType managev1.ShareLinkEntityType) (target, error) {
 			viewArchived:         policyv1.PrivacyHistory.ViewArchived,
 			editArchived:         policyv1.PrivacyHistory.EditArchived,
 		}, nil
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
+	case sharelink.EntityTerms:
 		return target{
 			table:                "terms_history",
 			name:                 "terms",
@@ -111,7 +110,7 @@ func targetFor(entityType managev1.ShareLinkEntityType) (target, error) {
 			editArchived:         policyv1.TermsHistory.EditArchived,
 		}, nil
 	default:
-		return target{}, errs.InvalidEntityType(entityType.String())
+		return target{}, errs.InvalidEntityType(string(entityType))
 	}
 }
 
@@ -124,11 +123,12 @@ const (
 
 type targetState struct {
 	ID            string     `gorm:"column:id"`
+	Version       int64      `gorm:"column:version"`
 	Status        string     `gorm:"column:status"`
 	EffectiveFrom *time.Time `gorm:"column:effective_from"`
 }
 
-func (a *Authority) AuthorizeList(ctx context.Context, entityType managev1.ShareLinkEntityType, entityID string) error {
+func (a *Authority) AuthorizeList(ctx context.Context, entityType sharelink.EntityType, entityID string) error {
 	target, err := targetFor(entityType)
 	if err != nil {
 		return err
@@ -143,50 +143,29 @@ func (a *Authority) AuthorizeList(ctx context.Context, entityType managev1.Share
 	return requireTargetLifecycle(target, state)
 }
 
-func (a *Authority) Create(ctx context.Context, entityType managev1.ShareLinkEntityType, entityID string, link *model.ShareLink, create sharelink.CreateRecord) error {
+// LockTarget locks the target row and selects the action its locked
+// lifecycle requires of a link mutation.
+func (a *Authority) LockTarget(ctx context.Context, tx *gorm.DB, entityType sharelink.EntityType, entityID string) (sharelink.LockedTarget, error) {
 	target, err := targetFor(entityType)
 	if err != nil {
-		return err
+		return sharelink.LockedTarget{}, err
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		state, err := loadTargetState(ctx, tx, target, entityID, true)
-		if err != nil {
-			return err
-		}
-		if err := a.requirePermission(ctx, target, entityID, targetAction(target, state, authorizationMutation)); err != nil {
-			return err
-		}
-		if err := requireTargetLifecycle(target, state); err != nil {
-			return err
-		}
-		if err := create(ctx, tx, link); err != nil {
-			return err
-		}
-		return a.appendAudit(ctx, tx, entityType, entityID, link.ID, sharedtelemetry.AuditItemOperationCreated)
-	})
-}
-
-func (a *Authority) Delete(ctx context.Context, entityType managev1.ShareLinkEntityType, link model.ShareLink, deleteRecord sharelink.DeleteRecord) error {
-	target, err := targetFor(entityType)
+	state, err := loadTargetState(ctx, tx, target, entityID, true)
 	if err != nil {
-		return err
+		return sharelink.LockedTarget{}, err
 	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		state, err := loadTargetState(ctx, tx, target, link.EntityID, true)
-		if err != nil {
-			return err
-		}
-		if err := a.requirePermission(ctx, target, link.EntityID, targetAction(target, state, authorizationMutation)); err != nil {
-			return err
-		}
-		if err := requireTargetLifecycle(target, state); err != nil {
-			return err
-		}
-		if err := deleteRecord(ctx, tx, link); err != nil {
-			return err
-		}
-		return a.appendAudit(ctx, tx, entityType, link.EntityID, link.ID, sharedtelemetry.AuditItemOperationDeleted)
-	})
+	can, err := targetAction(target, state, authorizationMutation)(entityID)
+	if err != nil {
+		return sharelink.LockedTarget{}, errs.InvalidArgument("entity_id", err.Error())
+	}
+	return sharelink.LockedTarget{
+		Name:      target.name,
+		Can:       can,
+		Lifecycle: requireTargetLifecycle(target, state),
+		Audit: func(linkID string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+			return linkAudit(entityType, entityID, linkID, state.Version, operation)
+		},
+	}, nil
 }
 
 func loadTargetState(ctx context.Context, db *gorm.DB, target target, entityID string, lock bool) (targetState, error) {
@@ -195,7 +174,7 @@ func loadTargetState(ctx context.Context, db *gorm.DB, target target, entityID s
 		columns = append(columns, "status")
 	}
 	if target.legalScheduledStatus != "" {
-		columns = append(columns, "effective_from")
+		columns = append(columns, "effective_from", "version")
 	}
 	var state targetState
 	query := db.WithContext(ctx).Table(target.table).Select(columns).Where("id = ?", entityID)
@@ -260,75 +239,42 @@ func requireTargetLifecycle(target target, state targetState) error {
 	return nil
 }
 
-func (a *Authority) appendAudit(ctx context.Context, tx *gorm.DB, entityType managev1.ShareLinkEntityType, entityID, linkID string, operation sharedtelemetry.AuditItemOperation) error {
-	if a.auditWriter == nil {
-		return nil
+// linkAudit names the target's record of a link change. A legal policy
+// records the version its locked row holds.
+func linkAudit(entityType sharelink.EntityType, entityID, linkID string, version int64, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+	audit := func(action sharedtelemetry.AuditAction, build func(sharedtelemetry.AuditMetadata, string, string, sharedtelemetry.AuditItemOperation) (sharedtelemetry.AuditRecord, error)) mutation.Audit {
+		return mutation.RequestAudit(action, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return build(m, entityID, linkID, operation)
+		})
 	}
-	var action sharedtelemetry.AuditAction
-	var build func(sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error)
 	switch entityType {
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST:
-		action = sharedtelemetry.AuditPostUpdated
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPostShareLinkAuditRecord(m, entityID, linkID, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE:
-		action = sharedtelemetry.AuditPageUpdated
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewPageShareLinkAuditRecord(m, entityID, linkID, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK:
-		action = sharedtelemetry.AuditWorkUpdated
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewWorkShareLinkAuditRecord(m, entityID, linkID, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE:
-		action = sharedtelemetry.AuditReleaseUpdated
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewReleaseShareLinkAuditRecord(m, entityID, linkID, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST:
-		action = sharedtelemetry.AuditArtistUpdated
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewArtistShareLinkAuditRecord(m, entityID, linkID, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL:
-		action = sharedtelemetry.AuditLabelUpdated
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewLabelShareLinkAuditRecord(m, entityID, linkID, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD:
-		action = sharedtelemetry.AuditFormUpdated
+	case sharelink.EntityPost:
+		return audit(sharedtelemetry.AuditPostUpdated, sharedtelemetry.NewPostShareLinkAuditRecord)
+	case sharelink.EntityPage:
+		return audit(sharedtelemetry.AuditPageUpdated, sharedtelemetry.NewPageShareLinkAuditRecord)
+	case sharelink.EntityWork:
+		return audit(sharedtelemetry.AuditWorkUpdated, sharedtelemetry.NewWorkShareLinkAuditRecord)
+	case sharelink.EntityRelease:
+		return audit(sharedtelemetry.AuditReleaseUpdated, sharedtelemetry.NewReleaseShareLinkAuditRecord)
+	case sharelink.EntityArtist:
+		return audit(sharedtelemetry.AuditArtistUpdated, sharedtelemetry.NewArtistShareLinkAuditRecord)
+	case sharelink.EntityLabel:
+		return audit(sharedtelemetry.AuditLabelUpdated, sharedtelemetry.NewLabelShareLinkAuditRecord)
+	case sharelink.EntityForm, sharelink.EntityFormDashboard:
 		scope := sharedtelemetry.AuditItemScopeForm
-		if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD {
+		if entityType == sharelink.EntityFormDashboard {
 			scope = sharedtelemetry.AuditItemScopeDashboard
 		}
-		build = func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return mutation.RequestAudit(sharedtelemetry.AuditFormUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewFormShareLinkAuditRecord(m, entityID, linkID, scope, operation)
-		}
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
-		return a.appendLegalAudit(ctx, tx, entityType, entityID, linkID, operation)
+		})
 	default:
-		return errs.InvalidEntityType(entityType.String())
-	}
-	return domainaudit.AppendRequest(ctx, tx, a.auditWriter, action, build)
-}
-
-func (a *Authority) appendLegalAudit(ctx context.Context, tx *gorm.DB, entityType managev1.ShareLinkEntityType, entityID, linkID string, operation sharedtelemetry.AuditItemOperation) error {
-	table, name, policyType := "terms_history", "terms", sharedtelemetry.AuditPolicyTypeTerms
-	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY {
-		table, name, policyType = "privacy_history", "privacy", sharedtelemetry.AuditPolicyTypePrivacy
-	}
-	var row struct {
-		Version int64 `gorm:"column:version"`
-	}
-	if err := tx.WithContext(ctx).Table(table).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound(name, entityID)
+		policyType := sharedtelemetry.AuditPolicyTypeTerms
+		if entityType == sharelink.EntityPrivacy {
+			policyType = sharedtelemetry.AuditPolicyTypePrivacy
 		}
-		return errs.Internal(err)
+		return mutation.RequestAudit(sharedtelemetry.AuditLegalPolicyUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewLegalPolicyShareLinkAuditRecord(m, entityID, policyType, version, operation, linkID)
+		})
 	}
-	return domainaudit.AppendRequest(ctx, tx, a.auditWriter, sharedtelemetry.AuditLegalPolicyUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		return sharedtelemetry.NewLegalPolicyShareLinkAuditRecord(m, entityID, policyType, row.Version, operation, linkID)
-	})
 }

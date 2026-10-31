@@ -98,7 +98,9 @@ func TestExpiredAutomaticLegalPreviewTokenResolvesOnlyExactPublicHistoryIntegrat
 		now,
 	)
 
-	service := sharelinkpublic.NewService(db, sharelinkadapter.NewPublicTargetResolver(db))
+	validation, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: sharelinkadapter.NewPublicTargetResolver(db)})
+	require.NoError(t, err)
+	service := sharelinkpublic.NewConnectHandler(validation)
 	publicHistory, err := service.Validate(
 		t.Context(),
 		connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: links[0].Token}),

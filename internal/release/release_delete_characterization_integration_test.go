@@ -16,15 +16,14 @@ import (
 	"gorm.io/gorm"
 
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
-	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -145,7 +144,7 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 		require.NoError(t, db.Exec(`INSERT INTO track_credit (track_id, credited_name) VALUES (?::uuid, 'Track credit')`, trackID).Error)
 	}
 	shareLabel := "Release delete characterization share"
-	_, err = sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, spiceDB, nil)).CreateShareLink(ctx, connect.NewRequest(&managev1.CreateShareLinkRequest{
+	_, err = sharelinktest.NewHandler(t, db, spiceDB).CreateShareLink(ctx, connect.NewRequest(&managev1.CreateShareLinkRequest{
 		EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, EntityId: releaseID, Label: &shareLabel,
 	}))
 	require.NoError(t, err)

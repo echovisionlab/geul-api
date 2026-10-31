@@ -2,7 +2,6 @@
 # -update.
 19 internal/account
 1 internal/account/public
-1 internal/adapters/sharelink
 11 internal/adapters/translation
 6 internal/artist
 1 internal/audience

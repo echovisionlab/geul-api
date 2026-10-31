@@ -19,6 +19,7 @@ const (
 // migration lands.
 var pipelineDomains = []string{
 	"internal/member",
+	"internal/sharelink",
 }
 
 func inPipelineDomain(pkg string) bool {

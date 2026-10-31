@@ -2,7 +2,6 @@ package sharelink
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -11,21 +10,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
-
-type failedDeleteAuthority struct {
-	recordingAuthority
-	err error
-}
-
-func (a *failedDeleteAuthority) Delete(context.Context, managev1.ShareLinkEntityType, model.ShareLink, DeleteRecord) error {
-	return a.err
-}
 
 // Callers decide how to answer; the error carries the redacted cause, the
 // entity and the server-fault mark for the one failure record.
@@ -63,13 +52,13 @@ func TestDeleteFailureCarriesCauseAndEntityWithoutStoredCredentials(t *testing.T
 	require.NoError(t, db.Exec(`INSERT INTO share_link(id,token,entity_type,entity_id,password_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?)`,
 		linkID, token, entityType.String(), entityID, hash, time.Now().Add(time.Hour), time.Now()).Error)
 	cause := errors.New(`delete from "share_link": connection reset for ` + token + " " + hash)
-	service := NewService(db, &failedDeleteAuthority{err: cause})
+	handler := newTestHandler(t, db, &recordingAuthority{lockErr: cause})
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(sharedtelemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	response, err := service.DeleteShareLink(t.Context(), connect.NewRequest(&managev1.DeleteShareLinkRequest{Id: linkID}))
+	response, err := handler.DeleteShareLink(t.Context(), connect.NewRequest(&managev1.DeleteShareLinkRequest{Id: linkID}))
 	require.Nil(t, response)
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))

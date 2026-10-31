@@ -728,11 +728,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(adminPath, adminHandler)
 	slog.Info("Registered service", "path", adminPath)
 
-	shareLinkService := sharelink.NewService(
-		db,
-		sharelinkadapter.NewAuthority(db, spicedbClient, telemetryWriter),
-	)
-	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(shareLinkService, handlerOpts...)
+	shareLinkService, err := sharelink.NewService(sharelink.Deps{
+		DB: db, SpiceDB: spicedbClient, Targets: sharelinkadapter.NewAuthority(db, spicedbClient), Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, err
+	}
+	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(sharelink.NewConnectHandler(shareLinkService), handlerOpts...)
 	mux.Handle(shareLinkPath, shareLinkHandler)
 	slog.Info("Registered service", "path", shareLinkPath)
 
@@ -902,7 +904,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)
-	(publicServiceRegistration{
+	if err := (publicServiceRegistration{
 		dependencies:     deps,
 		handlerOptions:   publicHandlerOpts,
 		fileService:      publicFileService,
@@ -911,7 +913,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workRuntime:      workRuntime,
 		legalRuntime:     legalRuntime,
 		formDependencies: formDependencies,
-	}).register()
+	}).register(); err != nil {
+		return registeredServices{}, err
+	}
 
 	return registeredServices{
 		authInterceptor:             authInterceptor,
