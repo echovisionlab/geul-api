@@ -568,14 +568,7 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 		for _, node := range nodes {
 			nodeByID[node.ID] = node
 		}
-		rules := make(map[string]FieldRule, len(document.Catalog.Fields))
-		for _, rule := range document.Catalog.Fields {
-			rules[fieldRuleKey(rule.BlockKind, rule.Field)] = rule
-		}
-		relationRules := make(map[string]RelationFieldRule, len(document.Catalog.RelationFields))
-		for _, rule := range document.Catalog.RelationFields {
-			relationRules[relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)] = rule
-		}
+		catalog := newCatalogIndex(document.Catalog)
 		type selectedFields struct {
 			blockFields    map[FieldID]struct{}
 			relationFields map[RelationID]map[RelationItemID]map[FieldID]struct{}
@@ -595,7 +588,7 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 				selected[field.Block] = entry
 			}
 			if field.Relation == "" {
-				if _, known := rules[fieldRuleKey(node.Kind, field.Field)]; !known {
+				if _, known := catalog.field(node.Kind, field.Field); !known {
 					return nil, fmt.Errorf("selected field %q is not defined for block %q", field.Field, field.Block)
 				}
 				entry.blockFields[field.Field] = struct{}{}
@@ -605,7 +598,7 @@ func selectNodes(document Document, request ReadRequest) ([]Node, error) {
 			if !ok {
 				return nil, fmt.Errorf("selected relation item %q does not exist", field.Item)
 			}
-			if _, known := relationRules[relationFieldRuleKey(node.Kind, relation.ID, item.Kind, field.Field)]; !known {
+			if _, known := catalog.relationField(node.Kind, relation.ID, item.Kind, field.Field); !known {
 				return nil, fmt.Errorf("selected field %q is not defined for relation item %q", field.Field, field.Item)
 			}
 			if entry.relationFields[field.Relation] == nil {

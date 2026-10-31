@@ -27,7 +27,7 @@ func (c Catalog) validate() error {
 		if err := validateStableID("field ID", string(rule.Field), maxCatalogIDLength); err != nil {
 			return err
 		}
-		key := string(rule.BlockKind) + "\x00" + string(rule.Field)
+		key := fieldRuleKey(rule.BlockKind, rule.Field)
 		if _, duplicate := rules[key]; duplicate {
 			return fmt.Errorf("duplicate field rule %q on %q", rule.Field, rule.BlockKind)
 		}
@@ -217,32 +217,13 @@ func (v Value) validateKindOnly() error {
 }
 
 func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
-	kinds := make(map[BlockKind]struct{}, len(catalog.BlockKinds))
-	for _, kind := range catalog.BlockKinds {
-		kinds[kind] = struct{}{}
-	}
-	rules := make(map[string]FieldRule, len(catalog.Fields))
-	for _, rule := range catalog.Fields {
-		rules[fieldRuleKey(rule.BlockKind, rule.Field)] = rule
-	}
-	relations := make(map[string]map[RelationItemKind]struct{}, len(catalog.Relations))
-	for _, rule := range catalog.Relations {
-		allowed := make(map[RelationItemKind]struct{}, len(rule.ItemKinds))
-		for _, kind := range rule.ItemKinds {
-			allowed[kind] = struct{}{}
-		}
-		relations[relationRuleKey(rule.BlockKind, rule.Relation)] = allowed
-	}
-	relationFields := make(map[string]RelationFieldRule, len(catalog.RelationFields))
-	for _, rule := range catalog.RelationFields {
-		relationFields[relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)] = rule
-	}
+	index := newCatalogIndex(catalog)
 	for _, node := range nodes {
-		if _, ok := kinds[node.Kind]; !ok {
+		if !index.hasBlockKind(node.Kind) {
 			return fmt.Errorf("block %q has unknown kind %q", node.ID, node.Kind)
 		}
 		for _, field := range node.Shared {
-			rule, ok := rules[fieldRuleKey(node.Kind, field.ID)]
+			rule, ok := index.field(node.Kind, field.ID)
 			if !ok || rule.File || (rule.Ownership != FieldOwnershipShared && rule.Ownership != FieldOwnershipSource) || rule.ValueKind != field.Value.Kind {
 				return fmt.Errorf("block %q shared field %q does not match the catalog", node.ID, field.ID)
 			}
@@ -253,7 +234,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 			}
 		}
 		for _, field := range node.Localized {
-			rule, ok := rules[fieldRuleKey(node.Kind, field.ID)]
+			rule, ok := index.field(node.Kind, field.ID)
 			if !ok || rule.File || rule.Ownership != FieldOwnershipLocale || rule.ValueKind != field.Value.Kind {
 				return fmt.Errorf("block %q localized field %q does not match the catalog", node.ID, field.ID)
 			}
@@ -264,7 +245,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 			}
 		}
 		for _, file := range node.Files {
-			rule, ok := rules[fieldRuleKey(node.Kind, file.Field)]
+			rule, ok := index.field(node.Kind, file.Field)
 			if !ok {
 				return fmt.Errorf("block %q file field %q does not match the catalog", node.ID, file.Field)
 			}
@@ -274,7 +255,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 			}
 		}
 		for _, relation := range node.Relations {
-			allowed, ok := relations[relationRuleKey(node.Kind, relation.ID)]
+			allowed, ok := index.relationItemKinds(node.Kind, relation.ID)
 			if !ok {
 				return fmt.Errorf("block %q relation %q does not match the catalog", node.ID, relation.ID)
 			}
@@ -283,7 +264,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 					return fmt.Errorf("relation item %q kind %q does not match the catalog", item.ID, item.Kind)
 				}
 				for _, field := range item.Shared {
-					rule, ok := relationFields[relationFieldRuleKey(node.Kind, relation.ID, item.Kind, field.ID)]
+					rule, ok := index.relationField(node.Kind, relation.ID, item.Kind, field.ID)
 					if !ok || rule.File || (rule.Ownership != FieldOwnershipShared && rule.Ownership != FieldOwnershipSource) || rule.ValueKind != field.Value.Kind {
 						return fmt.Errorf("relation item %q shared field %q does not match the catalog", item.ID, field.ID)
 					}
@@ -294,7 +275,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 					}
 				}
 				for _, field := range item.Localized {
-					rule, ok := relationFields[relationFieldRuleKey(node.Kind, relation.ID, item.Kind, field.ID)]
+					rule, ok := index.relationField(node.Kind, relation.ID, item.Kind, field.ID)
 					if !ok || rule.File || rule.Ownership != FieldOwnershipLocale || rule.ValueKind != field.Value.Kind {
 						return fmt.Errorf("relation item %q localized field %q does not match the catalog", item.ID, field.ID)
 					}
@@ -305,7 +286,7 @@ func validateDocumentCatalogValues(catalog Catalog, nodes []Node) error {
 					}
 				}
 				for _, file := range item.Files {
-					rule, ok := relationFields[relationFieldRuleKey(node.Kind, relation.ID, item.Kind, file.Field)]
+					rule, ok := index.relationField(node.Kind, relation.ID, item.Kind, file.Field)
 					if !ok {
 						return fmt.Errorf("relation item %q file field %q does not match the catalog", item.ID, file.Field)
 					}

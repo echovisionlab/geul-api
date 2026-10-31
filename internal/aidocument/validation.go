@@ -122,26 +122,7 @@ func ValidateOperations(document Document, request ApplyRequest) ValidationResul
 		return result
 	}
 
-	kinds := make(map[BlockKind]struct{}, len(document.Catalog.BlockKinds))
-	for _, kind := range document.Catalog.BlockKinds {
-		kinds[kind] = struct{}{}
-	}
-	rules := make(map[string]FieldRule, len(document.Catalog.Fields))
-	for _, rule := range document.Catalog.Fields {
-		rules[fieldRuleKey(rule.BlockKind, rule.Field)] = rule
-	}
-	relationRules := make(map[string]map[RelationItemKind]struct{}, len(document.Catalog.Relations))
-	for _, rule := range document.Catalog.Relations {
-		allowed := make(map[RelationItemKind]struct{}, len(rule.ItemKinds))
-		for _, kind := range rule.ItemKinds {
-			allowed[kind] = struct{}{}
-		}
-		relationRules[relationRuleKey(rule.BlockKind, rule.Relation)] = allowed
-	}
-	relationFieldRules := make(map[string]RelationFieldRule, len(document.Catalog.RelationFields))
-	for _, rule := range document.Catalog.RelationFields {
-		relationFieldRules[relationFieldRuleKey(rule.BlockKind, rule.Relation, rule.ItemKind, rule.Field)] = rule
-	}
+	catalog := newCatalogIndex(document.Catalog)
 	graph := make(map[BlockID]graphBlock, len(document.Nodes))
 	for _, node := range document.Nodes {
 		block := graphBlock{kind: node.Kind, parent: node.Parent, relations: make(map[RelationID]map[RelationItemID]RelationItemKind)}
@@ -157,7 +138,7 @@ func ValidateOperations(document Document, request ApplyRequest) ValidationResul
 
 	role := document.Role()
 	for index, operation := range request.Operations {
-		issue := validateOperation(index, operation, role, document.LocaleExists, len(request.Operations), kinds, rules, relationRules, relationFieldRules, graph)
+		issue := validateOperation(index, operation, role, document.LocaleExists, len(request.Operations), catalog, graph)
 		if issue != nil {
 			result.Issues = append(result.Issues, *issue)
 			continue
@@ -179,10 +160,7 @@ func validateOperation(
 	role LocaleRole,
 	localeExists bool,
 	batchSize int,
-	kinds map[BlockKind]struct{},
-	rules map[string]FieldRule,
-	relationRules map[string]map[RelationItemKind]struct{},
-	relationFieldRules map[string]RelationFieldRule,
+	catalog catalogIndex,
 	graph map[BlockID]graphBlock,
 ) *OperationIssue {
 	issue := func(code IssueCode, handle, message string) *OperationIssue {
@@ -206,7 +184,7 @@ func validateOperation(
 			return resolvedFieldRule{}, issue(IssueUnknownBlock, blockHandle(target.Block), "field target block does not exist")
 		}
 		if !target.relationItem() {
-			rule, ok := rules[fieldRuleKey(block.kind, target.Field)]
+			rule, ok := catalog.field(block.kind, target.Field)
 			if !ok {
 				return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), "field is not defined for the target block kind")
 			}
@@ -227,7 +205,7 @@ func validateOperation(
 		if !ok {
 			return resolvedFieldRule{}, issue(IssueUnknownRelationItem, relationItemHandle(target.Block, target.Relation, target.Item), "relation item does not exist")
 		}
-		rule, ok := relationFieldRules[relationFieldRuleKey(block.kind, target.Relation, itemKind, target.Field)]
+		rule, ok := catalog.relationField(block.kind, target.Relation, itemKind, target.Field)
 		if !ok {
 			return resolvedFieldRule{}, issue(IssueUnknownField, fieldHandle(target), "field is not defined for the relation item kind")
 		}
@@ -284,7 +262,7 @@ func validateOperation(
 		if _, exists := graph[operation.InsertBlock.Block]; exists {
 			return issue(IssueDuplicateBlock, blockHandle(operation.InsertBlock.Block), "block ID already exists")
 		}
-		if _, ok := kinds[operation.InsertBlock.Kind]; !ok {
+		if !catalog.hasBlockKind(operation.InsertBlock.Kind) {
 			return issue(IssueUnknownBlockKind, blockHandle(operation.InsertBlock.Block), "block kind is not in the domain catalog")
 		}
 		return validatePlacement(index, operation.InsertBlock.Block, operation.InsertBlock.Parent, operation.InsertBlock.After, graph)
@@ -314,7 +292,7 @@ func validateOperation(
 		if _, ok := graph[operation.ReplaceBlockKind.Block]; !ok {
 			return issue(IssueUnknownBlock, blockHandle(operation.ReplaceBlockKind.Block), "block does not exist")
 		}
-		if _, ok := kinds[operation.ReplaceBlockKind.Kind]; !ok {
+		if !catalog.hasBlockKind(operation.ReplaceBlockKind.Kind) {
 			return issue(IssueUnknownBlockKind, blockHandle(operation.ReplaceBlockKind.Block), "block kind is not in the domain catalog")
 		}
 		return nil
@@ -338,7 +316,7 @@ func validateOperation(
 		if !ok {
 			return issue(IssueUnknownBlock, blockHandle(op.Block), "relation owner block does not exist")
 		}
-		allowed, ok := relationRules[relationRuleKey(block.kind, op.Relation)]
+		allowed, ok := catalog.relationItemKinds(block.kind, op.Relation)
 		if !ok {
 			return issue(IssueUnknownRelation, relationHandle(op.Block, op.Relation), "relation is not defined for the block kind")
 		}
@@ -387,7 +365,7 @@ func validateOperation(
 		if !ok {
 			return issue(IssueUnknownBlock, blockHandle(op.TargetBlock), "target relation owner block does not exist")
 		}
-		allowed, ok := relationRules[relationRuleKey(target.kind, op.Target)]
+		allowed, ok := catalog.relationItemKinds(target.kind, op.Target)
 		if !ok {
 			return issue(IssueUnknownRelation, relationHandle(op.TargetBlock, op.Target), "target relation is not defined for the block kind")
 		}
@@ -647,18 +625,6 @@ func applyGraphEffect(operation Operation, graph map[BlockID]graphBlock) {
 		target.relations[op.Target][op.Item] = kind
 		graph[op.TargetBlock] = target
 	}
-}
-
-func fieldRuleKey(kind BlockKind, field FieldID) string {
-	return string(kind) + "\x00" + string(field)
-}
-
-func relationRuleKey(kind BlockKind, relation RelationID) string {
-	return string(kind) + "\x00" + string(relation)
-}
-
-func relationFieldRuleKey(kind BlockKind, relation RelationID, itemKind RelationItemKind, field FieldID) string {
-	return string(kind) + "\x00" + string(relation) + "\x00" + string(itemKind) + "\x00" + string(field)
 }
 
 func blockHandle(block BlockID) string { return "block:" + string(block) }

@@ -324,7 +324,7 @@ func TestValidateOperationRejectsMalformedShapeDirectly(t *testing.T) {
 			tableIssue(3, IssueInvalidOperation, "", `operation kind "zz" does not match its payload`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := validateOperation(3, tc.operation, LocaleRoleSource, true, 1, nil, nil, nil, nil, nil)
+			got := validateOperation(3, tc.operation, LocaleRoleSource, true, 1, catalogIndex{}, nil)
 			if got == nil || *got != tc.want {
 				t.Fatalf("issue = %#v, want %#v", got, tc.want)
 			}
