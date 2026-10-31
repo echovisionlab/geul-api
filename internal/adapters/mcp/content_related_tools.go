@@ -139,6 +139,11 @@ type featuredImageArguments struct {
 }
 
 func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	if name == ToolDocumentFeaturedImageDelete {
+		if err := rejectUnadvertisedArguments(arguments, "document_type", "document_id"); err != nil {
+			return executionError(err)
+		}
+	}
 	var input featuredImageArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)

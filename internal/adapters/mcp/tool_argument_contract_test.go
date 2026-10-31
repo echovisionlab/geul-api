@@ -40,7 +40,6 @@ var acceptedUnadvertisedFields = map[string]string{
 	"document_heading_update parent_block_id": "shared heading struct; update rejects parent_block_id",
 	"map_place_create clear_image":            "shared settings struct; create rejects clear_image",
 	"map_place_create map_place_id":           "shared settings struct; create rejects map_place_id",
-	"document_featured_image_delete file_id":  "drift: shared struct; delete ignores file_id",
 	"work_credit_add credit_id":               "drift: shared struct; add ignores credit_id",
 	"work_credit_update artist_id":            "drift: shared struct; update ignores artist_id",
 	"work_credit_update document_id":          "drift: shared struct; update ignores document_id",
