@@ -20,6 +20,11 @@ func (CatalogLinks) DeleteLabelShareLinks(ctx context.Context, tx *gorm.DB, labe
 	return deleteEntityShareLinks(ctx, tx, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
 }
 
+// DeleteArtistShareLinks deletes every share link of the Artist.
+func (CatalogLinks) DeleteArtistShareLinks(ctx context.Context, tx *gorm.DB, artistID string) error {
+	return deleteEntityShareLinks(ctx, tx, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, artistID)
+}
+
 func deleteEntityShareLinks(ctx context.Context, tx *gorm.DB, entityType managev1.ShareLinkEntityType, entityID string) error {
 	return tx.WithContext(ctx).
 		Where("entity_type = ? AND entity_id = ?", entityType.String(), entityID).

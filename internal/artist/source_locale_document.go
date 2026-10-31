@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -50,10 +50,10 @@ func touchArtistRootUpdatedAt(
 		Where("id = ?", artistID).
 		Updates(structured.Fields{"updated_at": now})
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return errs.NotFound("artist", artistID)
+		return domainerr.ResourceNotFound("artist", artistID)
 	}
 	return nil
 }

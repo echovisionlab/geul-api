@@ -3,6 +3,7 @@ package artist
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -38,3 +39,7 @@ func hasArtistAction(actions []managev1.ArtistAction, expected managev1.ArtistAc
 	}
 	return false
 }
+
+// errAuthenticationRequired answers a caller without an authenticated
+// principal.
+var errAuthenticationRequired = domainerr.New(domainerr.Unauthenticated, "", "authentication required")

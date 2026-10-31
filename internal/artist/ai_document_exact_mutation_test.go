@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/google/uuid"
 )
 
@@ -54,7 +55,7 @@ func TestValidateCompiledArtistAIDocumentMutationKeepsLockedStateAuthoritative(t
 			mutation.Batch = &batch
 			test.mutate(&mutation)
 			_, err := validateCompiledArtistAIDocumentMutation(state, mutation, contributor)
-			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			if errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 				t.Fatalf("mismatched compiled mutation error = %v", err)
 			}
 		})

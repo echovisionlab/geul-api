@@ -56,7 +56,7 @@ type ArtistLabelPublicFixture struct {
 	AdminID          string
 	Context          context.Context
 	Suffix           string
-	ArtistService    *artistpublic.ArtistService
+	ArtistService    *artistpublic.ConnectHandler
 	ArtistMedia      artistpublic.MediaProjection
 	LabelService     *labelpublic.ConnectHandler
 	ShareLinkService *sharelinkdomain.Service
@@ -111,16 +111,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	fileDeleter := artistLabelFileDeleter{}
 	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db))
 
-	manageArtist := artistdomain.NewArtistService(
-		db, spiceDB, identityManager,
-		fileDeleter, publisher,
-		artistdomain.Dependencies{
-			Translation: artistadapter.NewTranslation(),
-			Members:     artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
-			Runtime:     artistRuntime,
-		},
-		artistdomain.WithArtistContentBlockStore(contentBlocks),
-	)
+	manageArtist := artistdomain.NewConnectHandler(newFixtureArtistService(t, db, spiceDB, contentBlocks, publisher))
 	labelService, err := labeldomain.NewService(labeldomain.Deps{
 		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
 		ContentBlocks: contentBlocks, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
@@ -148,10 +139,9 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	)
 	shareLinks := sharelinkdomain.NewService(db, sharelinkadapter.NewAuthority(db, spiceDB, nil))
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
-	publicArtist := artistpublic.NewArtistService(
-		db, spiceDB, artistMedia,
-		artistpublic.WithArtistContentBlockStore(contentBlocks),
-	)
+	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, Media: artistMedia})
+	require.NoError(t, err)
+	publicArtist := artistpublic.NewConnectHandler(publicArtistService)
 	labelRuntime := labeladapter.NewPublicRuntime(db, artistLabelPublicCDN, spiceDB, contentBlocks)
 	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{DB: db, Content: labelRuntime, Draft: labelRuntime, Media: labelRuntime})
 	require.NoError(t, err)
@@ -428,7 +418,7 @@ func (artistLabelMediaHydrator) HydrateAuthorizedWorkBlockMediaWithDB(
 
 func createDraftArtistLabelFixtureArtist(
 	t *testing.T,
-	service *artistdomain.ArtistService,
+	service *artistdomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -453,7 +443,7 @@ func createDraftArtistLabelFixtureArtist(
 
 func createPublishedArtistLabelFixtureArtist(
 	t *testing.T,
-	service *artistdomain.ArtistService,
+	service *artistdomain.ConnectHandler,
 	ctx context.Context,
 	name string,
 	slug string,
@@ -514,6 +504,26 @@ func createPublishedArtistLabelFixtureLabel(
 	return created
 }
 
+// newFixtureArtistService is the Artist service of the fixture, auditing to a
+// recorder.
+func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store, publisher artistLabelAsyncPublisher) *artistdomain.Service {
+	t.Helper()
+	service, err := artistdomain.NewService(artistdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
+		ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		Translation:   artistadapter.NewTranslation(),
+		Members:       artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
+		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
+		Labels:        labeladapter.NewArtistLinks(),
+		Releases:      releaseadapter.NewArtistRelations(),
+		ProgramEvents: programeventadapter.NewArtistRelations(),
+		Works:         workadapter.NewArtistRelations(),
+		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	return service
+}
+
 func linkArtistLabelFixture(
 	t *testing.T,
 	db *gorm.DB,
@@ -537,15 +547,7 @@ func linkArtistLabelFixture(
 		WHERE artist.id = ?::uuid
 		LIMIT 1
 	`, artistID).Scan(&state).Error)
-	_, err := artistdomain.NewInternalArtistService(
-		db, publisher, spiceDB,
-		artistdomain.Dependencies{
-			Translation: artistadapter.NewTranslation(),
-			Runtime:     artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
-		},
-		artistdomain.WithInternalArtistContentBlockStore(store),
-		artistdomain.WithInternalArtistCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-	).UpdateArtistDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateArtistDocumentMetadataRequest{
+	_, err := artistdomain.NewInternalConnectHandler(newFixtureArtistService(t, db, spiceDB, store, publisher)).UpdateArtistDocumentMetadata(ctx, connect.NewRequest(&intrav1.UpdateArtistDocumentMetadataRequest{
 		ArtistId: artistID, ExpectedRevision: state.Revision, Locale: "en",
 		ContributorMemberIds: []string{state.Contributor},
 		Update: &intrav1.ArtistDocumentMetadataUpdate{

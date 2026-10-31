@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/stretchr/testify/require"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/stretchr/testify/require"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -376,10 +378,13 @@ type recordingArtistDocumentDiscovery struct {
 	err      error
 }
 
-func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, request *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
-	discovery.ctx, discovery.request = ctx, request
+func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, query artist.ListArtistsQuery) (artist.AdminArtistPage, error) {
+	discovery.ctx = ctx
+	discovery.request = connect.NewRequest(&managev1.ListArtistsAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, Filters: query.Filters, Sorts: query.Sorts,
+	})
 	if discovery.response == nil {
 		discovery.response = &managev1.ListArtistsAdminResponse{}
 	}
-	return connect.NewResponse(discovery.response), discovery.err
+	return artist.AdminArtistPage{Artists: discovery.response.Artists, Pagination: discovery.response.Pagination}, discovery.err
 }

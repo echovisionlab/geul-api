@@ -4,7 +4,6 @@
 1 internal/account/public
 1 internal/adapters/sharelink
 11 internal/adapters/translation
-6 internal/artist
 1 internal/audience
 1 internal/authentication
 5 internal/campaign

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -66,7 +67,7 @@ type MemberReferenceDiscovery interface {
 	SearchMembers(context.Context, member.SearchMembersQuery) ([]*commonv1.MemberSummary, error)
 }
 type ArtistReferenceDiscovery interface {
-	ListArtists(context.Context, *connect.Request[managev1.ListArtistsRequest]) (*connect.Response[managev1.ListArtistsResponse], error)
+	ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error)
 }
 type FileReferenceDiscovery interface {
 	ListFileManagerItems(context.Context, *connect.Request[managev1.ListFileManagerItemsRequest]) (*connect.Response[managev1.ListFileManagerItemsResponse], error)
@@ -193,12 +194,12 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 			}
 		}
 	case "artist":
-		response, err := tools.artists.ListArtists(ctx, connect.NewRequest(&managev1.ListArtistsRequest{Pagination: pagination, Filters: searchFilter}))
+		page, err := tools.artists.ListArtists(ctx, artist.ListArtistsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: searchFilter})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = response.Msg.Pagination.GetHasMore()
-		for _, item := range response.Msg.Artists {
+		hasMore = page.Pagination.GetHasMore()
+		for _, item := range page.Artists {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", item.Status, false))
 			}

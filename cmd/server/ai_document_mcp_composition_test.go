@@ -17,6 +17,7 @@ import (
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
+	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -476,9 +477,6 @@ type compositionClientReferences struct {
 type compositionMapPlaceReferences struct {
 	managev1connect.UnimplementedMapPlaceServiceHandler
 }
-type compositionArtistReferences struct {
-	managev1connect.UnimplementedArtistServiceHandler
-}
 type compositionFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
 }
@@ -524,7 +522,7 @@ func compositionContentApplications() contentMCPApplications {
 		clients:      &compositionClientReferences{},
 		mapPlaces:    &compositionMapPlaceReferences{},
 		members:      &member.Service{},
-		artists:      &compositionArtistReferences{},
+		artists:      &artistdomain.Service{},
 		files:        &compositionFileReferences{},
 		eventTypes:   &compositionProgramEventTypeReferences{},
 		eventSeries:  &compositionProgramEventSeriesReferences{},
@@ -775,15 +773,14 @@ func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.
 }
 
 type compositionArtistApplication struct {
-	managev1connect.UnimplementedArtistServiceHandler
 	principal *auth.UserInfo
 }
 
-func (application *compositionArtistApplication) ListArtistsAdmin(ctx context.Context, _ *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
+func (application *compositionArtistApplication) ListArtistsAdmin(ctx context.Context, _ artistdomain.ListArtistsQuery) (artistdomain.AdminArtistPage, error) {
 	application.principal = auth.GetUser(ctx)
-	return connect.NewResponse(&managev1.ListArtistsAdminResponse{Artists: []*managev1.ArtistWithStats{{Artist: &managev1.Artist{
+	return artistdomain.AdminArtistPage{Artists: []*managev1.ArtistWithStats{{Artist: &managev1.Artist{
 		Id: "55555555-5555-4555-8555-555555555555", Name: "Artist A", Status: "published", SourceLocale: "en", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
-	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}), nil
+	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}, nil
 }
 
 func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContext(t *testing.T) {

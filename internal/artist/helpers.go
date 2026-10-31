@@ -5,8 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -27,10 +26,10 @@ func ensureSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Valu
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		return errors.Internal(err)
+		return err
 	}
 	if count != 0 {
-		return errors.SlugAlreadyExists(entity, slug)
+		return domainerr.Duplicate(entity, "slug", slug)
 	}
 	return nil
 }
@@ -100,31 +99,4 @@ func buildManageStateTransitionContentUpdatedEvent(entityType managev1.ContentEn
 
 func buildManageMediaMutationContentUpdatedEvent(entityType managev1.ContentEntityType, entityID, path string) *managev1.ContentUpdatedEvent {
 	return buildContentUpdatedEvent(entityType, entityID, []*managev1.ContentUpdatedField{{Path: path, Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_MEDIA}})
-}
-
-// publishContentUpdatedEvent schedules content.updated in the caller's
-// mutation transaction so the signal commits or rolls back with the data.
-func publishContentUpdatedEvent(
-	ctx context.Context,
-	tx *gorm.DB,
-	publisher AsyncPublisher,
-	event *managev1.ContentUpdatedEvent,
-) error {
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
-
-func LabelSourceTitleSQL(alias string) string {
-	return sourceTitleSQL(alias, "label", "label_translation", "lt")
-}
-func ReleaseSourceTitleSQL(alias string) string {
-	return sourceTitleSQL(alias, "release", "release_translation", "rt")
-}
-func WorkSourceTitleSQL(alias string) string {
-	return sourceTitleSQL(alias, "work", "work_translation", "wt")
-}
-func sourceTitleSQL(alias, entity, table, translationAlias string) string {
-	if strings.TrimSpace(alias) == "" {
-		alias = entity
-	}
-	return "COALESCE((SELECT " + translationAlias + ".title FROM " + table + " AS " + translationAlias + " JOIN " + entity + " AS source ON source.id = " + translationAlias + ".entity_id AND source.source_locale = " + translationAlias + ".locale WHERE " + translationAlias + ".entity_id = " + alias + ".id LIMIT 1), '')"
 }

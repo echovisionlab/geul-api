@@ -10,7 +10,7 @@
 9 internal/adapters/sitemap
 2 internal/adapters/sitesettings
 1 internal/adapters/translation
-16 internal/artist
+14 internal/artist
 18 internal/artist/public
 3 internal/audience
 23 internal/campaign

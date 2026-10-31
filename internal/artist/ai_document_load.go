@@ -2,11 +2,11 @@ package artist
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -16,13 +16,10 @@ import (
 
 // LoadAIDocumentState preserves published visibility while keeping non-public
 // reads behind Artist's current SpiceDB authority fence.
-func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistID, locale string) (AIDocumentState, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil || s.contentBlocks == nil {
-		return AIDocumentState{}, errs.Internal(errors.New("artist AI document dependencies are not configured"))
-	}
+func (s *Service) LoadAIDocumentState(ctx context.Context, artistID, locale string) (AIDocumentState, error) {
 	id, err := canonicalArtistUUID(artistID)
 	if err != nil {
-		return AIDocumentState{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
+		return AIDocumentState{}, domainerr.InvalidField("artist_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeArtistDocumentLocale(locale)
 	if err != nil {
@@ -30,18 +27,18 @@ func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistI
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.Banned || principal.IdentityID == "" || principal.MemberID == "" {
-		return AIDocumentState{}, errs.AuthenticationRequired()
+		return AIDocumentState{}, errAuthenticationRequired
 	}
 
 	var state AIDocumentState
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
 		root, err := loadArtistAIDocumentRoot(ctx, tx, id.String(), "KEY SHARE")
 		if err != nil {
 			return err
 		}
 		published, valid := artistAIDocumentLifecycle(root.Status)
 		if !valid {
-			return errs.InternalMsg("Artist has an unsupported lifecycle status")
+			return errors.New("Artist has an unsupported lifecycle status")
 		}
 		if !published {
 			if err := artistEntity.RequirePermission(ctx, s.spiceDB, id.String(), policyv1.Artist.View); err != nil {
@@ -52,7 +49,7 @@ func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistI
 			ctx, tx, root, locale, principal.MemberID.String(),
 		)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return state, err
 }
 
@@ -78,17 +75,17 @@ func loadArtistAIDocumentRoot(
 	var root artistAIDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return artistAIDocumentRoot{}, errs.NotFound("artist", artistID)
+			return artistAIDocumentRoot{}, domainerr.ResourceNotFound("artist", artistID)
 		}
-		return artistAIDocumentRoot{}, errs.Internal(err)
+		return artistAIDocumentRoot{}, err
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
-		return artistAIDocumentRoot{}, errs.FailedPrecondition("Artist content document is not initialized")
+		return artistAIDocumentRoot{}, domainerr.Precondition("Artist content document is not initialized")
 	}
 	return root, nil
 }
 
-func (s *InternalArtistService) loadAIDocumentStateAfterAuthorization(
+func (s *Service) loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
 	tx *gorm.DB,
 	root artistAIDocumentRoot,

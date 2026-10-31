@@ -10,6 +10,7 @@ import (
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -182,8 +183,10 @@ func (r *recordingMemberReferences) SearchMembers(_ context.Context, query membe
 	return items, nil
 }
 
-type recordingArtistReferences struct {
-	managev1connect.UnimplementedArtistServiceHandler
+type recordingArtistReferences struct{}
+
+func (*recordingArtistReferences) ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error) {
+	return artist.ArtistPage{}, nil
 }
 
 type recordingFileReferences struct {

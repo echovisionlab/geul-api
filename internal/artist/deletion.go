@@ -7,13 +7,11 @@ import (
 	"encoding/hex"
 	"sort"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	"gorm.io/gorm"
 )
 
 type artistDeletionImpact struct {
@@ -23,130 +21,51 @@ type artistDeletionImpact struct {
 	RelationCount int32
 }
 
-type artistDeletionImpactRow struct {
-	Domain        string `gorm:"column:domain"`
-	EntityID      string `gorm:"column:entity_id"`
-	Label         string `gorm:"column:label"`
-	RelationCount int32  `gorm:"column:relation_count"`
+// PreviewDeleteArtistQuery reads what deleting an Artist would detach.
+type PreviewDeleteArtistQuery struct {
+	ID string
 }
 
-func (s *ArtistService) PreviewDeleteArtist(
-	ctx context.Context,
-	req *connect.Request[managev1.PreviewDeleteArtistRequest],
-) (*connect.Response[managev1.PreviewDeleteArtistResponse], error) {
-	if err := artistEntity.RequirePermission(ctx, s.spiceDB, req.Msg.Id, policyv1.Artist.Delete); err != nil {
+// PreviewDeleteArtist lists the child Artists, Labels, Program Events,
+// Releases, Tracks and Works that reference the Artist, with the revision
+// DeleteArtist checks.
+func (s *Service) PreviewDeleteArtist(ctx context.Context, query PreviewDeleteArtistQuery) (*managev1.PreviewDeleteArtistResponse, error) {
+	if err := artistEntity.RequirePermission(ctx, s.spiceDB, query.ID, policyv1.Artist.Delete); err != nil {
 		return nil, err
 	}
-	impacts, err := loadArtistDeletionImpacts(ctx, s.db, req.Msg.Id)
-	if err != nil {
-		return nil, errs.Internal(err)
+	var impacts []artistDeletionImpact
+	if err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+		var err error
+		impacts, err = s.loadArtistDeletionImpacts(ctx, tx, query.ID)
+		return err
+	}); err != nil {
+		return nil, err
 	}
-	return connect.NewResponse(buildArtistDeletionPreview(impacts)), nil
+	return buildArtistDeletionPreview(impacts), nil
 }
 
-func loadArtistDeletionImpacts(ctx context.Context, db *gorm.DB, artistID string) ([]artistDeletionImpact, error) {
-	queries := []struct {
-		domain managev1.ArtistRelationDomain
-		sql    string
-	}{
-		{
-			domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_CHILD_ARTIST,
-			sql: `
-				SELECT child.id::text AS entity_id,
-				       ` + ArtistSourceTitleSQL("child") + ` AS label,
-				       1::integer AS relation_count
-				FROM artist AS child
-				WHERE child.parent_artist_id = ?::uuid
-			`,
-		},
-		{
-			domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_LABEL,
-			sql: `
-				SELECT label.id::text AS entity_id,
-				       ` + LabelSourceTitleSQL("label") + ` AS label,
-				       1::integer AS relation_count
-				FROM artist_label
-				JOIN label ON label.id = artist_label.label_id
-				WHERE artist_label.artist_id = ?::uuid
-			`,
-		},
-		{
-			domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_PROGRAM_EVENT,
-			sql: `
-				SELECT program_event.id::text AS entity_id,
-				       program_event.title AS label,
-				       COUNT(*)::integer AS relation_count
-				FROM (
-					SELECT event_id FROM program_event_artist WHERE artist_id = ?::uuid
-					UNION ALL
-					SELECT event_id FROM program_event_credit WHERE artist_id = ?::uuid
-				) AS relation
-				JOIN program_event ON program_event.id = relation.event_id
-				GROUP BY program_event.id, program_event.title
-			`,
-		},
-		{
-			domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_RELEASE,
-			sql: `
-				SELECT release.id::text AS entity_id,
-				       ` + ReleaseSourceTitleSQL("release") + ` AS label,
-				       COUNT(*)::integer AS relation_count
-				FROM (
-					SELECT release_id FROM release_artist WHERE artist_id = ?::uuid
-					UNION ALL
-					SELECT release_id FROM release_credit WHERE artist_id = ?::uuid
-				) AS relation
-				JOIN release ON release.id = relation.release_id
-				GROUP BY release.id
-			`,
-		},
-		{
-			domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_TRACK,
-			sql: `
-				SELECT track.id::text AS entity_id,
-				       track.title AS label,
-				       COUNT(*)::integer AS relation_count
-				FROM track_credit
-				JOIN track ON track.id = track_credit.track_id
-				WHERE track_credit.artist_id = ?::uuid
-				GROUP BY track.id, track.title
-			`,
-		},
-		{
-			domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_WORK,
-			sql: `
-				SELECT work.id::text AS entity_id,
-				       ` + WorkSourceTitleSQL("work") + ` AS label,
-				       COUNT(*)::integer AS relation_count
-				FROM work_credit
-				JOIN work ON work.id = work_credit.work_id
-				WHERE work_credit.artist_id = ?::uuid
-				GROUP BY work.id
-			`,
-		},
-	}
-
+// loadArtistDeletionImpacts lists what references the Artist, ordered by
+// relation domain and entity ID.
+func (s *Service) loadArtistDeletionImpacts(ctx context.Context, db *gorm.DB, artistID string) ([]artistDeletionImpact, error) {
 	impacts := make([]artistDeletionImpact, 0)
-	for _, query := range queries {
-		var rows []artistDeletionImpactRow
-		argumentCount := 1
-		if query.domain == managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_PROGRAM_EVENT ||
-			query.domain == managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_RELEASE {
-			argumentCount = 2
-		}
-		arguments := make(structured.Values, argumentCount)
-		for i := range arguments {
-			arguments[i] = artistID
-		}
-		if err := db.WithContext(ctx).Raw(query.sql, arguments...).Scan(&rows).Error; err != nil {
+	for _, related := range []struct {
+		domain managev1.ArtistRelationDomain
+		load   func(context.Context, *gorm.DB, string) ([]entityparticipant.Related, error)
+	}{
+		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_CHILD_ARTIST, load: loadChildArtists},
+		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_LABEL, load: s.loadArtistLabels},
+		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_PROGRAM_EVENT, load: s.programEvents.ProgramEventsOfArtist},
+		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_RELEASE, load: s.releases.ReleasesOfArtist},
+		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_TRACK, load: s.releases.TracksOfArtist},
+		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_WORK, load: s.works.WorksOfArtist},
+	} {
+		rows, err := related.load(ctx, db, artistID)
+		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
 			impacts = append(impacts, artistDeletionImpact{
-				Domain:        query.domain,
-				EntityID:      row.EntityID,
-				Label:         row.Label,
-				RelationCount: row.RelationCount,
+				Domain: related.domain, EntityID: row.ID, Label: row.DisplayName, RelationCount: row.RelationCount,
 			})
 		}
 	}
@@ -157,6 +76,38 @@ func loadArtistDeletionImpacts(ctx context.Context, db *gorm.DB, artistID string
 		return impacts[i].EntityID < impacts[j].EntityID
 	})
 	return impacts, nil
+}
+
+func loadChildArtists(ctx context.Context, db *gorm.DB, artistID string) ([]entityparticipant.Related, error) {
+	var rows []entityparticipant.Related
+	err := db.WithContext(ctx).Raw(`
+		SELECT child.id::text AS id,
+		       `+ArtistSourceTitleSQL("child")+` AS display_name,
+		       1::integer AS relation_count
+		FROM artist AS child
+		WHERE child.parent_artist_id = ?::uuid
+	`, artistID).Scan(&rows).Error
+	return rows, err
+}
+
+// loadArtistLabels lists the Labels the Artist links with their source
+// titles.
+func (s *Service) loadArtistLabels(ctx context.Context, db *gorm.DB, artistID string) ([]entityparticipant.Related, error) {
+	var labelIDs []string
+	if err := db.WithContext(ctx).Table("artist_label").Select("label_id::text").Where("artist_id = ?::uuid", artistID).Scan(&labelIDs).Error; err != nil {
+		return nil, err
+	}
+	titles, err := s.labels.LabelTitles(ctx, db, labelIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]entityparticipant.Related, 0, len(labelIDs))
+	for _, labelID := range labelIDs {
+		if title, exists := titles[labelID]; exists {
+			rows = append(rows, entityparticipant.Related{ID: labelID, DisplayName: title, RelationCount: 1})
+		}
+	}
+	return rows, nil
 }
 
 func artistDeletionRevision(impacts []artistDeletionImpact) string {

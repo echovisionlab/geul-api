@@ -23,7 +23,7 @@ func TestArtistServiceListSlugAndManagerWorkflowsIntegration(t *testing.T) {
 	managerID := testutil.IntegrationUUID()
 	adminMemberID := seedArtistIdentity(t, db, adminID, "Artist Workflow Admin")
 	managerMemberID := seedArtistIdentity(t, db, managerID, "Artist Workflow Manager")
-	artistSvc := newArtistIntegrationSpiceDBService(t, db, adminID, &recordingArtistFileDeleter{})
+	artistSvc := newArtistIntegrationSpiceDBService(t, db, adminID)
 
 	adminCtx := artistIntegrationAdminCtx(adminID)
 	publishedSlug := "artist-list-published-" + testutil.IntegrationUUID()
@@ -116,11 +116,12 @@ func TestArtistServiceListSlugAndManagerWorkflowsIntegration(t *testing.T) {
 	require.Equal(t, "Artist Workflow Manager", manager.Member.Nickname)
 	require.Equal(t, managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_MANAGER, manager.Role)
 
-	managerCtx := auth.WithUser(context.Background(), &auth.UserInfo{
+	managerCtx := auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(managerID),
 		MemberID:      auth.MemberID(managerMemberID),
 		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
+		Onboarded:     true,
 	})
 	myArtists, err := artistSvc.ListMyArtists(managerCtx, connect.NewRequest(&managev1.ListMyArtistsRequest{
 		Filters: []*commonv1.FilterSpec{{
