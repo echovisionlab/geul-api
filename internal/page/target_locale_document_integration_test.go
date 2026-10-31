@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -27,11 +29,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := workIntegrationAdminCtx(identityID)
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
-	service := NewPageService(
-		db, newPageRuntimeForTest(db, "https://cdn.example.com"), &recordingPageDeleteFileDeleter{},
-		noopAsyncPublisher{}, &fakeIdentityManager{identity: postIntegrationIdentity(identityID, "en")}, spiceDB,
-		WithPageContentBlockStore(store), WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	service := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: &recordingPageDeleteFileDeleter{}, ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	created, err := service.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{Title: "Page target locale CAS"}))
 	require.NoError(t, err)
 	documentID, err := loadPageContentDocumentID(ctx, db, created.Msg.Id)
@@ -66,11 +64,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 		WHERE entity_id = ?::uuid AND locale = 'ko'`, created.Msg.Id).Scan(&originalLocaleRow).Error)
 	require.True(t, originalLocaleRow.UpdatedAt.Equal(now), "initial row must use the exact truncated creation timestamp")
 	sessionID := insertPageIntegrationSession(t, db, identityID)
-	internal := NewInternalPageService(
-		db, noopAsyncPublisher{}, spiceDB, newPageRuntimeForTest(db, "https://cdn.example.com"),
-		WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		WithInternalPageContentBlockStore(store), WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	internal := NewInternalConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), ContentBlocks: store, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, Audit: apitelemetry.NewDurableWriter(db)}))
 	loaded, err := internal.LoadPageBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPageBlockDocumentRequest{
 		PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: "ko",
 	}))
@@ -135,7 +129,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	var connectErr *connect.Error
 	require.ErrorAs(t, err, &connectErr)
 	require.Len(t, connectErr.Details(), 1)

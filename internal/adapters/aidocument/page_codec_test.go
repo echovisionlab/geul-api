@@ -122,7 +122,7 @@ func TestPageCodecCompilesSectionMoveByStableColumnHandle(t *testing.T) {
 
 func TestNewPageRegistrationRejectsMissingDomainService(t *testing.T) {
 	_, err := NewPageRegistration(nil)
-	require.ErrorContains(t, err, "dependencies are required")
+	require.ErrorContains(t, err, "page AI document port is required")
 }
 
 func TestCompilePageMetadataPreservesExplicitEmptyAndRejectsUnset(t *testing.T) {

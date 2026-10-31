@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -64,7 +63,7 @@ func readyManageOgAssetRef(
 	}
 	ready, err := assets.ResolveReadyAssetRefs(ctx, db, ids)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, id := range ids {
 		if ref := ready[id]; ref != nil {

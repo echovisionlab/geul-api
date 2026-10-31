@@ -12,6 +12,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -32,20 +33,13 @@ type pagePort struct {
 }
 
 type pageDocumentAPI interface {
-	Load(context.Context, string, string) (pagedomain.AIDocumentState, error)
-	ExecuteAIDocumentMutation(
-		context.Context,
-		string,
-		string,
-		pagedomain.AIDocumentExecutionMode,
-		pagedomain.AIDocumentMutationCompiler,
-	) (pagedomain.AIDocumentMutationResult, error)
+	LoadAIDocument(context.Context, pagedomain.LoadAIDocumentQuery) (pagedomain.AIDocumentState, error)
+	ExecuteAIDocumentMutation(context.Context, pagedomain.ExecuteAIDocumentMutationCommand) (pagedomain.AIDocumentMutationResult, error)
 }
 
-func NewPageRegistration(internal *pagedomain.InternalPageService) (DomainRegistration, error) {
-	application, err := pagedomain.NewAIDocumentService(internal)
-	if err != nil {
-		return DomainRegistration{}, err
+func NewPageRegistration(application *pagedomain.Service) (DomainRegistration, error) {
+	if application == nil {
+		return DomainRegistration{}, errors.New("page AI document port is required")
 	}
 	codec, err := NewPageCodec()
 	if err != nil {
@@ -77,7 +71,7 @@ func (p *pagePort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 	if err := validatePageIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.application.Load(ctx, string(identity.Reference), string(locale))
+	state, err := p.application.LoadAIDocument(ctx, pagedomain.LoadAIDocumentQuery{PageID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -111,12 +105,9 @@ func (p *pagePort) executeMutation(
 	}
 
 	run := newExactMutationRun("Page")
-	domainResult, err := p.application.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state pagedomain.AIDocumentState) (pagedomain.AIDocumentMutation, error) {
+	domainResult, err := p.application.ExecuteAIDocumentMutation(ctx, pagedomain.ExecuteAIDocumentMutationCommand{
+		PageID: string(identity.Reference), Locale: string(request.Locale), Mode: mode,
+		Compile: func(state pagedomain.AIDocumentState) (pagedomain.AIDocumentMutation, error) {
 			current, err := p.project(identity, request.Locale, state)
 			if err != nil {
 				return pagedomain.AIDocumentMutation{}, err
@@ -140,7 +131,7 @@ func (p *pagePort) executeMutation(
 			}
 			return mutation, nil
 		},
-	)
+	})
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
 			err, mode == pagedomain.AIDocumentExecutionValidate,
@@ -442,7 +433,11 @@ func pageDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
+	message := err.Error()
+	if classified, ok := errs.Classified(err); ok {
+		message = classified.Error()
+	}
+	return &core.OperationIssue{Operation: index, Code: code, Message: message}
 }
 
 func pageOperationHandles(operation core.Operation) []string {

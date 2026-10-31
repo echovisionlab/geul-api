@@ -46,17 +46,7 @@ func TestPageMenuTargetFailureRollsBackSlugAndDeleteIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
-	pageSvc := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		newPageIntegrationFiles(db, spiceDB),
-		noopAsyncPublisher{},
-		nil,
-		spiceDB,
-		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		WithPageMenuTargets(failingPageMenuTargets{}),
-	)
+	pageSvc := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: newPageIntegrationFiles(db, spiceDB), ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB), MediaHydrator: passthroughPageContentBlockMediaHydrator{}, MenuTargets: failingPageMenuTargets{}}))
 
 	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	originalSlug := "page-menu-rollback-original-" + suffix

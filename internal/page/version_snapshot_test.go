@@ -21,7 +21,7 @@ func TestPageVersionProtoFormatting(t *testing.T) {
 	contentSnapshot := requireVersionContentSnapshot(t, "en", &title, &summary)
 	digest := sha256.Sum256(contentSnapshot)
 
-	version, err := (&PageService{}).toProtoPageVersion(&model.PageVersion{
+	version, err := toProtoPageVersion(&model.PageVersion{
 		ID: "page-version-1", Version: 3, Title: &title, Summary: &summary,
 		ContentSnapshot:      contentSnapshot,
 		ContributorMemberIDs: []string{"member-2", "member-1", "member-2"},

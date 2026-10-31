@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -239,7 +240,7 @@ func TestDocumentVersionsListEnforcesPaginationBeforeCallingApplication(t *testi
 				case "work":
 					pagination = works.versions.Msg.Pagination
 				case "page":
-					pagination = pages.versions.Msg.Pagination
+					pagination = &commonv1.PaginationRequest{Limit: pages.versions.Page.Limit, Offset: pages.versions.Page.Offset}
 				}
 				if pagination.Limit != test.limit || pagination.Offset != test.offset {
 					t.Fatalf("pagination=%+v, want limit=%d offset=%d", pagination, test.limit, test.offset)
@@ -351,11 +352,26 @@ func (r *recordingWorkRelated) UpdateWorkCredit(_ context.Context, request *conn
 }
 
 type recordingPageRelated struct {
-	managev1connect.UnimplementedPageServiceHandler
-	versions *connect.Request[managev1.ListPageVersionsRequest]
+	versions *pagedomain.ListPageVersionsQuery
 }
 
-func (r *recordingPageRelated) ListPageVersions(_ context.Context, request *connect.Request[managev1.ListPageVersionsRequest]) (*connect.Response[managev1.ListPageVersionsResponse], error) {
-	r.versions = request
-	return connect.NewResponse(&managev1.ListPageVersionsResponse{Pagination: (queryutil.Pagination{Limit: request.Msg.Pagination.Limit, Offset: request.Msg.Pagination.Offset}).BuildResponse(6)}), nil
+func (r *recordingPageRelated) ListPageVersions(_ context.Context, query pagedomain.ListPageVersionsQuery) (*managev1.ListPageVersionsResponse, error) {
+	r.versions = &query
+	return &managev1.ListPageVersionsResponse{Pagination: (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6)}, nil
+}
+
+func (*recordingPageRelated) SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (*managev1.SetPageFeaturedImageResponse, error) {
+	return nil, errors.New("set page featured image is not part of this test")
+}
+
+func (*recordingPageRelated) DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error) {
+	return nil, errors.New("delete page featured image is not part of this test")
+}
+
+func (*recordingPageRelated) RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (*managev1.Page, error) {
+	return nil, errors.New("restore page version is not part of this test")
+}
+
+func (*recordingPageRelated) CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (*managev1.CheckPageSlugAvailableResponse, error) {
+	return nil, errors.New("check page slug is not part of this test")
 }

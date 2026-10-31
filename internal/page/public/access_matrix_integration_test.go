@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -92,7 +94,7 @@ const (
 type pageAccessMatrixFixture struct {
 	db          *gorm.DB
 	blocks      *contentblock.Store
-	manage      *pagedomain.PageService
+	manage      *pagedomain.ConnectHandler
 	adminCtx    context.Context
 	adminID     string
 	adminMember string
@@ -119,19 +121,10 @@ func newPageAccessMatrixFixture(t *testing.T) *pageAccessMatrixFixture {
 		`INSERT INTO user_tag_mapping (member_id, tag_id, created_at) VALUES (?::uuid, ?::uuid, NOW())`,
 		auth.GetUser(taggedCtx).MemberID.String(), tagID,
 	).Error)
+	manage, _ := newPublicPageManagement(t, db, spiceDB, blocks, files)
 	return &pageAccessMatrixFixture{
 		db: db, blocks: blocks, files: files,
-		manage: pagedomain.NewPageService(
-			db,
-			newPublicPageRuntimeForTest(db, "https://cdn.example.com"),
-			files,
-			publicReferenceAsyncPublisher{},
-			&publicReferenceIdentityManager{identity: &auth.Identity{}},
-			spiceDB,
-			pagedomain.WithPageContentBlockStore(blocks),
-			pagedomain.WithPageContentBlockMediaHydrator(files),
-			pagedomain.WithPageMenuTargets(pageAccessMatrixMenuTargets{}),
-		),
+		manage:      manage,
 		adminCtx:    publicPrincipalContext(adminMemberID, adminID),
 		adminID:     adminID,
 		adminMember: adminMemberID,
@@ -148,27 +141,14 @@ func seedPageAccessMatrixReader(t *testing.T, db *gorm.DB, name string) context.
 	return publicPrincipalContext(memberID, identityID)
 }
 
-// pageAccessMatrixMenuTargets lets DeletePage run; no Menu points at the
-// matrix Pages.
-type pageAccessMatrixMenuTargets struct{}
-
-func (pageAccessMatrixMenuTargets) UpdateSlug(context.Context, *gorm.DB, string, string, string, string) error {
-	return nil
-}
-
-func (pageAccessMatrixMenuTargets) Remove(context.Context, *gorm.DB, string, string, string) error {
-	return nil
-}
-
-func (f *pageAccessMatrixFixture) service(t *testing.T) (*PageService, *recordingPageMedia) {
+func (f *pageAccessMatrixFixture) service(t *testing.T) (*ConnectHandler, *recordingPageMedia) {
 	t.Helper()
 	media := &recordingPageMedia{publicPageMediaFixture: publicPageMediaFixture{files: f.files}}
 	access := publicPageAccessFixture{spiceDB: publicIntegrationSpiceDB(t)}
-	return NewPageService(
-		f.db, access, access, media,
-		WithPageContentBlockStore(f.blocks),
-		WithPageAccessPermissionChecker(publicIntegrationSpiceDB(t)),
-	), media
+	return newPublicPageHandler(t, Deps{
+		DB: f.db, DraftAccess: access, ShareLinks: access, Media: media,
+		Blocks: f.blocks, Permissions: publicIntegrationSpiceDB(t),
+	}), media
 }
 
 func (f *pageAccessMatrixFixture) viewerContext(viewer pageAccessViewer) context.Context {
@@ -339,7 +319,7 @@ func TestPublicPageAccessMatrixIntegration(t *testing.T) {
 					response, err := svc.Get(ctx, request)
 					if tc.wantCode != 0 {
 						require.Nil(t, response)
-						require.Equal(t, tc.wantCode, connect.CodeOf(err))
+						require.Equal(t, tc.wantCode, errs.CodeOf(err))
 						var connectErr *connect.Error
 						require.ErrorAs(t, err, &connectErr)
 						require.Equal(t, "page not found", connectErr.Message())

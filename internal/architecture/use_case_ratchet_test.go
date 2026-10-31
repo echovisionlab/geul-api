@@ -20,6 +20,7 @@ const (
 var pipelineDomains = []string{
 	"internal/member",
 	"internal/menu",
+	"internal/page",
 	"internal/series",
 	"internal/sharelink",
 }

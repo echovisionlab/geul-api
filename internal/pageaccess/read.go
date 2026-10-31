@@ -7,7 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -62,51 +62,72 @@ func Evaluate(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageI
 	if allowed {
 		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
 	}
+	groups, err := conditionGroups(ctx, db, checker, principal, policy)
+	if err != nil {
+		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+	}
+	if matchesGroups(groups, policy.Match) {
+		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+	}
+	return commonv1.PageAccessReason_PAGE_ACCESS_REASON_CONDITIONS_NOT_MET, nil
+}
+
+// conditionGroups reports, for each condition group the policy enables,
+// whether principal meets it.
+func conditionGroups(
+	ctx context.Context,
+	db *gorm.DB,
+	checker PermissionChecker,
+	principal *auth.UserInfo,
+	policy *commonv1.PageAccessPolicy,
+) ([]bool, error) {
 	groups := make([]bool, 0, 3)
 	if len(policy.AllowedRoles) > 0 {
-		matches := false
-		for _, role := range policy.AllowedRoles {
-			var can policyv1.Can
-			switch role {
-			case policyv1.AuthorizationRole_AUTHOR:
-				can, err = policyv1.Platform.IsAuthor()
-			case policyv1.AuthorizationRole_ADMIN:
-				can, err = policyv1.Platform.IsAdmin()
-			}
-			if err != nil {
-				return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
-			}
-			matches, err = check(ctx, checker, can)
-			if err != nil {
-				return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
-			}
-			if matches {
-				break
-			}
+		matches, err := holdsAnyRole(ctx, checker, policy.AllowedRoles)
+		if err != nil {
+			return nil, err
 		}
 		groups = append(groups, matches)
 	}
 	if len(policy.UserTagIds) > 0 {
 		var matches bool
 		if principal.MemberID != "" {
-			err = db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM user_tag_mapping WHERE member_id = ? AND tag_id IN ?)", principal.MemberID.String(), policy.UserTagIds).Scan(&matches).Error
-			if err != nil {
-				return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+			if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM user_tag_mapping WHERE member_id = ? AND tag_id IN ?)", principal.MemberID.String(), policy.UserTagIds).Scan(&matches).Error; err != nil {
+				return nil, err
 			}
 		}
 		groups = append(groups, matches)
 	}
 	if policy.NewsletterSubscriber {
 		var matches bool
-		if err = db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM newsletter_subscription WHERE identity_id = ?)", principal.IdentityID.String()).Scan(&matches).Error; err != nil {
-			return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+		if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM newsletter_subscription WHERE identity_id = ?)", principal.IdentityID.String()).Scan(&matches).Error; err != nil {
+			return nil, err
 		}
 		groups = append(groups, matches)
 	}
-	if matchesGroups(groups, policy.Match) {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+	return groups, nil
+}
+
+// holdsAnyRole reports whether the principal holds one of roles.
+func holdsAnyRole(ctx context.Context, checker PermissionChecker, roles []policyv1.AuthorizationRole) (bool, error) {
+	for _, role := range roles {
+		var can policyv1.Can
+		var err error
+		switch role {
+		case policyv1.AuthorizationRole_AUTHOR:
+			can, err = policyv1.Platform.IsAuthor()
+		case policyv1.AuthorizationRole_ADMIN:
+			can, err = policyv1.Platform.IsAdmin()
+		}
+		if err != nil {
+			return false, err
+		}
+		matches, err := check(ctx, checker, can)
+		if err != nil || matches {
+			return matches, err
+		}
 	}
-	return commonv1.PageAccessReason_PAGE_ACCESS_REASON_CONDITIONS_NOT_MET, nil
+	return false, nil
 }
 
 // EvaluateStored reads the policy from the Page root held by its caller.
@@ -144,14 +165,14 @@ func check(ctx context.Context, checker PermissionChecker, can policyv1.Can) (bo
 func Require(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageID string, raw json.RawMessage) error {
 	reason, err := Evaluate(ctx, db, checker, pageID, raw)
 	if err != nil {
-		return failurecause.WithAttrs(errs.Internal(err), slog.String("page_id", pageID))
+		return failurecause.WithAttrs(err, slog.String("page_id", pageID))
 	}
 	switch reason {
 	case commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED:
 		return nil
 	case commonv1.PageAccessReason_PAGE_ACCESS_REASON_AUTHENTICATION_REQUIRED:
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	default:
-		return errs.PermissionDenied("you do not have permission to access this page")
+		return domainerr.Denied("you do not have permission to access this page")
 	}
 }

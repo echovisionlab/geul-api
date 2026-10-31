@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -56,17 +58,7 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	contentBlocks := newPageIntegrationContentBlockStore(t, spiceDB)
 	fileDeleter := &pageManagementFileService{recordingArtistFileDeleter: &recordingArtistFileDeleter{}}
-	pageSvc := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		fileDeleter,
-		noopAsyncPublisher{},
-		nil,
-		spiceDB,
-		WithPageContentBlockStore(contentBlocks),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		WithPageMenuTargets(noopPageMenuTargets{}),
-	)
+	pageSvc := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: fileDeleter, ContentBlocks: contentBlocks, MediaHydrator: passthroughPageContentBlockMediaHydrator{}, MenuTargets: noopPageMenuTargets{}}))
 	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	slug := "page-manager-" + suffix
 	otherSlug := "page-manager-other-" + suffix
@@ -174,16 +166,7 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 	require.NoError(t, err)
 	publishStatements := &pagePublishStatementRecorder{Interface: db.Config.Logger}
 	countedDB := db.Session(&gorm.Session{Logger: publishStatements})
-	countedPageSvc := NewPageService(
-		countedDB,
-		newPageRuntimeForTest(countedDB, "https://cdn.example.com"),
-		fileDeleter,
-		noopAsyncPublisher{},
-		nil,
-		spiceDB,
-		WithPageContentBlockStore(contentBlocks),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	countedPageSvc := NewConnectHandler(newIntegrationPageService(t, Deps{DB: countedDB, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(countedDB, "https://cdn.example.com"), Files: fileDeleter, ContentBlocks: contentBlocks, MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	republished, err := countedPageSvc.PublishPage(ctx, connect.NewRequest(&managev1.PublishPageRequest{Id: other.Msg.Id}))
 	require.NoError(t, err)
 	require.NotNil(t, republished.Msg.PublishedAt)
@@ -194,7 +177,8 @@ func TestPageServiceManagementWorkflowIntegration(t *testing.T) {
 	require.Equal(t, firstPublishedAt, republishedPage.PublishedAt.UTC())
 	publishSQL := publishStatements.snapshot()
 	t.Logf("Page publish SQL statements: %d", len(publishSQL))
-	require.LessOrEqual(t, len(publishSQL), 8, "Page publish must stay on the indexed readiness path")
+	// Eight statements and the audit record every Page mutation appends.
+	require.LessOrEqual(t, len(publishSQL), 9, "Page publish must stay on the indexed readiness path")
 	publishSQLText := strings.ToLower(strings.Join(publishSQL, "\n"))
 	require.Contains(t, publishSQLText, "content_block_attachment")
 	require.NotContains(t, publishSQLText, "content_block_locale")
@@ -272,16 +256,7 @@ func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	admin, spiceDB := pageIntegrationAdmin(t, db)
-	pageSvc := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		newPageIntegrationFiles(db, spiceDB),
-		noopAsyncPublisher{},
-		nil,
-		spiceDB,
-		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageSvc := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: newPageIntegrationFiles(db, spiceDB), ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB), MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	slug := "page-admin-boundary-" + strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	page, err := pageSvc.CreatePage(admin, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Page Admin Boundary",
@@ -304,13 +279,13 @@ func TestPageDraftReadRequiresAdminIntegration(t *testing.T) {
 
 	_, draftByIDErr := pageSvc.GetPage(member, connect.NewRequest(&managev1.GetPageRequest{Id: page.Msg.Id}))
 	_, missingByIDErr := pageSvc.GetPage(member, connect.NewRequest(&managev1.GetPageRequest{Id: testutil.IntegrationUUID()}))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(draftByIDErr))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(missingByIDErr))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(draftByIDErr))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(missingByIDErr))
 
 	_, draftBySlugErr := pageSvc.GetPageBySlug(member, connect.NewRequest(&managev1.GetPageBySlugRequest{Slug: slug}))
 	_, missingBySlugErr := pageSvc.GetPageBySlug(member, connect.NewRequest(&managev1.GetPageBySlugRequest{Slug: slug + "-missing"}))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(draftBySlugErr))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(missingBySlugErr))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(draftBySlugErr))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(missingBySlugErr))
 
 }
 
@@ -318,16 +293,7 @@ func TestPageSlugSupportsSafeNestedRoutesIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
-	pageSvc := NewPageService(
-		db,
-		newPageRuntimeForTest(db, "https://cdn.example.com"),
-		newPageIntegrationFiles(db, spiceDB),
-		noopAsyncPublisher{},
-		nil,
-		spiceDB,
-		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-		WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-	)
+	pageSvc := NewConnectHandler(newIntegrationPageService(t, Deps{DB: db, SpiceDB: spiceDB, Runtime: newPageRuntimeForTest(db, "https://cdn.example.com"), Files: newPageIntegrationFiles(db, spiceDB), ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB), MediaHydrator: passthroughPageContentBlockMediaHydrator{}}))
 	validSlug := "page-nested-" + strings.ReplaceAll(testutil.IntegrationUUID(), "-", "") + "/team"
 	page, err := pageSvc.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Page Nested Route",
@@ -360,13 +326,13 @@ func TestPageSlugSupportsSafeNestedRoutesIntegration(t *testing.T) {
 			Title: "Invalid Page Slug",
 			Slug:  &test.slug,
 		}))
-		require.Equal(t, test.code, connect.CodeOf(err), test.slug)
+		require.Equal(t, test.code, errs.CodeOf(err), test.slug)
 
 		_, err = pageSvc.UpdatePage(ctx, connect.NewRequest(&managev1.UpdatePageRequest{
 			Id:   page.Msg.Id,
 			Slug: &test.slug,
 		}))
-		require.Equal(t, test.code, connect.CodeOf(err), test.slug)
+		require.Equal(t, test.code, errs.CodeOf(err), test.slug)
 
 		available, checkErr := pageSvc.CheckPageSlugAvailable(ctx, connect.NewRequest(&managev1.CheckPageSlugAvailableRequest{
 			Slug: test.slug,
@@ -391,10 +357,7 @@ func pageIntegrationAdmin(t *testing.T, db *gorm.DB) (context.Context, *auth.Spi
 	})
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	return auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
-	}), spiceDB
+	return testutil.NewAuditContext(t, identityID, memberID), spiceDB
 }
 
 func newPageIntegrationContentBlockStore(

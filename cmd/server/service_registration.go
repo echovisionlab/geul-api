@@ -527,16 +527,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(tagPath, tagHandler)
 	slog.Info("Registered service", "path", tagPath)
 
-	pageFiles := pageruntime.NewFiles(fileService)
-	pageService := page.NewAuditedPageService(
-		db, pageRuntime, pageFiles, servicePublisher, kratosClient, telemetryWriter, spicedbClient,
-		page.WithPageContentBlockStore(contentBlockStore),
-		page.WithPageContentBlockMediaHydrator(fileService),
-		page.WithPageMenuTargets(menu.NewTargetLifecycle(telemetryWriter)),
-	)
-	pagePath, pageHandler := managev1connect.NewPageServiceHandler(pageService, handlerOpts...)
+	pageService, err := page.NewService(page.Deps{
+		DB: db, SpiceDB: spicedbClient, Runtime: pageRuntime, Files: pageruntime.NewFiles(fileService),
+		Signals: servicePublisher, ContentBlocks: contentBlockStore, MediaHydrator: fileService,
+		MenuTargets: menu.NewTargetLifecycle(telemetryWriter), Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Page service: %w", err)
+	}
+	pagePath, pageHandler := managev1connect.NewPageServiceHandler(page.NewConnectHandler(pageService), handlerOpts...)
 	mux.Handle(pagePath, pageHandler)
 	slog.Info("Registered service", "path", pagePath)
+	internalPagePath, internalPageHandler := intrav1connect.NewInternalPageServiceHandler(
+		page.NewInternalConnectHandler(pageService), internalHandlerOpts...,
+	)
+	mux.Handle(internalPagePath, internalRPCTrust.collab(internalPageHandler))
+	slog.Info("Registered internal service", "path", internalPagePath)
 
 	menuService, err := menu.NewService(menu.Deps{
 		DB: db, SpiceDB: spicedbClient,
@@ -735,7 +741,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		internalTrust:               internalRPCTrust,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
 		collaborationRuntime:        collaborationRuntime,
-		pageRuntime:                 pageRuntime,
 		workRuntime:                 workRuntime,
 		fileService:                 fileService,
 		postMedia:                   postMedia,
@@ -748,7 +753,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	internalPageService := internalServices.page
 	internalWorkService := internalServices.work
 	internalEmailTemplateService := internalServices.emailTemplate
 	internalCampaignService := internalServices.campaign
@@ -773,7 +777,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.post, err = aidocumentadapter.NewPostRegistration(postService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Post AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.page, err = aidocumentadapter.NewPageRegistration(internalPageService); err != nil {
+	if aiDocumentRegistrations.page, err = aidocumentadapter.NewPageRegistration(pageService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Page AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.work, err = aidocumentadapter.NewWorkRegistration(internalWorkService); err != nil {

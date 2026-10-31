@@ -3,6 +3,8 @@ package page
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"gorm.io/driver/postgres"
@@ -39,7 +41,7 @@ func TestCreateSourceLocaleHonorsExplicitCanonicalLocaleAndRetainsFallback(t *te
 		t.Fatalf("anonymous header fallback=(%q, %v)", locale, err)
 	}
 	for _, requested := range []string{"xx", "EN", "en-US", " en "} {
-		if _, err := resolveCreateSourceLocale(ctx, db, requested, "ja"); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if _, err := resolveCreateSourceLocale(ctx, db, requested, "ja"); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("unsupported locale %q error=%v", requested, err)
 		}
 	}
@@ -53,7 +55,7 @@ func TestNormalizePageDocumentLocaleRequiresExactCanonicalValue(t *testing.T) {
 		t.Fatalf("canonical locale = (%q, %v)", locale, err)
 	}
 	for _, locale := range []string{"KO", "ko-KR", "ko_KR", " ko ", "zh-Hant", "es-MX"} {
-		if _, err := normalizePageDocumentLocale(locale); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if _, err := normalizePageDocumentLocale(locale); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("normalizePageDocumentLocale(%q) error = %v", locale, err)
 		}
 	}

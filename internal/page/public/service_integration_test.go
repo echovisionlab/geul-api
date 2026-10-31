@@ -18,9 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -43,17 +41,8 @@ func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T)
 	)
 	require.NoError(t, err)
 	manageFileService := newPublicReferenceManageFileService(db)
-	manageSvc := newPublicPageManageService(db, publicIntegrationSpiceDB(t), blockStore, manageFileService)
-	internalSvc := pagedomain.NewInternalPageService(
-		db,
-		publicReferenceAsyncPublisher{},
-		publicIntegrationSpiceDB(t),
-		newPublicPageRuntimeForTest(db, "https://cdn.example.com"),
-		pagedomain.WithInternalPageDomainAuditWriter(apitelemetry.NewDurableWriter(db)),
-		pagedomain.WithInternalPageContentBlockStore(blockStore),
-		pagedomain.WithInternalPageContentBlockMediaHydrator(manageFileService),
-	)
-	publicSvc := newPublicPageService(db, publicIntegrationSpiceDB(t), blockStore)
+	manageSvc, internalSvc := newPublicPageManagement(t, db, publicIntegrationSpiceDB(t), blockStore, manageFileService)
+	publicSvc := newPublicPageService(t, db, publicIntegrationSpiceDB(t), blockStore)
 
 	pageSlug := "public-page-" + suffix
 	pageSummary := "Published public page summary " + suffix
@@ -265,34 +254,14 @@ func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T)
 	require.Nil(t, missingSettingsHomepage.Msg.Page)
 }
 
-func newPublicPageManageService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	blocks *contentblock.Store,
-	fileService *publicPageFileGateway,
-) *pagedomain.PageService {
-	return pagedomain.NewPageService(
-		db,
-		newPublicPageRuntimeForTest(db, "https://cdn.example.com"),
-		fileService,
-		publicReferenceAsyncPublisher{},
-		&publicReferenceIdentityManager{identity: &auth.Identity{}},
-		spiceDB,
-		pagedomain.WithPageContentBlockStore(blocks),
-		pagedomain.WithPageContentBlockMediaHydrator(fileService),
-	)
-}
-
-func newPublicPageService(db *gorm.DB, spiceDB *auth.SpiceDBClient, blocks *contentblock.Store) *PageService {
+func newPublicPageService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, blocks *contentblock.Store) *ConnectHandler {
+	t.Helper()
 	files := &publicPageFileGateway{db: db, cdnDomain: "https://cdn.example.com"}
 	access := publicPageAccessFixture{spiceDB: spiceDB}
-	return NewPageService(
-		db,
-		access,
-		access,
-		publicPageMediaFixture{files: files},
-		WithPageContentBlockStore(blocks),
-	)
+	return newPublicPageHandler(t, Deps{
+		DB: db, DraftAccess: access, ShareLinks: access, Media: publicPageMediaFixture{files: files},
+		Blocks: blocks, Permissions: spiceDB,
+	})
 }
 
 type publicPageAccessFixture struct{ spiceDB *auth.SpiceDBClient }

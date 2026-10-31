@@ -24,6 +24,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -457,8 +458,10 @@ func (*compositionPostApplication) ListAIDocuments(
 type compositionWorkApplication struct {
 	managev1connect.UnimplementedWorkServiceHandler
 }
+// compositionPageApplication carries the Page use cases the composition
+// binds; no test calls them.
 type compositionPageApplication struct {
-	managev1connect.UnimplementedPageServiceHandler
+	*page.Service
 }
 type compositionProgramEventApplication struct {
 	managev1connect.UnimplementedProgramEventServiceHandler

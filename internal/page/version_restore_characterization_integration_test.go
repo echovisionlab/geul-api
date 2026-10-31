@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -193,7 +195,7 @@ func TestPageVersionRestoreCharacterizationIntegration(t *testing.T) {
 			requirePageVersionRestoreEvent(t, events[0], entity.id, f.memberID, afterRows.Revision, tc.want)
 
 			err = f.applyBodyAt(t, entity, beforeRows.Revision, "Stale writer body")
-			require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err), "a writer holding the pre-restore revision conflicts")
+			require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err), "a writer holding the pre-restore revision conflicts")
 		})
 	}
 }
@@ -267,7 +269,7 @@ func TestPageVersionRestoreRejectionsIntegration(t *testing.T) {
 
 			entityID, requestVersionID := tc.request(t, entity, other, versionID)
 			_, err := f.restore(tc.ctx, entityID, requestVersionID)
-			require.Equal(t, tc.wantCode, connect.CodeOf(err), "%v", err)
+			require.Equal(t, tc.wantCode, errs.CodeOf(err), "%v", err)
 			var connectErr *connect.Error
 			require.ErrorAs(t, err, &connectErr)
 			require.Equal(t, tc.wantMessage(entity, versionID), connectErr.Message())
@@ -338,8 +340,8 @@ type pageVersionRestoreFixture struct {
 	ctx       context.Context
 	systemCtx context.Context
 	memberID  string
-	manage    *PageService
-	internal  *InternalPageService
+	manage    *ConnectHandler
+	internal  *InternalConnectHandler
 }
 
 func newPageVersionRestoreFixture(t *testing.T) *pageVersionRestoreFixture {
@@ -357,24 +359,17 @@ func newPageVersionRestoreFixture(t *testing.T) *pageVersionRestoreFixture {
 	store, err := contentblock.NewGeneratedStore(NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
 	ctx := withPageAuditedRequestContext(t, pageVersionRestoreUserContext(adminID))
+	pages := newIntegrationPageService(t, Deps{
+		DB: db, SpiceDB: spiceDB, Signals: publisher, ContentBlocks: store, Audit: writer,
+	})
 	return &pageVersionRestoreFixture{
 		db:        db,
 		spiceDB:   spiceDB,
 		ctx:       ctx,
 		systemCtx: withPageAuditedCollabRequestContext(t, ctx),
 		memberID:  testutil.PostIntegrationMemberID(adminID),
-		manage: NewAuditedPageService(
-			db, newPageRuntimeForTest(db, "https://cdn.example.com"), &recordingPageDeleteFileDeleter{}, publisher,
-			&fakeIdentityManager{identity: postIntegrationIdentity(adminID, "en")}, writer, spiceDB,
-			WithPageContentBlockStore(store),
-			WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		),
-		internal: NewInternalPageService(
-			db, publisher, spiceDB, newPageRuntimeForTest(db, "https://cdn.example.com"),
-			WithInternalPageDomainAuditWriter(writer),
-			WithInternalPageContentBlockStore(store),
-			WithInternalPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}),
-		),
+		manage:    NewConnectHandler(pages),
+		internal:  NewInternalConnectHandler(pages),
 	}
 }
 

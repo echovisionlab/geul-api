@@ -3,11 +3,12 @@ package page
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
@@ -74,13 +75,13 @@ func loadPageSourceLocaleMetadataByPageID(
 		normalized,
 	).Scan(&rows)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 
 	states := make(map[string]*PageSourceLocaleMetadata, len(rows))
 	for _, row := range rows {
 		if strings.TrimSpace(row.Locale) == "" {
-			return nil, errs.Internal(fmt.Errorf("page %s has an empty source locale", row.EntityID))
+			return nil, fmt.Errorf("page %s has an empty source locale", row.EntityID)
 		}
 		state := &PageSourceLocaleMetadata{
 			Locale: row.Locale,
@@ -122,7 +123,7 @@ func loadRequiredPageSourceLocaleMetadata(
 		return nil, err
 	}
 	if state == nil {
-		return nil, errs.NotFound("page_translation", pageID)
+		return nil, domainerr.ResourceNotFound("page_translation", pageID)
 	}
 	return state, nil
 }
@@ -137,7 +138,7 @@ func createInitialPageSourceLocaleMetadata(
 	now time.Time,
 ) error {
 	if strings.TrimSpace(sourceLocale) == "" {
-		return errs.Internal(fmt.Errorf("invalid initial Page source locale"))
+		return errors.New("invalid initial Page source locale")
 	}
 
 	if err := db.WithContext(ctx).Exec(`
@@ -157,7 +158,7 @@ func createInitialPageSourceLocaleMetadata(
 		now,
 		now,
 	).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }

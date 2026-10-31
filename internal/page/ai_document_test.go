@@ -96,18 +96,18 @@ func TestPageAIDocumentLayoutMetadataNoopAndRollback(t *testing.T) {
 	seedPageAIDocumentSource(t, db, pageID, "en", "Source")
 	layout := model.DefaultDocumentLayout()
 	before := time.Now().UTC()
-	effect, err := applyPageDocumentLayoutMetadata(t.Context(), db, pageID, layout, before, nil)
+	effect, err := applyPageDocumentLayoutMetadata(t.Context(), db, pageID, layout, before)
 	require.NoError(t, err)
 	require.False(t, effect.Changed)
 	layout.ContentHeight = model.DocumentContentHeightViewport
 	layout.Footer = model.DocumentRegionPlacementPinned
-	effect, err = applyPageDocumentLayoutMetadata(t.Context(), db, pageID, layout, before, nil)
+	effect, err = applyPageDocumentLayoutMetadata(t.Context(), db, pageID, layout, before)
 	require.NoError(t, err)
 	require.True(t, effect.Changed)
 	require.False(t, effect.AffectsTranslationSource)
 	rollback := errors.New("rollback following body failure")
 	err = db.Transaction(func(tx *gorm.DB) error {
-		_, err := applyPageDocumentLayoutMetadata(t.Context(), tx, pageID, model.DefaultDocumentLayout(), time.Now().UTC(), nil)
+		_, err := applyPageDocumentLayoutMetadata(t.Context(), tx, pageID, model.DefaultDocumentLayout(), time.Now().UTC())
 		if err != nil {
 			return err
 		}
@@ -122,8 +122,8 @@ func TestPageAIDocumentLayoutMetadataNoopAndRollback(t *testing.T) {
 
 func TestPageAIDocumentLayoutMetadataRejectsNonSourceAtOwningBoundary(t *testing.T) {
 	contributor, revision, document := uuid.New(), uuid.New(), uuid.New()
-	service := &AIDocumentService{internal: &InternalPageService{}}
-	_, _, err := service.applyAIDocumentMutationInTransaction(t.Context(), nil, AIDocumentMutation{
+	service := &Service{}
+	_, err := service.applyAIDocumentMutationInTransaction(t.Context(), nil, AIDocumentMutation{
 		PageID: uuid.NewString(), Locale: "ko", ObservedSourceLocale: "en", ExpectedRevision: revision,
 		ContributorMemberID: contributor.String(),
 		Metadata:            AIDocumentMetadataPatch{SetDocumentLayout: true, DocumentLayout: model.DefaultDocumentLayout()},

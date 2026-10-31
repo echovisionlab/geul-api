@@ -3,7 +3,7 @@ package page
 import (
 	"context"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -40,7 +40,7 @@ func isSlugAvailable(
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	return count == 0, nil
 }
@@ -58,7 +58,7 @@ func ensureSlugAvailable(
 		return err
 	}
 	if !available {
-		return errs.SlugAlreadyExists(entity, slug)
+		return domainerr.Duplicate(entity, "slug", slug)
 	}
 	return nil
 }

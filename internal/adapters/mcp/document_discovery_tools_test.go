@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/stretchr/testify/require"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/stretchr/testify/require"
+
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -221,9 +223,9 @@ func (discovery *recordingProgramEventDocumentDiscovery) ListProgramEventsAdmin(
 
 func (*recordingPageDocumentDiscovery) ListPagesAdmin(
 	context.Context,
-	*connect.Request[managev1.ListPagesAdminRequest],
-) (*connect.Response[managev1.ListPagesAdminResponse], error) {
-	return connect.NewResponse(&managev1.ListPagesAdminResponse{}), nil
+	pagedomain.ListPagesAdminQuery,
+) (*managev1.ListPagesAdminResponse, error) {
+	return &managev1.ListPagesAdminResponse{}, nil
 }
 
 func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {

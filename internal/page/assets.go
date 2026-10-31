@@ -6,186 +6,148 @@ import (
 	"log/slog"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// pageSortConfig defines allowed sort fields for pages
-func (s *PageService) SetPageFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.SetPageFeaturedImageRequest],
-) (_ *connect.Response[managev1.SetPageFeaturedImageResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
+type SetPageFeaturedImageCommand struct{ PageID, FileID string }
+type DeletePageFeaturedImageCommand struct{ PageID string }
 
-	var ogRunID *string
+// pageFeaturedImage is the outcome of a featured image change. fileID is
+// the File the change added or removed; empty means nothing changed.
+type pageFeaturedImage struct {
+	fileID            string
+	ogGenerationRunID *string
+}
 
-	// Use transaction with row-level lock to prevent race conditions
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and get page with current featured_image_file_id
-		var page model.Page
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&page, "id = ?", req.Msg.PageId).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("page", req.Msg.PageId)
+func (s *Service) featuredImageMutation(
+	pageID string,
+	operation sharedtelemetry.AuditCollectionOperation,
+	change func(context.Context, *gorm.DB, *model.Page) (pageFeaturedImage, error),
+) mutation.Spec[pageFeaturedImage] {
+	return mutation.Spec[pageFeaturedImage]{
+		Access: s.lockedPage(pageID, policyv1.Page.Edit),
+		Change: func(ctx context.Context, tx *gorm.DB) (pageFeaturedImage, error) {
+			var page model.Page
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+				First(&page, "id = ?", pageID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return pageFeaturedImage{}, domainerr.ResourceNotFound("page", pageID)
+				}
+				return pageFeaturedImage{}, err
 			}
-			return errs.Internal(err)
-		}
-		if err := requireLockedPagePermission(ctx, tx, s.spiceDB, page.ID, policyv1.Page.Edit); err != nil {
-			return err
-		}
-		if page.FeaturedImageFileID != nil && *page.FeaturedImageFileID == req.Msg.FileId {
-			return nil
-		}
-		if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{req.Msg.FileId}); err != nil {
-			return err
-		}
-		// 2. Verify file exists
-		var file model.File
-		if err := tx.First(&file, "id = ?", req.Msg.FileId).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("file", req.Msg.FileId)
+			return change(ctx, tx, &page)
+		},
+		Audit: func(image pageFeaturedImage) mutation.Audit {
+			if image.fileID == "" {
+				return mutation.Unchanged()
 			}
-			return errs.Internal(err)
-		}
-
-		// 3. Update page with new file_id
-		if err := tx.Model(&page).Updates(structured.Fields{
-			"featured_image_file_id": req.Msg.FileId,
-			"updated_at":             time.Now(),
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-
-		runID, err := s.runtime.RequestCurrentWithDB(
-			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
-			req.Msg.PageId, "", true, "page_featured_image_updated",
-		)
-		if err != nil {
-			return err
-		}
-		if runID != "" {
-			ogRunID = &runID
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, page.ID, req.Msg.FileId, sharedtelemetry.AuditCollectionOperationAdded)
-			}); err != nil {
-				return err
+			return mutation.RequestAudit(sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, pageID, image.fileID, operation)
+			})
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, image pageFeaturedImage) error {
+			if image.fileID == "" {
+				return nil
 			}
-		}
-		return publishContentUpdatedEvent(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-				req.Msg.PageId,
-				"media.featured_image",
-			),
-		)
-	})
+			return s.publish(ctx, tx, buildManageMediaMutationContentUpdatedEvent(
+				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, pageID, "media.featured_image",
+			))
+		},
+	}
+}
 
+// SetPageFeaturedImage sets an attachable File as the Page featured image.
+func (s *Service) SetPageFeaturedImage(ctx context.Context, command SetPageFeaturedImageCommand) (_ *managev1.SetPageFeaturedImageResponse, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.PageID))
+
+	image, err := mutation.Run(ctx, s.mutations, s.featuredImageMutation(command.PageID, sharedtelemetry.AuditCollectionOperationAdded,
+		func(ctx context.Context, tx *gorm.DB, page *model.Page) (pageFeaturedImage, error) {
+			if page.FeaturedImageFileID != nil && *page.FeaturedImageFileID == command.FileID {
+				return pageFeaturedImage{}, nil
+			}
+			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{command.FileID}); err != nil {
+				return pageFeaturedImage{}, err
+			}
+			var file model.File
+			if err := tx.First(&file, "id = ?", command.FileID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return pageFeaturedImage{}, domainerr.ResourceNotFound("file", command.FileID)
+				}
+				return pageFeaturedImage{}, err
+			}
+			if err := tx.Model(page).Updates(structured.Fields{
+				"featured_image_file_id": command.FileID,
+				"updated_at":             time.Now(),
+			}).Error; err != nil {
+				return pageFeaturedImage{}, err
+			}
+			return s.requestFeaturedImageOG(ctx, tx, command.PageID, command.FileID, "page_featured_image_updated")
+		},
+	))
 	if err != nil {
 		return nil, err
 	}
-	featuredImageFileID := req.Msg.FileId
+	featuredImageFileID := command.FileID
 	featuredDeliveries, err := s.loadPageFeaturedImageDeliveries(ctx, []model.Page{{
-		ID:                  req.Msg.PageId,
+		ID:                  command.PageID,
 		FeaturedImageFileID: &featuredImageFileID,
 	}})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.SetPageFeaturedImageResponse{
-		ImageDelivery: featuredDeliveries[req.Msg.PageId], OgGenerationRunId: ogRunID,
-	}), nil
+	return &managev1.SetPageFeaturedImageResponse{
+		ImageDelivery: featuredDeliveries[command.PageID], OgGenerationRunId: image.ogGenerationRunID,
+	}, nil
 }
 
-// DeletePageFeaturedImage removes the featured image from a page (admin only)
-func (s *PageService) DeletePageFeaturedImage(
-	ctx context.Context,
-	req *connect.Request[managev1.DeletePageFeaturedImageRequest],
-) (_ *connect.Response[managev1.OgAssetDeleteResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("page_id", req.Msg.GetPageId()))
+// DeletePageFeaturedImage removes the Page featured image.
+func (s *Service) DeletePageFeaturedImage(ctx context.Context, command DeletePageFeaturedImageCommand) (_ *managev1.OgAssetDeleteResponse, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.PageID))
 
-	var oldFileID *string
-	var ogRunID *string
-
-	// Use transaction with row-level lock to prevent race conditions
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock and get page with current featured_image_file_id
-		var page model.Page
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&page, "id = ?", req.Msg.PageId).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("page", req.Msg.PageId)
+	image, err := mutation.Run(ctx, s.mutations, s.featuredImageMutation(command.PageID, sharedtelemetry.AuditCollectionOperationRemoved,
+		func(ctx context.Context, tx *gorm.DB, page *model.Page) (pageFeaturedImage, error) {
+			if page.FeaturedImageFileID == nil {
+				return pageFeaturedImage{}, nil
 			}
-			return errs.Internal(err)
-		}
-		if err := requireLockedPagePermission(ctx, tx, s.spiceDB, page.ID, policyv1.Page.Edit); err != nil {
-			return err
-		}
-		// Store old file ID for cleanup after transaction
-		oldFileID = page.FeaturedImageFileID
-		if oldFileID == nil {
-			return nil
-		}
-		// 2. Clear featured image file_id
-		if err := tx.Model(&page).Updates(structured.Fields{
-			"featured_image_file_id": nil,
-			"updated_at":             time.Now(),
-		}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := s.runtime.ReleasePublicAssetBindings(
-			ctx, tx, "page", req.Msg.PageId, "featured_image",
-		); err != nil {
-			return err
-		}
-		runID, err := s.runtime.RequestCurrentWithDB(
-			ctx, tx,
-			managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
-			req.Msg.PageId, "", true, "page_featured_image_removed",
-		)
-		if err != nil {
-			return err
-		}
-		if runID != "" {
-			ogRunID = &runID
-		}
-		if s.auditWriter != nil {
-			if err := domainaudit.AppendRequest(ctx, tx, s.auditWriter, sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewPageFeaturedImageAuditRecord(metadata, page.ID, *oldFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-			}); err != nil {
-				return err
+			oldFileID := *page.FeaturedImageFileID
+			if err := tx.Model(page).Updates(structured.Fields{
+				"featured_image_file_id": nil,
+				"updated_at":             time.Now(),
+			}).Error; err != nil {
+				return pageFeaturedImage{}, err
 			}
-		}
-		return publishContentUpdatedEvent(
-			ctx,
-			tx,
-			s.asyncPublisher,
-			buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-				req.Msg.PageId,
-				"media.featured_image",
-			),
-		)
-	})
-
+			if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "page", command.PageID, "featured_image"); err != nil {
+				return pageFeaturedImage{}, err
+			}
+			return s.requestFeaturedImageOG(ctx, tx, command.PageID, oldFileID, "page_featured_image_removed")
+		},
+	))
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: ogRunID}), nil
+	return &managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: image.ogGenerationRunID}, nil
 }
 
-// Helper methods
+// requestFeaturedImageOG regenerates every locale's OG image after the
+// featured image of the Page changed to or from fileID.
+func (s *Service) requestFeaturedImageOG(ctx context.Context, tx *gorm.DB, pageID, fileID, reason string) (pageFeaturedImage, error) {
+	runID, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE, pageID, "", true, reason)
+	if err != nil {
+		return pageFeaturedImage{}, err
+	}
+	image := pageFeaturedImage{fileID: fileID}
+	if runID != "" {
+		image.ogGenerationRunID = &runID
+	}
+	return image, nil
+}

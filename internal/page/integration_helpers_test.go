@@ -22,11 +22,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -48,6 +50,44 @@ func TestMain(m *testing.M) {
 		code = 1
 	}
 	os.Exit(code)
+}
+
+// newIntegrationPageService returns the Page use cases over deps, filling
+// the collaborators a test leaves unset with no-op stand-ins and the durable
+// audit writer of deps.DB. checker, when given, decides Page actions in
+// place of SpiceDB.
+func newIntegrationPageService(t *testing.T, deps Deps, checker ...CollaborationPermissionChecker) *Service {
+	t.Helper()
+	if deps.SpiceDB == nil {
+		deps.SpiceDB = integrationSpiceDB(t)
+	}
+	if deps.Runtime == nil {
+		deps.Runtime = newPageRuntimeForTest(deps.DB, "https://cdn.example.com")
+	}
+	if deps.Files == nil {
+		deps.Files = &recordingPageDeleteFileDeleter{}
+	}
+	if deps.Signals == nil {
+		deps.Signals = noopAsyncPublisher{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = newPageIntegrationContentBlockStore(t, deps.SpiceDB)
+	}
+	if deps.MediaHydrator == nil {
+		deps.MediaHydrator = passthroughPageContentBlockMediaHydrator{}
+	}
+	if deps.MenuTargets == nil {
+		deps.MenuTargets = noopPageMenuTargets{}
+	}
+	if deps.Audit == nil {
+		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
+	}
+	service, err := NewService(deps)
+	require.NoError(t, err)
+	if len(checker) != 0 {
+		service.permissions = checker[0]
+	}
+	return service
 }
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
@@ -106,8 +146,14 @@ func requireFileRowExists(t *testing.T, db *gorm.DB, fileID string) {
 	require.Equal(t, int64(1), count)
 }
 
+// workIntegrationAdminCtx is a member request, so mutations can name their
+// audit records.
 func workIntegrationAdminCtx(identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	request, err := sharedtelemetry.NewPublicRequestContext("192.0.2.40")
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), request), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
 		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
 		SessionID:     auth.SessionID(uuid.NewString()),

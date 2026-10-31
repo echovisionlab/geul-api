@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -45,11 +45,39 @@ func RequireIndexedContentBlockAttachmentsReadyForPublication(
 	tx *gorm.DB,
 	attachments []contentblock.PublicationAttachment,
 ) error {
+	fileIDs, err := publicationFileIDs(attachments)
+	if err != nil || len(fileIDs) == 0 {
+		return err
+	}
+	var files []publicationFileRow
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
+		Table("file").Select("id, mime_type, duration_seconds, delete_requested_at").
+		Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
+		return err
+	}
+	if len(files) != len(fileIDs) {
+		return domainerr.Precondition("Page content Block media File is unavailable")
+	}
+	readiness, err := loadPublicationReadiness(ctx, tx, fileIDs)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := readiness.require(file); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// publicationFileIDs returns the sorted distinct Files the attachments
+// reference; a missing attachment rejects publication.
+func publicationFileIDs(attachments []contentblock.PublicationAttachment) ([]string, error) {
 	fileIDs := make([]string, 0, len(attachments))
 	seen := make(map[string]struct{}, len(attachments))
 	for _, attachment := range attachments {
 		if attachment.FileID == uuid.Nil || attachment.MissingMediaKind != "" {
-			return errs.FailedPrecondition("Page content Block has a missing media attachment")
+			return nil, domainerr.Precondition("Page content Block has a missing media attachment")
 		}
 		fileID := attachment.FileID.String()
 		if _, exists := seen[fileID]; !exists {
@@ -57,30 +85,31 @@ func RequireIndexedContentBlockAttachmentsReadyForPublication(
 			fileIDs = append(fileIDs, fileID)
 		}
 	}
-	if len(fileIDs) == 0 {
-		return nil
-	}
 	sort.Strings(fileIDs)
-	var files []publicationFileRow
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Table("file").Select("id, mime_type, duration_seconds, delete_requested_at").
-		Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if len(files) != len(fileIDs) {
-		return errs.FailedPrecondition("Page content Block media File is unavailable")
-	}
+	return fileIDs, nil
+}
+
+// publicationReadiness is the ready presentation of each File, keyed by
+// File ID and asset kind or derivative type.
+type publicationReadiness struct {
+	sourceAssets map[string]bool
+	derivatives  map[string]bool
+}
+
+func loadPublicationReadiness(ctx context.Context, tx *gorm.DB, fileIDs []string) (publicationReadiness, error) {
 	var sourceAssets []publicationSourceAssetRow
 	if err := tx.WithContext(ctx).Table("public_asset").
 		Select("source_file_id, kind, file_size, sha256").
 		Where("source_file_id IN ? AND kind IN ? AND status = ?", fileIDs, []string{"image", "mesh"}, model.PublicAssetStatusReady).
 		Find(&sourceAssets).Error; err != nil {
-		return errs.Internal(err)
+		return publicationReadiness{}, err
 	}
-	readySourceAssets := make(map[string]bool, len(sourceAssets))
+	readiness := publicationReadiness{
+		sourceAssets: make(map[string]bool, len(sourceAssets)),
+	}
 	for _, asset := range sourceAssets {
 		if asset.FileSize != nil && len(asset.SHA256) == 32 {
-			readySourceAssets[asset.SourceFileID+"\x00"+asset.Kind] = true
+			readiness.sourceAssets[asset.SourceFileID+"\x00"+asset.Kind] = true
 		}
 	}
 	var derivatives []publicationDerivativeRow
@@ -91,63 +120,67 @@ func RequireIndexedContentBlockAttachmentsReadyForPublication(
 		Joins("LEFT JOIN public_asset AS pa ON pa.id = fd.asset_id").
 		Joins("LEFT JOIN media_generation AS mg ON mg.id = fd.media_generation_id").
 		Where("fd.file_id IN ?", fileIDs).Find(&derivatives).Error; err != nil {
-		return errs.Internal(err)
+		return publicationReadiness{}, err
 	}
-	readyDerivatives := make(map[string]bool, len(derivatives))
+	readiness.derivatives = make(map[string]bool, len(derivatives))
 	for _, derivative := range derivatives {
-		key := derivative.FileID + "\x00" + derivative.Type
-		if derivative.Type == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String() {
-			readyDerivatives[key] = derivative.MediaGenerationFileID != nil && *derivative.MediaGenerationFileID == derivative.FileID &&
-				derivative.MediaGenerationStatus != nil && *derivative.MediaGenerationStatus == model.MediaGenerationStatusReady &&
-				derivative.MediaGenerationManifest != nil && strings.TrimSpace(*derivative.MediaGenerationManifest) != ""
-			continue
-		}
-		readyDerivatives[key] = derivative.AssetStatus != nil && *derivative.AssetStatus == model.PublicAssetStatusReady &&
-			derivative.AssetFileSize != nil && len(derivative.AssetSHA256) == 32
+		readiness.derivatives[derivative.FileID+"\x00"+derivative.Type] = derivative.ready()
 	}
-	requireDerivative := func(fileID string, derivativeType managev1.FileDerivativeType) error {
-		if !readyDerivatives[fileID+"\x00"+derivativeType.String()] {
-			return errs.FailedPrecondition("Page content Block media presentation is not ready")
-		}
-		return nil
+	return readiness, nil
+}
+
+// ready reports whether the derivative can be delivered: an HLS stream needs
+// its ready manifest, any other derivative its ready asset.
+func (d publicationDerivativeRow) ready() bool {
+	if d.Type == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String() {
+		return d.MediaGenerationFileID != nil && *d.MediaGenerationFileID == d.FileID &&
+			d.MediaGenerationStatus != nil && *d.MediaGenerationStatus == model.MediaGenerationStatusReady &&
+			d.MediaGenerationManifest != nil && strings.TrimSpace(*d.MediaGenerationManifest) != ""
 	}
-	for _, file := range files {
-		if file.DeleteRequestedAt != nil {
-			return errs.FailedPrecondition("Page content Block media File is pending deletion")
+	return d.AssetStatus != nil && *d.AssetStatus == model.PublicAssetStatusReady &&
+		d.AssetFileSize != nil && len(d.AssetSHA256) == 32
+}
+
+// require rejects a File whose presentation for its media type is not ready.
+func (r publicationReadiness) require(file publicationFileRow) error {
+	if file.DeleteRequestedAt != nil {
+		return domainerr.Precondition("Page content Block media File is pending deletion")
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(strings.SplitN(file.MIMEType, ";", 2)[0]))
+	switch {
+	case strings.HasPrefix(mimeType, "image/"):
+		if !r.sourceAssets[file.ID+"\x00image"] {
+			return domainerr.Precondition("Page content Block image presentation is not ready")
 		}
-		mimeType := strings.ToLower(strings.TrimSpace(strings.SplitN(file.MIMEType, ";", 2)[0]))
-		switch {
-		case strings.HasPrefix(mimeType, "image/"):
-			if !readySourceAssets[file.ID+"\x00image"] {
-				return errs.FailedPrecondition("Page content Block image presentation is not ready")
-			}
-		case mimeType == "model/gltf-binary":
-			if !readySourceAssets[file.ID+"\x00mesh"] {
-				return errs.FailedPrecondition("Page content Block mesh presentation is not ready")
-			}
-		case strings.HasPrefix(mimeType, "video/"):
-			if file.DurationSeconds == nil {
-				return errs.FailedPrecondition("Page content Block video presentation is not ready")
-			}
-			if err := requireDerivative(file.ID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS); err != nil {
-				return err
-			}
-			if err := requireDerivative(file.ID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL); err != nil {
-				return err
-			}
-		case strings.HasPrefix(mimeType, "audio/"):
-			if file.DurationSeconds == nil {
-				return errs.FailedPrecondition("Page content Block audio presentation is not ready")
-			}
-			for _, derivativeType := range []managev1.FileDerivativeType{
-				managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS,
-				managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM,
-				managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM,
-			} {
-				if err := requireDerivative(file.ID, derivativeType); err != nil {
-					return err
-				}
-			}
+	case mimeType == "model/gltf-binary":
+		if !r.sourceAssets[file.ID+"\x00mesh"] {
+			return domainerr.Precondition("Page content Block mesh presentation is not ready")
+		}
+	case strings.HasPrefix(mimeType, "video/"):
+		if file.DurationSeconds == nil {
+			return domainerr.Precondition("Page content Block video presentation is not ready")
+		}
+		return r.requireDerivatives(file.ID,
+			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS,
+			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL,
+		)
+	case strings.HasPrefix(mimeType, "audio/"):
+		if file.DurationSeconds == nil {
+			return domainerr.Precondition("Page content Block audio presentation is not ready")
+		}
+		return r.requireDerivatives(file.ID,
+			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS,
+			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM,
+			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM,
+		)
+	}
+	return nil
+}
+
+func (r publicationReadiness) requireDerivatives(fileID string, derivativeTypes ...managev1.FileDerivativeType) error {
+	for _, derivativeType := range derivativeTypes {
+		if !r.derivatives[fileID+"\x00"+derivativeType.String()] {
+			return domainerr.Precondition("Page content Block media presentation is not ready")
 		}
 	}
 	return nil

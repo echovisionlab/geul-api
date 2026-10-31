@@ -113,8 +113,8 @@ func TestBuildPageLocaleContentUpdatedEventRejectsInconsistentLocaleFence(t *tes
 
 func TestBuildManagePageContentUpdatedEvent(t *testing.T) {
 	showTitle := false
-	event := buildManagePageContentUpdatedEvent(&managev1.UpdatePageRequest{
-		Id:        "page-1",
+	event := buildManagePageContentUpdatedEvent(UpdatePageCommand{
+		ID:        "page-1",
 		ShowTitle: &showTitle,
 	})
 	require.NotNil(t, event)

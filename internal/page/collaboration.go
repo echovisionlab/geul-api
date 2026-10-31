@@ -6,60 +6,54 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func RequireCollaborationEditForPrincipal(
+// requireCollaborationEditForPrincipal requires principal to edit the Page
+// whose room it opens.
+func requireCollaborationEditForPrincipal(
 	ctx context.Context,
 	checker CollaborationPermissionChecker,
-	resourceKind intrav1.CollaborationResourceType,
-	resourceID string,
+	pageID string,
 	principal *auth.UserInfo,
 ) error {
-	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
-	if resourceKind != intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PAGE {
-		return errs.InvalidArgument("resource.type", "must be Page")
-	}
-	can, err := policyv1.Page.Edit(resourceID)
+	can, err := policyv1.Page.Edit(pageID)
 	if err != nil {
-		return errs.WithCause(errs.InvalidArgument("resource.id", "must be a canonical resource UUID"), err)
+		return domainerr.InvalidField("resource.id", "must be a canonical resource UUID").WithCause(err)
 	}
 	if principal == nil || !principal.Authenticated {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Name(), "page")
+		return domainerr.NoPermission(can.Action().Name(), "page")
 	}
 	return nil
 }
 
 func requireDocumentContributors(ctx context.Context, db *gorm.DB, memberIDs []string) error {
 	if len(memberIDs) == 0 {
-		return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires contributors")
+		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
 	unique := make([]string, 0, len(memberIDs))
 	for _, memberID := range memberIDs {
 		memberID = strings.TrimSpace(memberID)
 		if _, err := uuidutil.ParseCanonical(memberID, "contributor_member_ids"); err != nil {
-			return errs.WithCause(errs.InvalidArgument("contributor_member_ids", "must contain canonical Member UUIDs"), err)
+			return domainerr.InvalidField("contributor_member_ids", "must contain canonical Member UUIDs").WithCause(err)
 		}
 		if len(unique) > 0 && unique[len(unique)-1] >= memberID {
-			return errs.InvalidArgument("contributor_member_ids", "must be sorted and contain unique canonical Member UUIDs")
+			return domainerr.InvalidField("contributor_member_ids", "must be sorted and contain unique canonical Member UUIDs")
 		}
 		unique = append(unique, memberID)
 	}
@@ -72,10 +66,10 @@ func requireDocumentContributors(ctx context.Context, db *gorm.DB, memberIDs []s
 		Select("id::text").
 		Where("id IN ?", unique).
 		Find(&members).Error; err != nil {
-		return errs.Internal(fmt.Errorf("lock Page save contributor Members: %w", err))
+		return fmt.Errorf("lock Page save contributor Members: %w", err)
 	}
 	if len(members) != len(unique) {
-		return errs.InvalidArgument("contributor_member_ids", "contains a Member that does not exist")
+		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil
 }
@@ -96,9 +90,6 @@ func requirePageContributorsPermission(
 	if err := requireDocumentContributors(ctx, tx, memberIDs); err != nil {
 		return err
 	}
-	if spiceDB == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
 	type contributorRow struct {
 		MemberID   string `gorm:"column:member_id"`
 		IdentityID string `gorm:"column:identity_id"`
@@ -110,30 +101,30 @@ func requirePageContributorsPermission(
 		Select("member.id::text AS member_id, member.account_identity_id::text AS identity_id").
 		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = TRUE AND member.account_identity_id IS NOT NULL AND COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) = FALSE", memberIDs).
 		Find(&rows).Error; err != nil {
-		return errs.Internal(fmt.Errorf("load Page collaboration contributors: %w", err))
+		return fmt.Errorf("load Page collaboration contributors: %w", err)
 	}
 	identities := make(map[string]string, len(rows))
 	for _, row := range rows {
 		identities[row.MemberID] = row.IdentityID
 	}
 	if len(identities) != len(memberIDs) {
-		return errs.NoPermission("edit", "page contributor")
+		return domainerr.NoPermission("edit", "page contributor")
 	}
 	can, err := action(pageID)
 	if err != nil {
-		return errs.WithCause(errs.NotFound("page", pageID), err)
+		return domainerr.ResourceNotFound("page", pageID).WithCause(err)
 	}
 	for _, memberID := range memberIDs {
 		actor, err := policyv1.NewAccountIdentityActor(identities[memberID])
 		if err != nil {
-			return errs.WithCause(errs.NoPermission("edit", "page contributor"), err)
+			return domainerr.NoPermission("edit", "page contributor").WithCause(err)
 		}
 		allowed, err := spiceDB.CheckActorCan(ctx, actor, can)
 		if err != nil {
-			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+			return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		if !allowed {
-			return errs.NoPermission("edit", "page contributor")
+			return domainerr.NoPermission("edit", "page contributor")
 		}
 	}
 	return nil

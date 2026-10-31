@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -182,7 +184,7 @@ func TestPageAccessFreshIdentityAndMalformedPolicyIntegration(t *testing.T) {
 		reason, err := Evaluate(ctx, tx, checker, pageID, page.AccessPolicy)
 		require.Error(t, err)
 		require.NotEqual(t, commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, reason)
-		require.Equal(t, connect.CodeInternal, connect.CodeOf(Require(ctx, tx, checker, pageID, page.AccessPolicy)))
+		require.Equal(t, connect.CodeInternal, errs.Wrap(Require(ctx, tx, checker, pageID, page.AccessPolicy)).Code())
 		return nil
 	}))
 }

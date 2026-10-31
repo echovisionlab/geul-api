@@ -2,13 +2,13 @@ package page
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"gorm.io/gorm"
 )
 
@@ -21,7 +21,7 @@ func LoadTranslationSourceDocument(
 	pageID string,
 ) (*translation.SourceDocument, error) {
 	if store == nil {
-		return nil, errs.Internal(fmt.Errorf("page translation Content Block store is not configured"))
+		return nil, errors.New("page translation Content Block store is not configured")
 	}
 	metadata, err := loadRequiredPageSourceLocaleMetadata(ctx, db, pageID)
 	if err != nil {
@@ -56,16 +56,16 @@ func validatePageSourceLocaleMutations(
 	groups []contentblock.LocaleMutationGroup,
 ) error {
 	if strings.TrimSpace(pageID) == "" || strings.TrimSpace(sourceLocale) == "" {
-		return errs.Internal(fmt.Errorf("invalid Page source locale"))
+		return errors.New("invalid Page source locale")
 	}
 
 	for _, group := range groups {
 		locale := strings.TrimSpace(group.Locale)
 		if locale == "" {
-			return errs.Internal(fmt.Errorf("page target locale is empty"))
+			return errors.New("page target locale is empty")
 		}
 		if locale != sourceLocale {
-			return errs.FailedPrecondition("target Page locale documents are read-only")
+			return domainerr.Precondition("target Page locale documents are read-only")
 		}
 	}
 	return nil
@@ -81,7 +81,7 @@ func UpsertTranslationMetadataEntry(
 	input translation.EntryWrite,
 ) error {
 	if len(input.ContentJSON) > 0 || input.ContentHTML != nil || input.ContentText != nil {
-		return errs.FailedPrecondition("Page translation body is stored as typed Content Blocks")
+		return domainerr.Precondition("Page translation body is stored as typed Content Blocks")
 	}
 	now := input.Now.UTC()
 	if err := db.WithContext(ctx).Exec(
@@ -94,7 +94,7 @@ func UpsertTranslationMetadataEntry(
 			updated_at = EXCLUDED.updated_at`,
 		pageID, locale, input.Title, input.Summary, now, now,
 	).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
