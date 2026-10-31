@@ -10,6 +10,8 @@ import (
 	"net/http"
 	neturl "net/url"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -234,7 +236,8 @@ func (c *KratosClient) ListIdentities(ctx context.Context, page, perPage int) ([
 
 	var total int64
 	if totalStr := resp.Header.Get("X-Total-Count"); totalStr != "" {
-		if _, err := fmt.Sscanf(totalStr, "%d", &total); err != nil {
+		var err error
+		if total, err = strconv.ParseInt(strings.TrimSpace(totalStr), 10, 64); err != nil || total < 0 {
 			// Report an unreadable count as unknown (0); paging callers then stop on a short page.
 			slog.WarnContext(ctx, "Kratos identity count header is invalid", "x_total_count", totalStr, failurecause.Attr(err))
 			total = 0
