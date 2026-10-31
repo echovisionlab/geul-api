@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"slices"
 	"sync"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,7 +148,7 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 	// characterized delete.
 	shareExpiresAt := time.Now().Add(time.Hour)
 	require.NoError(t, db.Create(&model.ShareLink{
-		Token: "release-delete-characterization-" + releaseID, EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(),
+		Token: strings.ReplaceAll(releaseID, "-", ""), EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(),
 		EntityID: releaseID, Label: &shareLabel, CreatedAt: time.Now(), ExpiresAt: &shareExpiresAt,
 	}).Error)
 	releasepkg.SeedReleaseTargetLocaleForTest(t, db, store, releaseID, "fr", "Titre", nil)
