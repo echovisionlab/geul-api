@@ -16,7 +16,11 @@ func seedActiveMemberEmailPair(t *testing.T, db *gorm.DB, identityID, email stri
 	t.Helper()
 	memberID := uuid.NewString()
 	name := "Email fixture " + memberID
-	now := time.Now().UTC()
+	// The email projection stamps updated_at with the database clock, so the
+	// fixture must not take created_at from a host clock that may run ahead
+	// of it (chk_member_timestamps).
+	var now time.Time
+	require.NoError(t, db.Raw("SELECT CURRENT_TIMESTAMP").Scan(&now).Error)
 	require.NoError(t, db.Exec(
 		`INSERT INTO account_identity (id, created_at)
 		 SELECT id, created_at
