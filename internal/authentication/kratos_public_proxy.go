@@ -122,6 +122,10 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 		issuance.Recipient, err = p.resolveFlowRecipient(request, issuance)
 		if err != nil {
 			recordAuthenticationFailure(request.Context(), issuanceFailure("resolve flow recipient", issuance, err))
+			if errors.Is(err, errKratosFlowLookupUnavailable) {
+				writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+				return
+			}
 			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
 			return
 		}
@@ -181,6 +185,10 @@ func issuanceFailure(operation string, issuance AuthCodeIssuanceRequest, err err
 	return failurecause.WithAttrs(fmt.Errorf("%s: %w", operation, err), slog.String("template_type", issuance.EventKey.String()))
 }
 
+// errKratosFlowLookupUnavailable marks a flow lookup that failed on the Kratos
+// side (unreachable, 5xx, unreadable answer) rather than on the client's flow.
+var errKratosFlowLookupUnavailable = errors.New("authentication flow lookup unavailable")
+
 func (p *KratosPublicProxy) resolveFlowRecipient(
 	request *http.Request,
 	issuance AuthCodeIssuanceRequest,
@@ -202,7 +210,7 @@ func (p *KratosPublicProxy) resolveFlowRecipient(
 	})
 	flowRequest, err := http.NewRequestWithContext(request.Context(), http.MethodGet, flowURL.String(), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errKratosFlowLookupUnavailable, err)
 	}
 	flowRequest.Header.Set("Accept", "application/json")
 	sharedtelemetry.InjectCorrelation(request.Context(), propagation.HeaderCarrier(flowRequest.Header))
@@ -211,15 +219,18 @@ func (p *KratosPublicProxy) resolveFlowRecipient(
 	}
 	response, err := p.httpClient.Do(flowRequest)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errKratosFlowLookupUnavailable, err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode >= http.StatusInternalServerError {
+		return "", fmt.Errorf("%w: Kratos returned %d", errKratosFlowLookupUnavailable, response.StatusCode)
+	}
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("authentication flow lookup returned %d", response.StatusCode)
 	}
 	body, err := readBoundedKratosBody(response.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errKratosFlowLookupUnavailable, err)
 	}
 	var flow struct {
 		UI struct {
@@ -232,7 +243,7 @@ func (p *KratosPublicProxy) resolveFlowRecipient(
 		} `json:"ui"`
 	}
 	if err := json.Unmarshal(body, &flow); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errKratosFlowLookupUnavailable, err)
 	}
 	for _, node := range flow.UI.Nodes {
 		switch node.Attributes.Name {

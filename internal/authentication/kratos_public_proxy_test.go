@@ -149,6 +149,46 @@ func TestKratosPublicProxyResolvesFlowOnlyResendRecipient(t *testing.T) {
 	require.EqualValues(t, 1, postCalls.Load())
 }
 
+func TestKratosPublicProxyAnswersFlowLookupFailuresByOwner(t *testing.T) {
+	t.Parallel()
+	unreachable := httptest.NewServer(http.NotFoundHandler())
+	unreachableURL := unreachable.URL
+	unreachable.Close()
+	for _, testCase := range []struct {
+		name     string
+		upstream func(t *testing.T) string
+		status   int
+	}{
+		{name: "network failure", upstream: func(*testing.T) string { return unreachableURL }, status: http.StatusServiceUnavailable},
+		{name: "Kratos server error", upstream: flowLookupUpstream(http.StatusInternalServerError), status: http.StatusServiceUnavailable},
+		{name: "unknown flow", upstream: flowLookupUpstream(http.StatusNotFound), status: http.StatusBadRequest},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			limiter, _ := newTestAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
+			proxy, err := NewKratosPublicProxy(testCase.upstream(t), limiter, testAuthIssuanceProvenanceKey)
+			require.NoError(t, err)
+			server := httptest.NewServer(proxy)
+			defer server.Close()
+
+			response := postKratosJSON(t, server.URL+"/self-service/login?flow=login-flow", structured.Fields{"method": "code"})
+			defer response.Body.Close()
+			require.Equal(t, testCase.status, response.StatusCode)
+		})
+	}
+}
+
+func flowLookupUpstream(status int) func(t *testing.T) string {
+	return func(t *testing.T) string {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			require.Equal(t, http.MethodGet, request.Method, "the proxy must not forward an issuance without a recipient")
+			w.WriteHeader(status)
+		}))
+		t.Cleanup(upstream.Close)
+		return upstream.URL
+	}
+}
+
 func TestKratosPublicProxyReleasesBudgetWhenKratosRejectsIssuance(t *testing.T) {
 	t.Parallel()
 	var upstreamCalls atomic.Int32
