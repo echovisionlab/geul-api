@@ -86,9 +86,9 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		publisher.requireNone(t)
 	})
 
-	t.Run("config replacement verifies and drops omitted secrets", func(t *testing.T) {
+	t.Run("config replacement verifies and keeps the stored password and unknown keys", func(t *testing.T) {
 		server := newFakeSMTPServer(t, false)
-		adapter := seedSMTPMailAdapter(t, db, server, `{"provider_hint":"kept-only-by-sender-updates"}`)
+		adapter := seedSMTPMailAdapter(t, db, server, `{"provider_hint":"kept"}`)
 		service, publisher := newService()
 		response, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
 			Id: adapter.ID,
@@ -101,13 +101,36 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		require.Equal(t, []string{"replaced-sender@example.test"}, server.recipients())
 		server.requireClientsDisconnected(t)
 		stored := loadMailAdapter(t, db, adapter.ID)
-		// The admin RPC replaces the whole provider config: an omitted
-		// password and unknown stored keys are not carried over.
+		// The admin form never sees the stored password, so an empty one keeps
+		// it; an omitted sender name clears it.
 		require.JSONEq(t, `{
 			"host":"127.0.0.1","port":`+strconv.Itoa(int(server.port()))+`,"secure":false,
-			"user":"smtp-user","password":"","from_email":"replaced-sender@example.test"
+			"user":"smtp-user","password":"smtp-secret","from_email":"replaced-sender@example.test",
+			"provider_hint":"kept"
 		}`, string(stored.Config.RawMessage))
 		requireMailAdapterResponse(t, response.Msg.Adapter, stored, "replaced-sender@example.test")
+		requireMailAdapterAudits(t, db, adapter.ID, []string{"config"})
+		publisher.requireUpdated(t, adapter.ID)
+	})
+
+	t.Run("a new password replaces the stored one", func(t *testing.T) {
+		server := newFakeSMTPServer(t, false)
+		adapter := seedSMTPMailAdapter(t, db, server, `{}`)
+		service, publisher := newService()
+		fromName := "SMTP Sender"
+		_, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
+			Id: adapter.ID,
+			Config: &managev1.UpdateMailAdapterRequest_SmtpConfig{SmtpConfig: &managev1.SMTPConfig{
+				Host: "127.0.0.1", Port: server.port(), User: "smtp-user", Password: "rotated-secret",
+				FromEmail: "smtp-sender@example.test", FromName: &fromName,
+			}},
+		}))
+		require.NoError(t, err)
+		require.Equal(t, []string{"smtp-sender@example.test"}, server.recipients())
+		row := loadMailAdapter(t, db, adapter.ID)
+		stored, err := row.GetSMTPConfig()
+		require.NoError(t, err)
+		require.Equal(t, "rotated-secret", stored.Password)
 		requireMailAdapterAudits(t, db, adapter.ID, []string{"config"})
 		publisher.requireUpdated(t, adapter.ID)
 	})

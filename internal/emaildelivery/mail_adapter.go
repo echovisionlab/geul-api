@@ -247,27 +247,21 @@ func (s *MailAdapterService) update(
 		}
 
 		senderChanged := sender != nil && (sender.FromName != nil || sender.FromEmail != nil)
-		configChanged := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
+		configRequested := typeChanged || req.Msg.GetSesConfig() != nil || req.Msg.GetSmtpConfig() != nil || senderChanged
 		var requestedConfig model.MailAdapterConfig
-		if configChanged {
+		configChanged := false
+		if configRequested {
 			var config structured.Value
 			if senderChanged {
 				requestedConfig, config, err = s.senderConfig(&adapter, *sender)
-				if err != nil {
-					return err
-				}
 			} else {
-				config, err = s.buildConfig(effectiveType, req.Msg.GetSesConfig(), req.Msg.GetSmtpConfig())
-				if err != nil {
-					return errs.InvalidArgumentMsg(err.Error())
-				}
-				candidate := adapter
-				if err := candidate.SetConfig(config); err != nil {
-					return errs.Internal(fmt.Errorf("failed to set config: %w", err))
-				}
-				requestedConfig = candidate.Config
+				requestedConfig, config, err = s.replacementConfig(&adapter, effectiveType, typeChanged, req.Msg)
 			}
-			if !senderChanged || !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
+			if err != nil {
+				return err
+			}
+			configChanged = !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage)
+			if !senderChanged || configChanged {
 				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
 					if senderChanged {
 						// Provider diagnostics can contain credentials. Keep their cause
@@ -302,7 +296,7 @@ func (s *MailAdapterService) update(
 			adapter.Type = effectiveType
 			changedFields = append(changedFields, "type")
 		}
-		if configChanged && !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage) {
+		if configChanged {
 			updates["config"] = requestedConfig
 			adapter.Config = requestedConfig
 			changedFields = append(changedFields, "config")
