@@ -361,55 +361,75 @@ func validateValueForSchema(value Value, schema FieldSchema, depth int) error {
 	}
 	switch schema.Kind {
 	case ValueKindList:
-		stable := schema.Identity.Kind != ListIdentityPositional
-		if len(value.List) > 0 && (value.List[0].ID != "") != stable {
-			return fmt.Errorf("list identity %q does not match item handles", schema.Identity.Kind)
-		}
-		if schema.Identity.Kind == ListIdentityFixed {
-			if len(value.List) != len(schema.Identity.Handles) {
-				return errors.New("fixed list length does not match its catalog handles")
-			}
-			for index, item := range value.List {
-				if item.ID != schema.Identity.Handles[index] {
-					return fmt.Errorf("fixed list item %d must use handle %q", index, schema.Identity.Handles[index])
-				}
-			}
-		}
-		for _, item := range value.List {
-			if schema.Identity.Kind == ListIdentityValue {
-				if item.Value.Kind != ValueKindText && item.Value.Kind != ValueKindNumber {
-					return errors.New("value-identified list items must be canonical text or number scalars")
-				}
-				if item.ID != RelationItemID(item.Value.Text) {
-					return errors.New("value-identified list item handle must equal its canonical scalar value")
-				}
-			}
-			if schema.Identity.Kind == ListIdentityField {
-				identity, ok := objectField(item.Value, schema.Identity.Field)
-				if !ok || identity.Kind != ValueKindText || item.ID != RelationItemID(identity.Text) {
-					return fmt.Errorf("field-identified list item handle must equal text field %q", schema.Identity.Field)
-				}
-			}
-			if err := validateValueForSchema(item.Value, *schema.Item, depth+1); err != nil {
-				return fmt.Errorf("list item %q: %w", item.ID, err)
-			}
-		}
+		return validateListForSchema(value.List, schema, depth)
 	case ValueKindObject:
-		rules := make(map[FieldID]FieldSchema, len(schema.Fields))
-		for _, field := range schema.Fields {
-			rules[field.Field] = field.Schema
+		return validateObjectForSchema(value.Object, schema, depth)
+	}
+	return nil
+}
+
+func validateListForSchema(items []ListItem, schema FieldSchema, depth int) error {
+	identity := schema.Identity
+	stable := identity.Kind != ListIdentityPositional
+	if len(items) > 0 && (items[0].ID != "") != stable {
+		return fmt.Errorf("list identity %q does not match item handles", identity.Kind)
+	}
+	if identity.Kind == ListIdentityFixed {
+		if len(items) != len(identity.Handles) {
+			return errors.New("fixed list length does not match its catalog handles")
 		}
-		for _, field := range value.Object {
-			rule, ok := rules[field.ID]
-			if !ok {
-				return fmt.Errorf("object field %q is not in the catalog", field.ID)
+		for index, item := range items {
+			if item.ID != identity.Handles[index] {
+				return fmt.Errorf("fixed list item %d must use handle %q", index, identity.Handles[index])
 			}
-			if rule.File {
-				return fmt.Errorf("object file field %q requires a typed file binding", field.ID)
-			}
-			if err := validateValueForSchema(field.Value, rule, depth+1); err != nil {
-				return fmt.Errorf("object field %q: %w", field.ID, err)
-			}
+		}
+	}
+	for _, item := range items {
+		if err := validateListItemIdentity(item, identity); err != nil {
+			return err
+		}
+		if err := validateValueForSchema(item.Value, *schema.Item, depth+1); err != nil {
+			return fmt.Errorf("list item %q: %w", item.ID, err)
+		}
+	}
+	return nil
+}
+
+// validateListItemIdentity requires a value- or field-identified item's
+// handle to equal the scalar it is identified by.
+func validateListItemIdentity(item ListItem, identity ListIdentityRule) error {
+	switch identity.Kind {
+	case ListIdentityValue:
+		if item.Value.Kind != ValueKindText && item.Value.Kind != ValueKindNumber {
+			return errors.New("value-identified list items must be canonical text or number scalars")
+		}
+		if item.ID != RelationItemID(item.Value.Text) {
+			return errors.New("value-identified list item handle must equal its canonical scalar value")
+		}
+	case ListIdentityField:
+		value, ok := objectField(item.Value, identity.Field)
+		if !ok || value.Kind != ValueKindText || item.ID != RelationItemID(value.Text) {
+			return fmt.Errorf("field-identified list item handle must equal text field %q", identity.Field)
+		}
+	}
+	return nil
+}
+
+func validateObjectForSchema(fields []ObjectField, schema FieldSchema, depth int) error {
+	rules := make(map[FieldID]FieldSchema, len(schema.Fields))
+	for _, field := range schema.Fields {
+		rules[field.Field] = field.Schema
+	}
+	for _, field := range fields {
+		rule, ok := rules[field.ID]
+		if !ok {
+			return fmt.Errorf("object field %q is not in the catalog", field.ID)
+		}
+		if rule.File {
+			return fmt.Errorf("object file field %q requires a typed file binding", field.ID)
+		}
+		if err := validateValueForSchema(field.Value, rule, depth+1); err != nil {
+			return fmt.Errorf("object field %q: %w", field.ID, err)
 		}
 	}
 	return nil
