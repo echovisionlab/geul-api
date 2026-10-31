@@ -181,7 +181,7 @@ func trackCreditUpdateMap(previous, next model.TrackCredit) map[string]any {
 }
 
 func sameTrackCredit(left, right model.TrackCredit) bool {
-	return left.CreditRole == right.CreditRole && left.SortOrder == right.SortOrder && sameOptionalString(left.ArtistID, right.ArtistID) && sameOptionalString(left.MemberID, right.MemberID) && sameOptionalString(left.CreditedName, right.CreditedName)
+	return sameOptionalString(left.CreditRole, right.CreditRole) && left.SortOrder == right.SortOrder && sameOptionalString(left.ArtistID, right.ArtistID) && sameOptionalString(left.MemberID, right.MemberID) && sameOptionalString(left.CreditedName, right.CreditedName)
 }
 
 func trackCreditMemberReferences(inputs []*managev1.TrackCreditInput) []authorizationtarget.Reference {

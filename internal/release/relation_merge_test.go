@@ -6,6 +6,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestObservedRelationSnapshotMustBePresent(t *testing.T) {
@@ -168,3 +169,24 @@ func TestMergeTrackCreditsDoesNotRecreateObservedCreditDeletedByPeer(t *testing.
 }
 
 func stringPointer(value string) *string { return &value }
+
+// A delta that sets a credit role the row already holds must not count as a
+// change: it would write nothing and still append an "updated" audit record.
+func TestMergeTrackCreditsRoleAlreadyAppliedIsUnchanged(t *testing.T) {
+	stored := "producer"
+	observedRole := "mixer"
+	desiredRole := "producer"
+	current := []model.TrackCredit{{ID: "credit-a", TrackID: "track-1", CreditedName: proto.String("A"), CreditRole: &stored}}
+	next := mergeTrackCredits(
+		"track-1",
+		current,
+		[]*managev1.TrackCreditInput{{Id: proto.String("credit-a"), CreditedName: proto.String("A"), CreditRole: &observedRole}},
+		[]*managev1.TrackCreditInput{{Id: proto.String("credit-a"), CreditedName: proto.String("A"), CreditRole: &desiredRole}},
+	)
+	if len(next) != 1 {
+		t.Fatalf("merged credits = %d, want 1", len(next))
+	}
+	if !sameTrackCredit(current[0], next[0]) {
+		t.Fatalf("credit with the same role value was treated as changed: %+v", trackCreditUpdateMap(current[0], next[0]))
+	}
+}
