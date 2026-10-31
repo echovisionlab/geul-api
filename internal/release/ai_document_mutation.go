@@ -3,7 +3,6 @@ package release
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -35,7 +33,6 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 	}
 	canonicalReleaseID, err := uuidFromCanonicalString(releaseID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
 		return AIDocumentMutationResult{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeReleaseDocumentLocale(locale)
@@ -62,8 +59,7 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 		}
 		memberID, err := uuidFromCanonicalString(principal.MemberID.String())
 		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
-			return errs.NotFound("release", root.ID)
+			return errs.WithCause(errs.NotFound("release", root.ID), err)
 		}
 		state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, memberID.String())
 		if err != nil {
@@ -127,10 +123,8 @@ func (s *InternalReleaseService) ExecuteAIDocumentMutation(ctx context.Context, 
 		case errors.As(err, &conflict):
 			return AIDocumentMutationResult{}, conflict
 		case errors.As(err, &stale):
-			slog.WarnContext(ctx, "AI document revision conflict", "domain", "release", "operation", "ExecuteAIDocumentMutation", "release_id", releaseID, "locale", locale, failurecause.Attr(err))
 			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String()}
 		case errors.As(err, &targetConflict):
-			slog.WarnContext(ctx, "AI document revision conflict", "domain", "release", "operation", "ExecuteAIDocumentMutation", "release_id", releaseID, "locale", locale, failurecause.Attr(err))
 			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: input.ExpectedDocumentRevision, CurrentTargetRevision: releaseTargetConflictRevision(targetConflict)}
 		default:
 			return AIDocumentMutationResult{}, mapReleaseAIDocumentMutationError(err)

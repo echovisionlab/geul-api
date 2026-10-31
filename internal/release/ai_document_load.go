@@ -4,12 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -22,7 +20,6 @@ func (s *InternalReleaseService) LoadAIDocumentState(ctx context.Context, releas
 	}
 	id, err := uuidFromCanonicalString(releaseID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "LoadAIDocumentState", failurecause.Attr(err))
 		return AIDocumentState{}, errs.InvalidArgument("release_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeReleaseDocumentLocale(locale)

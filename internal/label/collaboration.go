@@ -2,11 +2,9 @@ package label
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -23,18 +21,15 @@ func requireLabelCollaborationEdit(ctx context.Context, checker *auth.SpiceDBCli
 	}
 	can, err := policyv1.Label.Edit(labelID)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelCollaborationEdit", "outcome", "failed", failurecause.Attr(err))
 		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelCollaborationEdit", "outcome", "failed", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.requireLabelCollaborationEdit", "outcome", "failed", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NoPermission(can.Action().Name(), "label")

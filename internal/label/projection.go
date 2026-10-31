@@ -125,12 +125,12 @@ func labelImageAssetsFromReadyMap(label *model.Label, refs map[string]*commonv1.
 func (s *LabelService) getLabelImageAssets(ctx context.Context, labelID string) *labelImageAssets {
 	var label model.Label
 	if err := s.db.WithContext(ctx).Select("id", "logo_light_file_id", "logo_dark_file_id").First(&label, "id = ?", labelID).Error; err != nil {
-		slog.WarnContext(ctx, "failed to load label logo assets", "label_id", labelID, "failure_cause", failurecause.Message(err))
+		slog.WarnContext(ctx, "Label logo lookup failed; serving the Label without logos", "domain", "label", "operation", "load_label_logo_assets", "label_id", labelID, failurecause.Attr(err))
 		return &labelImageAssets{}
 	}
 	refs, err := s.loadReadyLabelLogoAssets(ctx, []model.Label{label})
 	if err != nil {
-		slog.WarnContext(ctx, "failed to resolve label logo assets", "label_id", labelID, "failure_cause", failurecause.Message(err))
+		slog.WarnContext(ctx, "Label logo asset resolution failed; serving the Label without logos", "domain", "label", "operation", "resolve_label_logo_assets", "label_id", labelID, failurecause.Attr(err))
 		return &labelImageAssets{}
 	}
 	return labelImageAssetsFromReadyMap(&label, refs)

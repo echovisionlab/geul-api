@@ -3,13 +3,11 @@ package artist
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -43,7 +41,6 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 	}
 	canonicalArtistID, err := canonicalArtistUUID(artistID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
 		return AIDocumentMutationResult{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeArtistDocumentLocale(locale)
@@ -74,8 +71,7 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 		}
 		memberID, err := canonicalArtistUUID(principal.MemberID.String())
 		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "ExecuteAIDocumentMutation", failurecause.Attr(err))
-			return errs.NotFound("artist", root.ID)
+			return errs.WithCause(errs.NotFound("artist", root.ID), err)
 		}
 		state, err := s.loadAIDocumentStateAfterAuthorization(
 			ctx, tx, root, locale, memberID.String(),
@@ -140,7 +136,6 @@ func (s *InternalArtistService) ExecuteAIDocumentMutation(
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
 		if errors.As(err, &targetConflict) {
-			slog.WarnContext(ctx, "AI document revision conflict", "domain", "artist", "operation", "ExecuteAIDocumentMutation", "artist_id", artistID, "locale", locale, failurecause.Attr(err))
 			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
 				Kind: AIDocumentTargetRevisionConflict, CurrentRevision: input.ExpectedRevision,
 				CurrentTargetRevision: artistTargetConflictRevision(targetConflict),
@@ -320,13 +315,11 @@ func requireArtistAIDocumentMutationAuthority(ctx context.Context, tx *gorm.DB, 
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistAIDocumentMutationAuthority", failurecause.Attr(err))
-		return false, errs.AuthenticationRequired()
+		return false, errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistAIDocumentMutationAuthority", failurecause.Attr(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	return allowed, nil
 }

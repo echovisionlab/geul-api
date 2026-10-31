@@ -4,11 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -24,7 +22,6 @@ func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistI
 	}
 	id, err := canonicalArtistUUID(artistID)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "LoadAIDocumentState", failurecause.Attr(err))
 		return AIDocumentState{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
 	}
 	locale, err = normalizeArtistDocumentLocale(locale)

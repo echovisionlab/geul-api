@@ -272,7 +272,7 @@ func (s *LabelService) buildLabelResponseInTransaction(
 	*label = current
 	localization, err := publiccontent.Resolve(ctx, s.db, labelLocalizationSpec, labelID, acceptLanguage)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to resolve label localization", "labelId", labelID, "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, "Label localization lookup failed; serving the unlocalized Label", "domain", "label", "operation", "resolve_label_localization", failurecause.Attr(err), "label_id", labelID)
 	}
 	content, err := s.content.LoadDocument(ctx, s.db, labelID, localization.DisplayedLocale)
 	if err != nil {
@@ -516,7 +516,7 @@ func (s *LabelService) getOptionalLabelImageAsset(ctx context.Context, fileID *s
 	}
 	assets, err := s.media.ReadyForSourceFiles(ctx, s.db, []string{*fileID}, "logo")
 	if err != nil {
-		slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "resolve_logo_asset", "outcome", "failed", failurecause.Attr(err), "file_id", *fileID)
+		slog.ErrorContext(ctx, "Label logo asset lookup failed; serving the Label without it", "domain", "label", "operation", "resolve_logo_asset", "outcome", "failed", failurecause.Attr(err), "file_id", *fileID)
 		return nil
 	}
 	return assets[*fileID]
@@ -558,7 +558,7 @@ func (s *LabelService) getParentLabel(ctx context.Context, parentLabelID string)
 
 	if err != nil || parent.ID == "" {
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "load_parent_label", "outcome", "failed", failurecause.Attr(err), "label_id", parentLabelID)
+			slog.ErrorContext(ctx, "Parent Label lookup failed; serving the Label without its parent", "domain", "label", "operation", "load_parent_label", "outcome", "failed", failurecause.Attr(err), "label_id", parentLabelID)
 		}
 		return nil
 	}
@@ -575,7 +575,7 @@ func (s *LabelService) getParentLabel(ctx context.Context, parentLabelID string)
 		var err error
 		summary.OgAsset, err = s.media.ResolveOg(ctx, s.db, parent.OgAssetID)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "resolve_parent_og_asset", "outcome", "failed", failurecause.Attr(err), "label_id", parentLabelID)
+			slog.ErrorContext(ctx, "Parent Label OG asset lookup failed; serving the parent without it", "domain", "label", "operation", "resolve_parent_og_asset", "outcome", "failed", failurecause.Attr(err), "label_id", parentLabelID)
 		}
 	}
 

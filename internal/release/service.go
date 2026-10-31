@@ -342,7 +342,6 @@ func (s *ReleaseService) CreateRelease(
 		var err error
 		requestedSourceLocale, err = normalizeReleaseDocumentLocale(requestedSourceLocale)
 		if err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("source_locale", "must be a supported canonical locale")
 		}
 	}
@@ -462,8 +461,7 @@ func (s *ReleaseService) CreateRelease(
 	})
 	if err != nil {
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
-			return nil, errs.SlugAlreadyExists("release", "slug")
+			return nil, errs.WithCause(errs.SlugAlreadyExists("release", "slug"), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -533,11 +531,11 @@ func (s *ReleaseService) DeleteRelease(
 
 	var trackIDs []string
 	deleted := false
+	var uploadsChanged error
 	for range MaxTrackUploadCleanupPasses {
 		if err := s.cleanupReleaseTrackUploadSessions(ctx, req.Msg.Id); err != nil {
 			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(err))
-				return nil, errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release")
+				return nil, errs.WithCause(errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release"), err)
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFound("release", req.Msg.Id)
@@ -634,7 +632,7 @@ func (s *ReleaseService) DeleteRelease(
 			return s.appendReleaseDeletedAudit(ctx, tx, req.Msg.Id)
 		})
 		if errors.Is(err, ErrTrackUploadSessionsChanged) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteRelease", failurecause.Attr(err))
+			uploadsChanged = err
 			continue
 		}
 		if err != nil {
@@ -647,7 +645,7 @@ func (s *ReleaseService) DeleteRelease(
 		break
 	}
 	if !deleted {
-		return nil, errs.FailedPrecondition("track audio uploads changed during deletion; retry the request")
+		return nil, errs.WithCause(errs.FailedPrecondition("track audio uploads changed during deletion; retry the request"), uploadsChanged)
 	}
 	if err := s.waveformJobs.CancelTracks(
 		ctx,

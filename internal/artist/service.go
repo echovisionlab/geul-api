@@ -3,7 +3,6 @@ package artist
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -561,7 +559,6 @@ func (s *ArtistService) DeleteArtist(
 
 	snapshotPlan, err := policyv1.Artist.Snapshot(req.Msg.Id)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("id", "must identify an Artist")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
@@ -586,13 +583,11 @@ func (s *ArtistService) DeleteArtist(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		deleteRelationships, restoreRelationships, err := artistDeletionRelationshipMutations(req.Msg.Id, snapshots)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "DeleteArtist", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		if err := validateResourceDeletionAuthorizationBatchSize("artist", deleteRelationships, restoreRelationships); err != nil {
 			return err

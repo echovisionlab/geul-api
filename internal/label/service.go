@@ -468,8 +468,7 @@ func (s *LabelService) CreateLabel(
 			return nil, err
 		}
 		if dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
-			return nil, errs.AlreadyExistsMsg("label with this slug already exists")
+			return nil, errs.WithCause(errs.AlreadyExistsMsg("label with this slug already exists"), err)
 		}
 		return nil, errs.Internal(err)
 	}
@@ -671,7 +670,6 @@ func (s *LabelService) DeleteLabel(
 
 	snapshotPlan, err := policyv1.Label.Snapshot(req.Msg.Id)
 	if err != nil {
-		slog.WarnContext(ctx, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", failurecause.Attr(err))
 		return nil, errs.InvalidArgument("id", "must identify a Label")
 	}
 	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
@@ -701,13 +699,11 @@ func (s *LabelService) DeleteLabel(
 		}
 		snapshots, _, err := s.spiceDB.SnapshotResourceRelationshipDescriptors(ctx, snapshotPlan)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		deleteRelationships, restoreRelationships, err := labelDeletionRelationshipMutations(req.Msg.Id, snapshots)
 		if err != nil {
-			slog.ErrorContext(ctx, "content operation failed", "domain", "label", "operation", "label.DeleteLabel", "outcome", "failed", failurecause.Attr(err))
-			return errs.DependencyUnavailable("SpiceDB")
+			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		if err := validateResourceDeletionAuthorizationBatchSize("label", deleteRelationships, restoreRelationships); err != nil {
 			return err

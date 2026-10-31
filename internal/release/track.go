@@ -139,7 +139,7 @@ func (s *TrackService) deleteTrackWhenNoUploadSessions(
 }
 
 // toProto converts a model.Track to protobuf Track
-func (s *TrackService) toProto(t *model.Track) *managev1.Track {
+func (s *TrackService) toProto(ctx context.Context, t *model.Track) *managev1.Track {
 	proto := &managev1.Track{
 		Id:          t.ID,
 		ReleaseId:   t.ReleaseID,
@@ -167,9 +167,7 @@ func (s *TrackService) toProto(t *model.Track) *managev1.Track {
 		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
 			proto.Metadata = metadata
 		} else {
-			if err != nil {
-				slog.ErrorContext(context.Background(), "Operation failed", "domain", "release", "operation", "toProto", failurecause.Attr(err), "track_id", t.ID)
-			}
+			slog.ErrorContext(ctx, "Track metadata could not be converted; omitting it from the response", "domain", "release", "operation", "convert_track_metadata", failurecause.Attr(err), "track_id", t.ID)
 		}
 	}
 
@@ -385,7 +383,7 @@ func (s *TrackService) CreateTrack(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	return connect.NewResponse(s.toProto(&track)), nil
+	return connect.NewResponse(s.toProto(ctx, &track)), nil
 }
 
 // UpdateTrack updates an existing track (Site Admin only).
@@ -505,7 +503,7 @@ func (s *TrackService) UpdateTrack(
 		return nil, errs.Internal(err)
 	}
 
-	return connect.NewResponse(s.toProto(&track)), nil
+	return connect.NewResponse(s.toProto(ctx, &track)), nil
 }
 
 // DeleteTrack deletes a track (Site Admin only).
@@ -536,18 +534,18 @@ func (s *TrackService) DeleteTrack(
 		return nil, err
 	}
 	deleted := false
+	var uploadsChanged error
 	for range MaxTrackUploadCleanupPasses {
 		if err := s.cleanupTrackUploadSessions(ctx, track.ID); err != nil {
 			if errors.Is(err, ErrTrackUploadSessionNotAbortable) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(err))
-				return nil, errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the track")
+				return nil, errs.WithCause(errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the track"), err)
 			}
 			return nil, errs.Internal(fmt.Errorf("cleanup track audio uploads: %w", err))
 		}
 		err := s.deleteTrackWhenNoUploadSessions(ctx, track.ID)
 		if err != nil {
 			if errors.Is(err, ErrTrackUploadSessionsChanged) {
-				slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "DeleteTrack", failurecause.Attr(err))
+				uploadsChanged = err
 				continue
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -559,7 +557,7 @@ func (s *TrackService) DeleteTrack(
 		break
 	}
 	if !deleted {
-		return nil, errs.FailedPrecondition("track audio uploads changed during deletion; retry the request")
+		return nil, errs.WithCause(errs.FailedPrecondition("track audio uploads changed during deletion; retry the request"), uploadsChanged)
 	}
 	if err := s.waveformJobs.CancelTracks(
 		ctx,
@@ -612,7 +610,7 @@ func (s *TrackService) SetTrackCredits(
 	}
 
 	return connect.NewResponse(&managev1.TrackWithCredits{
-		Track:   s.toProto(&track),
+		Track:   s.toProto(ctx, &track),
 		Credits: credits,
 	}), nil
 }
@@ -638,7 +636,6 @@ func (s *TrackService) ReorderTracks(
 	// Validate all track IDs are valid UUIDs to prevent injection
 	for _, trackID := range req.Msg.TrackIds {
 		if _, err := uuid.Parse(trackID); err != nil {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "ReorderTracks", failurecause.Attr(err))
 			return nil, errs.InvalidArgument("track_id", fmt.Sprintf("invalid: %s", trackID))
 		}
 	}
@@ -723,7 +720,7 @@ func (s *TrackService) ReorderTracks(
 			return nil, errs.Internal(err)
 		}
 		result[i] = &managev1.TrackWithCredits{
-			Track:   s.toProto(&tracks[i]),
+			Track:   s.toProto(ctx, &tracks[i]),
 			Credits: credits,
 		}
 	}
@@ -764,9 +761,7 @@ func (s *TrackService) toProtoForViewer(ctx context.Context, t *model.Track) *ma
 		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
 			proto.Metadata = metadata
 		} else {
-			if err != nil {
-				slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "convert_track_metadata", failurecause.Attr(err), "track_id", t.ID)
-			}
+			slog.ErrorContext(ctx, "Track metadata could not be converted; omitting it from the response", "domain", "release", "operation", "convert_track_metadata", failurecause.Attr(err), "track_id", t.ID)
 		}
 	}
 

@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"connectrpc.com/connect"
@@ -312,8 +310,7 @@ func loadReleaseContentBlockBootstrap(
 			ctx, tx, principalMessage.GetSessionId(),
 		)
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "loadReleaseContentBlockBootstrap", failurecause.Attr(err))
-			return errs.AuthenticationRequired()
+			return errs.WithCause(errs.AuthenticationRequired(), err)
 		}
 		if err != nil {
 			return errs.Internal(fmt.Errorf("resolve Release collaboration principal: %w", err))
@@ -449,25 +446,24 @@ func normalizeReleaseContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
+	// A revision conflict carries its current revisions in the conflict
+	// detail and does not keep its cause: callers branch on errors.Is/As for
+	// raw stale and target-revision errors, and an already-normalized
+	// conflict must not take those branches.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "release", "operation", "normalizeReleaseContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "release", "operation", "normalizeReleaseContentBlockError", failurecause.Attr(err))
-		return errs.NotFoundMsg("release content document not found")
+		return errs.WithCause(errs.NotFoundMsg("release content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "release", "operation", "normalizeReleaseContentBlockError", failurecause.Attr(err))
 		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "release content revision changed; reload before saving", err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "release", "operation", "normalizeReleaseContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "a Block belongs to another document")
+		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		slog.WarnContext(context.Background(), "Content document operation rejected", "domain", "release", "operation", "normalizeReleaseContentBlockError", failurecause.Attr(err))
-		return errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks")
+		return errs.WithCause(errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks"), err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
 	default:

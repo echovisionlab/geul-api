@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -50,13 +48,11 @@ func requireArtistGlobalAction(ctx context.Context, checker artistPermissionChec
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistGlobalAction", failurecause.Attr(err))
-		return errs.AuthenticationRequired()
+		return errs.WithCause(errs.AuthenticationRequired(), err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistGlobalAction", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.AdminRequired()
@@ -86,8 +82,7 @@ func requireArtistPermission(ctx context.Context, checker artistPermissionChecke
 	}
 	allowed, err := checkArtistPermissionForPrincipal(ctx, checker, artistID, action, auth.GetUser(ctx))
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireArtistPermission", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NotFound("artist", artistID)
@@ -127,8 +122,7 @@ func requireLockedArtistPermission(ctx context.Context, tx *gorm.DB, checker art
 	}
 	allowed, err := checkArtistPermissionForPrincipal(ctx, checker, artistID, action, principal)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "requireLockedArtistPermission", failurecause.Attr(err))
-		return errs.DependencyUnavailable("SpiceDB")
+		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	if !allowed {
 		return errs.NotFound("artist", artistID)
@@ -158,8 +152,7 @@ func artistAllowedActions(ctx context.Context, checker artistPermissionChecker, 
 	for _, check := range checks {
 		allowed, err := checkArtistPermissionForPrincipal(ctx, checker, artistID, check.can, principal)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "artist", "operation", "artistAllowedActions", failurecause.Attr(err))
-			return nil, errs.DependencyUnavailable("SpiceDB")
+			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 		}
 		if allowed {
 			actions = append(actions, check.action)
@@ -186,10 +179,7 @@ func mapArtistParticipantMutationError(err error) error {
 		return err
 	}
 	if isArtistLastOwnerConstraint(err) {
-		if err != nil {
-			slog.WarnContext(context.Background(), "Operation failed", "domain", "artist", "operation", "mapArtistParticipantMutationError", failurecause.Attr(err))
-		}
-		return errs.FailedPrecondition("an Artist must retain at least one durable Owner")
+		return errs.WithCause(errs.FailedPrecondition("an Artist must retain at least one durable Owner"), err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("Artist participant not found")

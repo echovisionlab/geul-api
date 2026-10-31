@@ -41,7 +41,7 @@ func memberPreferredSourceLocale(ctx context.Context, db *gorm.DB) *string {
 		Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
 		Scan(&preferredLocale).Error; err != nil || preferredLocale == nil {
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "memberPreferredSourceLocale", failurecause.Attr(err))
+			slog.ErrorContext(ctx, "Member preferred locale lookup failed; inferring Release source locale", "domain", "release", "operation", "load_member_preferred_locale", failurecause.Attr(err))
 		}
 		return nil
 	}
@@ -51,7 +51,7 @@ func memberPreferredSourceLocale(ctx context.Context, db *gorm.DB) *string {
 func translationRuntimeDefaultLocale(ctx context.Context, db *gorm.DB) *string {
 	settings, err := translation.LoadRuntimeSettings(ctx, db)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "domain", "release", "operation", "translationRuntimeDefaultLocale", failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Translation runtime settings lookup failed; using the built-in default Release source locale", "domain", "release", "operation", "load_translation_default_locale", failurecause.Attr(err))
 		return nil
 	}
 	return localization.NormalizeSupportedLocale(settings.DefaultLocale)
