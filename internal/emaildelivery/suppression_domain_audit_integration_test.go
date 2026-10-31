@@ -15,6 +15,7 @@ import (
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -111,3 +112,21 @@ func (failingSuppressionAuditAppender) AppendDomainAuditInTransaction(
 }
 
 var _ domainaudit.Appender = failingSuppressionAuditAppender{}
+
+func TestEmailSuppressionLookupRequiresAdministratorIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	adminContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-lookup@example.test")
+	service := NewEmailSuppressionService(db, spiceDB)
+	request := connect.NewRequest(&managev1.GetEmailSuppressionRequest{Email: suppression.Email})
+
+	response, err := service.GetEmailSuppression(adminContext, request)
+	require.NoError(t, err)
+	require.Equal(t, suppression.ID, response.Msg.GetSuppression().GetId())
+
+	member := auth.GetUser(adminContext)
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, string(member.IdentityID), policyv1.Role.User())
+	_, err = service.GetEmailSuppression(adminContext, request)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+}

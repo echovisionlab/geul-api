@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
@@ -51,6 +52,11 @@ func (s *EmailSuppressionService) GetEmailSuppression(
 	ctx context.Context,
 	req *connect.Request[managev1.GetEmailSuppressionRequest],
 ) (*connect.Response[managev1.GetEmailSuppressionResponse], error) {
+	// A suppression names an address and its delivery failure; only
+	// administrators may read it.
+	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
+		return nil, err
+	}
 	if req.Msg.Email == "" {
 		return nil, errs.Required("email")
 	}
