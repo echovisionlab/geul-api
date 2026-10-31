@@ -154,7 +154,7 @@ func (s *InternalPageService) LoadPageBlockDocument(
 			return err
 		}
 		documentLayout = row.DocumentLayout
-		blockMedia, err = LoadContentBlockMediaReferences(ctx, tx, documentID)
+		blockMedia, err = contentblock.LoadMediaReferences(ctx, tx, documentID)
 		if err != nil {
 			return err
 		}

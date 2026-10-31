@@ -391,7 +391,7 @@ func (s *PageService) buildPageResponse(
 			if err != nil {
 				return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
 			}
-			blockMedia, err = pagedomain.LoadContentBlockMediaReferences(ctx, tx, documentID)
+			blockMedia, err = contentblock.LoadMediaReferences(ctx, tx, documentID)
 			if err != nil {
 				return errs.Internal(err)
 			}

@@ -216,7 +216,7 @@ func (s *WorkService) hydrateWorkContentProjection(ctx context.Context, work *mo
 		if loadErr != nil {
 			return loadErr
 		}
-		mediaItems, loadErr = LoadContentBlockMediaReferences(ctx, tx, documentID)
+		mediaItems, loadErr = contentblock.LoadMediaReferences(ctx, tx, documentID)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -276,7 +276,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 	if err != nil {
 		return nil, "", nil, normalizeWorkContentBlockError(err)
 	}
-	media, err := LoadContentBlockMediaReferences(ctx, tx, documentID)
+	media, err := contentblock.LoadMediaReferences(ctx, tx, documentID)
 	if err != nil {
 		return nil, "", nil, err
 	}

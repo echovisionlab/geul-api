@@ -141,7 +141,7 @@ func (s *InternalWorkService) LoadWorkBlockDocument(
 		if loadErr != nil {
 			return loadErr
 		}
-		mediaItems, loadErr = LoadContentBlockMediaReferences(ctx, tx, documentID)
+		mediaItems, loadErr = contentblock.LoadMediaReferences(ctx, tx, documentID)
 		if loadErr != nil {
 			return loadErr
 		}

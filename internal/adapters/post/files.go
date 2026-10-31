@@ -5,8 +5,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -89,7 +89,7 @@ func (a *PublicFiles) ResolveAuthorizedContentBlockMedia(
 	ctx context.Context,
 	documentID uuid.UUID,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	items, err := filemedia.LoadContentBlockMediaReferences(ctx, a.db, documentID)
+	items, err := contentblock.LoadMediaReferences(ctx, a.db, documentID)
 	if err != nil {
 		return nil, errs.Internal(err)
 	}

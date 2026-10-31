@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -39,7 +39,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, initial.Msg.GetDownload().GetUrl())
 	ownerContext := mediaasset.WithContentDownloadOwnerAuthorization(t.Context(), mediaasset.ContentDownloadOwnerAuthorization{ResourceType: "page", ResourceID: pageID, DocumentID: documentID, Status: "PAGE_STATUS_PUBLISHED", Mode: mediaasset.ContentDownloadOwnerAccessPublic})
-	items, err := filemedia.LoadContentBlockMediaReferences(t.Context(), db, uuid.MustParse(documentID))
+	items, err := contentblock.LoadMediaReferences(t.Context(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`UPDATE page SET access_policy='{"mode":"PAGE_ACCESS_MODE_AUTHENTICATED"}'::jsonb WHERE id=?::uuid`, pageID).Error)
 	denied, err := svc.AuthorizeDownload(t.Context(), request)

@@ -22,7 +22,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	programevent "github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -233,7 +232,7 @@ func (s *ProgramEventService) Get(
 		if err != nil {
 			return err
 		}
-		media, err = programevent.LoadContentBlockMediaReferences(ctx, tx, blockRead.DocumentID)
+		media, err = contentblock.LoadMediaReferences(ctx, tx, blockRead.DocumentID)
 		mediaAuthorization = mediaasset.ContentDownloadOwnerAuthorization{
 			ResourceType: "program_event", ResourceID: event.ID, Status: event.Status,
 			DocumentID: blockRead.DocumentID.String(), Mode: mediaasset.ContentDownloadOwnerAccessPublic,

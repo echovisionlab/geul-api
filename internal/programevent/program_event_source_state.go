@@ -123,7 +123,7 @@ func (s *ProgramEventService) toProtoProgramEvent(ctx context.Context, event *mo
 	if err != nil {
 		return nil, normalizeProgramEventContentBlockError(err)
 	}
-	blockMedia, err := LoadContentBlockMediaReferences(ctx, s.db, documentID)
+	blockMedia, err := contentblock.LoadMediaReferences(ctx, s.db, documentID)
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
