@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -328,4 +329,10 @@ func TestRunTakesDomainLocksBeforeAccess(t *testing.T) {
 	require.ErrorIs(t, err, missing)
 	require.Equal(t, []string{"lock"}, steps)
 	require.EqualValues(t, 1, noteCount(t, db))
+}
+
+func TestIsAnsweredRecognizesClassifiedFailures(t *testing.T) {
+	require.True(t, IsAnswered(connect.NewError(connect.CodeNotFound, errors.New("missing"))))
+	require.True(t, IsAnswered(fmt.Errorf("save: %w", domainerr.Precondition("kept"))))
+	require.False(t, IsAnswered(errors.New("database unavailable")))
 }

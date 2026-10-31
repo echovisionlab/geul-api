@@ -249,6 +249,14 @@ func IsNotFound(err error) bool {
 	return ok && classified.Code() == connect.CodeNotFound
 }
 
+// IsAnswered reports whether err already carries a client answer, a
+// Connect code or a use-case error, for a domain that maps only the
+// failures nothing answered yet.
+func IsAnswered(err error) bool {
+	_, ok := errs.Classified(err)
+	return ok
+}
+
 // PrincipalFence locks the authenticated principal's Identity without an
 // action check, for a principal's own lifecycle transition that Change
 // guards by state (onboarding, before the principal is onboarded).

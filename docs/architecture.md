@@ -153,6 +153,7 @@ type Require func(can policyv1.Can) error
 func IsDenied(err error) bool          // a fresh check's permission denial
 func IsUnauthenticated(err error) bool // a missing or stale session
 func IsNotFound(err error) bool        // a shared helper's not-found answer
+func IsAnswered(err error) bool        // any client answer, Connect code or use-case error
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit

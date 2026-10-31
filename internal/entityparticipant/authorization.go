@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -179,13 +178,10 @@ func AllowedActions[A any](ctx context.Context, s Spec, checker PermissionChecke
 const lastOwnerConstraint = "must retain at least one durable Owner"
 
 // MapMutationError gives a participant mutation failure that carries no
-// Connect code its client answer. The database rejects removing the last
+// client answer yet its answer. The database rejects removing the last
 // Owner with the same wording the service uses.
 func (s Spec) MapMutationError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
-		return err
-	}
-	if _, classified := errors.AsType[*domainerr.Error](err); classified {
+	if err == nil || mutation.IsAnswered(err) {
 		return err
 	}
 	if strings.Contains(err.Error(), lastOwnerConstraint) {
