@@ -3,7 +3,6 @@ package label
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"google.golang.org/protobuf/proto"
@@ -26,8 +25,7 @@ type FileDeleter interface {
 // Translation provides Label's locale normalization and shared translation
 // contributor/audit checks. Label's source locale is owned by label.source_locale.
 type Translation interface {
-	ResolveInitialSourceLocale(context.Context, *gorm.DB, auth.IdentityManager, string) string
-	NormalizeInitialSourceLocale(context.Context, *gorm.DB, string) string
+	ResolveInitialSourceLocale(context.Context, *gorm.DB, string) string
 	RequireDocumentContributors(context.Context, *gorm.DB, []string) error
 }
 

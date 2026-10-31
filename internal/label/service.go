@@ -529,7 +529,7 @@ func (s *LabelService) createLabelWithDB(
 	if err := requireLabelRouteAvailableWithDB(ctx, tx, label.Slug); err != nil {
 		return err
 	}
-	sourceLocale := s.translation.ResolveInitialSourceLocale(ctx, tx, s.kratosClient, acceptLanguage)
+	sourceLocale := s.translation.ResolveInitialSourceLocale(ctx, tx, acceptLanguage)
 	label.SourceLocale = sourceLocale
 	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 		Profile:      creativeContentProfile,

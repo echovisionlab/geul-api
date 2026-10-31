@@ -3,7 +3,6 @@ package artist
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -26,8 +25,7 @@ type FileDeleter interface {
 
 // Translation is the Artist-owned port to the shared translation runtime.
 type Translation interface {
-	ResolveInitialSourceLocale(context.Context, *gorm.DB, auth.IdentityManager, string) string
-	NormalizeInitialSourceLocale(context.Context, *gorm.DB, string) string
+	ResolveInitialSourceLocale(context.Context, *gorm.DB, string) string
 	RequireDocumentContributors(context.Context, *gorm.DB, []string) error
 }
 

@@ -185,10 +185,7 @@ func (artistIdentityManager) DeleteIdentity(context.Context, string) error      
 
 type artistIntegrationTranslation struct{}
 
-func (artistIntegrationTranslation) ResolveInitialSourceLocale(context.Context, *gorm.DB, auth.IdentityManager, string) string {
-	return "en"
-}
-func (artistIntegrationTranslation) NormalizeInitialSourceLocale(context.Context, *gorm.DB, string) string {
+func (artistIntegrationTranslation) ResolveInitialSourceLocale(context.Context, *gorm.DB, string) string {
 	return "en"
 }
 func (artistIntegrationTranslation) RequireDocumentContributors(ctx context.Context, tx *gorm.DB, contributors []string) error {

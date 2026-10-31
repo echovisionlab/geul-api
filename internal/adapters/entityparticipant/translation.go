@@ -27,7 +27,7 @@ type Translation struct {
 // NewTranslation names the entity ("Artist") in internal error text.
 func NewTranslation(entityTitle string) *Translation { return &Translation{entityTitle: entityTitle} }
 
-func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.IdentityManager, acceptLanguage string) string {
+func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage string) string {
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
 		var preferred *string
 		if err := db.WithContext(ctx).Model(&model.Member{}).Select("preferred_locale").Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).Scan(&preferred).Error; err != nil {
@@ -46,20 +46,6 @@ func (*Translation) ResolveInitialSourceLocale(ctx context.Context, db *gorm.DB,
 	} else {
 		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {
 			return *locale
-		}
-	}
-	return translation.DefaultLocale
-}
-
-func (*Translation) NormalizeInitialSourceLocale(ctx context.Context, db *gorm.DB, locale string) string {
-	if normalized := localization.NormalizeSupportedLocale(locale); normalized != nil {
-		return *normalized
-	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err != nil {
-		slog.ErrorContext(ctx, "Source locale settings load failed; using the default locale", failurecause.Attr(err))
-	} else {
-		if normalized := localization.NormalizeSupportedLocale(settings.DefaultLocale); normalized != nil {
-			return *normalized
 		}
 	}
 	return translation.DefaultLocale

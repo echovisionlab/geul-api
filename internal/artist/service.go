@@ -447,7 +447,7 @@ func (s *ArtistService) createArtistWithDB(
 	if err := requireArtistRouteAvailableWithDB(ctx, s.runtime, tx, artist.Slug); err != nil {
 		return err
 	}
-	sourceLocale := s.translation.ResolveInitialSourceLocale(ctx, tx, s.kratosClient, acceptLanguage)
+	sourceLocale := s.translation.ResolveInitialSourceLocale(ctx, tx, acceptLanguage)
 	artist.SourceLocale = sourceLocale
 	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 		Profile:      creativeContentProfile,
