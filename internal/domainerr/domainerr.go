@@ -96,3 +96,39 @@ func InvalidSession() *Error {
 func DependencyUnavailable(dependency string) *Error {
 	return New(Unavailable, "", dependency+" unavailable")
 }
+
+// AuthenticationRequired rejects a request without an authenticated
+// principal.
+func AuthenticationRequired() *Error {
+	return New(Unauthenticated, "", "authentication required")
+}
+
+// AccountBanned rejects a principal whose account is banned.
+func AccountBanned() *Error {
+	return New(PermissionDenied, "", "account is banned")
+}
+
+// NoPermission rejects a caller without action on resource.
+func NoPermission(action, resource string) *Error {
+	return New(PermissionDenied, "", fmt.Sprintf("no permission to %s this %s", action, resource))
+}
+
+// AdminRequired rejects a caller without administrator authority.
+func AdminRequired() *Error {
+	return New(PermissionDenied, "", "admin access required")
+}
+
+// AuthorRequired rejects a caller without author authority.
+func AuthorRequired() *Error {
+	return New(PermissionDenied, "", "author access required")
+}
+
+// InvalidEntityType rejects an unsupported entity type.
+func InvalidEntityType(entityType string) *Error {
+	return New(Invalid, "entity_type", "unsupported entity type: "+entityType)
+}
+
+// InvalidEntityID rejects an entity ID that is not a UUID.
+func InvalidEntityID() *Error {
+	return New(Invalid, "entity_id", "invalid entity_id format: must be a valid UUID")
+}

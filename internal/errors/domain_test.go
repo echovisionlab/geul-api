@@ -27,6 +27,13 @@ func TestDomainErrorsMapToTheirConnectCounterparts(t *testing.T) {
 		{"denied", domainerr.Denied("avatar source does not belong to this member"), PermissionDenied("avatar source does not belong to this member")},
 		{"invalid session", domainerr.InvalidSession(), InvalidSession()},
 		{"unavailable", domainerr.DependencyUnavailable("account email"), DependencyUnavailable("account email")},
+		{"authentication required", domainerr.AuthenticationRequired(), AuthenticationRequired()},
+		{"account banned", domainerr.AccountBanned(), AccountBanned()},
+		{"no permission", domainerr.NoPermission("edit", "post"), NoPermission("edit", "post")},
+		{"admin required", domainerr.AdminRequired(), AdminRequired()},
+		{"author required", domainerr.AuthorRequired(), AuthorRequired()},
+		{"invalid entity type", domainerr.InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED"), InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED")},
+		{"invalid entity id", domainerr.InvalidEntityID(), InvalidEntityID()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

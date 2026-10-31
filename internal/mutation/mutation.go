@@ -22,9 +22,12 @@ import (
 	"slices"
 	"strings"
 
+	"connectrpc.com/connect"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -193,6 +196,34 @@ func FreshAdminCan(can policyv1.Can, err error) Access {
 	return Access{check: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
 		return identitystate.RequireFreshAdminCan(ctx, tx, spiceDB, can)
 	}}
+}
+
+// Require runs FreshCan's check for can in the mutation's transaction.
+type Require func(can policyv1.Can) error
+
+// Locked authorizes against the target state Change will see: check locks
+// the target row in tx, picks the action its locked state requires (Edit or
+// EditArchived), and calls require with it. Change runs after check returns,
+// in the same transaction, so the state cannot move between the two.
+func Locked(check func(ctx context.Context, tx *gorm.DB, require Require) error) Access {
+	if check == nil {
+		return Access{err: errors.New("mutation locked access check is required")}
+	}
+	return Access{check: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
+		return check(ctx, tx, func(can policyv1.Can) error {
+			return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
+		})
+	}}
+}
+
+// IsDenied reports whether err is the permission denial of a fresh check,
+// for a domain that answers it differently (a masked target answers not
+// found).
+func IsDenied(err error) bool {
+	if domainErr, ok := errors.AsType[*domainerr.Error](err); ok {
+		return domainErr.Kind == domainerr.PermissionDenied
+	}
+	return connect.CodeOf(err) == connect.CodePermissionDenied
 }
 
 // PrincipalFence locks the authenticated principal's Identity without an
