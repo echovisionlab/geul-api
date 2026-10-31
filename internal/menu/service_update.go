@@ -82,18 +82,9 @@ func (s *MenuService) applyMenuUpdate(
 			return targetErr
 		}
 		menu = *locked
-		change := menuUpdate{now: update.now}
-		changedFields := make([]string, 0, 2)
-		if update.name != nil && *update.name != menu.Name {
-			if err := ensureUpdatedMenuNameAvailable(tx, menuID, request.Name); err != nil {
-				return err
-			}
-			change.name = update.name
-			changedFields = append(changedFields, "name")
-		}
-		if update.items != nil && !semanticMenuItemsEqual(menu.Items, update.items) {
-			change.items = update.items
-			changedFields = append(changedFields, "items")
+		change, changedFields, err := lockedMenuChange(tx, menu, request, update)
+		if err != nil {
+			return err
 		}
 		if len(changedFields) == 0 {
 			return nil
@@ -110,16 +101,7 @@ func (s *MenuService) applyMenuUpdate(
 			return errs.Internal(fmt.Errorf("failed to reload menu: %w", err))
 		}
 		if change.items != nil {
-			nextItems, err := decodeSourceItems(menu.Items)
-			if err != nil {
-				return err
-			}
-			if err := SyncCurrentSourceLabelValues(ctx, tx, menu.ID, nextItems, update.now); err != nil {
-				return err
-			}
-			if err := ReconcileTranslationRowsWithSourceJSON(
-				ctx, tx, menu.ID, menu.Items, update.now,
-			); err != nil {
+			if err := syncMenuSourceItemValues(ctx, tx, menu, update.now); err != nil {
 				return err
 			}
 		}
@@ -143,6 +125,43 @@ func (s *MenuService) applyMenuUpdate(
 		return nil
 	})
 	return &menu, changed, err
+}
+
+// lockedMenuChange compares update with the locked menu and returns the part
+// that changes it, with the changed audit fields.
+func lockedMenuChange(
+	tx *gorm.DB,
+	menu model.Menu,
+	request *managev1.UpdateMenuRequest,
+	update menuUpdate,
+) (menuUpdate, []string, error) {
+	change := menuUpdate{now: update.now}
+	changedFields := make([]string, 0, 2)
+	if update.name != nil && *update.name != menu.Name {
+		if err := ensureUpdatedMenuNameAvailable(tx, menu.ID, request.Name); err != nil {
+			return change, nil, err
+		}
+		change.name = update.name
+		changedFields = append(changedFields, "name")
+	}
+	if update.items != nil && !semanticMenuItemsEqual(menu.Items, update.items) {
+		change.items = update.items
+		changedFields = append(changedFields, "items")
+	}
+	return change, changedFields, nil
+}
+
+// syncMenuSourceItemValues brings the source label values and translation rows
+// in line with the items just written to menu.
+func syncMenuSourceItemValues(ctx context.Context, tx *gorm.DB, menu model.Menu, now time.Time) error {
+	nextItems, err := decodeSourceItems(menu.Items)
+	if err != nil {
+		return err
+	}
+	if err := SyncCurrentSourceLabelValues(ctx, tx, menu.ID, nextItems, now); err != nil {
+		return err
+	}
+	return ReconcileTranslationRowsWithSourceJSON(ctx, tx, menu.ID, menu.Items, now)
 }
 
 func menuUpdateAction(

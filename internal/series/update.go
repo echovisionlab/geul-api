@@ -79,20 +79,9 @@ func (s *SeriesService) applySeriesUpdate(
 		if err := loadSeriesForUpdate(tx, request.Id, &series); err != nil {
 			return err
 		}
-		oldSlug := series.Slug
-		if err := validateSeriesUpdateSlug(ctx, tx, request.Id, plan.nextSlug); err != nil {
-			return err
-		}
 		previousStatus := series.Status
-		metadataFields, lifecycleChanged := seriesAuditChanges(series, plan)
-		if err := applySeriesFields(tx, &series, plan, metadataFields, lifecycleChanged); err != nil {
-			return err
-		}
-		nextSlug := plan.nextSlug
-		if !containsSeriesAuditField(metadataFields, "slug") {
-			nextSlug = nil
-		}
-		if err := s.updateSeriesMenuSlug(ctx, tx, series.ID, oldSlug, nextSlug); err != nil {
+		metadataFields, lifecycleChanged, err := s.writeSeriesRoot(ctx, tx, &series, plan)
+		if err != nil {
 			return err
 		}
 		sourceChanged, err := s.updateSeriesSourceDocument(ctx, tx, series.ID, request, plan.now)
@@ -124,6 +113,33 @@ func (s *SeriesService) applySeriesUpdate(
 		return nil
 	})
 	return series, err
+}
+
+// writeSeriesRoot writes the requested slug and status to the locked series
+// and moves Menu targets to a changed slug. It returns the changed metadata
+// audit fields and whether the status changed.
+func (s *SeriesService) writeSeriesRoot(
+	ctx context.Context,
+	tx *gorm.DB,
+	series *model.Series,
+	plan seriesUpdatePlan,
+) ([]string, bool, error) {
+	oldSlug := series.Slug
+	if err := validateSeriesUpdateSlug(ctx, tx, series.ID, plan.nextSlug); err != nil {
+		return nil, false, err
+	}
+	metadataFields, lifecycleChanged := seriesAuditChanges(*series, plan)
+	if err := applySeriesFields(tx, series, plan, metadataFields, lifecycleChanged); err != nil {
+		return nil, false, err
+	}
+	nextSlug := plan.nextSlug
+	if !containsSeriesAuditField(metadataFields, "slug") {
+		nextSlug = nil
+	}
+	if err := s.updateSeriesMenuSlug(ctx, tx, series.ID, oldSlug, nextSlug); err != nil {
+		return nil, false, err
+	}
+	return metadataFields, lifecycleChanged, nil
 }
 
 func seriesUpdateAction(request *managev1.UpdateSeriesRequest) seriesAction {
