@@ -106,13 +106,13 @@ func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *
 			require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
 			var connectErr *connect.Error
 			require.ErrorAs(t, err, &connectErr)
-			require.Equal(t, test.name+" with name '"+name+"' already exists", connectErr.Message())
+			require.Equal(t, test.name+" with name '"+conflictingName+"' already exists", connectErr.Message())
 
 			err = test.update(id, nil, &conflictingSlug)
 			require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
 			connectErr = nil
 			require.ErrorAs(t, err, &connectErr)
-			require.Equal(t, test.name+" with slug '"+slug+"' already exists", connectErr.Message())
+			require.Equal(t, test.name+" with slug '"+conflictingSlug+"' already exists", connectErr.Message())
 
 			blank := "   "
 			err = test.update(id, &blank, nil)

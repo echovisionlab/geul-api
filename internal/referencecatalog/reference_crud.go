@@ -109,26 +109,24 @@ func (c referenceCRUD[T]) updateLocked(
 		return nil, nil, errs.InternalMsg(c.resource + " mutation requires a locked row")
 	}
 
-	nextName, nextSlug := c.values(record)
+	currentName, currentSlug := c.values(record)
+	nextName, nextSlug := currentName, currentSlug
 	updates := structured.Fields{}
 	changedFields := make([]string, 0, 3)
+	var err error
 	if name != nil {
-		nextName, err := normalizeReferenceName(*name, c.maxLength)
-		if err != nil {
+		if nextName, err = normalizeReferenceName(*name, c.maxLength); err != nil {
 			return nil, nil, err
 		}
-		currentName, _ := c.values(record)
 		if nextName != currentName {
 			updates["name"] = nextName
 			changedFields = append(changedFields, "name")
 		}
 	}
 	if slug != nil {
-		nextSlug, err := normalizeReferenceSlug(*slug, c.maxLength)
-		if err != nil {
+		if nextSlug, err = normalizeReferenceSlug(*slug, c.maxLength); err != nil {
 			return nil, nil, err
 		}
-		_, currentSlug := c.values(record)
 		if nextSlug != currentSlug {
 			updates["slug"] = nextSlug
 			changedFields = append(changedFields, "slug")
