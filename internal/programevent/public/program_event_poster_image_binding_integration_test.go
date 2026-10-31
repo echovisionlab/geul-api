@@ -53,9 +53,11 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.PublishProgramEvent(ctx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: event.Msg.Id}))
 	require.NoError(t, err)
-	publicService := NewProgramEventService(db, newPublicProgramEventAssets(db, "https://cdn.example.com"),
-		programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
-		WithProgramEventContentBlockStore(store), WithProgramEventFileService(files))
+	publicService := NewConnectHandler(publicServiceForTest(t, Deps{
+		DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"),
+		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
+		ContentBlocks: store, Files: files,
+	}))
 
 	var primaryMediaID, primaryFileID string
 	for _, kind := range []string{"image", "poster"} {

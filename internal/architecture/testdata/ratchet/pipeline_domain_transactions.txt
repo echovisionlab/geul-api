@@ -4,3 +4,5 @@
 1 internal/member/member_deletion_unonboarded.go
 1 internal/member/member_registration_provision.go
 1 internal/member/public/newsletter.go
+1 internal/programevent/locked_read.go
+1 internal/programevent/public/locked_read.go

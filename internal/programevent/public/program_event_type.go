@@ -3,67 +3,61 @@ package public
 import (
 	"context"
 
-	"connectrpc.com/connect"
-	"gorm.io/gorm"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-type ProgramEventTypeService struct {
-	openv1connect.UnimplementedProgramEventTypeServiceHandler
-	db *gorm.DB
+// ListProgramEventTypesQuery is one page of active event types, named in
+// the locale AcceptLanguage selects.
+type ListProgramEventTypesQuery struct {
+	Limit          int32
+	Offset         int32
+	Filters        []*commonv1.FilterSpec
+	AcceptLanguage string
 }
 
-func NewProgramEventTypeService(db *gorm.DB) *ProgramEventTypeService {
-	return &ProgramEventTypeService{db: db}
+// TypeList is one page of active event types.
+type TypeList struct {
+	Types      []*openv1.ProgramEventType
+	Pagination *commonv1.PaginationResponse
 }
-func (s *ProgramEventTypeService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListProgramEventTypesRequest],
-) (*connect.Response[openv1.ListProgramEventTypesResponse], error) {
-	query := s.db.WithContext(ctx).
+
+// ListProgramEventTypes returns one page of active event types in their
+// sort order.
+func (s *Service) ListProgramEventTypes(ctx context.Context, query ListProgramEventTypesQuery) (TypeList, error) {
+	rows := s.db.WithContext(ctx).
 		Model(&model.ProgramEventType{}).
 		Where("status = ?", model.ProgramEventTypeStatusActive)
-	var err error
-	query, err = applySimpleProgramEventTypeFilters(query, req.Msg.Filters)
+	rows, err := applySimpleProgramEventTypeFilters(rows, query.Filters)
 	if err != nil {
-		return nil, err
+		return TypeList{}, err
 	}
-
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := rows.Count(&total).Error; err != nil {
+		return TypeList{}, err
 	}
-	query = query.Order("sort_order ASC, slug ASC")
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	query = pagination.Apply(query)
-
-	var rows []model.ProgramEventType
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var types []model.ProgramEventType
+	if err := pagination.Apply(rows.Order("sort_order ASC, slug ASC")).Find(&types).Error; err != nil {
+		return TypeList{}, err
 	}
-	typeIDs := make([]string, 0, len(rows))
-	for i := range rows {
-		typeIDs = append(typeIDs, rows[i].ID)
+	typeIDs := make([]string, 0, len(types))
+	for i := range types {
+		typeIDs = append(typeIDs, types[i].ID)
 	}
 	localesByType, err := loadPublicProgramEventTypeLocales(ctx, s.db, typeIDs)
 	if err != nil {
-		return nil, err
+		return TypeList{}, err
 	}
-	result := make([]*openv1.ProgramEventType, 0, len(rows))
-	for i := range rows {
-		item, err := publicProgramEventTypeProto(rows[i], localesByType[rows[i].ID], req.Header().Get("Accept-Language"))
+	result := make([]*openv1.ProgramEventType, 0, len(types))
+	for i := range types {
+		item, err := publicProgramEventTypeProto(types[i], localesByType[types[i].ID], query.AcceptLanguage)
 		if err != nil {
-			return nil, err
+			return TypeList{}, err
 		}
 		result = append(result, item)
 	}
-	return connect.NewResponse(&openv1.ListProgramEventTypesResponse{
-		Types:      result,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
+	return TypeList{Types: result, Pagination: pagination.BuildResponse(total)}, nil
 }

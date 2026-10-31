@@ -18,6 +18,8 @@ import (
 	eventdomain "github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -135,3 +137,39 @@ func publicPrincipalContext(memberID, identityID string) context.Context {
 
 func stringPtr(value string) *string { return &value }
 func boolPtr(value bool) *bool       { return &value }
+
+// publicServiceForTest builds the public reads through NewService. Fields
+// left unset in deps get stand-ins that fail if a test reaches them.
+func publicServiceForTest(t *testing.T, deps Deps) *Service {
+	t.Helper()
+	if deps.DB == nil {
+		deps.DB = newDryRunPublicServiceDB(t)
+	}
+	if deps.Assets == nil {
+		deps.Assets = unusedAssets{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = &contentblock.Store{}
+	}
+	if deps.Files == nil {
+		deps.Files = unusedFiles{}
+	}
+	if deps.CreditMembers == nil {
+		deps.CreditMembers = unusedCreditMembers{}
+	}
+	service, err := NewService(deps)
+	require.NoError(t, err)
+	return service
+}
+
+type unusedFiles struct{}
+
+func (unusedFiles) HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error) {
+	return nil, errUnusedTestDependency
+}
+
+type unusedCreditMembers struct{}
+
+func (unusedCreditMembers) LoadPublicCreditMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {
+	return nil, errUnusedTestDependency
+}

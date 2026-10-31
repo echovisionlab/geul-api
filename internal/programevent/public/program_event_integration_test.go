@@ -197,13 +197,12 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	_, err = eventSvc.PublishProgramEvent(adminCtx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: eventResp.Msg.Id}))
 	require.NoError(t, err)
 
-	publicEventSvc := NewProgramEventService(
-		db,
-		newPublicProgramEventAssets(db, "https://cdn.example.com"),
-		programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
-		WithProgramEventContentBlockStore(contentBlocks),
-		WithProgramEventFileService(publicFileSvc),
-	)
+	publicEvents := publicServiceForTest(t, Deps{
+		DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"),
+		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
+		ContentBlocks: contentBlocks, Files: publicFileSvc,
+	})
+	publicEventSvc := NewConnectHandler(publicEvents)
 	getReq := connect.NewRequest(&openv1.GetProgramEventRequest{Slug: "public-program-event-" + suffix})
 	getReq.Header().Set("Accept-Language", "ko")
 	fetched, err := publicEventSvc.Get(context.Background(), getReq)
@@ -316,7 +315,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	publicSeriesSvc := NewProgramEventSeriesService(db, newPublicProgramEventAssets(db, "https://cdn.example.com"))
+	publicSeriesSvc := NewSeriesConnectHandler(publicEvents)
 	seriesGet, err := publicSeriesSvc.Get(context.Background(), connect.NewRequest(&openv1.GetProgramEventSeriesRequest{
 		Slug: "public-program-event-series-" + suffix,
 	}))
@@ -352,7 +351,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	require.Len(t, seriesList.Msg.Series, 1)
 	require.Equal(t, seriesResp.Msg.Id, seriesList.Msg.Series[0].Id)
 
-	publicTypeSvc := NewProgramEventTypeService(db)
+	publicTypeSvc := NewTypeConnectHandler(publicEvents)
 	typeList, err := publicTypeSvc.List(context.Background(), connect.NewRequest(&openv1.ListProgramEventTypesRequest{
 		Filters: []*commonv1.FilterSpec{
 			nil,

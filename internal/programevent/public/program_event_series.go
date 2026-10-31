@@ -5,107 +5,93 @@ import (
 	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-type ProgramEventSeriesService struct {
-	openv1connect.UnimplementedProgramEventSeriesServiceHandler
-	db     *gorm.DB
-	assets Assets
+// GetProgramEventSeriesQuery names a published series by slug or ID.
+type GetProgramEventSeriesQuery struct {
+	SlugOrID string
 }
 
-func NewProgramEventSeriesService(db *gorm.DB, assets Assets) *ProgramEventSeriesService {
-	if assets == nil {
-		panic("Program Event public assets are required")
-	}
-	return &ProgramEventSeriesService{db: db, assets: assets}
-}
-func (s *ProgramEventSeriesService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetProgramEventSeriesRequest],
-) (*connect.Response[openv1.GetProgramEventSeriesResponse], error) {
-	slugOrID := strings.TrimSpace(req.Msg.Slug)
+// GetProgramEventSeries returns a published series.
+func (s *Service) GetProgramEventSeries(ctx context.Context, query GetProgramEventSeriesQuery) (*openv1.ProgramEventSeries, error) {
+	slugOrID := strings.TrimSpace(query.SlugOrID)
 	if slugOrID == "" {
-		return nil, errs.Required("slug")
+		return nil, domainerr.Required("slug")
 	}
-
 	var series model.ProgramEventSeries
-	query := s.db.WithContext(ctx).
+	rows := s.db.WithContext(ctx).
 		Model(&model.ProgramEventSeries{}).
 		Where("status = ?", model.ProgramEventStatusPublished)
 	if _, parseErr := uuid.Parse(slugOrID); parseErr == nil {
-		query = query.Where("id = ?", slugOrID)
+		rows = rows.Where("id = ?", slugOrID)
 	} else {
-		query = query.Where("slug = ?", slugOrID)
+		rows = rows.Where("slug = ?", slugOrID)
 	}
-	if err := query.First(&series).Error; err != nil {
+	if err := rows.First(&series).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("program event series not found")
+			return nil, domainerr.New(domainerr.NotFound, "", "program event series not found")
 		}
-		return nil, errs.Internal(err)
-	}
-	protoSeries, err := s.toProtoProgramEventSeries(ctx, &series, req.Header().Get("Accept-Language"))
-	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&openv1.GetProgramEventSeriesResponse{Series: protoSeries}), nil
+	return toProtoProgramEventSeries(ctx, s.assets, &series), nil
 }
 
-func (s *ProgramEventSeriesService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListProgramEventSeriesRequest],
-) (*connect.Response[openv1.ListProgramEventSeriesResponse], error) {
-	query := s.db.WithContext(ctx).
+// ListProgramEventSeriesQuery is one page of published series.
+type ListProgramEventSeriesQuery struct {
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+}
+
+// SeriesList is one page of published series.
+type SeriesList struct {
+	Series     []*openv1.ProgramEventSeries
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListProgramEventSeries returns one page of published series, most
+// recently updated first.
+func (s *Service) ListProgramEventSeries(ctx context.Context, query ListProgramEventSeriesQuery) (SeriesList, error) {
+	rows := s.db.WithContext(ctx).
 		Model(&model.ProgramEventSeries{}).
 		Where("status = ?", model.ProgramEventStatusPublished)
-	var err error
-	query, err = applySimpleProgramEventSeriesFilters(query, req.Msg.Filters)
+	rows, err := applySimpleProgramEventSeriesFilters(rows, query.Filters)
 	if err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := rows.Count(&total).Error; err != nil {
+		return SeriesList{}, err
 	}
-	query = query.Order("updated_at DESC")
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-	query = pagination.Apply(query)
-
-	var rows []model.ProgramEventSeries
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var series []model.ProgramEventSeries
+	if err := pagination.Apply(rows.Order("updated_at DESC")).Find(&series).Error; err != nil {
+		return SeriesList{}, err
 	}
-	result, err := s.toProtoProgramEventSeriesList(ctx, rows)
+	result, err := s.toProtoProgramEventSeriesList(ctx, series)
 	if err != nil {
-		return nil, err
+		return SeriesList{}, err
 	}
-	return connect.NewResponse(&openv1.ListProgramEventSeriesResponse{
-		Series:     result,
-		Pagination: pagination.BuildResponse(total),
-	}), nil
+	return SeriesList{Series: result, Pagination: pagination.BuildResponse(total)}, nil
 }
-func (s *ProgramEventSeriesService) toProtoProgramEventSeries(
-	ctx context.Context,
-	series *model.ProgramEventSeries,
-	_ string,
-) (*openv1.ProgramEventSeries, error) {
+
+func toProtoProgramEventSeries(ctx context.Context, assets Assets, series *model.ProgramEventSeries) *openv1.ProgramEventSeries {
 	result := openProgramEventSeriesProto(series)
-	if posterAsset := loadProgramEventFileAsset(ctx, s.assets, series.PosterFileID); posterAsset != nil {
+	if posterAsset := loadProgramEventFileAsset(ctx, assets, series.PosterFileID); posterAsset != nil {
 		result.PosterAsset = posterAsset
 	}
-	return result, nil
+	return result
 }
 
-func (s *ProgramEventSeriesService) toProtoProgramEventSeriesList(
+func (s *Service) toProtoProgramEventSeriesList(
 	ctx context.Context,
 	series []model.ProgramEventSeries,
 ) ([]*openv1.ProgramEventSeries, error) {
@@ -117,9 +103,8 @@ func (s *ProgramEventSeriesService) toProtoProgramEventSeriesList(
 	}
 	assetsByFile, err := s.assets.ResolveReadyAssetsForSourceFiles(ctx, fileIDs, "image", "poster", "map_image")
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	result := make([]*openv1.ProgramEventSeries, 0, len(series))
 	for i := range series {
 		item := openProgramEventSeriesProto(&series[i])

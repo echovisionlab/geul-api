@@ -42,11 +42,10 @@ func TestPublicProgramEventListQueryBudgetDoesNotGrowPerRowIntegration(t *testin
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewProgramEventService(
-		countedDB,
-		newPublicProgramEventAssets(countedDB, "https://cdn.example.com"),
-		&publicProgramEventQueryBudgetCredits{},
-	)
+	service := NewConnectHandler(publicServiceForTest(t, Deps{
+		DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com"),
+		CreditMembers: &publicProgramEventQueryBudgetCredits{},
+	}))
 	eventCounts := make(map[int]int64, 3)
 	for _, limit := range []int32{1, 6, 20} {
 		queryCount.Store(0)
@@ -91,7 +90,7 @@ func TestPublicProgramEventTypeListQueryBudgetDoesNotGrowPerRowIntegration(t *te
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewProgramEventTypeService(countedDB)
+	service := NewTypeConnectHandler(publicServiceForTest(t, Deps{DB: countedDB}))
 	typeCounts := make(map[int]int64, 3)
 	for _, limit := range []int32{1, 6, 20} {
 		queryCount.Store(0)
