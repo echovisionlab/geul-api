@@ -181,19 +181,19 @@ func normalizeProgramEventContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
-	// A revision conflict keeps err out of its chain: CollaborationConflict
-	// already reads the revisions from it, and AI document callers treat a
-	// stale or target revision error in the chain as their own conflict result.
+	// A revision conflict keeps its cause, so a conflict found while storing
+	// takes the same errors.Is/As branches (AI document conflict result,
+	// translation source no longer current) as one found by the pre-check.
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
+		return errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err), err)
 	}
 
 	switch {
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
 		return errs.WithCause(errs.NotFoundMsg("Program Event content document not found"), err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "Program Event content revision changed; reload before saving", err)
+		return errs.WithCause(errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "Program Event content revision changed; reload before saving", err), err)
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
