@@ -30,6 +30,9 @@ const (
 	Unauthenticated
 	// Unavailable reports a dependency that may recover on retry.
 	Unavailable
+	// Aborted rejects a write whose optimistic concurrency check found a
+	// newer state; the client rereads and retries.
+	Aborted
 )
 
 // Error is a use-case outcome. Message is what the client sees; the cause
@@ -88,6 +91,11 @@ func Duplicate(resource, field, value string) *Error {
 // Precondition rejects a request the current state does not allow.
 func Precondition(message string) *Error {
 	return New(FailedPrecondition, "", message)
+}
+
+// Changed rejects a write whose expected revision is no longer current.
+func Changed(message string) *Error {
+	return New(Aborted, "", message)
 }
 
 // Denied rejects an authenticated caller.

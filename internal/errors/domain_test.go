@@ -36,6 +36,7 @@ func TestDomainErrorsMapToTheirConnectCounterparts(t *testing.T) {
 		{"author required", domainerr.AuthorRequired(), AuthorRequired()},
 		{"invalid entity type", domainerr.InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED"), InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED")},
 		{"invalid entity id", domainerr.InvalidEntityID(), InvalidEntityID()},
+		{"changed", domainerr.Changed("Post configuration changed; reload before saving"), connect.NewError(connect.CodeAborted, stderrors.New("Post configuration changed; reload before saving"))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
