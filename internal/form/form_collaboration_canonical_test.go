@@ -97,12 +97,12 @@ func TestFormCollaborativeCanonicalNoopAndExplicitEmptyTitle(t *testing.T) {
 	now := time.Date(2026, time.August, 25, 0, 0, 0, 0, time.UTC)
 	current := formAIDocumentLocaleRow{Schema: schema}
 	update, titleChanged := formCollaborativeLocaleUpdates(current, nil, schema, now)
-	if titleChanged || len(update.fields) != 0 {
+	if titleChanged || len(update.columns()) != 0 {
 		t.Fatalf("canonical no-op = (%+v, %v)", update, titleChanged)
 	}
 	empty := ""
 	update, titleChanged = formCollaborativeLocaleUpdates(current, &empty, schema, now)
-	if !titleChanged || len(update.fields) != 2 || update.fields["title"] == nil {
+	if !titleChanged || len(update.columns()) != 2 || update.columns()["title"] == nil {
 		t.Fatalf("explicit empty title update = (%+v, %v)", update, titleChanged)
 	}
 }
