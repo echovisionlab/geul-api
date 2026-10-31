@@ -67,7 +67,7 @@ func (s *Service) ListPageVersions(ctx context.Context, query ListPageVersionsQu
 	for i := range versions {
 		contributorLists[i] = versions[i].ContributorMemberIDs
 	}
-	contributorNames, err := resolveVersionContributorNames(ctx, s.db, contributorLists...)
+	contributorNames, err := s.resolveVersionContributorNames(ctx, contributorLists...)
 	if err != nil {
 		return nil, err
 	}

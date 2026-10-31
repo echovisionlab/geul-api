@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -158,7 +157,7 @@ func (s *Service) applyPageUpdate(ctx context.Context, tx *gorm.DB, pageID strin
 			return pageUpdated{}, err
 		}
 	}
-	if err := validatePageAccessPolicyTags(ctx, tx, update.accessPolicy); err != nil {
+	if err := s.validatePageAccessPolicyTags(ctx, tx, update.accessPolicy); err != nil {
 		return pageUpdated{}, err
 	}
 	currentPolicy, err := pageaccess.Decode(lockedPage.AccessPolicy)
@@ -213,14 +212,12 @@ func pageUpdateChangedFields(page *lockedPageMenuTargetState, update pageUpdate)
 	return fields
 }
 
-func validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *commonv1.PageAccessPolicy) error {
+func (s *Service) validatePageAccessPolicyTags(ctx context.Context, tx *gorm.DB, policy *commonv1.PageAccessPolicy) error {
 	if policy == nil || len(policy.UserTagIds) == 0 {
 		return nil
 	}
-	var ids []string
-	if err := tx.WithContext(ctx).Model(&model.UserTag{}).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Where("id IN ?", policy.UserTagIds).Pluck("id", &ids).Error; err != nil {
+	ids, err := s.members.LockUserTags(ctx, tx, policy.UserTagIds)
+	if err != nil {
 		return err
 	}
 	if len(ids) != len(policy.UserTagIds) {

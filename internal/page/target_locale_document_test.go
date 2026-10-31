@@ -3,6 +3,8 @@ package page
 import (
 	"testing"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -24,24 +26,25 @@ func TestCreateSourceLocaleHonorsExplicitCanonicalLocaleAndRetainsFallback(t *te
 		t.Fatal(err)
 	}
 	memberID := "11111111-1111-4111-8111-111111111111"
+	service := &Service{members: memberadapter.PageMembers{}}
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{Authenticated: true, MemberID: auth.MemberID(memberID)})
 	// The explicit locale needs no preference read and must win even when the
 	// member prefers ko and the header requests ja.
-	locale, err := resolveCreateSourceLocale(ctx, db, "en", "ja")
+	locale, err := service.resolveCreateSourceLocale(ctx, db, "en", "ja")
 	if err != nil || locale != "en" {
 		t.Fatalf("explicit locale=(%q, %v)", locale, err)
 	}
 	mock.ExpectQuery(`SELECT "preferred_locale" FROM "member"`).WithArgs(memberID).WillReturnRows(sqlmock.NewRows([]string{"preferred_locale"}).AddRow("ko"))
-	locale, err = resolveCreateSourceLocale(ctx, db, "", "ja")
+	locale, err = service.resolveCreateSourceLocale(ctx, db, "", "ja")
 	if err != nil || locale != "ko" {
 		t.Fatalf("omitted locale lost preference fallback=(%q, %v)", locale, err)
 	}
-	locale, err = resolveCreateSourceLocale(t.Context(), nil, "", "ja")
+	locale, err = service.resolveCreateSourceLocale(t.Context(), nil, "", "ja")
 	if err != nil || locale != "ja" {
 		t.Fatalf("anonymous header fallback=(%q, %v)", locale, err)
 	}
 	for _, requested := range []string{"xx", "EN", "en-US", " en "} {
-		if _, err := resolveCreateSourceLocale(ctx, db, requested, "ja"); errs.CodeOf(err) != connect.CodeInvalidArgument {
+		if _, err := service.resolveCreateSourceLocale(ctx, db, requested, "ja"); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("unsupported locale %q error=%v", requested, err)
 		}
 	}

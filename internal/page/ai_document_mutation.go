@@ -158,7 +158,7 @@ func (s *Service) executeAIDocumentMutation(
 	if err := validateCompiledPageAIDocumentMutation(execution.state, execution.mutation); err != nil {
 		return err
 	}
-	fence := pageAuthorizedAIDocumentFence(root.page.ID, root.documentID,
+	fence := s.pageAuthorizedAIDocumentFence(root.page.ID, root.documentID,
 		contentblock.DomainContext{SourceLocale: execution.state.SourceLocale}, execution.mutation.ContributorMemberID)
 	if execution.applied, err = s.applyAIDocumentMutationInTransaction(ctx, tx, execution.mutation, fence); err != nil {
 		return err
@@ -295,7 +295,7 @@ func pageTargetConflictRevision(conflict *translation.TargetRevisionConflict) *s
 	return &current
 }
 
-func pageAuthorizedAIDocumentFence(
+func (s *Service) pageAuthorizedAIDocumentFence(
 	pageID string,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
@@ -305,7 +305,7 @@ func pageAuthorizedAIDocumentFence(
 		if strings.TrimSpace(pageID) == "" || documentID == uuid.Nil || requestedDocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Page content document changed; reload before saving")
 		}
-		if err := requireDocumentContributors(ctx, tx, []string{contributorMemberID}); err != nil {
+		if err := s.requireDocumentContributors(ctx, tx, []string{contributorMemberID}); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return domain, nil

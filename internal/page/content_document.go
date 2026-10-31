@@ -179,7 +179,7 @@ func (s *Service) pageCollaborationDocumentFence(
 		if err := lockPageContentDocumentRoot(ctx, tx, pageID, documentID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if err := requirePageContributorsPermission(ctx, tx, s.permissions, pageID, action, contributors); err != nil {
+		if err := s.requirePageContributorsPermission(ctx, tx, pageID, action, contributors); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return loadPageContentDomainContext(ctx, tx, pageID)

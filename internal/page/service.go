@@ -61,6 +61,8 @@ type Deps struct {
 	MediaHydrator ContentBlockMediaHydrator
 	// MenuTargets keeps Menu links to a Page in step with its slug.
 	MenuTargets MenuTargets
+	Members     Members
+	ShareLinks  ShareLinks
 	Audit       domainaudit.Appender
 }
 
@@ -69,7 +71,8 @@ func (d Deps) validate() error {
 	for name, absent := range map[string]bool{
 		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Runtime": d.Runtime == nil, "Files": d.Files == nil,
 		"Signals": d.Signals == nil, "ContentBlocks": d.ContentBlocks == nil, "MediaHydrator": d.MediaHydrator == nil,
-		"MenuTargets": d.MenuTargets == nil, "Audit": d.Audit == nil,
+		"MenuTargets": d.MenuTargets == nil, "Members": d.Members == nil, "ShareLinks": d.ShareLinks == nil,
+		"Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -96,6 +99,8 @@ type Service struct {
 	contentBlocks *contentblock.Store
 	mediaHydrator ContentBlockMediaHydrator
 	menuTargets   MenuTargets
+	members       Members
+	shareLinks    ShareLinks
 	mutations     *mutation.Runner
 }
 
@@ -111,7 +116,7 @@ func NewService(deps Deps) (*Service, error) {
 	return &Service{
 		db: deps.DB, spiceDB: deps.SpiceDB, permissions: deps.SpiceDB, runtime: deps.Runtime, files: deps.Files, signals: deps.Signals,
 		contentBlocks: deps.ContentBlocks, mediaHydrator: deps.MediaHydrator, menuTargets: deps.MenuTargets,
-		mutations: mutations,
+		members: deps.Members, shareLinks: deps.ShareLinks, mutations: mutations,
 	}, nil
 }
 
@@ -310,7 +315,7 @@ func (s *Service) preparePageCreation(ctx context.Context, command CreatePageCom
 
 func (s *Service) createPage(ctx context.Context, tx *gorm.DB, creation pageCreation) (*model.Page, error) {
 	page := creation.page
-	if err := validatePageAccessPolicyTags(ctx, tx, creation.accessPolicy); err != nil {
+	if err := s.validatePageAccessPolicyTags(ctx, tx, creation.accessPolicy); err != nil {
 		return nil, err
 	}
 	if page.Slug != nil {
@@ -318,7 +323,7 @@ func (s *Service) createPage(ctx context.Context, tx *gorm.DB, creation pageCrea
 			return nil, err
 		}
 	}
-	sourceLocale, err := resolveCreateSourceLocale(ctx, tx, creation.command.SourceLocale, creation.command.AcceptLanguage)
+	sourceLocale, err := s.resolveCreateSourceLocale(ctx, tx, creation.command.SourceLocale, creation.command.AcceptLanguage)
 	if err != nil {
 		return nil, err
 	}
@@ -386,12 +391,7 @@ func (s *Service) deletePage(ctx context.Context, tx *gorm.DB, pageID string) (p
 	if err != nil {
 		return pageDeletion{}, err
 	}
-	if err := tx.
-		Where("entity_id = ? AND entity_type IN ?", pageID, []string{
-			"page",
-			managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE.String(),
-		}).
-		Delete(&model.ShareLink{}).Error; err != nil {
+	if err := s.shareLinks.DeletePageShareLinks(ctx, tx, pageID); err != nil {
 		return pageDeletion{}, err
 	}
 	if err := s.runtime.CancelAndReleaseEntityWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE, "page", pageID); err != nil {

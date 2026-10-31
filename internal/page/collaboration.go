@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // requireCollaborationEditForPrincipal requires principal to edit the Page
@@ -42,7 +41,7 @@ func requireCollaborationEditForPrincipal(
 	return nil
 }
 
-func requireDocumentContributors(ctx context.Context, db *gorm.DB, memberIDs []string) error {
+func (s *Service) requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []string) error {
 	if len(memberIDs) == 0 {
 		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
@@ -57,15 +56,8 @@ func requireDocumentContributors(ctx context.Context, db *gorm.DB, memberIDs []s
 		}
 		unique = append(unique, memberID)
 	}
-	var members []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := db.WithContext(ctx).
-		Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Select("id::text").
-		Where("id IN ?", unique).
-		Find(&members).Error; err != nil {
+	members, err := s.members.LockMembers(ctx, tx, unique)
+	if err != nil {
 		return fmt.Errorf("lock Page save contributor Members: %w", err)
 	}
 	if len(members) != len(unique) {
@@ -79,33 +71,19 @@ func requireDocumentContributors(ctx context.Context, db *gorm.DB, memberIDs []s
 // list carries the browser actors admitted to the resident room. Every actor
 // must still be an active Member with the exact Page permission after the Page
 // root has been locked.
-func requirePageContributorsPermission(
+func (s *Service) requirePageContributorsPermission(
 	ctx context.Context,
 	tx *gorm.DB,
-	spiceDB CollaborationPermissionChecker,
 	pageID string,
 	action pageAction,
 	memberIDs []string,
 ) error {
-	if err := requireDocumentContributors(ctx, tx, memberIDs); err != nil {
+	if err := s.requireDocumentContributors(ctx, tx, memberIDs); err != nil {
 		return err
 	}
-	type contributorRow struct {
-		MemberID   string `gorm:"column:member_id"`
-		IdentityID string `gorm:"column:identity_id"`
-	}
-	var rows []contributorRow
-	if err := tx.WithContext(ctx).
-		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text AND identity.state = ?", "active").
-		Select("member.id::text AS member_id, member.account_identity_id::text AS identity_id").
-		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = TRUE AND member.account_identity_id IS NOT NULL AND COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) = FALSE", memberIDs).
-		Find(&rows).Error; err != nil {
+	identities, err := s.members.ActiveIdentities(ctx, tx, memberIDs)
+	if err != nil {
 		return fmt.Errorf("load Page collaboration contributors: %w", err)
-	}
-	identities := make(map[string]string, len(rows))
-	for _, row := range rows {
-		identities[row.MemberID] = row.IdentityID
 	}
 	if len(identities) != len(memberIDs) {
 		return domainerr.NoPermission("edit", "page contributor")
@@ -119,7 +97,7 @@ func requirePageContributorsPermission(
 		if err != nil {
 			return domainerr.NoPermission("edit", "page contributor").WithCause(err)
 		}
-		allowed, err := spiceDB.CheckActorCan(ctx, actor, can)
+		allowed, err := s.permissions.CheckActorCan(ctx, actor, can)
 		if err != nil {
 			return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}

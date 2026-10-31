@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/lib/pq"
@@ -88,7 +87,7 @@ func normalizeContributorMemberIDs(memberIDs []string) pq.StringArray {
 	return result
 }
 
-func resolveVersionContributorNames(ctx context.Context, db *gorm.DB, lists ...[]string) (map[string]string, error) {
+func (s *Service) resolveVersionContributorNames(ctx context.Context, lists ...[]string) (map[string]string, error) {
 	all := make([]string, 0)
 	for _, list := range lists {
 		all = append(all, list...)
@@ -97,16 +96,16 @@ func resolveVersionContributorNames(ctx context.Context, db *gorm.DB, lists ...[
 	if len(ids) == 0 {
 		return map[string]string{}, nil
 	}
-	var members []model.Member
-	if err := db.WithContext(ctx).Select("id", "nickname").Where("id IN ?", []string(ids)).Find(&members).Error; err != nil {
+	nicknames, err := s.members.Nicknames(ctx, s.db, []string(ids))
+	if err != nil {
 		return nil, fmt.Errorf("resolve page version contributor Members: %w", err)
 	}
-	names := make(map[string]string, len(members))
-	for _, member := range members {
-		if strings.TrimSpace(member.Nickname) == "" {
-			return nil, fmt.Errorf("page version contributor Member %s has blank nickname", member.ID)
+	names := make(map[string]string, len(nicknames))
+	for memberID, nickname := range nicknames {
+		if strings.TrimSpace(nickname) == "" {
+			return nil, fmt.Errorf("page version contributor Member %s has blank nickname", memberID)
 		}
-		names[member.ID] = strings.TrimSpace(member.Nickname)
+		names[memberID] = strings.TrimSpace(nickname)
 	}
 	if len(names) != len(ids) {
 		return nil, fmt.Errorf("page version contributor Member set is incomplete")

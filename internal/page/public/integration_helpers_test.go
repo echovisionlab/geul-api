@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
@@ -119,7 +122,8 @@ func newPublicPageManagement(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBCli
 	pages, err := pagedomain.NewService(pagedomain.Deps{
 		DB: db, SpiceDB: spiceDB, Runtime: newPublicPageRuntimeForTest(db, "https://cdn.example.com"),
 		Files: files, Signals: publicReferenceAsyncPublisher{}, ContentBlocks: blocks, MediaHydrator: files,
-		MenuTargets: publicPageMenuTargets{}, Audit: apitelemetry.NewDurableWriter(db),
+		MenuTargets: publicPageMenuTargets{}, Members: memberadapter.PageMembers{}, ShareLinks: sharelinkadapter.PageLinks{},
+		Audit: apitelemetry.NewDurableWriter(db),
 	})
 	require.NoError(t, err)
 	return pagedomain.NewConnectHandler(pages), pagedomain.NewInternalConnectHandler(pages)

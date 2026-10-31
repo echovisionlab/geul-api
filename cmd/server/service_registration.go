@@ -530,7 +530,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	pageService, err := page.NewService(page.Deps{
 		DB: db, SpiceDB: spicedbClient, Runtime: pageRuntime, Files: pageruntime.NewFiles(fileService),
 		Signals: servicePublisher, ContentBlocks: contentBlockStore, MediaHydrator: fileService,
-		MenuTargets: menu.NewTargetLifecycle(telemetryWriter), Audit: telemetryWriter,
+		MenuTargets: menu.NewTargetLifecycle(telemetryWriter), Members: memberadapter.PageMembers{},
+		ShareLinks: sharelinkadapter.PageLinks{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Page service: %w", err)

@@ -59,6 +59,30 @@ type ContentBlockMediaHydrator interface {
 	) ([]*contentv1.ContentBlockMediaItem, error)
 }
 
+// Members reads the Member and user tag rows Page authorization and
+// attribution need; Member owns them.
+type Members interface {
+	// LockMembers takes a KEY SHARE lock on each existing Member of
+	// memberIDs and returns the IDs it locked.
+	LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error)
+	// ActiveIdentities returns the linked Identity of each onboarded, live
+	// Member of memberIDs whose Identity is active and not banned.
+	ActiveIdentities(ctx context.Context, tx *gorm.DB, memberIDs []string) (map[string]string, error)
+	// Nicknames returns the nickname of each existing Member of memberIDs.
+	Nicknames(ctx context.Context, db *gorm.DB, memberIDs []string) (map[string]string, error)
+	// PreferredLocale returns the preferred locale of a live Member, or nil.
+	PreferredLocale(ctx context.Context, db *gorm.DB, memberID string) (*string, error)
+	// LockUserTags takes a SHARE lock on each existing user tag of tagIDs
+	// and returns the IDs it locked.
+	LockUserTags(ctx context.Context, tx *gorm.DB, tagIDs []string) ([]string, error)
+}
+
+// ShareLinks removes a deleted Page's share links in its transaction;
+// Share Link owns them.
+type ShareLinks interface {
+	DeletePageShareLinks(ctx context.Context, tx *gorm.DB, pageID string) error
+}
+
 // MenuTargets owns cross-domain Menu reference rewrites triggered by Page
 // slug changes and deletion.
 type MenuTargets interface {

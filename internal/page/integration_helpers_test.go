@@ -11,6 +11,9 @@ import (
 	"slices"
 	"testing"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -78,6 +81,12 @@ func newIntegrationPageService(t *testing.T, deps Deps, checker ...Collaboration
 	}
 	if deps.MenuTargets == nil {
 		deps.MenuTargets = noopPageMenuTargets{}
+	}
+	if deps.Members == nil {
+		deps.Members = memberadapter.PageMembers{}
+	}
+	if deps.ShareLinks == nil {
+		deps.ShareLinks = sharelinkadapter.PageLinks{}
 	}
 	if deps.Audit == nil {
 		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
