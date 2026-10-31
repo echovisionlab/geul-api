@@ -161,7 +161,7 @@ func TestWrapKeepsOperationContextOutOfClientMessage(t *testing.T) {
 			if got.Message() != tc.message {
 				t.Fatalf("client message = %q, want %q", got.Message(), tc.message)
 			}
-			if cause := operationCause(got); !strings.HasPrefix(cause, "resolve operation: ") {
+			if cause := failurecause.Message(got); !strings.HasPrefix(cause, "resolve operation: ") {
 				t.Fatalf("operation context lost: %q", cause)
 			}
 			if !stderrors.Is(got, tc.inner) {
@@ -178,7 +178,7 @@ func TestWrapKeepsOperationContextOutOfClientMessage(t *testing.T) {
 func TestOperationCauseRendersNestedClassifications(t *testing.T) {
 	inner := Wrap(fmt.Errorf("load page: %w", NotFoundMsg("page not found")))
 	outer := Wrap(fmt.Errorf("render share link: %w", inner))
-	if got := operationCause(outer); got != "render share link: load page: not_found: page not found" {
+	if got := failurecause.Message(outer); got != "render share link: load page: not_found: page not found" {
 		t.Fatalf("operation cause = %q", got)
 	}
 	if outer.Message() != "page not found" {
@@ -343,5 +343,14 @@ func TestWithCauseKeepsTheReasonOutOfTheClientMessage(t *testing.T) {
 	}
 	if WithCause(client, nil) != client {
 		t.Fatal("a nil cause must return the client error")
+	}
+}
+
+func TestWithCauseRendersOperationContextHiddenInsideTheCause(t *testing.T) {
+	inner := Wrap(fmt.Errorf("download source: %w", context.DeadlineExceeded))
+	err := WithCause(InvalidArgumentMsg("remote download failed"), fmt.Errorf("import remote file: %w", inner))
+
+	if got := failurecause.Message(err); got != "import remote file: download source: context deadline exceeded" {
+		t.Fatalf("logged cause = %q", got)
 	}
 }

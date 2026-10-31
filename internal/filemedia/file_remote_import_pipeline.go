@@ -330,9 +330,10 @@ func (s *FileService) openRemoteImportSourceWithClient(
 	}
 	response, err := client.Do(httpRequest)
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to download remote import source", failurecause.Attr(err, request.opts.fileName), "file_id", request.identity.fileID, "correlation_id", request.opts.correlationID)
 		client.CloseIdleConnections()
-		return nil, fail(errs.Internal(fmt.Errorf("failed to download: %w", remoteImportDownloadCause(err))))
+		cause := failurecause.WithAttrs(failurecause.WithPrivate(remoteImportDownloadCause(err), request.opts.fileName),
+			slog.String("file_id", request.identity.fileID), slog.String("correlation_id", request.opts.correlationID))
+		return nil, fail(errs.Internal(fmt.Errorf("failed to download: %w", cause)))
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
@@ -360,6 +361,13 @@ type remoteImportDownloadFailure struct{ cause error }
 
 func (remoteImportDownloadFailure) Error() string         { return "remote download failed" }
 func (failure remoteImportDownloadFailure) Unwrap() error { return failure.cause }
+
+// OperationContext implements failurecause.OperationContext: the failure
+// record renders the transport cause, where the URL query and user info are
+// redacted.
+func (failure remoteImportDownloadFailure) OperationContext() (rendered, operation string) {
+	return failure.Error(), failure.cause.Error()
+}
 
 func validateRemoteImportSource(
 	response *http.Response,

@@ -2,7 +2,6 @@ package filemedia
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -63,7 +62,7 @@ func (transport failedRemoteImportTransport) RoundTrip(*http.Request) (*http.Res
 	return nil, transport.err
 }
 
-func TestRemoteImportLogsCauseBeforeSafeClientError(t *testing.T) {
+func TestRemoteImportKeepsTransportCauseOutOfTheClientError(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -79,11 +78,11 @@ func TestRemoteImportLogsCauseBeforeSafeClientError(t *testing.T) {
 	require.Contains(t, err.Error(), "remote download failed")
 	require.NotContains(t, err.Error(), "connection refused")
 
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Contains(t, entry["failure_cause"], "upstream connection refused")
-	require.Contains(t, entry["failure_cause"], "https://example.com/source")
-	require.Equal(t, "ERROR", entry["level"])
-	require.NotContains(t, output.String(), "private@example.test")
-	require.NotContains(t, output.String(), "hidden")
+	// The request record renders the transport cause from the error.
+	require.Empty(t, output.String())
+	logged := failurecause.Message(err)
+	require.Contains(t, logged, "upstream connection refused")
+	require.Contains(t, logged, "https://example.com/source")
+	require.NotContains(t, logged, "private@example.test")
+	require.NotContains(t, logged, "hidden")
 }

@@ -11,6 +11,8 @@ import (
 	"connectrpc.com/connect"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
 // =============================================================================
@@ -335,8 +337,10 @@ func WithCause(client *connect.Error, cause error) *connect.Error {
 	if cause == nil {
 		return client
 	}
+	// The operation renders the operation context of classified errors in
+	// cause in place of their client messages.
 	classified := newClassifiedError(client.Code(), &classifiedCause{
-		message: client.Message(), operation: operationCause(cause), cause: cause,
+		message: client.Message(), operation: failurecause.Message(cause), cause: cause,
 	})
 	for _, detail := range client.Details() {
 		classified.AddDetail(detail)
@@ -442,22 +446,6 @@ func newClassifiedError(code connect.Code, cause *classifiedCause) *connect.Erro
 
 func classifiedError(code connect.Code, message string, cause error) *connect.Error {
 	return newClassifiedError(code, &classifiedCause{message: message, operation: cause.Error(), cause: cause})
-}
-
-// operationCause returns the server-side description of err. Where err holds a
-// classified Connect error, that error's client-facing text is replaced by the
-// operation context it kept.
-func operationCause(err error) string {
-	text := err.Error()
-	var connectErr *connect.Error
-	if !stderrors.As(err, &connectErr) || connectErr == nil {
-		return text
-	}
-	classified, ok := connectErr.Unwrap().(*classifiedCause) //nolint:errorlint // only a cause Wrap attached directly carries operation context
-	if !ok {
-		return text
-	}
-	return strings.Replace(text, connectErr.Error(), classified.operation, 1)
 }
 
 // CollaborationState preserves revisions read under the owning resource lock.
