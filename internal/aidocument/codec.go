@@ -233,52 +233,65 @@ func (i *InlineItem) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(parts[0], &i.Kind); err != nil {
 		return err
 	}
-	decode := func(want int, targets ...any) error {
-		if len(parts) != want {
-			return fmt.Errorf("inline item %q must contain exactly %d items", i.Kind, want)
-		}
-		for index, target := range targets {
-			if bytes.Equal(bytes.TrimSpace(parts[index+1]), []byte("null")) {
-				return fmt.Errorf("inline item %q item %d cannot be null", i.Kind, index+1)
-			}
-			if err := json.Unmarshal(parts[index+1], target); err != nil {
-				return fmt.Errorf("inline item %q item %d: %w", i.Kind, index+1, err)
-			}
-		}
-		return nil
-	}
+	item := compactItem{label: "inline item", kind: string(i.Kind), parts: parts}
+	var err error
 	switch i.Kind {
 	case InlineKindSiteVariable:
-		if len(parts) == 3 {
-			if err := decode(3, &i.Text, &i.Linked); err != nil {
-				return err
-			}
-			if !i.Linked {
-				return errors.New("siteVariable third item must be true")
-			}
-		} else if err := decode(2, &i.Text); err != nil {
-			return err
-		}
+		err = i.decodeSiteVariable(item)
 	case InlineKindText, InlineKindMath, InlineKindPlaceholder:
-		if err := decode(2, &i.Text); err != nil {
-			return err
-		}
+		err = item.decode(2, &i.Text)
 	case InlineKindBold, InlineKindItalic, InlineKindUnderline, InlineKindStrike, InlineKindCode:
-		if err := decode(2, &i.Children); err != nil {
-			return err
-		}
+		err = item.decode(2, &i.Children)
 	case InlineKindTextColor, InlineKindBackground, InlineKindLink:
-		if err := decode(3, &i.Target, &i.Children); err != nil {
-			return err
-		}
+		err = item.decode(3, &i.Target, &i.Children)
 	case InlineKindHardBreak:
-		if err := decode(1); err != nil {
-			return err
-		}
+		err = item.decode(1)
 	default:
-		return fmt.Errorf("unsupported inline item kind %q", i.Kind)
+		err = fmt.Errorf("unsupported inline item kind %q", i.Kind)
+	}
+	if err != nil {
+		return err
 	}
 	return i.validate(0)
+}
+
+// decodeSiteVariable reads ["siteVariable", key] or the linked form
+// ["siteVariable", key, true].
+func (i *InlineItem) decodeSiteVariable(item compactItem) error {
+	if len(item.parts) != 3 {
+		return item.decode(2, &i.Text)
+	}
+	if err := item.decode(3, &i.Text, &i.Linked); err != nil {
+		return err
+	}
+	if !i.Linked {
+		return errors.New("siteVariable third item must be true")
+	}
+	return nil
+}
+
+// compactItem is a decoded compact array whose first item names its kind.
+type compactItem struct {
+	label string
+	kind  string
+	parts []json.RawMessage
+}
+
+// decode requires exactly want array items and decodes the items after the
+// kind into targets, rejecting explicit nulls.
+func (c compactItem) decode(want int, targets ...any) error {
+	if len(c.parts) != want {
+		return fmt.Errorf("%s %q must contain exactly %d items", c.label, c.kind, want)
+	}
+	for index, target := range targets {
+		if bytes.Equal(bytes.TrimSpace(c.parts[index+1]), []byte("null")) {
+			return fmt.Errorf("%s %q item %d cannot be null", c.label, c.kind, index+1)
+		}
+		if err := json.Unmarshal(c.parts[index+1], target); err != nil {
+			return fmt.Errorf("%s %q item %d: %w", c.label, c.kind, index+1, err)
+		}
+	}
+	return nil
 }
 
 func (i ListItem) MarshalJSON() ([]byte, error) {

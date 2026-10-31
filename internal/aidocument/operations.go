@@ -365,164 +365,139 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(parts[0], &o.Kind); err != nil {
 		return err
 	}
-	decode := func(want int, targets ...any) error {
-		if len(parts) != want {
-			return fmt.Errorf("operation %q must contain exactly %d items", o.Kind, want)
-		}
-		for index, target := range targets {
-			if bytes.Equal(bytes.TrimSpace(parts[index+1]), []byte("null")) {
-				return fmt.Errorf("operation %q item %d cannot be null", o.Kind, index+1)
-			}
-			if err := json.Unmarshal(parts[index+1], target); err != nil {
-				return fmt.Errorf("operation %q item %d: %w", o.Kind, index+1, err)
-			}
-		}
-		return nil
+	decoded, err := decodeOperation(o.Kind, compactItem{label: "operation", kind: string(o.Kind), parts: parts})
+	if err != nil {
+		return err
 	}
-	switch o.Kind {
+	*o = decoded
+	return o.validateShape()
+}
+
+func decodeOperation(kind OperationKind, item compactItem) (Operation, error) {
+	operation := Operation{Kind: kind}
+	var err error
+	switch kind {
 	case OperationSetField:
-		payload := &SetField{}
-		if err := decode(3, &payload.Target, &payload.Value); err != nil {
-			return err
-		}
-		switch {
-		case payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = SetRelationFieldOperation(
-				payload.Target.Block,
-				payload.Target.Relation,
-				payload.Target.Item,
-				payload.Target.Field,
-				payload.Value,
-			)
-		case !payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = SetFieldOperation(payload.Target.Block, payload.Target.Field, payload.Value)
-		case !payload.Target.relationItem():
-			*o = SetNestedFieldOperation(
-				payload.Target.Block,
-				payload.Target.Field,
-				payload.Target.Path,
-				payload.Value,
-			)
-		default:
-			o.SetField = payload
-		}
+		return decodeSetField(item)
 	case OperationUnsetField:
-		payload := &UnsetField{}
-		if err := decode(2, &payload.Target); err != nil {
-			return err
-		}
-		switch {
-		case payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = UnsetRelationFieldOperation(
-				payload.Target.Block,
-				payload.Target.Relation,
-				payload.Target.Item,
-				payload.Target.Field,
-			)
-		case !payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = UnsetFieldOperation(payload.Target.Block, payload.Target.Field)
-		case !payload.Target.relationItem():
-			*o = UnsetNestedFieldOperation(
-				payload.Target.Block,
-				payload.Target.Field,
-				payload.Target.Path,
-			)
-		default:
-			o.UnsetField = payload
-		}
+		return decodeUnsetField(item)
+	case OperationAttachFile:
+		return decodeAttachFile(item)
+	case OperationDetachFile:
+		return decodeDetachFile(item)
 	case OperationInsertBlock:
 		payload := &InsertBlock{}
-		if err := decode(5, &payload.Block, &payload.Kind, &payload.Parent, &payload.After); err != nil {
-			return err
-		}
-		o.InsertBlock = payload
+		operation.InsertBlock = payload
+		err = item.decode(5, &payload.Block, &payload.Kind, &payload.Parent, &payload.After)
 	case OperationDeleteBlock:
 		payload := &DeleteBlock{}
-		if err := decode(2, &payload.Block); err != nil {
-			return err
-		}
-		o.DeleteBlock = payload
+		operation.DeleteBlock = payload
+		err = item.decode(2, &payload.Block)
 	case OperationMoveBlock:
 		payload := &MoveBlock{}
-		if err := decode(4, &payload.Block, &payload.Parent, &payload.After); err != nil {
-			return err
-		}
-		o.MoveBlock = payload
+		operation.MoveBlock = payload
+		err = item.decode(4, &payload.Block, &payload.Parent, &payload.After)
 	case OperationReplaceBlockKind:
 		payload := &ReplaceBlockKind{}
-		if err := decode(3, &payload.Block, &payload.Kind); err != nil {
-			return err
-		}
-		o.ReplaceBlockKind = payload
+		operation.ReplaceBlockKind = payload
+		err = item.decode(3, &payload.Block, &payload.Kind)
 	case OperationInsertRelationItem:
 		payload := &InsertRelationItem{}
-		if err := decode(6, &payload.Block, &payload.Relation, &payload.Item, &payload.Kind, &payload.After); err != nil {
-			return err
-		}
-		o.InsertRelationItem = payload
+		operation.InsertRelationItem = payload
+		err = item.decode(6, &payload.Block, &payload.Relation, &payload.Item, &payload.Kind, &payload.After)
 	case OperationDeleteRelationItem:
 		payload := &DeleteRelationItem{}
-		if err := decode(4, &payload.Block, &payload.Relation, &payload.Item); err != nil {
-			return err
-		}
-		o.DeleteRelationItem = payload
+		operation.DeleteRelationItem = payload
+		err = item.decode(4, &payload.Block, &payload.Relation, &payload.Item)
 	case OperationMoveRelationItem:
 		payload := &MoveRelationItem{}
-		if err := decode(7, &payload.Block, &payload.Relation, &payload.Item, &payload.TargetBlock, &payload.Target, &payload.After); err != nil {
-			return err
-		}
-		o.MoveRelationItem = payload
-	case OperationAttachFile:
-		payload := &AttachFile{}
-		if err := decode(3, &payload.Target, &payload.File); err != nil {
-			return err
-		}
-		switch {
-		case payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = AttachRelationFileOperation(
-				payload.Target.Block,
-				payload.Target.Relation,
-				payload.Target.Item,
-				payload.Target.Field,
-				payload.File,
-			)
-		case !payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = AttachFileOperation(payload.Target.Block, payload.Target.Field, payload.File)
-		default:
-			o.AttachFile = payload
-		}
-	case OperationDetachFile:
-		payload := &DetachFile{}
-		if err := decode(2, &payload.Target); err != nil {
-			return err
-		}
-		switch {
-		case payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = DetachRelationFileOperation(
-				payload.Target.Block,
-				payload.Target.Relation,
-				payload.Target.Item,
-				payload.Target.Field,
-			)
-		case !payload.Target.relationItem() && len(payload.Target.Path) == 0:
-			*o = DetachFileOperation(payload.Target.Block, payload.Target.Field)
-		default:
-			o.DetachFile = payload
-		}
+		operation.MoveRelationItem = payload
+		err = item.decode(7, &payload.Block, &payload.Relation, &payload.Item, &payload.TargetBlock, &payload.Target, &payload.After)
 	case OperationCreateTranslation:
-		if err := decode(1); err != nil {
-			return err
-		}
-		o.CreateTranslation = &CreateTranslation{}
+		operation.CreateTranslation = &CreateTranslation{}
+		err = item.decode(1)
 	case OperationDeleteTranslation:
-		if err := decode(1); err != nil {
-			return err
-		}
-		o.DeleteTranslation = &DeleteTranslation{}
+		operation.DeleteTranslation = &DeleteTranslation{}
+		err = item.decode(1)
 	default:
-		return fmt.Errorf("unsupported operation kind %q", o.Kind)
+		err = fmt.Errorf("unsupported operation kind %q", kind)
 	}
-	return o.validateShape()
+	if err != nil {
+		return Operation{}, err
+	}
+	return operation, nil
+}
+
+// The field-target decoders rebuild targets without a nested path through the
+// public constructors, so a decoded batch has the same shape as a constructed
+// one.
+
+func decodeSetField(item compactItem) (Operation, error) {
+	payload := &SetField{}
+	if err := item.decode(3, &payload.Target, &payload.Value); err != nil {
+		return Operation{}, err
+	}
+	target := payload.Target
+	switch {
+	case target.relationItem() && len(target.Path) == 0:
+		return SetRelationFieldOperation(target.Block, target.Relation, target.Item, target.Field, payload.Value), nil
+	case !target.relationItem() && len(target.Path) == 0:
+		return SetFieldOperation(target.Block, target.Field, payload.Value), nil
+	case !target.relationItem():
+		return SetNestedFieldOperation(target.Block, target.Field, target.Path, payload.Value), nil
+	default:
+		return Operation{Kind: OperationSetField, SetField: payload}, nil
+	}
+}
+
+func decodeUnsetField(item compactItem) (Operation, error) {
+	payload := &UnsetField{}
+	if err := item.decode(2, &payload.Target); err != nil {
+		return Operation{}, err
+	}
+	target := payload.Target
+	switch {
+	case target.relationItem() && len(target.Path) == 0:
+		return UnsetRelationFieldOperation(target.Block, target.Relation, target.Item, target.Field), nil
+	case !target.relationItem() && len(target.Path) == 0:
+		return UnsetFieldOperation(target.Block, target.Field), nil
+	case !target.relationItem():
+		return UnsetNestedFieldOperation(target.Block, target.Field, target.Path), nil
+	default:
+		return Operation{Kind: OperationUnsetField, UnsetField: payload}, nil
+	}
+}
+
+func decodeAttachFile(item compactItem) (Operation, error) {
+	payload := &AttachFile{}
+	if err := item.decode(3, &payload.Target, &payload.File); err != nil {
+		return Operation{}, err
+	}
+	target := payload.Target
+	switch {
+	case target.relationItem() && len(target.Path) == 0:
+		return AttachRelationFileOperation(target.Block, target.Relation, target.Item, target.Field, payload.File), nil
+	case !target.relationItem() && len(target.Path) == 0:
+		return AttachFileOperation(target.Block, target.Field, payload.File), nil
+	default:
+		return Operation{Kind: OperationAttachFile, AttachFile: payload}, nil
+	}
+}
+
+func decodeDetachFile(item compactItem) (Operation, error) {
+	payload := &DetachFile{}
+	if err := item.decode(2, &payload.Target); err != nil {
+		return Operation{}, err
+	}
+	target := payload.Target
+	switch {
+	case target.relationItem() && len(target.Path) == 0:
+		return DetachRelationFileOperation(target.Block, target.Relation, target.Item, target.Field), nil
+	case !target.relationItem() && len(target.Path) == 0:
+		return DetachFileOperation(target.Block, target.Field), nil
+	default:
+		return Operation{Kind: OperationDetachFile, DetachFile: payload}, nil
+	}
 }
 
 type ApplyRequest struct {
