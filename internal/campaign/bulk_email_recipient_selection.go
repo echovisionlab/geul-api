@@ -279,7 +279,7 @@ func normalizeBulkEmailSubjectLookup(value string) (policyv1.SubjectLookup, bool
 	case policyv1.Role.User().ID():
 		return policyv1.Platform.LookupUserSubjects(), true, nil
 	default:
-		return policyv1.SubjectLookup{}, false, errs.InvalidArgumentMsg(fmt.Sprintf("invalid account permission: %s", value))
+		return policyv1.SubjectLookup{}, false, fmt.Errorf("invalid account permission %q", value)
 	}
 }
 
@@ -295,7 +295,9 @@ func resolveBulkEmailRecipientSelectionPermissions(ctx context.Context, spiceDB 
 	}
 	lookups, err := normalizeBulkEmailSubjectLookups(selection.Filters.AccountRoles)
 	if err != nil {
-		return err
+		// The roles come from a stored audience segment or delivery target,
+		// which validated them on write, not from this request.
+		return errs.Internal(err)
 	}
 	identityIDs := make([]string, 0)
 	seen := make(map[string]struct{})
