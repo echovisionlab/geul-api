@@ -21,7 +21,7 @@
 5 internal/programevent
 3 internal/referencecatalog
 14 internal/release
-12 internal/series
+2 internal/series
 1 internal/sitesettings
 5 internal/translation/application
 6 internal/work

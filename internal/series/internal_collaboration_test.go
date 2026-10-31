@@ -68,23 +68,23 @@ func (a postSeriesCollaborationAuthorizer) AuthorizeInTx(
 }
 
 func TestInternalPostSeriesServicePersistsExactTargetRoom(t *testing.T) {
-	documents, db, seriesID, _, _ := newSeriesAIDocumentFixture(t)
+	audit := &postSeriesCollaborationAudit{}
+	subject := auth.AccountIdentitySubject{ID: auth.IdentityID(uuid.NewString())}
+	registry := collaboration.NewRegistry(collaboration.Registration{
+		ResourceType: intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST_SERIES,
+		Authorizer:   postSeriesCollaborationAuthorizer{},
+	})
+	documents, db, seriesID, _, _ := newSeriesAIDocumentFixtureWith(t, Deps{
+		Audit:       audit,
+		Checkpoints: collaboration.NewCheckpointFence(registry, postSeriesCollaborationContributorResolver{subject: subject}),
+	})
+	service := NewInternalConnectHandler(documents)
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	title, summary := "시리즈", "기존 요약"
 	require.NoError(t, db.Table("series_translation").Create(&model.SeriesTranslation{
 		EntityID: seriesID, Locale: "ko", Title: &title, Summary: &summary,
 		ContentText: &summary, CreatedAt: now, UpdatedAt: now,
 	}).Error)
-	audit := &postSeriesCollaborationAudit{}
-	documents.auditWriter = audit
-	subject := auth.AccountIdentitySubject{ID: auth.IdentityID(uuid.NewString())}
-	registry := collaboration.NewRegistry(collaboration.Registration{
-		ResourceType: intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST_SERIES,
-		Authorizer:   postSeriesCollaborationAuthorizer{},
-	})
-	service := NewInternalPostSeriesService(documents, collaboration.NewCheckpointFence(
-		registry, postSeriesCollaborationContributorResolver{subject: subject},
-	))
 
 	loaded, err := service.LoadDocument(t.Context(), connect.NewRequest(
 		&intrav1.LoadPostSeriesDocumentRequest{SeriesId: seriesID, Locale: "ko"},

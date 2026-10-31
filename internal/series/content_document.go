@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -41,7 +41,7 @@ func loadSeriesContentDocumentState(
 	lock bool,
 ) (seriesContentDocumentState, error) {
 	if db == nil {
-		return seriesContentDocumentState{}, errs.Internal(errors.New("series content document database is required"))
+		return seriesContentDocumentState{}, errors.New("series content document database is required")
 	}
 	query := db.WithContext(ctx).Table("series").
 		Select("id, source_locale, content_document_id").
@@ -52,12 +52,12 @@ func loadSeriesContentDocumentState(
 	var root seriesContentDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return seriesContentDocumentState{}, errs.NotFound("series", seriesID)
+			return seriesContentDocumentState{}, domainerr.ResourceNotFound("series", seriesID)
 		}
-		return seriesContentDocumentState{}, errs.Internal(err)
+		return seriesContentDocumentState{}, err
 	}
 	if !root.ContentDocumentID.Valid || strings.TrimSpace(root.ContentDocumentID.String) == "" {
-		return seriesContentDocumentState{}, errs.FailedPrecondition("series content document is not initialized")
+		return seriesContentDocumentState{}, domainerr.Precondition("series content document is not initialized")
 	}
 	documentID, err := parseSeriesContentDocumentUUID(root.ContentDocumentID.String, "content_document_id")
 	if err != nil {
@@ -72,16 +72,16 @@ func loadSeriesContentDocumentState(
 	var document seriesContentDocumentRow
 	if err := documentQuery.Take(&document).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return seriesContentDocumentState{}, errs.FailedPrecondition("series content document is missing")
+			return seriesContentDocumentState{}, domainerr.Precondition("series content document is missing")
 		}
-		return seriesContentDocumentState{}, errs.Internal(err)
+		return seriesContentDocumentState{}, err
 	}
 	if strings.TrimSpace(document.Profile) != seriesContentDocumentProfile {
-		return seriesContentDocumentState{}, errs.FailedPrecondition("series content document profile is invalid")
+		return seriesContentDocumentState{}, domainerr.Precondition("series content document profile is invalid")
 	}
 	sourceLocale := strings.TrimSpace(root.SourceLocale)
 	if sourceLocale == "" {
-		return seriesContentDocumentState{}, errs.FailedPrecondition("series source locale is not initialized")
+		return seriesContentDocumentState{}, domainerr.Precondition("series source locale is not initialized")
 	}
 	revision, err := parseSeriesContentDocumentUUID(document.Revision.String, "content_document.revision")
 	if err != nil {
@@ -98,14 +98,14 @@ func parseSeriesContentDocumentUUID(value, field string) (uuid.UUID, error) {
 	normalized := strings.TrimSpace(value)
 	parsed, err := uuid.Parse(normalized)
 	if err != nil || parsed == uuid.Nil || parsed.String() != normalized {
-		return uuid.Nil, errs.WithCause(errs.Internal(fmt.Errorf("invalid Series %s: %s", field, normalized)), err)
+		return uuid.Nil, fmt.Errorf("invalid Series %s %q", field, normalized)
 	}
 	return parsed, nil
 }
 
 func createSeriesContentDocument(ctx context.Context, tx *gorm.DB, now time.Time) (uuid.UUID, error) {
 	if tx == nil {
-		return uuid.Nil, errs.Internal(errors.New("series content document transaction is required"))
+		return uuid.Nil, errors.New("series content document transaction is required")
 	}
 	documentID := uuid.New()
 	revision := uuid.New()
@@ -114,7 +114,7 @@ func createSeriesContentDocument(ctx context.Context, tx *gorm.DB, now time.Time
 		 VALUES (?, ?, ?, ?, ?)`,
 		documentID, seriesContentDocumentProfile, revision, now.UTC(), now.UTC(),
 	).Error; err != nil {
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	return documentID, nil
 }
@@ -128,7 +128,7 @@ func advanceSeriesContentDocument(
 	now time.Time,
 ) (uuid.UUID, error) {
 	if tx == nil || documentID == uuid.Nil || expectedRevision == uuid.Nil {
-		return uuid.Nil, errs.InvalidArgument("expected_document_revision", "Series content document identity and revision are required")
+		return uuid.Nil, domainerr.InvalidField("expected_document_revision", "Series content document identity and revision are required")
 	}
 	nextRevision := uuid.New()
 	updated := tx.WithContext(ctx).Exec(
@@ -142,10 +142,10 @@ func advanceSeriesContentDocument(
 		nextRevision, now.UTC(), documentID, expectedRevision, seriesID, documentID,
 	)
 	if updated.Error != nil {
-		return uuid.Nil, errs.Internal(updated.Error)
+		return uuid.Nil, updated.Error
 	}
 	if updated.RowsAffected != 1 {
-		return uuid.Nil, errs.FailedPrecondition("series content document revision changed; reload before saving")
+		return uuid.Nil, domainerr.Precondition("series content document revision changed; reload before saving")
 	}
 	return nextRevision, nil
 }
@@ -161,14 +161,14 @@ func advanceSeriesContentDocumentForMutation(ctx context.Context, tx *gorm.DB, s
 
 func deleteSeriesContentDocument(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) error {
 	if tx == nil || documentID == uuid.Nil {
-		return errs.InvalidArgument("content_document_id", "Series content document is required")
+		return domainerr.InvalidField("content_document_id", "Series content document is required")
 	}
 	result := tx.WithContext(ctx).Exec("DELETE FROM content_document WHERE id = ?", documentID)
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("series content document is missing")
+		return domainerr.Precondition("series content document is missing")
 	}
 	return nil
 }

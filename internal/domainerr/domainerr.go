@@ -5,6 +5,7 @@
 package domainerr
 
 import (
+	"errors"
 	"fmt"
 
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -147,6 +148,19 @@ type CollaborationRevisions struct {
 	Document     string
 	Target       string
 	TargetExists *bool
+}
+
+// CollaborationRevisionsOf returns the revisions a collaboration state
+// error in err's chain carries (translation.WithDocumentRevision), or none.
+func CollaborationRevisionsOf(err error) CollaborationRevisions {
+	var state interface {
+		CollaborationRevisions() (string, string, *bool)
+	}
+	if !errors.As(err, &state) {
+		return CollaborationRevisions{}
+	}
+	document, target, exists := state.CollaborationRevisions()
+	return CollaborationRevisions{Document: document, Target: target, TargetExists: exists}
 }
 
 // CollaborationConflict rejects a collaboration save whose expected

@@ -16,8 +16,8 @@ type recordingReader struct {
 	getIDOrSlug    string
 }
 
-func (r *recordingReader) List(_ context.Context, _ *openv1.ListSeriesRequest, acceptLanguage string) (Page, error) {
-	r.acceptLanguage = acceptLanguage
+func (r *recordingReader) List(_ context.Context, query ListSeriesQuery) (Page, error) {
+	r.acceptLanguage = query.AcceptLanguage
 	return r.listPage, nil
 }
 
@@ -37,7 +37,7 @@ func TestSeriesServiceListProjectsAdapterPagination(t *testing.T) {
 	request := connect.NewRequest(&openv1.ListSeriesRequest{})
 	request.Header().Set("Accept-Language", "ko")
 
-	response, err := NewSeriesService(reader).List(t.Context(), request)
+	response, err := newTestHandler(t, reader).List(t.Context(), request)
 
 	require.NoError(t, err)
 	require.Equal(t, "ko", reader.acceptLanguage)
@@ -48,7 +48,7 @@ func TestSeriesServiceListProjectsAdapterPagination(t *testing.T) {
 
 func TestSeriesServiceGetValidatesAndDelegatesSlug(t *testing.T) {
 	reader := &recordingReader{getItem: &openv1.Series{Id: "series-id"}}
-	service := NewSeriesService(reader)
+	service := newTestHandler(t, reader)
 
 	_, err := service.Get(t.Context(), connect.NewRequest(&openv1.GetSeriesRequest{}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
@@ -62,4 +62,11 @@ func TestSeriesServiceGetValidatesAndDelegatesSlug(t *testing.T) {
 	require.Equal(t, "series-slug", reader.getIDOrSlug)
 	require.Equal(t, "en", reader.acceptLanguage)
 	require.Equal(t, "series-id", response.Msg.Series.Id)
+}
+
+func newTestHandler(t *testing.T, reader Reader) *ConnectHandler {
+	t.Helper()
+	service, err := NewService(reader)
+	require.NoError(t, err)
+	return NewConnectHandler(service)
 }

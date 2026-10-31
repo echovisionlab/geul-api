@@ -249,6 +249,8 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 	require.True(t, IsUnauthenticated(fmt.Errorf("authorize: %w", errs.AuthenticationRequired())))
 	require.True(t, IsUnauthenticated(domainerr.AuthenticationRequired()))
 	require.False(t, IsUnauthenticated(errs.NoPermission("edit", "post")))
+	require.True(t, IsNotFound(fmt.Errorf("lock: %w", errs.NotFound("member", "id"))))
+	require.False(t, IsNotFound(errs.NoPermission("edit", "post")))
 }
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {

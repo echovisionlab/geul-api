@@ -231,6 +231,13 @@ func IsUnauthenticated(err error) bool {
 	return ok && classified.Code() == connect.CodeUnauthenticated
 }
 
+// IsNotFound reports whether err answers a missing resource, for a domain
+// that reads a shared helper's answer (a retired authorization target).
+func IsNotFound(err error) bool {
+	classified, ok := errs.Classified(err)
+	return ok && classified.Code() == connect.CodeNotFound
+}
+
 // PrincipalFence locks the authenticated principal's Identity without an
 // action check, for a principal's own lifecycle transition that Change
 // guards by state (onboarding, before the principal is onboarded).

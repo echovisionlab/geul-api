@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
@@ -14,7 +14,7 @@ import (
 )
 
 // SeriesService implements the SeriesService Connect handler
-func (s *SeriesService) setSeriesFeaturedImageAsset(ctx context.Context, series *managev1.Series) {
+func (s *Service) setSeriesFeaturedImageAsset(ctx context.Context, series *managev1.Series) {
 	if series == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (s *SeriesService) setSeriesFeaturedImageAsset(ctx context.Context, series 
 	}
 }
 
-func (s *SeriesService) loadReadySeriesOgAssets(
+func (s *Service) loadReadySeriesOgAssets(
 	ctx context.Context,
 	seriesList []model.Series,
 ) (map[string]*commonv1.AssetRef, error) {
@@ -53,7 +53,7 @@ func (s *SeriesService) loadReadySeriesOgAssets(
 	return s.media.ReadyAssets(ctx, candidates...)
 }
 
-func (s *SeriesService) overlaySeriesSourceLocaleDocument(ctx context.Context, series *model.Series) error {
+func (s *Service) overlaySeriesSourceLocaleDocument(ctx context.Context, series *model.Series) error {
 	if series == nil {
 		return nil
 	}
@@ -65,7 +65,7 @@ func (s *SeriesService) overlaySeriesSourceLocaleDocument(ctx context.Context, s
 	return nil
 }
 
-func (s *SeriesService) overlaySeriesSourceLocaleDocuments(ctx context.Context, series []model.Series) error {
+func (s *Service) overlaySeriesSourceLocaleDocuments(ctx context.Context, series []model.Series) error {
 	ids := make([]string, 0, len(series))
 	for i := range series {
 		ids = append(ids, series[i].ID)
@@ -77,7 +77,7 @@ func (s *SeriesService) overlaySeriesSourceLocaleDocuments(ctx context.Context, 
 	for i := range series {
 		state := states[series[i].ID]
 		if state == nil {
-			return errs.NotFound("series_translation", series[i].ID)
+			return domainerr.ResourceNotFound("series_translation", series[i].ID)
 		}
 		OverlaySourceLocaleDocument(&series[i], state)
 	}
@@ -85,7 +85,7 @@ func (s *SeriesService) overlaySeriesSourceLocaleDocuments(ctx context.Context, 
 }
 
 // toProtoSeries converts a model.Series to protobuf Series
-func (s *SeriesService) toProtoSeries(
+func (s *Service) toProtoSeries(
 	seriesModel *model.Series,
 	ogAsset *commonv1.AssetRef,
 ) *managev1.Series {

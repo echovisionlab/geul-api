@@ -566,33 +566,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
 	seriesMenuTargets := menu.NewTargetLifecycle(telemetryWriter)
 	seriesPostAccess := seriesadapter.PostAccess{}
-	seriesService := series.NewAuditedSeriesService(
-		db,
-		seriesRuntime,
-		seriesRuntime,
-		seriesRuntime,
-		spicedbClient,
-		kratosClient,
-		seriesMenuTargets,
-		seriesPostAccess,
-		postadapter.SeriesMembership{},
-		seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
-		telemetryWriter,
-	)
-	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(seriesService, handlerOpts...)
+	seriesService, err := series.NewService(series.Deps{
+		DB: db, SpiceDB: spicedbClient, Identity: kratosClient,
+		Media: seriesRuntime, OG: seriesRuntime, Reads: seriesRuntime,
+		MenuTargets: seriesMenuTargets, Posts: seriesPostAccess, Membership: postadapter.SeriesMembership{},
+		Members:     seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
+		Checkpoints: collaborationRuntime.Checkpoints, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post Series service: %w", err)
+	}
+	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(series.NewConnectHandler(seriesService), handlerOpts...)
 	mux.Handle(seriesPath, seriesHandler)
 	slog.Info("Registered service", "path", seriesPath)
-	postSeriesDocuments, err := series.NewAIDocumentService(
-		db, spicedbClient, seriesMenuTargets, seriesPostAccess, postadapter.SeriesMembership{}, seriesRuntime, telemetryWriter,
-	)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post Series document service: %w", err)
-	}
-	internalPostSeriesService := series.NewInternalPostSeriesService(
-		postSeriesDocuments, collaborationRuntime.Checkpoints,
-	)
 	internalPostSeriesPath, internalPostSeriesHandler := intrav1connect.NewInternalPostSeriesServiceHandler(
-		internalPostSeriesService, internalHandlerOpts...,
+		series.NewInternalConnectHandler(seriesService), internalHandlerOpts...,
 	)
 	mux.Handle(internalPostSeriesPath, internalRPCTrust.collab(internalPostSeriesHandler))
 	slog.Info("Registered internal service", "path", internalPostSeriesPath)
@@ -825,7 +813,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, fmt.Errorf("register Terms AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.postSeries, err = aidocumentadapter.NewPostSeriesRegistration(
-		postSeriesDocuments,
+		seriesService,
 	); err != nil {
 		return registeredServices{}, fmt.Errorf("register Post Series AI document domain: %w", err)
 	}

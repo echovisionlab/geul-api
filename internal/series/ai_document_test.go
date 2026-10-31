@@ -11,6 +11,7 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,7 @@ type allowSeriesAIDocumentAccess struct{}
 func (allowSeriesAIDocumentAccess) RequirePermissionAndLock(
 	context.Context,
 	*gorm.DB,
+	mutation.Require,
 	string,
 	seriesAction,
 ) error {
@@ -35,6 +37,7 @@ type recordingSeriesAIDocumentAccess struct {
 func (a *recordingSeriesAIDocumentAccess) RequirePermissionAndLock(
 	_ context.Context,
 	_ *gorm.DB,
+	_ mutation.Require,
 	seriesID string,
 	action seriesAction,
 ) error {
@@ -73,7 +76,7 @@ func TestPostSeriesAIDocumentProjectsStableMetadataPostsAndExplicitEmpty(t *test
 	service, db, seriesID, postIDs, _ := newSeriesAIDocumentFixture(t)
 	identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
 
-	source, err := service.Load(t.Context(), identity, "en")
+	source, err := service.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
 	require.True(t, source.LocaleExists)
 	require.Equal(t, core.LocaleRoleSource, source.Role())
@@ -83,7 +86,7 @@ func TestPostSeriesAIDocumentProjectsStableMetadataPostsAndExplicitEmpty(t *test
 	require.Equal(t, postIDs[0], string(source.Nodes[0].Relations[0].Items[0].ID))
 	require.Equal(t, postIDs[1], string(source.Nodes[0].Relations[0].Items[1].ID))
 
-	missing, err := service.Load(t.Context(), identity, "ko")
+	missing, err := service.Load(seriesUnitContext(t), identity, "ko")
 	require.NoError(t, err)
 	require.False(t, missing.LocaleExists)
 	require.Equal(t, core.LocaleRoleNonSource, missing.Role())
@@ -96,7 +99,7 @@ func TestPostSeriesAIDocumentProjectsStableMetadataPostsAndExplicitEmpty(t *test
 	require.NoError(t, db.Table("series_translation").Create(&model.SeriesTranslation{
 		EntityID: seriesID, Locale: "ko", Title: &empty, CreatedAt: now, UpdatedAt: now,
 	}).Error)
-	existing, err := service.Load(t.Context(), identity, "ko")
+	existing, err := service.Load(seriesUnitContext(t), identity, "ko")
 	require.NoError(t, err)
 	require.True(t, existing.LocaleExists)
 	require.Equal(t, "", requireAIDocumentLocalizedText(t, existing, postSeriesAIFieldTitle))
@@ -109,7 +112,7 @@ func TestPostSeriesAIDocumentImplicitTargetCreateExactCASAndDelete(t *testing.T)
 	application, err := core.NewService(port)
 	require.NoError(t, err)
 	identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
-	missing, err := port.Load(t.Context(), identity, "ko")
+	missing, err := port.Load(seriesUnitContext(t), identity, "ko")
 	require.NoError(t, err)
 
 	request := core.ApplyRequest{
@@ -117,7 +120,7 @@ func TestPostSeriesAIDocumentImplicitTargetCreateExactCASAndDelete(t *testing.T)
 		Document: identity.Reference, Locale: "ko", ExpectedDocumentRevision: missing.DocumentRevision,
 		Operations: []core.Operation{core.SetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldTitle, core.Text(""))},
 	}
-	applied, err := application.Apply(t.Context(), request)
+	applied, err := application.Apply(seriesUnitContext(t), request)
 	require.NoError(t, err)
 	require.True(t, applied.Changed)
 	require.Equal(t, missing.DocumentRevision, applied.DocumentRevision)
@@ -128,7 +131,7 @@ func TestPostSeriesAIDocumentImplicitTargetCreateExactCASAndDelete(t *testing.T)
 	require.NotNil(t, target.Title)
 	require.Equal(t, "", *target.Title)
 
-	_, err = application.Apply(t.Context(), request)
+	_, err = application.Apply(seriesUnitContext(t), request)
 	var conflict *core.ConflictError
 	require.ErrorAs(t, err, &conflict)
 	require.Equal(t, core.ConflictTargetRevision, conflict.Conflict.Code)
@@ -141,7 +144,7 @@ func TestPostSeriesAIDocumentImplicitTargetCreateExactCASAndDelete(t *testing.T)
 		ExpectedTargetRevision: applied.TargetRevision,
 		Operations:             []core.Operation{core.UnsetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldTitle)},
 	}
-	validation, err := application.Validate(t.Context(), unsetRequest)
+	validation, err := application.Validate(seriesUnitContext(t), unsetRequest)
 	require.NoError(t, err)
 	require.Len(t, validation.Issues, 1)
 	require.Equal(t, core.IssueTargetFieldForbidden, validation.Issues[0].Code)
@@ -155,7 +158,7 @@ func TestPostSeriesAIDocumentImplicitTargetCreateExactCASAndDelete(t *testing.T)
 		ExpectedTargetRevision: applied.TargetRevision,
 		Operations:             []core.Operation{core.DeleteTranslationOperation()},
 	}
-	deleted, err := application.Apply(t.Context(), deleteRequest)
+	deleted, err := application.Apply(seriesUnitContext(t), deleteRequest)
 	require.NoError(t, err)
 	require.True(t, deleted.Changed)
 	require.Equal(t, applied.DocumentRevision, deleted.DocumentRevision)
@@ -169,7 +172,7 @@ func TestPostSeriesAIDocumentImplicitTargetCreateExactCASAndDelete(t *testing.T)
 		Document: identity.Reference, Locale: "ko", ExpectedDocumentRevision: deleted.DocumentRevision,
 		Operations: []core.Operation{core.CreateTranslationOperation()},
 	}
-	created, err := application.Apply(t.Context(), createRequest)
+	created, err := application.Apply(seriesUnitContext(t), createRequest)
 	require.NoError(t, err)
 	require.True(t, created.Changed)
 	require.Equal(t, deleted.DocumentRevision, created.DocumentRevision)
@@ -194,18 +197,18 @@ func TestPostSeriesAIDocumentTargetMutationIsLocaleExactAndSourceInvalidatesEver
 		require.NoError(t, db.Table("series_translation").Create(&translation).Error)
 	}
 
-	sourceBefore, err := port.Load(t.Context(), identity, "en")
+	sourceBefore, err := port.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
-	koBefore, err := port.Load(t.Context(), identity, "ko")
+	koBefore, err := port.Load(seriesUnitContext(t), identity, "ko")
 	require.NoError(t, err)
-	jaBefore, err := port.Load(t.Context(), identity, "ja")
+	jaBefore, err := port.Load(seriesUnitContext(t), identity, "ja")
 	require.NoError(t, err)
 	require.Equal(t, sourceBefore.DocumentRevision, koBefore.DocumentRevision)
 	require.Equal(t, sourceBefore.DocumentRevision, jaBefore.DocumentRevision)
 	require.NotNil(t, koBefore.TargetRevision)
 	require.NotNil(t, jaBefore.TargetRevision)
 
-	koUpdated, err := application.Apply(t.Context(), core.ApplyRequest{
+	koUpdated, err := application.Apply(seriesUnitContext(t), core.ApplyRequest{
 		Protocol: core.ProtocolVersion, Profile: core.DomainPostSeries,
 		Document: identity.Reference, Locale: "ko", ExpectedDocumentRevision: koBefore.DocumentRevision,
 		ExpectedTargetRevision: koBefore.TargetRevision,
@@ -216,7 +219,7 @@ func TestPostSeriesAIDocumentTargetMutationIsLocaleExactAndSourceInvalidatesEver
 	require.NoError(t, err)
 	require.Equal(t, koBefore.DocumentRevision, koUpdated.DocumentRevision)
 	require.NotEqual(t, *koBefore.TargetRevision, *koUpdated.TargetRevision)
-	jaAfterTargetWrite, err := port.Load(t.Context(), identity, "ja")
+	jaAfterTargetWrite, err := port.Load(seriesUnitContext(t), identity, "ja")
 	require.NoError(t, err)
 	require.Equal(t, jaBefore.DocumentRevision, jaAfterTargetWrite.DocumentRevision)
 	require.Equal(t, *jaBefore.TargetRevision, *jaAfterTargetWrite.TargetRevision)
@@ -224,7 +227,7 @@ func TestPostSeriesAIDocumentTargetMutationIsLocaleExactAndSourceInvalidatesEver
 	var targetTimesBefore []time.Time
 	require.NoError(t, db.Table("series_translation").Where("entity_id = ? AND locale IN ?", seriesID, []string{"ko", "ja"}).
 		Order("locale").Pluck("updated_at", &targetTimesBefore).Error)
-	sourceUpdated, err := application.Apply(t.Context(), core.ApplyRequest{
+	sourceUpdated, err := application.Apply(seriesUnitContext(t), core.ApplyRequest{
 		Protocol: core.ProtocolVersion, Profile: core.DomainPostSeries,
 		Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: sourceBefore.DocumentRevision,
 		Operations: []core.Operation{
@@ -233,9 +236,9 @@ func TestPostSeriesAIDocumentTargetMutationIsLocaleExactAndSourceInvalidatesEver
 	})
 	require.NoError(t, err)
 	require.NotEqual(t, sourceBefore.DocumentRevision, sourceUpdated.DocumentRevision)
-	koAfterSourceWrite, err := port.Load(t.Context(), identity, "ko")
+	koAfterSourceWrite, err := port.Load(seriesUnitContext(t), identity, "ko")
 	require.NoError(t, err)
-	jaAfterSourceWrite, err := port.Load(t.Context(), identity, "ja")
+	jaAfterSourceWrite, err := port.Load(seriesUnitContext(t), identity, "ja")
 	require.NoError(t, err)
 	require.Equal(t, sourceUpdated.DocumentRevision, koAfterSourceWrite.DocumentRevision)
 	require.Equal(t, sourceUpdated.DocumentRevision, jaAfterSourceWrite.DocumentRevision)
@@ -252,7 +255,7 @@ func TestPostSeriesAIDocumentSourceConstraintsAndStructuralOrder(t *testing.T) {
 	application, err := core.NewService(port)
 	require.NoError(t, err)
 	identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
-	source, err := port.Load(t.Context(), identity, "en")
+	source, err := port.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
 
 	invalid := core.ApplyRequest{
@@ -260,7 +263,7 @@ func TestPostSeriesAIDocumentSourceConstraintsAndStructuralOrder(t *testing.T) {
 		Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: source.DocumentRevision,
 		Operations: []core.Operation{core.SetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldTitle, core.Text("   "))},
 	}
-	validation, err := application.Validate(t.Context(), invalid)
+	validation, err := application.Validate(seriesUnitContext(t), invalid)
 	require.NoError(t, err)
 	require.Len(t, validation.Issues, 1)
 	require.Equal(t, core.IssueValueKindMismatch, validation.Issues[0].Code)
@@ -273,7 +276,7 @@ func TestPostSeriesAIDocumentSourceConstraintsAndStructuralOrder(t *testing.T) {
 			postSeriesAIDocumentBlock, postSeriesAIDocumentPosts, "",
 		)},
 	}
-	moved, err := application.Apply(t.Context(), move)
+	moved, err := application.Apply(seriesUnitContext(t), move)
 	require.NoError(t, err)
 	require.True(t, moved.Changed)
 	var ordered []string
@@ -285,7 +288,7 @@ func TestPostSeriesAIDocumentSourceConstraintsAndStructuralOrder(t *testing.T) {
 		Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: moved.DocumentRevision,
 		Operations: []core.Operation{core.SetFieldOperation(postSeriesAIDocumentBlock, postSeriesAIFieldTitle, core.Text("Next title"))},
 	}
-	updated, err := application.Apply(t.Context(), title)
+	updated, err := application.Apply(seriesUnitContext(t), title)
 	require.NoError(t, err)
 	require.True(t, updated.Changed)
 	require.Equal(t, []string{"en"}, og.locales)
@@ -341,14 +344,14 @@ func TestPostSeriesAIDocumentRepeatedMetadataAssignmentsUseFinalValue(t *testing
 			application, err := core.NewService(port)
 			require.NoError(t, err)
 			identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
-			before, err := port.Load(t.Context(), identity, "en")
+			before, err := port.Load(seriesUnitContext(t), identity, "en")
 			require.NoError(t, err)
 			operations := make([]core.Operation, 0, len(test.values))
 			for _, value := range test.values {
 				operations = append(operations, core.SetFieldOperation(postSeriesAIDocumentBlock, test.field, core.Text(value)))
 			}
 			request := core.ApplyRequest{Protocol: core.ProtocolVersion, Profile: core.DomainPostSeries, Document: identity.Reference, Locale: "en", ExpectedDocumentRevision: before.DocumentRevision, Operations: operations}
-			result, err := application.Apply(t.Context(), request)
+			result, err := application.Apply(seriesUnitContext(t), request)
 			require.NoError(t, err)
 			require.Equal(t, test.changed, result.Changed)
 			require.Len(t, result.Normalized, len(operations))
@@ -373,9 +376,9 @@ func TestPostSeriesAIDocumentStatusResetKeepsOtherFieldChange(t *testing.T) {
 	application, err := core.NewService(port)
 	require.NoError(t, err)
 	identity := core.DocumentIdentity{Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID)}
-	before, err := port.Load(t.Context(), identity, "en")
+	before, err := port.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
-	result, err := application.Apply(t.Context(), core.ApplyRequest{
+	result, err := application.Apply(seriesUnitContext(t), core.ApplyRequest{
 		Protocol: core.ProtocolVersion, Profile: core.DomainPostSeries, Document: identity.Reference,
 		Locale: "en", ExpectedDocumentRevision: before.DocumentRevision,
 		Operations: []core.Operation{
@@ -392,7 +395,7 @@ func TestPostSeriesAIDocumentStatusResetKeepsOtherFieldChange(t *testing.T) {
 	var stored model.Series
 	require.NoError(t, db.Where("id = ?", seriesID).Take(&stored).Error)
 	require.Equal(t, "SERIES_STATUS_DRAFT", stored.Status)
-	after, err := port.Load(t.Context(), identity, "en")
+	after, err := port.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
 	require.Equal(t, "Changed title", requireAIDocumentLocalizedText(t, after, postSeriesAIFieldTitle))
 }
@@ -406,7 +409,7 @@ func TestPostSeriesExactMutationUsesOneDecisionAndValidateRollsBack(t *testing.T
 	identity := core.DocumentIdentity{
 		Domain: core.DomainPostSeries, Reference: core.DocumentReference(seriesID),
 	}
-	loaded, err := port.Load(t.Context(), identity, "en")
+	loaded, err := port.Load(seriesUnitContext(t), identity, "en")
 	require.NoError(t, err)
 	access.actions = nil
 	request := core.ApplyRequest{
@@ -417,7 +420,7 @@ func TestPostSeriesExactMutationUsesOneDecisionAndValidateRollsBack(t *testing.T
 		},
 	}
 
-	validation, err := application.Validate(t.Context(), request)
+	validation, err := application.Validate(seriesUnitContext(t), request)
 	require.NoError(t, err)
 	require.True(t, validation.Valid())
 	var title *string
@@ -426,7 +429,7 @@ func TestPostSeriesExactMutationUsesOneDecisionAndValidateRollsBack(t *testing.T
 	require.NotNil(t, title)
 	require.Equal(t, "Source title", *title, "Validate must roll the owning transaction back")
 
-	result, err := application.Apply(t.Context(), request)
+	result, err := application.Apply(seriesUnitContext(t), request)
 	require.NoError(t, err)
 	require.True(t, result.Changed)
 	wantAction, err := policyv1.PostSeries.Edit(seriesID)
@@ -441,7 +444,13 @@ func TestPostSeriesExactMutationUsesOneDecisionAndValidateRollsBack(t *testing.T
 	require.Equal(t, "Validated title", *title)
 }
 
-func newSeriesAIDocumentFixture(t *testing.T) (*AIDocumentService, *gorm.DB, string, []string, *seriesAIDocumentOG) {
+func newSeriesAIDocumentFixture(t *testing.T) (*Service, *gorm.DB, string, []string, *seriesAIDocumentOG) {
+	return newSeriesAIDocumentFixtureWith(t, Deps{})
+}
+
+// newSeriesAIDocumentFixtureWith seeds one Series with two Posts and serves
+// it with deps, filling the AI document collaborators.
+func newSeriesAIDocumentFixtureWith(t *testing.T, deps Deps) (*Service, *gorm.DB, string, []string, *seriesAIDocumentOG) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -475,11 +484,10 @@ func newSeriesAIDocumentFixture(t *testing.T) (*AIDocumentService, *gorm.DB, str
 		require.NoError(t, db.Exec("INSERT INTO post (id, series_id, series_order) VALUES (?, ?, ?)", postID, seriesID, index).Error)
 	}
 	og := &seriesAIDocumentOG{}
-	service := &AIDocumentService{
-		db: db, spiceDB: &auth.SpiceDBClient{}, access: allowSeriesAIDocumentAccess{},
-		menuTargets: seriesAIDocumentMenu{},
-		postAccess:  seriesAIDocumentPostAccess{}, postMembership: testPostMembership{}, ogRefresh: og, now: func() time.Time { return now.Add(time.Minute) },
-	}
+	deps.DB, deps.MenuTargets, deps.Posts, deps.OG = db, seriesAIDocumentMenu{}, seriesAIDocumentPostAccess{}, og
+	service := newTestService(t, deps)
+	service.access = allowSeriesAIDocumentAccess{}
+	service.now = func() time.Time { return now.Add(time.Minute) }
 	return service, db, seriesID, postIDs, og
 }
 

@@ -169,22 +169,15 @@ func (seriesFailingAuditAppender) AppendDomainAuditInTransaction(context.Context
 	return errors.New("post series audit unavailable")
 }
 
-func auditedSeriesIntegrationService(t *testing.T, db *gorm.DB, adminID string, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *SeriesService {
+func auditedSeriesIntegrationService(t *testing.T, db *gorm.DB, adminID string, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) seriesIntegrationService {
 	t.Helper()
 	runtime := seriesadapter.NewRuntime(db, "", newOGRefresherForTest(db, ""))
-	return NewAuditedSeriesService(
-		db,
-		runtime,
-		runtime,
-		runtime,
-		spiceDB,
-		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
-		seriesTestMenuTargets{},
-		seriesTestPostAccess{},
-		testPostMembership{},
-		seriesTestMemberSummaries{},
-		writer,
-	)
+	return newSeriesIntegrationHandler(t, Deps{
+		DB: db, SpiceDB: spiceDB,
+		Identity: testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
+		Media:    runtime, OG: runtime, Reads: runtime, MenuTargets: seriesTestMenuTargets{},
+		Posts: seriesTestPostAccess{}, Members: seriesTestMemberSummaries{}, Audit: writer,
+	})
 }
 
 func seriesAuditContext(t *testing.T, identityID string) context.Context {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewPostSeriesRegistrationBindsExactDomainAndRequiresDependencies(t *testing.T) {
-	port := &seriesdomain.AIDocumentService{}
+	port := &seriesdomain.Service{}
 	registration, err := NewPostSeriesRegistration(port)
 	require.NoError(t, err)
 	require.Equal(t, core.DomainPostSeries, registration.Domain)

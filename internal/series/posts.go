@@ -6,77 +6,83 @@ import (
 	"sort"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// SeriesService implements the SeriesService Connect handler
-func (s *SeriesService) AssignPostToSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.AssignPostToSeriesRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	observed, err := s.postMembership.ReadSeriesRelation(ctx, s.db, req.Msg.PostId)
+type AssignPostToSeriesCommand struct{ PostID, SeriesID string }
+type UnassignPostFromSeriesCommand struct{ PostID, SeriesID string }
+
+// ReorderSeriesPostsCommand gives the Posts of a Series the order of
+// PostIDs, which must name exactly its current Posts.
+type ReorderSeriesPostsCommand struct {
+	SeriesID string
+	PostIDs  []string
+}
+
+func (s *Service) AssignPostToSeries(ctx context.Context, command AssignPostToSeriesCommand) error {
+	observed, err := s.postMembership.ReadSeriesRelation(ctx, s.db, command.PostID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("post", req.Msg.PostId)
+			return domainerr.ResourceNotFound("post", command.PostID)
 		}
-		return nil, errs.Internal(err)
+		return err
 	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.assignPostToSeriesWithDB(ctx, tx, req.Msg.PostId, req.Msg.SeriesId, observed)
-	}); err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	var audits seriesAudits
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		// Both Series roots are locked in ID order before the target's
+		// manage check.
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+			if err := lockSeriesAssignmentRoots(ctx, tx, command.SeriesID, observed); err != nil {
+				return err
+			}
+			return requireSeriesPermissionAndLock(ctx, tx, require, command.SeriesID, policyv1.PostSeries.Manage)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			return struct{}{}, s.assignLockedPost(ctx, tx, &audits, command.PostID, command.SeriesID, observed)
+		},
+		Audit: func(struct{}) mutation.Audit { return audits.audit() },
+	})
+	return err
 }
 
-func (s *SeriesService) assignPostToSeriesWithDB(
+// assignPostToSeriesAfterSeriesPermissionWithDB assigns a Post inside a
+// mutation that already holds the Series manage decision.
+func (s *Service) assignPostToSeriesAfterSeriesPermissionWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
+	audits *seriesAudits,
 	postID string,
 	seriesID string,
 	observedSeriesID *string,
-) error {
-	return s.assignPostToSeriesWithAuthorization(ctx, tx, postID, seriesID, observedSeriesID, true)
-}
-
-func (s *SeriesService) assignPostToSeriesAfterSeriesPermissionWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	postID string,
-	seriesID string,
-	observedSeriesID *string,
-) error {
-	return s.assignPostToSeriesWithAuthorization(ctx, tx, postID, seriesID, observedSeriesID, false)
-}
-
-func (s *SeriesService) assignPostToSeriesWithAuthorization(
-	ctx context.Context,
-	tx *gorm.DB,
-	postID string,
-	seriesID string,
-	observedSeriesID *string,
-	requireSeriesPermission bool,
 ) error {
 	if err := lockSeriesAssignmentRoots(ctx, tx, seriesID, observedSeriesID); err != nil {
 		return err
 	}
-	if requireSeriesPermission {
-		if err := s.requireAssignableSeries(ctx, tx, seriesID); err != nil {
-			return err
-		}
-	}
+	return s.assignLockedPost(ctx, tx, audits, postID, seriesID, observedSeriesID)
+}
+
+// assignLockedPost moves a Post into seriesID once both Series roots are
+// locked: the Post must still be where it was observed and its owner must
+// allow the edit.
+func (s *Service) assignLockedPost(
+	ctx context.Context,
+	tx *gorm.DB,
+	audits *seriesAudits,
+	postID string,
+	seriesID string,
+	observedSeriesID *string,
+) error {
 	currentSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
 	if err != nil {
 		return err
 	}
 	if !sameOptionalString(currentSeriesID, observedSeriesID) {
-		return errs.FailedPrecondition("post series relation changed; retry")
+		return domainerr.Precondition("post series relation changed; retry")
 	}
 	if err := s.postAccess.RequireLockedEdit(ctx, tx, s.spiceDB, postID); err != nil {
 		return err
@@ -86,22 +92,20 @@ func (s *SeriesService) assignPostToSeriesWithAuthorization(
 	}
 	nextOrder, err := s.postMembership.NextSeriesOrder(ctx, tx, seriesID)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	now := dbtime.Now()
 	if err := s.postMembership.AssignSeries(ctx, tx, postID, seriesID, nextOrder, now); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("post", postID)
+			return domainerr.ResourceNotFound("post", postID)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	previousSeriesID := ""
 	if currentSeriesID != nil {
 		previousSeriesID = *currentSeriesID
 	}
-	if err := s.appendPostSeriesMembershipAudit(ctx, tx, seriesID, postID, previousSeriesID, seriesID); err != nil {
-		return err
-	}
+	audits.membership(seriesID, postID, previousSeriesID, seriesID)
 	if currentSeriesID == nil {
 		return advanceSeriesContentDocumentForMutation(ctx, tx, seriesID, time.Now().UTC())
 	}
@@ -128,78 +132,64 @@ func lockSeriesAssignmentRoots(ctx context.Context, tx *gorm.DB, targetSeriesID 
 	return nil
 }
 
-// UnassignPostFromSeries removes a post from its series
-func (s *SeriesService) UnassignPostFromSeries(
-	ctx context.Context,
-	req *connect.Request[managev1.UnassignPostFromSeriesRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.requireSeriesManageAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
-			return err
-		}
-		postSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, req.Msg.PostId)
-		if err != nil {
-			return err
-		}
-		if postSeriesID == nil || *postSeriesID != req.Msg.SeriesId {
-			return errs.InvalidArgument("post_id", "must belong to the requested series")
-		}
-		now := dbtime.Now()
-		if err := seriesRelationError(s.postMembership.ClearSeries(ctx, tx, req.Msg.PostId, req.Msg.SeriesId, now)); err != nil {
-			return err
-		}
-		if err := compactSeriesPostOrders(ctx, tx, s.postMembership, req.Msg.SeriesId, now); err != nil {
-			return err
-		}
-		if err := s.appendPostSeriesMembershipAudit(ctx, tx, req.Msg.SeriesId, req.Msg.PostId, req.Msg.SeriesId, ""); err != nil {
-			return err
-		}
-		return advanceSeriesContentDocumentForMutation(ctx, tx, req.Msg.SeriesId, time.Now().UTC())
-	}); err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+func (s *Service) UnassignPostFromSeries(ctx context.Context, command UnassignPostFromSeriesCommand) error {
+	var audits seriesAudits
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.Manage),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			postSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, command.PostID)
+			if err != nil {
+				return struct{}{}, err
+			}
+			if postSeriesID == nil || *postSeriesID != command.SeriesID {
+				return struct{}{}, domainerr.InvalidField("post_id", "must belong to the requested series")
+			}
+			now := dbtime.Now()
+			if err := seriesRelationError(s.postMembership.ClearSeries(ctx, tx, command.PostID, command.SeriesID, now)); err != nil {
+				return struct{}{}, err
+			}
+			if err := compactSeriesPostOrders(ctx, tx, s.postMembership, command.SeriesID, now); err != nil {
+				return struct{}{}, err
+			}
+			audits.membership(command.SeriesID, command.PostID, command.SeriesID, "")
+			return struct{}{}, advanceSeriesContentDocumentForMutation(ctx, tx, command.SeriesID, time.Now().UTC())
+		},
+		Audit: func(struct{}) mutation.Audit { return audits.audit() },
+	})
+	return err
 }
 
-// ReorderSeriesPosts reorders posts in a series
-func (s *SeriesService) ReorderSeriesPosts(
-	ctx context.Context,
-	req *connect.Request[managev1.ReorderSeriesPostsRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	postIDs, err := validateSeriesPostOrder(req.Msg.PostIds)
+func (s *Service) ReorderSeriesPosts(ctx context.Context, command ReorderSeriesPostsCommand) error {
+	postIDs, err := validateSeriesPostOrder(command.PostIDs)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.requireSeriesManageAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
-			return err
-		}
-		if err := lockSeriesOrderPosts(ctx, tx, s.postMembership, postIDs); err != nil {
-			return err
-		}
-		currentPostIDs, err := s.postMembership.SeriesPostIDs(ctx, tx, req.Msg.SeriesId)
-		if err != nil {
-			return errs.Internal(err)
-		}
-		if !sameStringSet(currentPostIDs, postIDs) {
-			return errs.InvalidArgument("post_ids", "must be the exact set of posts currently assigned to the series")
-		}
-		if sameSeriesPostOrder(currentPostIDs, postIDs) {
-			return nil
-		}
-		if err := orderSeriesPosts(ctx, tx, s.postMembership, req.Msg.SeriesId, postIDs, dbtime.Now()); err != nil {
-			return err
-		}
-		if err := s.appendPostSeriesOrderAudit(ctx, tx, req.Msg.SeriesId, postIDs); err != nil {
-			return err
-		}
-		return advanceSeriesContentDocumentForMutation(ctx, tx, req.Msg.SeriesId, time.Now().UTC())
-	}); err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	var audits seriesAudits
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.Manage),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			if err := lockSeriesOrderPosts(ctx, tx, s.postMembership, postIDs); err != nil {
+				return struct{}{}, err
+			}
+			currentPostIDs, err := s.postMembership.SeriesPostIDs(ctx, tx, command.SeriesID)
+			if err != nil {
+				return struct{}{}, err
+			}
+			if !sameStringSet(currentPostIDs, postIDs) {
+				return struct{}{}, domainerr.InvalidField("post_ids", "must be the exact set of posts currently assigned to the series")
+			}
+			if sameSeriesPostOrder(currentPostIDs, postIDs) {
+				return struct{}{}, nil
+			}
+			if err := orderSeriesPosts(ctx, tx, s.postMembership, command.SeriesID, postIDs, dbtime.Now()); err != nil {
+				return struct{}{}, err
+			}
+			audits.order(command.SeriesID, postIDs)
+			return struct{}{}, advanceSeriesContentDocumentForMutation(ctx, tx, command.SeriesID, time.Now().UTC())
+		},
+		Audit: func(struct{}) mutation.Audit { return audits.audit() },
+	})
+	return err
 }
 
 func sameSeriesPostOrder(left, right []string) bool {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,6 @@ func TestSeriesTranslationApplyFenceAllowsUnpublishedRootAndRejectsDeletedRoot(t
 	require.NoError(t, applyFence(), "an already-submitted translation job may apply to a draft Series")
 	require.NoError(t, db.Exec("DELETE FROM series WHERE id = ?", seriesID).Error)
 	err = applyFence()
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err),
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err),
 		"a deleted Series root must reject an existing translation job")
 }

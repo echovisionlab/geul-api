@@ -99,7 +99,7 @@ func seedSeriesPost(t *testing.T, db *gorm.DB, authorMemberID string) string {
 	return postID
 }
 
-func grantSeriesPostAuthorRelation(t *testing.T, service *SeriesService, postID, identityID string) {
+func grantSeriesPostAuthorRelation(t *testing.T, service seriesIntegrationService, postID, identityID string) {
 	t.Helper()
 	actor, err := policyv1.NewAccountIdentityActor(identityID)
 	require.NoError(t, err)
