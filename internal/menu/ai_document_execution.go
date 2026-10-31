@@ -161,7 +161,8 @@ func (s *MenuService) LoadAIDocument(
 // ExecuteAIDocumentMutation is Menu's exact DCDP mutation boundary. It locks
 // the root first, performs one exact Edit or Manage decision, and only then
 // exposes the authorized snapshot to the adapter compiler. Validate executes
-// this identical path and deliberately rolls the transaction back.
+// this identical path, deliberately rolls the transaction back and returns an
+// empty result.
 func (s *MenuService) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	menuID string,
@@ -321,7 +322,9 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_MENU, command.MenuID, command.Locale, result.DocumentRevision, result.TargetRevision, result.Changed, compiled.deleteTranslation, contentsignal.InteractiveMemberID(ctx))
 	})
 	if errors.Is(err, errRollbackMenuAIDocumentValidation) {
-		return result, nil
+		// The rolled-back revision never becomes current. Like every AI
+		// document domain's Validate, a dry run reports validity only.
+		return AIDocumentApplyResult{}, nil
 	}
 	if err != nil {
 		var compilerErr *menuAIDocumentCompilerError

@@ -62,7 +62,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		})
 	})
 
-	t.Run("validate computes a result and rolls every write back", func(t *testing.T) {
+	t.Run("validate rolls every write back and reports no result", func(t *testing.T) {
 		menuID, before := fixture.createMenu(t)
 		events := &recordedMenuContentEvents{}
 		result, err := fixture.service.ExecuteAIDocumentMutation(
@@ -71,11 +71,7 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 			menuMutation(before, nil, menuSetName("Validated "+menuID[:8])),
 		)
 		require.NoError(t, err)
-		require.True(t, result.Changed)
-		require.Nil(t, result.TargetRevision)
-		// The dry run reports the revision its rolled-back write produced; that
-		// revision never becomes current.
-		require.NotEqual(t, before, result.DocumentRevision)
+		require.Equal(t, menudomain.AIDocumentApplyResult{}, result, "a dry run returns no unsaved revision")
 		state := fixture.state(t, menuID)
 		require.Equal(t, before, state.revision)
 		require.Equal(t, "Menu "+menuID[:8], state.name)
@@ -228,6 +224,16 @@ func TestMenuAIDocumentExecutionCharacterizationIntegration(t *testing.T) {
 		fixture.requireLastAudit(t, menuID, 2, `{"changed_fields":["locale_content"],"locale":"`+target+`","item_operation":"created"}`)
 
 		events := &recordedMenuContentEvents{}
+		validated, err := fixture.service.ExecuteAIDocumentMutation(
+			events.context(fixture.ctx), menuID, target,
+			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionValidate,
+			menuMutation(before, created.TargetRevision, menuSetLabel("home", "홈")),
+		)
+		require.NoError(t, err)
+		require.Equal(t, menudomain.AIDocumentApplyResult{}, validated, "a dry run returns no unsaved target revision")
+		require.JSONEq(t, `[{"id":"about","label":"about"},{"id":"home","label":"home"}]`, menuLocaleJSON(t, fixture.db, menuID, target))
+		events.requireNone(t)
+
 		updated, err := fixture.service.ExecuteAIDocumentMutation(
 			events.context(fixture.ctx), menuID, target,
 			menudomain.AIDocumentMutationEdit, menudomain.AIDocumentExecutionApply,
