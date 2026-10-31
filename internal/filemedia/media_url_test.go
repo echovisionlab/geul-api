@@ -88,11 +88,14 @@ func TestBuildSignedMediaURLValidation(t *testing.T) {
 	_, err = BuildPublicMediaHLSURL("", fileID, generationID, "segment_001.m4s")
 	require.ErrorIs(t, err, ErrMediaURLSigningFailed)
 
-	_, err = generateMediaToken(mediaauth.Purpose("invalid"), mediaauth.ScopeExact, "media/object.bin", time.Minute, "secret", "")
+	_, _, err = generateMediaToken(mediaauth.Purpose("invalid"), mediaauth.ScopeExact, "media/object.bin", time.Minute, "secret", "")
 	require.ErrorIs(t, err, ErrMediaURLSigningFailed)
-	token, err := generateMediaToken(mediaauth.PurposeInline, mediaauth.ScopeExact, "media/"+fileID+".mp3", 0, "secret", "")
+	token, expiresAt, err := generateMediaToken(mediaauth.PurposeInline, mediaauth.ScopeExact, "media/"+fileID+".mp3", 0, "secret", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
+	claims, err := mediaauth.ValidateToken(token, "secret")
+	require.NoError(t, err)
+	require.Equal(t, time.Unix(claims.ExpiryUnix, 0).UTC(), expiresAt)
 }
 
 func TestMediaURLHelpers(t *testing.T) {

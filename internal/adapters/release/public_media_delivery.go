@@ -120,22 +120,19 @@ func buildExpiringFileRef(
 	purpose mediaauth.Purpose,
 	ttl time.Duration,
 ) (*commonv1.ExpiringMediaRef, error) {
-	var url string
-	var err error
 	var downloadFilename string
 	if purpose == mediaauth.PurposeDownload {
 		downloadFilename = releasepublic.CanonicalDownloadFilename(fileName, fileID, extension)
-		url, err = BuildSignedMediaDownloadURL(
-			mediaDomain,
-			fileID,
-			extension,
-			mediaSecret,
-			ttl,
-			downloadFilename,
-		)
-	} else {
-		url, err = BuildSignedMediaFileURL(mediaDomain, fileID, extension, mediaSecret, ttl, purpose)
 	}
+	url, expiresAt, err := SignMediaFileURL(
+		mediaDomain,
+		fileID,
+		extension,
+		mediaSecret,
+		ttl,
+		purpose,
+		downloadFilename,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +140,7 @@ func buildExpiringFileRef(
 		FileId:    fileID,
 		Url:       url,
 		Purpose:   mediaDeliveryPurpose(purpose),
-		ExpiresAt: timestamppb.New(time.Now().UTC().Add(ttl)),
+		ExpiresAt: timestamppb.New(expiresAt),
 		Extension: extension,
 		MimeType:  mimeType,
 		FileName:  fileName,

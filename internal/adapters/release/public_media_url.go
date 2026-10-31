@@ -18,7 +18,8 @@ func BuildSignedMediaFileURL(
 	ttl time.Duration,
 	purpose mediaauth.Purpose,
 ) (string, error) {
-	return buildSignedMediaFileURL(mediaDomain, fileID, extension, secret, ttl, purpose, "")
+	url, _, err := SignMediaFileURL(mediaDomain, fileID, extension, secret, ttl, purpose, "")
+	return url, err
 }
 
 func BuildSignedMediaDownloadURL(
@@ -28,7 +29,7 @@ func BuildSignedMediaDownloadURL(
 	ttl time.Duration,
 	filename string,
 ) (string, error) {
-	return buildSignedMediaFileURL(
+	url, _, err := SignMediaFileURL(
 		mediaDomain,
 		fileID,
 		extension,
@@ -37,36 +38,39 @@ func BuildSignedMediaDownloadURL(
 		mediaauth.PurposeDownload,
 		filename,
 	)
+	return url, err
 }
 
-func buildSignedMediaFileURL(
+// SignMediaFileURL signs a media file URL and returns the expiry its token
+// enforces, which callers advertise instead of recomputing now+ttl.
+func SignMediaFileURL(
 	mediaDomain, fileID string,
 	extension string,
 	secret string,
 	ttl time.Duration,
 	purpose mediaauth.Purpose,
 	filename string,
-) (string, error) {
+) (string, time.Time, error) {
 	if secret == "" {
-		return "", ErrMediaURLSigningFailed
+		return "", time.Time{}, ErrMediaURLSigningFailed
 	}
 
 	extension = strings.ToLower(strings.TrimSpace(extension))
 	objectKey, err := mediaauth.MediaObjectKey(fileID, extension)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrMediaURLSigningFailed, err)
+		return "", time.Time{}, fmt.Errorf("%w: %w", ErrMediaURLSigningFailed, err)
 	}
 
-	token, err := generateMediaToken(purpose, mediaauth.ScopeExact, objectKey, ttl, secret, filename)
+	token, expiresAt, err := generateMediaToken(purpose, mediaauth.ScopeExact, objectKey, ttl, secret, filename)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	signedPath, err := mediaauth.SignedMediaPath(token, fileID, extension)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrMediaURLSigningFailed, err)
+		return "", time.Time{}, fmt.Errorf("%w: %w", ErrMediaURLSigningFailed, err)
 	}
 
-	return joinOriginPath(mediaDomain, signedPath), nil
+	return joinOriginPath(mediaDomain, signedPath), expiresAt, nil
 }
 
 func BuildPublicMediaHLSURL(mediaDomain, fileID, generationID, objectName string) (string, error) {
@@ -89,7 +93,7 @@ func generateMediaToken(
 	ttl time.Duration,
 	secret string,
 	filename string,
-) (string, error) {
+) (string, time.Time, error) {
 	if ttl <= 0 {
 		ttl = time.Minute
 	}
@@ -97,20 +101,21 @@ func generateMediaToken(
 		ttl = maxTTL
 	}
 	now := time.Now().UTC()
+	expiryUnix := now.Add(ttl).Unix()
 	token, err := mediaauth.GenerateToken(mediaauth.Claims{
 		Version:      mediaauth.TokenVersion,
 		Purpose:      purpose,
 		ScopeType:    scopeType,
 		ScopeValue:   scopeValue,
 		IssuedAtUnix: now.Unix(),
-		ExpiryUnix:   now.Add(ttl).Unix(),
+		ExpiryUnix:   expiryUnix,
 		Methods:      []mediaauth.Method{mediaauth.MethodGet, mediaauth.MethodHead},
 		Filename:     filename,
 	}, secret)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrMediaURLSigningFailed, err)
+		return "", time.Time{}, fmt.Errorf("%w: %w", ErrMediaURLSigningFailed, err)
 	}
-	return token, nil
+	return token, time.Unix(expiryUnix, 0).UTC(), nil
 }
 
 func mediaTokenMaxTTL(purpose mediaauth.Purpose) (time.Duration, bool) {
